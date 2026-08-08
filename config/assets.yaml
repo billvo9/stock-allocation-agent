@@ -1,0 +1,31 @@
+assets:
+  - symbol: MU
+    vendor_symbol: MU
+    name: Micron Technology
+    currency: USD
+
+  - symbol: SNDK
+    vendor_symbol: SNDK
+    name: SanDisk
+    currency: USD
+
+  - symbol: MRVL
+    vendor_symbol: MRVL
+    name: Marvell Technology
+    currency: USD
+
+benchmarks:
+  - symbol: NASDAQ_COMPOSITE
+    vendor_symbol: "^IXIC"
+    name: Nasdaq Composite
+    currency: USD
+
+  - symbol: SP500
+    vendor_symbol: "^GSPC"
+    name: S&P 500
+    currency: USD
+
+  - symbol: DOW_JONES
+    vendor_symbol: "^DJI"
+    name: Dow Jones Industrial Average
+    currency: USD
