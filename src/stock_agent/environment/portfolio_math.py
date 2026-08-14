@@ -82,3 +82,26 @@ def calculate_drawdown(
         return 0.0
 
     return 1.0 - wealth / peak_wealth
+
+def update_wealth(
+    current_wealth: float,
+    portfolio_return: float,
+    transaction_cost: float,
+) -> float:
+    """Update portfolio wealth after return and trading costs."""
+
+    if current_wealth <= 0:
+        raise ValueError("Current wealth must be positive.")
+
+    if transaction_cost < 0:
+        raise ValueError("Transaction cost cannot be negative.")
+
+    net_return = portfolio_return - transaction_cost
+    new_wealth = current_wealth * (1.0 + net_return)
+
+    if new_wealth <= 0:
+        raise ValueError(
+            "Portfolio wealth became non-positive after applying return and costs."
+        )
+
+    return float(new_wealth)
