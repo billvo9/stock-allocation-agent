@@ -4,7 +4,6 @@ import pandas as pd
 
 from stock_agent.evaluation.baseline import run_equal_weight_baseline
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FEATURES_PATH = PROJECT_ROOT / "data" / "processed" / "rolling_features.parquet"
 
