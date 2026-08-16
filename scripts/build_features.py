@@ -14,9 +14,11 @@ INVESTABLE_SYMBOLS = ["MU", "SNDK", "MRVL"]
 
 BECHMARK_SYMBOLS = ["NASDAQ_COMPOSITE", "SP500", "DOW_JONES"]
 
+
 def load_feature_query() -> str:
     """Read the SQL feature query from disk."""
     return SQL_PATH.read_text(encoding="utf-8")
+
 
 def run_feature_query() -> pd.DataFrame:
     """Execute rolling feature SQL against the raw parquet data."""
@@ -26,8 +28,7 @@ def run_feature_query() -> pd.DataFrame:
         frame = duckdb.sql(query).df()
     except Exception as exc:
         raise RuntimeError(
-            f"Unable to build SQL market fetures. "
-            f"Check {SQL_PATH}. Original error: {exc}"
+            f"Unable to build SQL market fetures. Check {SQL_PATH}. Original error: {exc}"
         ) from exc
 
     if frame.empty:
@@ -36,41 +37,37 @@ def run_feature_query() -> pd.DataFrame:
     return frame
 
 
-def find_common_investable_dates(frame: pd.DataFrame,)-> pd.Series:
+def find_common_investable_dates(
+    frame: pd.DataFrame,
+) -> pd.Series:
     """Return dates for which all investable symbols are available."""
     investable = frame[frame["symbol"].isin(INVESTABLE_SYMBOLS)]
-    counts = (
-        investable.groupby("date")["symbol"].nunique()
-    )
+    counts = investable.groupby("date")["symbol"].nunique()
 
     return counts[counts == len(INVESTABLE_SYMBOLS)].index
+
 
 def build_model_dataset() -> pd.DataFrame:
     frame = run_feature_query()
 
-    #Remove incomplete rolling-feature row.
+    # Remove incomplete rolling-feature row.
 
-    frame = frame.dropna(subset=[
-        "daily_return",
-        "momentum_20d",
-        "volatility_20d",
+    frame = frame.dropna(
+        subset=[
+            "daily_return",
+            "momentum_20d",
+            "volatility_20d",
         ]
     )
 
-    common_dates= find_common_investable_dates(frame)
+    common_dates = find_common_investable_dates(frame)
 
-    frame = frame[
-        frame["date"].isin(common_dates)
-    ].copy()
+    frame = frame[frame["date"].isin(common_dates)].copy()
 
     if frame.empty:
-        raise RuntimeError(
-            "No common dates remain after feature filtering."
-        )
+        raise RuntimeError("No common dates remain after feature filtering.")
 
-    return (
-        frame.sort_values(["date", "symbol"]).reset_index(drop=True)
-        )
+    return frame.sort_values(["date", "symbol"]).reset_index(drop=True)
 
 
 def main() -> None:
@@ -101,7 +98,6 @@ def main() -> None:
         features["date"].max(),
     )
 
+
 if __name__ == "__main__":
     main()
-
-

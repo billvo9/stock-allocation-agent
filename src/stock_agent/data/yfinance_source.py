@@ -42,8 +42,7 @@ class YFinanceDataSource(MarketDataSource):
 
         if frame.empty:
             raise MarketDataDownloadError(
-                f"No market data returned for {symbol} "
-                f"({vendor_symbol}) from {start} to {end}."
+                f"No market data returned for {symbol} ({vendor_symbol}) from {start} to {end}."
             )
 
         frame = self._flatten_columns(frame)
@@ -65,11 +64,7 @@ class YFinanceDataSource(MarketDataSource):
 
         self._validate(frame, symbol)
 
-        return (
-            frame[CANONICAL_PRICE_COLUMNS]
-            .sort_values("date")
-            .reset_index(drop=True)
-        )
+        return frame[CANONICAL_PRICE_COLUMNS].sort_values("date").reset_index(drop=True)
 
     @staticmethod
     def _flatten_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -84,27 +79,18 @@ class YFinanceDataSource(MarketDataSource):
 
     @staticmethod
     def _validate(frame: pd.DataFrame, symbol: str) -> None:
-        missing = [
-            column
-            for column in CANONICAL_PRICE_COLUMNS
-            if column not in frame.columns
-        ]
+        missing = [column for column in CANONICAL_PRICE_COLUMNS if column not in frame.columns]
 
         if missing:
             raise MarketDataValidationError(
-                f"{symbol}: standardized market data are missing "
-                f"required columns: {missing}"
+                f"{symbol}: standardized market data are missing required columns: {missing}"
             )
 
         if frame["date"].isna().any():
-            raise MarketDataValidationError(
-                f"{symbol}: one or more dates could not be parsed."
-            )
+            raise MarketDataValidationError(f"{symbol}: one or more dates could not be parsed.")
 
         if frame["date"].duplicated().any():
-            raise MarketDataValidationError(
-                f"{symbol}: duplicate trading dates were detected."
-            )
+            raise MarketDataValidationError(f"{symbol}: duplicate trading dates were detected.")
 
 
 def standardize_yfinance_columns(frame: pd.DataFrame) -> pd.DataFrame:
@@ -116,7 +102,14 @@ def standardize_yfinance_columns(frame: pd.DataFrame) -> pd.DataFrame:
 
     result = frame.copy()
 
-    column_map = {"Open": "open", "High": "high", "Low": "low", "Close": "close", "Adj Close": "adjusted_close", "Volume": "volume"}
+    column_map = {
+        "Open": "open",
+        "High": "high",
+        "Low": "low",
+        "Close": "close",
+        "Adj Close": "adjusted_close",
+        "Volume": "volume",
+    }
     result = result.rename(columns=column_map)
 
     # raise NotImplementedError("TODO_STUDENT: implement column standardization.")
