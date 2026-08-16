@@ -15,11 +15,13 @@ def test_valid_weights():
 
     validate_weights(weights)
 
+
 def test_weights_must_sum_to_one():
-    weights = np.array([0.30, 0.25, 0,25, 0.10])
+    weights = np.array([0.30, 0.25, 0, 25, 0.10])
 
     with pytest.raises(ValueError, match="must sum to 1"):
         validate_weights(weights)
+
 
 def test_calculate_turnover():
     current = np.array([0.40, 0.30, 0.20, 0.10])
@@ -28,6 +30,7 @@ def test_calculate_turnover():
     result = calculate_turnover(current, target)
 
     assert np.isclose(result, 0.20)
+
 
 def test_portfolio_return():
     weights = np.array([0.50, 0.30, 0.20])
@@ -49,10 +52,11 @@ def test_transaction_cost():
 
     assert np.isclose(result, 0.0002)
 
+
 def test_drawdown():
     result = calculate_drawdown(
         wealth=90_000,
         peak_wealth=100_000,
     )
-    
+
     assert np.isclose(result, 0.10)

@@ -32,13 +32,10 @@ def test_reward_with_drawdown_penalty():
         risk_penalty=2.0,
     )
 
-    expected = (
-        math.log(98_000 / 100_000)
-        - (0.001 * 0.10)
-        - 2.0 * (0.05**2)
-    )
+    expected = math.log(98_000 / 100_000) - (0.001 * 0.10) - 2.0 * (0.05**2)
 
     assert result == pytest.approx(expected)
+
 
 def test_negative_turnover_raises_error():
     with pytest.raises(ValueError, match="Turnover"):
@@ -51,6 +48,3 @@ def test_negative_turnover_raises_error():
             drawdown_threshold=0.10,
             risk_penalty=2.0,
         )
-
-    
-

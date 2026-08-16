@@ -51,10 +51,7 @@ def download_all_prices(
 
     combined = pd.concat(frames, ignore_index=True)
 
-    return (
-        combined.sort_values(["symbol", "date"])
-        .reset_index(drop=True)
-    )
+    return combined.sort_values(["symbol", "date"]).reset_index(drop=True)
 
 
 def main() -> None:

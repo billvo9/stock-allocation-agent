@@ -36,14 +36,12 @@ def calculate_reward(
 
     if risk_penalty < 0:
         raise ValueError("risk_penalty must larger than or equal to 0")
-    
-    log_return = math.log(current_wealth/previous_wealth)
-    transaction_penalty = transaction_cost_rate*turnover
-    excess_drawdown = max(0.0, drawdown-drawdown_threshold)
+
+    log_return = math.log(current_wealth / previous_wealth)
+    transaction_penalty = transaction_cost_rate * turnover
+    excess_drawdown = max(0.0, drawdown - drawdown_threshold)
     drawdown_penalty = risk_penalty
 
-    reward = log_return - transaction_penalty - drawdown_penalty*(excess_drawdown)**2
+    reward = log_return - transaction_penalty - drawdown_penalty * (excess_drawdown) ** 2
 
     return reward
-
-
