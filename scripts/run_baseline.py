@@ -9,6 +9,7 @@ FEATURES_PATH = PROJECT_ROOT / "data" / "processed" / "rolling_features.parquet"
 
 SYMBOLS = ["MU", "SNDK", "MRVL"]
 
+
 def main() -> None:
     features = pd.read_parquet(FEATURES_PATH)
 
@@ -16,7 +17,7 @@ def main() -> None:
         frame=features,
         symbols=SYMBOLS,
         initial_wealth=100_000,
-        rebalance_every=30,
+        rebalance_every=5,
         transaction_cost_rate=0.001,
     )
 
@@ -26,37 +27,6 @@ def main() -> None:
     print(f"Maximum drawdown:   {result.max_drawdown:.2%}")
     print(f"Total turnover:     {result.total_turnover:.4f}")
 
-    print(
-        features.loc[
-            features["symbol"].isin(SYMBOLS),
-            "daily_return",
-        ].describe()
-    )
-
-    print(
-        features.loc[
-            features["symbol"].isin(SYMBOLS),
-            "daily_return",
-        ].abs().nlargest(10)
-    )
-
-    print(
-        features.loc[
-            features["symbol"].isin(SYMBOLS),
-            ["date", "symbol", "daily_return"],
-        ]
-        .sort_values("daily_return")
-        .head(10)
-    )
-
-    print(
-        features.loc[
-            features["symbol"].isin(SYMBOLS),
-            ["date", "symbol", "daily_return"],
-        ]
-        .sort_values("daily_return", ascending=False)
-        .head(10)
-    )
 
 if __name__ == "__main__":
     main()
