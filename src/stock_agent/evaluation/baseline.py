@@ -89,114 +89,6 @@ def update_peak_and_drawdown(
     return (new_peak, drawdown)
 
 
-def run_equal_weight_baseline(
-    frame: pd.DataFrame,
-    symbols: list[str],
-    initial_wealth: float = 100_000.0,
-    rebalance_every: int = 5,
-    transaction_cost_rate: float = 0.001,
-) -> BaselineResult:
-    """Backtest a periodically rebalanced equal-weight strategy.
-
-    The first available date initializes the portfolio. Its daily return is not
-    applied because that return represents a period before the portfolio exists.
-    """
-    if initial_wealth <= 0:
-        raise ValueError("Initial wealth must be positive.")
-
-    if rebalance_every <= 0:
-        raise ValueError("Rebalance interval must be positive.")
-
-    if transaction_cost_rate < 0:
-        raise ValueError("Transaction cost rate cannot be negative.")
-
-    returns = prepare_feature_matrix(
-        frame=frame,
-        symbols=symbols,
-        column="daily_return",
-    )
-
-    if returns.empty:
-        raise ValueError("Return matrix cannot be empty.")
-
-    if len(returns) < 2:
-        raise ValueError("Return matrix must contain at least two dates.")
-
-    target_map = equal_weight(symbols)
-
-    target_weights = np.array(
-        [target_map[symbol] for symbol in symbols],
-        dtype=float,
-    )
-
-    current_weights = target_weights.copy()
-
-    wealth = initial_wealth
-    peak_wealth = initial_wealth
-
-    max_drawdown = 0.0
-    total_turnover = 0.0
-
-    return_matrix = returns.iloc[1:].to_numpy(dtype=float)
-
-    for step, asset_returns in enumerate(return_matrix):
-        transaction_cost = 0.0
-
-        # Rebalance at the beginning of every rebalance interval.
-        # Step 0 is excluded because the portfolio already starts
-        # at the target equal weights.
-        if step > 0 and step % rebalance_every == 0:
-            turnover = calculate_turnover(
-                current_weights=current_weights,
-                target_weights=target_weights,
-            )
-
-            transaction_cost = calculate_transaction_cost(
-                turnover=turnover,
-                transaction_cost_rate=transaction_cost_rate,
-            )
-
-            total_turnover += turnover
-
-            current_weights = target_weights.copy()
-
-        portfolio_return = calculate_portfolio_return(
-            asset_weights=current_weights,
-            asset_returns=asset_returns,
-        )
-
-        wealth = update_wealth(
-            current_wealth=wealth,
-            portfolio_return=portfolio_return,
-            transaction_cost=transaction_cost,
-        )
-
-        current_weights = drift_weights(
-            weights=current_weights,
-            asset_returns=asset_returns,
-        )
-
-        peak_wealth, current_drawdown = update_peak_and_drawdown(
-            wealth=wealth,
-            peak_wealth=peak_wealth,
-        )
-
-        max_drawdown = max(
-            max_drawdown,
-            current_drawdown,
-        )
-
-    cumulative_return = wealth / initial_wealth - 1.0
-
-    return BaselineResult(
-        initial_wealth=initial_wealth,
-        final_wealth=wealth,
-        cumulative_return=cumulative_return,
-        max_drawdown=max_drawdown,
-        total_turnover=total_turnover,
-    )
-
-
 def weights_to_array(
     weights: dict[str, float],
     symbols: list[str],
@@ -262,6 +154,7 @@ def run_rebalanced_backtest(
     initial_wealth: float = 100_000.0,
     rebalance_every: int = 5,
     transaction_cost_rate: float = 0.001,
+    first_rebalance_step: int | None = None,
 ) -> BaselineResult:
     if initial_wealth <= 0:
         raise ValueError("Initial wealth must be positive.")
@@ -281,6 +174,12 @@ def run_rebalanced_backtest(
     if len(returns) < 2:
         raise ValueError("Backtest requires at least two dates.")
 
+    if first_rebalance_step is None:
+        first_rebalance_step = rebalance_every
+
+    if first_rebalance_step <= 0:
+        raise ValueError("First rebalance step must be positive.")
+
     current_weights = target_weights.iloc[0].to_numpy(dtype=float)
 
     wealth = initial_wealth
@@ -291,20 +190,16 @@ def run_rebalanced_backtest(
     for step in range(1, len(returns)):
         transaction_cost = 0.0
 
-        # Decide whether this is a rebalance step.
-        # If yes:
-        #   1. get target weights from the PREVIOUS date
-        #   2. calculate turnover
-        #   3. calculate transaction cost
-        #   4. update total turnover
-        #   5. set current_weights to target
+        should_rebalance = (
+            step >= first_rebalance_step and (step - first_rebalance_step) % rebalance_every == 0
+        )
 
-        if step % rebalance_every == 0:
-            previous_day_target_weights = target_weights.iloc[step - 1].to_numpy(dtype=float)
+        if should_rebalance:
+            rebalance_target_weights = target_weights.iloc[step - 1].to_numpy(dtype=float)
 
             turnover = calculate_turnover(
                 current_weights=current_weights,
-                target_weights=previous_day_target_weights,
+                target_weights=rebalance_target_weights,
             )
 
             transaction_cost = calculate_transaction_cost(
@@ -313,7 +208,8 @@ def run_rebalanced_backtest(
             )
 
             total_turnover += turnover
-            current_weights = previous_day_target_weights.copy()
+
+            current_weights = rebalance_target_weights.copy()
 
         asset_returns = returns.iloc[step].to_numpy(dtype=float)
 
@@ -379,4 +275,54 @@ def run_inverse_volatility_baseline(
         initial_wealth=initial_wealth,
         rebalance_every=rebalance_every,
         transaction_cost_rate=transaction_cost_rate,
+        first_rebalance_step=rebalance_every,
+    )
+
+
+def prepare_equal_weight_targets(
+    returns: pd.DataFrame,
+    symbols: list[str],
+) -> pd.DataFrame:
+    target_map = equal_weight(symbols)
+
+    target_array = weights_to_array(
+        target_map,
+        symbols,
+    )
+
+    # 1. repeat target_array once for every date in returns
+    # 2. build a DataFrame
+    # 3. use returns.index as the index
+    # 4. use symbols as the columns
+    # 5. return the DataFrame
+    return pd.DataFrame(
+        data=np.tile(target_array, (len(returns), 1)), index=returns.index, columns=symbols
+    )
+
+
+def run_equal_weight_baseline(
+    frame: pd.DataFrame,
+    symbols: list[str],
+    initial_wealth: float = 100_000.0,
+    rebalance_every: int = 5,
+    transaction_cost_rate: float = 0.001,
+) -> BaselineResult:
+    returns = prepare_feature_matrix(
+        frame=frame,
+        symbols=symbols,
+        column="daily_return",
+    )
+
+    target_weights = prepare_equal_weight_targets(
+        returns=returns,
+        symbols=symbols,
+    )
+
+    return run_rebalanced_backtest(
+        returns=returns,
+        target_weights=target_weights,
+        initial_wealth=initial_wealth,
+        rebalance_every=rebalance_every,
+        transaction_cost_rate=transaction_cost_rate,
+        first_rebalance_step=rebalance_every + 1,
     )
