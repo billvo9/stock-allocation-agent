@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from stock_agent.evaluation.baseline import (
+    add_cash_returns,
     drift_weights,
     inverse_volatility_weights,
     prepare_equal_weight_targets,
@@ -813,3 +814,196 @@ def test_run_rebalanced_backtest_respects_first_rebalance_step():
     assert result.final_wealth == pytest.approx(99_900)
     assert result.cumulative_return == pytest.approx(-0.001)
     assert result.max_drawdown == pytest.approx(0.001)
+
+
+def test_add_cash_returns_adds_zero_return_cash():
+    dates = pd.to_datetime(
+        [
+            "2026-01-01",
+            "2026-01-02",
+        ]
+    )
+
+    returns = pd.DataFrame(
+        data=[
+            [0.01, -0.02, 0.03],
+            [0.02, 0.01, -0.01],
+        ],
+        index=dates,
+        columns=["MU", "SNDK", "MRVL"],
+    )
+
+    result = add_cash_returns(returns)
+
+    assert list(result.columns) == [
+        "MU",
+        "SNDK",
+        "MRVL",
+        "CASH",
+    ]
+
+    # verify CASH is exactly 0 on every date
+    assert np.allclose(
+        result["CASH"].to_numpy(),
+        [0.0, 0.0],
+    )
+
+
+def test_add_cash_returns_adds_nonzero_return_cash():
+    dates = pd.to_datetime(
+        [
+            "2026-01-01",
+            "2026-01-02",
+        ]
+    )
+
+    returns = pd.DataFrame(
+        data=[
+            [0.01, -0.02, 0.03],
+            [0.02, 0.01, -0.01],
+        ],
+        index=dates,
+        columns=["MU", "SNDK", "MRVL"],
+    )
+
+    result = add_cash_returns(
+        returns,
+        cash_return=0.0001,
+    )
+
+    assert np.allclose(
+        result["CASH"].to_numpy(),
+        [0.0001, 0.0001],
+    )
+
+
+def test_add_cash_returns_does_not_mutate_input():
+
+    dates = pd.to_datetime(
+        [
+            "2026-01-01",
+            "2026-01-02",
+        ]
+    )
+
+    returns = pd.DataFrame(
+        data=[
+            [0.01, -0.02, 0.03],
+            [0.02, 0.01, -0.01],
+        ],
+        index=dates,
+        columns=["MU", "SNDK", "MRVL"],
+    )
+
+    result = add_cash_returns(returns)
+
+    assert "CASH" not in returns.columns
+    assert "CASH" in result.columns
+
+
+def test_add_cash_returns_rejects_existing_cash_column():
+
+    dates = pd.to_datetime(
+        [
+            "2026-01-01",
+            "2026-01-02",
+        ]
+    )
+
+    returns = pd.DataFrame(
+        data=[
+            [0.01, -0.02, 0.03, 0.0],
+            [0.02, 0.01, -0.01, 0.0],
+        ],
+        index=dates,
+        columns=["MU", "SNDK", "MRVL", "CASH"],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="CASH",
+    ):
+        add_cash_returns(returns)
+
+
+def test_rebalanced_backtest_supports_full_cash_position():
+
+    dates = pd.to_datetime(
+        [
+            "2026-01-01",
+            "2026-01-02",
+        ]
+    )
+
+    returns = pd.DataFrame(
+        data=[
+            [0.00, 0.00, 0.00, 0.00],
+            [-0.20, -0.30, -0.15, 0.00],
+        ],
+        columns=["MU", "SNDK", "MRVL", "CASH"],
+        index=dates,
+    )
+
+    target_weights = pd.DataFrame(
+        data=[
+            [0.00, 0.00, 0.00, 1.00],
+            [0.00, 0.00, 0.00, 1.00],
+        ],
+        index=dates,
+        columns=["MU", "SNDK", "MRVL", "CASH"],
+    )
+
+    result = run_rebalanced_backtest(
+        returns=returns,
+        target_weights=target_weights,
+        initial_wealth=100_000,
+        transaction_cost_rate=0.001,
+    )
+
+    assert result.final_wealth == pytest.approx(100_000)
+    assert result.cumulative_return == pytest.approx(0.0)
+    assert result.max_drawdown == pytest.approx(0.0)
+    assert result.total_turnover == pytest.approx(0.0)
+
+
+def test_rebalanced_backtest_charges_cost_when_moving_to_cash():
+    dates = pd.to_datetime(
+        [
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+        ]
+    )
+
+    returns = pd.DataFrame(
+        data=[
+            [0.00, 0.00, 0.00, 0.00],
+            [0.00, 0.00, 0.00, 0.00],
+            [0.00, 0.00, 0.00, 0.00],
+        ],
+        index=dates,
+        columns=["MU", "SNDK", "MRVL", "CASH"],
+    )
+
+    target_weights = pd.DataFrame(
+        data=[
+            [0.50, 0.30, 0.20, 0.00],
+            [0.00, 0.00, 0.00, 1.00],
+            [0.00, 0.00, 0.00, 1.00],
+        ],
+        index=dates,
+        columns=["MU", "SNDK", "MRVL", "CASH"],
+    )
+
+    result = run_rebalanced_backtest(
+        returns=returns,
+        target_weights=target_weights,
+        initial_wealth=100_000,
+        rebalance_every=2,
+        transaction_cost_rate=0.001,
+    )
+
+    assert result.total_turnover == pytest.approx(2.0)
+    assert result.final_wealth == pytest.approx(99_800)
+    assert result.cumulative_return == pytest.approx(-0.002)
+    assert result.max_drawdown == pytest.approx(0.002)
