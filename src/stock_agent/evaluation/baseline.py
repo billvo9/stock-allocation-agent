@@ -326,3 +326,19 @@ def run_equal_weight_baseline(
         transaction_cost_rate=transaction_cost_rate,
         first_rebalance_step=rebalance_every + 1,
     )
+
+
+def add_cash_returns(
+    returns: pd.DataFrame,
+    cash_symbol: str = "CASH",
+    cash_return: float = 0.0,
+) -> pd.DataFrame:
+    """Add a synthetic cash return column to a return matrix."""
+
+    if cash_symbol in returns.columns:
+        raise ValueError(f"{cash_symbol} already exists in returns.")
+
+    result = returns.copy()
+    result[cash_symbol] = cash_return
+
+    return result
