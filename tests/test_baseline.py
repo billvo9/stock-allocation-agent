@@ -9,8 +9,10 @@ from stock_agent.evaluation.baseline import (
     prepare_equal_weight_targets,
     prepare_feature_matrix,
     prepare_inverse_volatility_targets,
+    prepare_momentum_targets,
     run_equal_weight_baseline,
     run_inverse_volatility_baseline,
+    run_momentum_baseline,
     run_rebalanced_backtest,
     update_peak_and_drawdown,
     weights_to_array,
@@ -1007,3 +1009,210 @@ def test_rebalanced_backtest_charges_cost_when_moving_to_cash():
     assert result.final_wealth == pytest.approx(99_800)
     assert result.cumulative_return == pytest.approx(-0.002)
     assert result.max_drawdown == pytest.approx(0.002)
+
+
+def make_momentum_test_frame(
+    dates: pd.DatetimeIndex,
+    symbols: list[str],
+    returns_by_symbol: dict[str, list[float]],
+) -> pd.DataFrame:
+    rows = []
+
+    for symbol in symbols:
+        for date, daily_return in zip(
+            dates,
+            returns_by_symbol[symbol],
+            strict=True,
+        ):
+            rows.append(
+                {
+                    "date": date,
+                    "symbol": symbol,
+                    "daily_return": daily_return,
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def test_prepare_momentum_targets_removes_warmup_dates():
+    dates = pd.date_range("2026-01-01", periods=5, freq="D")
+
+    symbols = ["MU", "SNDK", "MRVL"]
+
+    frame = make_momentum_test_frame(
+        dates=dates,
+        symbols=symbols,
+        returns_by_symbol={
+            "MU": [0.02, -0.01, 0.03, 0.01, -0.02],
+            "SNDK": [0.01, 0.02, -0.01, 0.04, 0.01],
+            "MRVL": [-0.01, 0.03, 0.02, -0.02, 0.03],
+        },
+    )
+
+    result = prepare_momentum_targets(
+        frame=frame,
+        symbols=symbols,
+        lookback=3,
+    )
+
+    assert len(result) == 3
+    assert result.index[0] == dates[2]
+
+
+def test_prepare_momentum_targets_contains_cash_and_sums_to_one():
+    dates = pd.date_range("2026-01-01", periods=5, freq="D")
+
+    symbols = ["MU", "SNDK", "MRVL"]
+
+    frame = make_momentum_test_frame(
+        dates=dates,
+        symbols=symbols,
+        returns_by_symbol={
+            "MU": [0.03, 0.01, -0.02, 0.04, 0.02],
+            "SNDK": [-0.02, 0.03, 0.01, -0.01, 0.05],
+            "MRVL": [0.01, -0.01, 0.02, 0.03, -0.02],
+        },
+    )
+
+    result = prepare_momentum_targets(
+        frame=frame,
+        symbols=symbols,
+        lookback=3,
+    )
+
+    assert list(result.columns) == ["MU", "SNDK", "MRVL", "CASH"]
+
+    assert np.allclose(
+        result.sum(axis=1).to_numpy(),
+        1.0,
+    )
+
+
+def test_prepare_momentum_targets_uses_cash_when_all_momentum_negative():
+    dates = pd.date_range("2026-01-01", periods=3, freq="D")
+
+    symbols = ["MU", "SNDK", "MRVL"]
+
+    frame = make_momentum_test_frame(
+        dates=dates,
+        symbols=symbols,
+        returns_by_symbol={
+            "MU": [-0.01, -0.02, -0.01],
+            "SNDK": [-0.03, -0.01, -0.02],
+            "MRVL": [-0.02, -0.02, -0.01],
+        },
+    )
+
+    result = prepare_momentum_targets(
+        frame=frame,
+        symbols=symbols,
+        lookback=3,
+    )
+
+    first_target = result.iloc[0]
+
+    assert first_target["CASH"] == pytest.approx(1.0)
+    assert first_target["MU"] == pytest.approx(0.0)
+    assert first_target["SNDK"] == pytest.approx(0.0)
+    assert first_target["MRVL"] == pytest.approx(0.0)
+
+
+def test_run_momentum_baseline_uses_cash_when_all_momentum_negative():
+    dates = pd.date_range(
+        "2026-01-01",
+        periods=5,
+        freq="D",
+    )
+
+    symbols = ["MU", "SNDK", "MRVL"]
+
+    frame = make_momentum_test_frame(
+        dates=dates,
+        symbols=symbols,
+        returns_by_symbol={
+            "MU": [-0.01, -0.02, -0.01, -0.03, -0.02],
+            "SNDK": [-0.02, -0.01, -0.03, -0.02, -0.01],
+            "MRVL": [-0.01, -0.03, -0.02, -0.01, -0.02],
+        },
+    )
+
+    result = run_momentum_baseline(
+        frame=frame,
+        symbols=symbols,
+        lookback=3,
+        initial_wealth=100_000,
+        rebalance_every=2,
+        transaction_cost_rate=0.001,
+    )
+
+    assert result.final_wealth == pytest.approx(100_000)
+    assert result.cumulative_return == pytest.approx(0.0)
+    assert result.max_drawdown == pytest.approx(0.0)
+    assert result.total_turnover == pytest.approx(0.0)
+
+
+def test_run_momentum_baseline_applies_positive_momentum_exposure():
+    dates = pd.date_range(
+        "2026-01-01",
+        periods=5,
+        freq="D",
+    )
+
+    symbols = ["MU", "SNDK", "MRVL"]
+
+    frame = make_momentum_test_frame(
+        dates=dates,
+        symbols=symbols,
+        returns_by_symbol={
+            "MU": [0.02, 0.02, 0.02, 0.03, 0.04],
+            "SNDK": [0.01, 0.01, 0.01, 0.00, 0.00],
+            "MRVL": [-0.01, -0.01, -0.01, -0.02, -0.02],
+        },
+    )
+
+    result = run_momentum_baseline(
+        frame=frame,
+        symbols=symbols,
+        lookback=3,
+        initial_wealth=100_000,
+        rebalance_every=2,
+        transaction_cost_rate=0.0,
+    )
+
+    assert result.final_wealth > 100_000
+    assert result.cumulative_return > 0
+
+
+def test_run_momentum_baseline_forwards_nonzero_cash_return():
+    dates = pd.date_range(
+        "2026-01-01",
+        periods=5,
+        freq="D",
+    )
+
+    symbols = ["MU", "SNDK", "MRVL"]
+
+    frame = make_momentum_test_frame(
+        dates=dates,
+        symbols=symbols,
+        returns_by_symbol={
+            "MU": [-0.01, -0.01, -0.01, -0.01, -0.01],
+            "SNDK": [-0.02, -0.02, -0.02, -0.02, -0.02],
+            "MRVL": [-0.03, -0.03, -0.03, -0.03, -0.03],
+        },
+    )
+
+    result = run_momentum_baseline(
+        frame=frame,
+        symbols=symbols,
+        lookback=3,
+        initial_wealth=100_000,
+        rebalance_every=2,
+        transaction_cost_rate=0.0,
+        cash_return=0.001,
+    )
+
+    assert result.final_wealth == pytest.approx(100_200.10)
+    assert result.cumulative_return == pytest.approx(0.002001)
+    assert result.max_drawdown == pytest.approx(0.0)

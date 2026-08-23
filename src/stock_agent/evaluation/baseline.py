@@ -7,6 +7,7 @@ import pandas as pd
 
 from stock_agent.agents.equal_weight import equal_weight
 from stock_agent.agents.inverse_volatility import inverse_volatility
+from stock_agent.agents.momentum import momentum_weights
 from stock_agent.environment.portfolio_math import (
     calculate_drawdown,
     calculate_portfolio_return,
@@ -342,3 +343,94 @@ def add_cash_returns(
     result[cash_symbol] = cash_return
 
     return result
+
+
+def prepare_momentum_targets(
+    frame: pd.DataFrame,
+    symbols: list[str],
+    lookback: int = 20,
+    cash_symbol: str = "CASH",
+) -> pd.DataFrame:
+    if lookback <= 0:
+        raise ValueError("Momentum lookback must be positive.")
+
+    if cash_symbol in symbols:
+        raise ValueError(f"{cash_symbol} must not be included in market symbols.")
+
+    returns = prepare_feature_matrix(
+        frame=frame,
+        symbols=symbols,
+        column="daily_return",
+    )
+
+    momentum = (1.0 + returns).rolling(window=lookback).apply(np.prod, raw=True) - 1.0
+
+    momentum = momentum.dropna()
+
+    portfolio_symbols = [*symbols, cash_symbol]
+
+    target_rows = []
+
+    for _, momentum_row in momentum.iterrows():
+        scores = {symbol: float(momentum_row[symbol]) for symbol in symbols}
+
+        target_map = momentum_weights(
+            scores,
+            cash_symbol=cash_symbol,
+        )
+
+        target_array = weights_to_array(
+            target_map,
+            portfolio_symbols,
+        )
+
+        target_rows.append(target_array)
+
+    return pd.DataFrame(
+        data=target_rows,
+        index=momentum.index,
+        columns=portfolio_symbols,
+    )
+
+
+def run_momentum_baseline(
+    frame: pd.DataFrame,
+    symbols: list[str],
+    lookback: int = 20,
+    initial_wealth: float = 100_000.0,
+    rebalance_every: int = 5,
+    transaction_cost_rate: float = 0.001,
+    cash_symbol: str = "CASH",
+    cash_return: float = 0.0,
+) -> BaselineResult:
+    returns = prepare_feature_matrix(
+        frame=frame,
+        symbols=symbols,
+        column="daily_return",
+    )
+
+    target_weights = prepare_momentum_targets(
+        frame=frame,
+        symbols=symbols,
+        lookback=lookback,
+        cash_symbol=cash_symbol,
+    )
+
+    # Align stock returns to the dates where momentum targets exist.
+    returns = returns.loc[target_weights.index]
+
+    # Add synthetic CASH return so returns and targets have matching columns.
+    portfolio_returns = add_cash_returns(
+        returns=returns,
+        cash_symbol=cash_symbol,
+        cash_return=cash_return,
+    )
+
+    return run_rebalanced_backtest(
+        returns=portfolio_returns,
+        target_weights=target_weights,
+        initial_wealth=initial_wealth,
+        rebalance_every=rebalance_every,
+        transaction_cost_rate=transaction_cost_rate,
+        first_rebalance_step=rebalance_every,
+    )
