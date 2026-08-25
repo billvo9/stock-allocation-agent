@@ -1216,3 +1216,115 @@ def test_run_momentum_baseline_forwards_nonzero_cash_return():
     assert result.final_wealth == pytest.approx(100_200.10)
     assert result.cumulative_return == pytest.approx(0.002001)
     assert result.max_drawdown == pytest.approx(0.0)
+
+
+def test_rebalanced_backtest_records_return_and_wealth_history():
+    dates = pd.to_datetime(
+        [
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+        ]
+    )
+
+    returns = pd.DataFrame(
+        data=[
+            [0.00, 0.00],
+            [0.01, 0.01],
+            [0.02, 0.02],
+        ],
+        index=dates,
+        columns=["A", "B"],
+    )
+
+    target_weights = pd.DataFrame(
+        data=[
+            [0.50, 0.50],
+            [0.50, 0.50],
+            [0.50, 0.50],
+        ],
+        index=dates,
+        columns=["A", "B"],
+    )
+
+    result = run_rebalanced_backtest(
+        returns=returns,
+        target_weights=target_weights,
+        initial_wealth=100_000,
+        transaction_cost_rate=0.0,
+        rebalance_every=5,
+    )
+
+    assert result.history is not None
+
+    # What should the index of portfolio_returns be?
+    # How many realized returns should exist?
+    #
+    # Expected realized returns:
+    # Day 2 = 1%
+    # Day 3 = 2%
+    assert list(result.history.portfolio_returns.index) == [
+        dates[1],
+        dates[2],
+    ]
+
+    assert result.history.portfolio_returns.iloc[0] == pytest.approx(0.01)
+    assert result.history.portfolio_returns.iloc[1] == pytest.approx(0.02)
+
+    assert result.history.wealth.iloc[-1] == pytest.approx(result.final_wealth)
+
+    assert list(result.history.wealth.index) == list(dates)
+
+    assert result.history.wealth.iloc[0] == pytest.approx(100_000)
+
+    assert result.history.wealth.iloc[-1] == pytest.approx(103_020)
+
+    assert result.history.wealth.iloc[-1] == pytest.approx(result.final_wealth)
+
+
+def test_backtest_history_returns_include_transaction_costs():
+    dates = pd.to_datetime(
+        [
+            "2026-01-01",
+            "2026-01-02",
+            "2026-01-03",
+        ]
+    )
+
+    returns = pd.DataFrame(
+        data=[
+            [0.00, 0.00],
+            [0.00, 0.00],
+            [0.00, 0.00],
+        ],
+        index=dates,
+        columns=["A", "B"],
+    )
+
+    target_weights = pd.DataFrame(
+        data=[
+            [0.50, 0.50],  # initial portfolio
+            [1.00, 0.00],  # target used at the rebalance
+            [1.00, 0.00],
+        ],
+        index=dates,
+        columns=["A", "B"],
+    )
+
+    result = run_rebalanced_backtest(
+        returns=returns,
+        target_weights=target_weights,
+        initial_wealth=100_000,
+        transaction_cost_rate=0.001,
+        rebalance_every=2,
+    )
+
+    assert result.history is not None
+
+    assert result.history.portfolio_returns.iloc[-1] == pytest.approx(-0.001)
+
+    assert result.total_turnover == pytest.approx(1.0)
+
+    assert result.final_wealth == pytest.approx(99_900)
+
+    assert result.history.wealth.iloc[-1] == pytest.approx(99_900)

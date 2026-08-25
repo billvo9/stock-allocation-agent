@@ -15,6 +15,7 @@ from stock_agent.environment.portfolio_math import (
     calculate_turnover,
     update_wealth,
 )
+from stock_agent.evaluation.results import BacktestHistory
 
 
 def prepare_feature_matrix(
@@ -72,6 +73,7 @@ class BaselineResult:
     cumulative_return: float
     max_drawdown: float
     total_turnover: float
+    history: BacktestHistory | None = None
 
 
 def update_peak_and_drawdown(
@@ -188,6 +190,12 @@ def run_rebalanced_backtest(
     max_drawdown = 0.0
     total_turnover = 0.0
 
+    realized_dates = []
+    net_portfolio_returns = []
+
+    wealth_dates = [returns.index[0]]
+    wealth_values = [initial_wealth]
+
     for step in range(1, len(returns)):
         transaction_cost = 0.0
 
@@ -219,11 +227,21 @@ def run_rebalanced_backtest(
             asset_returns=asset_returns,
         )
 
+        net_portfolio_return = portfolio_return - transaction_cost
+
         wealth = update_wealth(
             current_wealth=wealth,
             portfolio_return=portfolio_return,
             transaction_cost=transaction_cost,
         )
+
+        realized_dates.append(returns.index[step])
+
+        net_portfolio_returns.append(net_portfolio_return)
+
+        wealth_dates.append(returns.index[step])
+
+        wealth_values.append(wealth)
 
         current_weights = drift_weights(
             current_weights,
@@ -242,12 +260,28 @@ def run_rebalanced_backtest(
 
     cumulative_return = wealth / initial_wealth - 1.0
 
+    history = BacktestHistory(
+        portfolio_returns=pd.Series(
+            data=net_portfolio_returns,
+            index=realized_dates,
+            name="portfolio_return",
+            dtype=float,
+        ),
+        wealth=pd.Series(
+            data=wealth_values,
+            index=wealth_dates,
+            name="wealth",
+            dtype=float,
+        ),
+    )
+
     return BaselineResult(
         initial_wealth=initial_wealth,
         final_wealth=wealth,
         cumulative_return=cumulative_return,
         max_drawdown=max_drawdown,
         total_turnover=total_turnover,
+        history=history,
     )
 
 
