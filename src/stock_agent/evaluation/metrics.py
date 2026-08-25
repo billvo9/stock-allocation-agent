@@ -6,6 +6,25 @@ import numpy as np
 import pandas as pd
 
 
+def _validate_risk_free_returns(
+    returns: pd.Series,
+    risk_free_returns: pd.Series,
+    periods_per_year: int,
+) -> None:
+    _validate_returns(
+        returns,
+        periods_per_year,
+    )
+
+    _validate_returns(
+        risk_free_returns,
+        periods_per_year,
+    )
+
+    if not returns.index.equals(risk_free_returns.index):
+        raise ValueError("Returns and risk-free returns must have matching dates.")
+
+
 def _validate_returns(
     returns: pd.Series,
     periods_per_year: int,
@@ -54,60 +73,45 @@ def calculate_annualized_volatility(
     return periodic_volatility * math.sqrt(periods_per_year)
 
 
-def _annual_to_periodic_rate(
-    annual_rate: float,
-    periods_per_year: int,
-) -> float:
-    if annual_rate <= -1.0:
-        raise ValueError("Annual rate must be greater than -100%.")
-
-    return (1.0 + annual_rate) ** (1.0 / periods_per_year) - 1.0
-
-
 def calculate_sharpe_ratio(
     returns: pd.Series,
-    annual_risk_free_rate: float = 0.0,
+    risk_free_returns: pd.Series,
     periods_per_year: int = 252,
 ) -> float:
-    _validate_returns(
+    _validate_risk_free_returns(
         returns,
+        risk_free_returns,
         periods_per_year,
     )
 
     if len(returns) < 2:
         return float("nan")
 
-    periodic_rf = _annual_to_periodic_rate(
-        annual_risk_free_rate,
-        periods_per_year,
-    )
-
-    excess_returns = returns - periodic_rf
+    excess_returns = returns - risk_free_returns
 
     excess_volatility = float(excess_returns.std(ddof=1))
 
-    if excess_volatility == 0.0:
-        return np.nan
+    if np.isclose(
+        excess_volatility,
+        0.0,
+    ):
+        return float("nan")
 
-    return math.sqrt(periods_per_year) * (excess_returns.mean()) / excess_volatility
+    return math.sqrt(periods_per_year) * float(excess_returns.mean()) / excess_volatility
 
 
 def calculate_sortino_ratio(
     returns: pd.Series,
-    annual_risk_free_rate: float = 0.0,
+    risk_free_returns: pd.Series,
     periods_per_year: int = 252,
 ) -> float:
-    _validate_returns(
+    _validate_risk_free_returns(
         returns,
+        risk_free_returns,
         periods_per_year,
     )
 
-    periodic_rf = _annual_to_periodic_rate(
-        annual_risk_free_rate,
-        periods_per_year,
-    )
-
-    excess_returns = returns - periodic_rf
+    excess_returns = returns - risk_free_returns
 
     downside_returns = np.minimum(
         excess_returns.to_numpy(dtype=float),
@@ -132,11 +136,16 @@ def calculate_sortino_ratio(
 def _calculate_max_drawdown_from_returns(
     returns: pd.Series,
 ) -> float:
-    wealth_index = (1.0 + returns).cumprod()
+    growth = np.concatenate(
+        [
+            [1.0],
+            (1.0 + returns.to_numpy(dtype=float)).cumprod(),
+        ]
+    )
 
-    running_peak = wealth_index.cummax()
+    running_peak = np.maximum.accumulate(growth)
 
-    drawdowns = wealth_index / running_peak - 1.0
+    drawdowns = growth / running_peak - 1.0
 
     return abs(float(drawdowns.min()))
 
@@ -158,6 +167,6 @@ def calculate_calmar_ratio(
     max_drawdown = _calculate_max_drawdown_from_returns(returns)
 
     if max_drawdown == 0.0:
-        return np.nan
+        return float("nan")
 
     return cagr / max_drawdown

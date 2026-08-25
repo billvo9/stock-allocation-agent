@@ -44,9 +44,73 @@ def test_calculate_sharpe_ratio():
         dtype=float,
     )
 
-    result = calculate_sharpe_ratio(returns, periods_per_year=2, annual_risk_free_rate=0.0)
+    risk_free_returns = pd.Series(
+        [0.0, 0.0],
+        index=returns.index,
+        dtype=float,
+    )
+
+    result = calculate_sharpe_ratio(
+        returns=returns,
+        risk_free_returns=risk_free_returns,
+        periods_per_year=2,
+    )
 
     assert result == pytest.approx(2.0)
+
+
+def test_sharpe_uses_risk_free_returns():
+    returns = pd.Series(
+        [0.02, 0.04],
+        dtype=float,
+    )
+
+    risk_free_returns = pd.Series(
+        [0.01, 0.01],
+        index=returns.index,
+        dtype=float,
+    )
+
+    result = calculate_sharpe_ratio(
+        returns=returns,
+        risk_free_returns=risk_free_returns,
+        periods_per_year=2,
+    )
+
+    assert result == pytest.approx(2)
+
+
+def test_sharpe_rejects_mismatched_risk_free_dates():
+    returns = pd.Series(
+        [0.01, 0.02],
+        index=pd.to_datetime(
+            [
+                "2026-01-02",
+                "2026-01-05",
+            ]
+        ),
+        dtype=float,
+    )
+
+    risk_free_returns = pd.Series(
+        [0.001, 0.001],
+        index=pd.to_datetime(
+            [
+                "2026-01-02",
+                "2026-01-06",
+            ]
+        ),
+        dtype=float,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="matching dates",
+    ):
+        calculate_sharpe_ratio(
+            returns=returns,
+            risk_free_returns=risk_free_returns,
+        )
 
 
 def test_calculate_sortino_ratio():
@@ -55,7 +119,17 @@ def test_calculate_sortino_ratio():
         dtype=float,
     )
 
-    result = calculate_sortino_ratio(returns, periods_per_year=2, annual_risk_free_rate=0.0)
+    risk_free_returns = pd.Series(
+        [0.0, 0.0],
+        index=returns.index,
+        dtype=float,
+    )
+
+    result = calculate_sortino_ratio(
+        returns=returns,
+        risk_free_returns=risk_free_returns,
+        periods_per_year=2,
+    )
 
     assert result == pytest.approx(1.0)
 
@@ -72,3 +146,17 @@ def test_calculate_calmar_ratio():
     )
 
     assert result == pytest.approx(2.96)
+
+
+def test_calmar_includes_drawdown_from_initial_wealth():
+    returns = pd.Series(
+        [-0.10, 0.00],
+        dtype=float,
+    )
+
+    result = calculate_calmar_ratio(
+        returns,
+        periods_per_year=2,
+    )
+
+    assert result == pytest.approx(-1.0)
