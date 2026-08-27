@@ -23,6 +23,7 @@ class RateSeriesSpec:
     currency: str
     tenor: str
     quote_convention: str
+    provider_release_id: int | None = None
 
 
 def validate_rate_frame(
@@ -39,10 +40,5 @@ def validate_rate_frame(
     if frame.isna().any(axis=None):
         raise ValueError("Rate data has missing values")
 
-    if frame.duplicated(
-        subset=["date", "rate_id"]
-    ).any():
-        raise ValueError(
-            "Rate data contains duplicate "
-            "(date, rate_id) rows."
-        )
+    if frame.duplicated(subset=["date", "rate_id"]).any():
+        raise ValueError("Rate data contains duplicate (date, rate_id) rows.")
