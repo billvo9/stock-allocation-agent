@@ -1,0 +1,8 @@
+risk_free:
+  rate_id: USD_TREASURY_3M
+  provider: FRED
+  provider_series_id: DGS3MO
+  provider_release_id: 18
+  currency: USD
+  tenor: 3M
+  quote_convention: investment_basis
