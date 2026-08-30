@@ -6,3 +6,4 @@ risk_free:
   currency: USD
   tenor: 3M
   quote_convention: investment_basis
+  refresh_overlap_days: 7
