@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from itertools import pairwise
+# from itertools import pairwise
 from pathlib import Path
 
 import pandas as pd
 
 from stock_agent.config import (
     load_asset_symbols,
+    load_benchmark_symbols,
     load_risk_free_rate_config,
 )
 from stock_agent.evaluation.baseline import (
@@ -16,15 +17,15 @@ from stock_agent.evaluation.baseline import (
     run_inverse_volatility_baseline,
     run_momentum_baseline,
 )
+from stock_agent.evaluation.benchmark import (
+    run_buy_and_hold_benchmark,
+)
 from stock_agent.evaluation.performance import (
     PerformanceMetrics,
     calculate_performance_metrics,
 )
 from stock_agent.evaluation.results import (
     BacktestHistory,
-)
-from stock_agent.evaluation.risk_adjusted import (
-    prepare_aligned_risk_free_returns,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -85,54 +86,36 @@ def validate_common_history(
         if not reference_index.equals(history.portfolio_returns.index):
             raise RuntimeError("Baseline histories do not share the same evaluation dates.")
 
+def build_comparison_table(
+    results: dict[str, BaselineResult],
+    metrics: dict[str, PerformanceMetrics],
+) -> pd.DataFrame:
+    rows = []
 
-def print_risk_free_alignment_sample(
-    history: BacktestHistory,
-    rates: pd.DataFrame,
-    rate_id: str,
-) -> None:
-    """Print a temporary real-data check of risk-free alignment."""
+    if results.keys() != metrics.keys():
+        raise ValueError(
+            "Results and metrics must contain "
+            "the same portfolio names."
+        )
 
-    risk_free_returns = prepare_aligned_risk_free_returns(
-        history=history,
-        rates=rates,
-        rate_id=rate_id,
-    )
+    for name, result in results.items():
+        performance = metrics[name]
 
-    comparison = pd.DataFrame(
-        {
-            "portfolio_return": (history.portfolio_returns),
-            "risk_free_return": (risk_free_returns),
-        }
-    )
+        rows.append(
+            {
+                "portfolio": name,
+                "cagr": performance.cagr,
+                "volatility": (performance.annualized_volatility),
+                "sharpe": performance.sharpe,
+                "sortino": performance.sortino,
+                "calmar": performance.calmar,
+                "max_drawdown": (result.max_drawdown),
+                "turnover": (result.total_turnover),
+                "final_wealth": (result.final_wealth),
+            }
+        )
 
-    portfolio_dates = history.wealth.index
-
-    if not isinstance(
-        portfolio_dates,
-        pd.DatetimeIndex,
-    ):
-        raise TypeError("Backtest wealth history must use a DatetimeIndex.")
-
-    comparison["calendar_days"] = [(end - start).days for start, end in pairwise(portfolio_dates)]
-
-    print("\nRisk-free alignment sample (multi-day periods)")
-    print("---------------------------------------")
-
-    multi_day = comparison[comparison["calendar_days"] > 1].head(10)
-
-    if multi_day.empty:
-        print("No multi-day periods found in this sample.")
-    else:
-        print(multi_day)
-
-    print("\nFirst 5 aligned observations")
-    print("----------------------------")
-    print(comparison.head(5))
-
-    print("\nLast 5 aligned observations")
-    print("---------------------------")
-    print(comparison.tail(5))
+    return pd.DataFrame(rows).set_index("portfolio")
 
 
 def main() -> None:
@@ -140,6 +123,8 @@ def main() -> None:
     rates = pd.read_parquet(RATES_PATH)
 
     symbols = load_asset_symbols(ASSET_CONFIG_PATH)
+
+    benchmark_symbols = load_benchmark_symbols(ASSET_CONFIG_PATH)
 
     rate_config = load_risk_free_rate_config(RATE_CONFIG_PATH)
     rate_id = rate_config.spec.rate_id
@@ -185,14 +170,27 @@ def main() -> None:
         cash_return=0.0,
     )
 
+    benchmark_results = {
+        symbol: run_buy_and_hold_benchmark(
+            frame=comparison_features,
+            symbol=symbol,
+            initial_wealth=100_000,
+        )
+        for symbol in benchmark_symbols
+    }
+
     equal_history = require_history(equal_weight_result)
     inverse_history = require_history(inverse_vol_result)
     momentum_history = require_history(momentum_result)
+    benchmark_histories = {
+        symbol: require_history(result) for symbol, result in benchmark_results.items()
+    }
 
     validate_common_history(
         equal_history,
         inverse_history,
         momentum_history,
+        *benchmark_histories.values(),
     )
 
     equal_metrics = calculate_performance_metrics(
@@ -212,6 +210,38 @@ def main() -> None:
         rates=rates,
         rate_id=rate_id,
     )
+
+    benchmark_metrics = {
+        symbol: calculate_performance_metrics(
+            result=result,
+            rates=rates,
+            rate_id=rate_id,
+        )
+        for symbol, result in benchmark_results.items()
+    }
+
+    all_results = {
+        "Equal Weight": equal_weight_result,
+        "Inverse Volatility": (inverse_vol_result),
+        "Momentum": momentum_result,
+        **benchmark_results,
+    }
+
+    all_metrics = {
+        "Equal Weight": equal_metrics,
+        "Inverse Volatility": inverse_metrics,
+        "Momentum": momentum_metrics,
+        **benchmark_metrics,
+    }
+
+    comparison_table = build_comparison_table(
+        results=all_results,
+        metrics=all_metrics,
+    )
+
+    print("\nPerformance comparison")
+    print("======================")
+    print(comparison_table)
 
     print(f"\nCommon evaluation start: {comparison_start.date()}")
 
@@ -233,6 +263,16 @@ def main() -> None:
         momentum_metrics,
     )
 
+    print("\nPassive Benchmarks")
+    print("==================")
+
+    for symbol in benchmark_symbols:
+        print_result(
+            symbol,
+            benchmark_results[symbol],
+            benchmark_metrics[symbol],
+        )
+
     stock_targets = momentum_targets[symbols]
 
     max_stock_weight = stock_targets.max(axis=1).max()
@@ -249,15 +289,6 @@ def main() -> None:
     print(f"Average largest position:     {average_max_stock_weight:.2%}")
     print(f"Dates with cash exposure:     {cash_usage_rate:.2%}")
     print(f"Dates at 100% cash:           {full_cash_rate:.2%}")
-
-    # Temporary diagnostic for this stage. Once real-data alignment
-    # is visually confirmed, this can be removed from normal output.
-    print_risk_free_alignment_sample(
-        history=momentum_history,
-        rates=rates,
-        rate_id=rate_id,
-    )
-
 
 if __name__ == "__main__":
     main()
