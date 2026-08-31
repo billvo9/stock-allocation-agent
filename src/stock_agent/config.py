@@ -101,3 +101,33 @@ def load_risk_free_rate_config(
         ),
         refresh_overlap_days=refresh_overlap_days,
     )
+
+
+def load_benchmark_symbols(
+    config_path: Path,
+) -> list[str]:
+    """Load benchmark symbols from assets.yaml."""
+
+    with config_path.open(
+        "r",
+        encoding="utf-8",
+    ) as file:
+        config = yaml.safe_load(file)
+
+    benchmarks = config.get(
+        "benchmarks",
+        [],
+    )
+
+    symbols = [benchmark["symbol"] for benchmark in benchmarks]
+
+    if not symbols:
+        raise ValueError("No benchmarks found in config.")
+
+    if len(symbols) != len(set(symbols)):
+        raise ValueError("Duplicate benchmark symbols found in config.")
+
+    if any(not symbol for symbol in symbols):
+        raise ValueError("Benchmark symbols cannot be empty.")
+
+    return symbols
