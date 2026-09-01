@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# from itertools import pairwise
 from pathlib import Path
 
 import pandas as pd
@@ -23,6 +22,9 @@ from stock_agent.evaluation.benchmark import (
 from stock_agent.evaluation.performance import (
     PerformanceMetrics,
     calculate_performance_metrics,
+)
+from stock_agent.evaluation.reporting import (
+    build_comparison_table,
 )
 from stock_agent.evaluation.results import (
     BacktestHistory,
@@ -85,37 +87,6 @@ def validate_common_history(
     for history in histories[1:]:
         if not reference_index.equals(history.portfolio_returns.index):
             raise RuntimeError("Baseline histories do not share the same evaluation dates.")
-
-def build_comparison_table(
-    results: dict[str, BaselineResult],
-    metrics: dict[str, PerformanceMetrics],
-) -> pd.DataFrame:
-    rows = []
-
-    if results.keys() != metrics.keys():
-        raise ValueError(
-            "Results and metrics must contain "
-            "the same portfolio names."
-        )
-
-    for name, result in results.items():
-        performance = metrics[name]
-
-        rows.append(
-            {
-                "portfolio": name,
-                "cagr": performance.cagr,
-                "volatility": (performance.annualized_volatility),
-                "sharpe": performance.sharpe,
-                "sortino": performance.sortino,
-                "calmar": performance.calmar,
-                "max_drawdown": (result.max_drawdown),
-                "turnover": (result.total_turnover),
-                "final_wealth": (result.final_wealth),
-            }
-        )
-
-    return pd.DataFrame(rows).set_index("portfolio")
 
 
 def main() -> None:
@@ -289,6 +260,7 @@ def main() -> None:
     print(f"Average largest position:     {average_max_stock_weight:.2%}")
     print(f"Dates with cash exposure:     {cash_usage_rate:.2%}")
     print(f"Dates at 100% cash:           {full_cash_rate:.2%}")
+
 
 if __name__ == "__main__":
     main()
