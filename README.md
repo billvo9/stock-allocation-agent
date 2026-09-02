@@ -1,7 +1,6 @@
 # Stock Allocation Agent
 
-A small reinforcement-learning portfolio allocation project built for
-Python, SQL, Git, data engineering, and reinforcement-learning practice.
+An end-to-end portfolio allocation research project combining market-data engineering, SQL feature pipelines, quantitative baselines, portfolio simulation, and reinforcement learning.
 
 ## Initial assets
 
