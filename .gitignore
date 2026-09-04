@@ -38,4 +38,4 @@ models/
 *.pth
 
 # Logs
-*.log
+*.logreports/

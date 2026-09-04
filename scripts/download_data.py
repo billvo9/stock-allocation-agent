@@ -20,12 +20,15 @@ def load_config() -> dict:
 
 def download_all_prices(
     start: str = "2024-01-01",
-    end: str = "2026-08-01",
+    end: str | None = None,
 ) -> pd.DataFrame:
     config = load_config()
     source = YFinanceDataSource()
 
     frames: list[pd.DataFrame] = []
+
+    if end is None:
+        end = (pd.Timestamp.today().normalize() + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
     instruments = config["assets"] + config["benchmarks"]
 
