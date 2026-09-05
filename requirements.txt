@@ -7,3 +7,4 @@ pyyaml
 pytest
 ruff
 matplotlib
+lxml

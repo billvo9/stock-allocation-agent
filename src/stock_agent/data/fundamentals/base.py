@@ -26,3 +26,17 @@ class FundamentalDataSource(ABC):
         """Return metadata and a point-in-time snapshot."""
 
         raise NotImplementedError
+
+
+class QuarterlyFundamentalDataSource(ABC):
+    """Interface for historical accounting data."""
+
+    @abstractmethod
+    def get_quarterly_fundamentals(
+        self,
+        symbol: str,
+        provider_symbol: str,
+    ) -> pd.DataFrame:
+        """Return canonical quarterly fundamentals."""
+
+        raise NotImplementedError
