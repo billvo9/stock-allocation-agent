@@ -313,3 +313,33 @@ def test_duplicate_symbol_availability_raises():
             market_frame=market,
             fundamentals=fundamentals,
         )
+
+
+def test_aligned_fundamentals_never_come_from_future():
+    market = _market_frame(
+        [
+            "2026-06-26",
+            "2026-06-27",
+            "2026-07-15",
+        ]
+    )
+
+    fundamentals = _fundamental_row(
+        symbol="MU",
+        period_end="2026-05-31",
+        available_at="2026-06-27",
+        revenue=1000.0,
+    )
+
+    result = align_quarterly_fundamentals_asof(
+        market_frame=market,
+        fundamentals=fundamentals,
+    )
+
+    assert (
+        result["available_at"].isna()
+        | (
+            result["available_at"]
+            <= result["date"]
+        )
+    ).all()
