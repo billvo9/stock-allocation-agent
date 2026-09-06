@@ -3,6 +3,9 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+from stock_agent.data.fundamentals.features import (
+    build_quarterly_fundamental_features,
+)
 from stock_agent.data.fundamentals.point_in_time import (
     align_quarterly_fundamentals_asof,
 )
@@ -16,6 +19,7 @@ def _fundamental_row(
     period_end: str,
     available_at: str,
     revenue: float,
+    gross_profit: float = 400.0,
     retrieved_at: str = "2026-09-04T12:00:00Z",
 ) -> pd.DataFrame:
     available_timestamp = pd.Timestamp(available_at)
@@ -31,7 +35,7 @@ def _fundamental_row(
                 "available_at": (available_timestamp),
                 "retrieved_at": pd.Timestamp(retrieved_at),
                 "revenue": revenue,
-                "gross_profit": 400.0,
+                "gross_profit": gross_profit,
                 "operating_income": 250.0,
                 "net_income": 200.0,
                 "diluted_eps": 2.0,
@@ -276,25 +280,20 @@ def test_multiple_symbols_align_independently():
 
 
 def test_duplicate_symbol_availability_raises():
-    first = _fundamental_row(
-        symbol="MU",
-        period_end="2026-02-28",
-        available_at="2026-06-27",
-        revenue=800.0,
-    )
-
-    second = _fundamental_row(
-        symbol="MU",
-        period_end="2026-05-31",
-        available_at="2026-06-27",
-        revenue=1000.0,
-        retrieved_at="2026-09-05T12:00:00Z",
-    )
-
     fundamentals = pd.concat(
         [
-            first,
-            second,
+            _fundamental_row(
+                symbol="MU",
+                period_end="2025-05-31",
+                available_at="2026-06-27",
+                revenue=100.0,
+            ),
+            _fundamental_row(
+                symbol="MU",
+                period_end="2026-05-31",
+                available_at="2026-06-27",
+                revenue=120.0,
+            ),
         ],
         ignore_index=True,
     )
@@ -336,10 +335,49 @@ def test_aligned_fundamentals_never_come_from_future():
         fundamentals=fundamentals,
     )
 
-    assert (
-        result["available_at"].isna()
-        | (
-            result["available_at"]
-            <= result["date"]
-        )
-    ).all()
+    assert (result["available_at"].isna() | (result["available_at"] <= result["date"])).all()
+
+
+def test_derived_features_follow_point_in_time_availability():
+    fundamentals = pd.concat(
+        [
+            _fundamental_row(
+                symbol="MU",
+                period_end="2025-05-31",
+                available_at="2025-06-27",
+                revenue=100.0,
+                gross_profit=40.0,
+            ),
+            _fundamental_row(
+                symbol="MU",
+                period_end="2026-05-31",
+                available_at="2026-06-27",
+                revenue=120.0,
+                gross_profit=60.0,
+            ),
+        ],
+        ignore_index=True,
+    )
+
+    featured = build_quarterly_fundamental_features(fundamentals)
+
+    market = _market_frame(
+        [
+            "2026-06-26",
+            "2026-06-27",
+        ]
+    )
+
+    result = align_quarterly_fundamentals_asof(
+        market_frame=market,
+        fundamentals=featured,
+    )
+
+    before = result.iloc[0]
+    after = result.iloc[1]
+
+    assert before["gross_margin"] == pytest.approx(0.40)
+
+    assert after["gross_margin"] == pytest.approx(0.50)
+
+    assert after["revenue_growth_yoy"] == pytest.approx(0.20)
