@@ -463,3 +463,49 @@ def test_missing_price_for_one_asset_does_not_affect_another():
     assert bool(mu.iloc[-1]["is_investable"])
 
     assert not bool(sndk.iloc[-1]["is_investable"])
+
+
+def test_malformed_price_does_not_crash_or_count_as_history():
+    frame = _panel(
+        [
+            {
+                "date": "2026-01-02",
+                "symbol": "MU",
+                "adjusted_close": 100.0,
+            },
+            {
+                "date": "2026-01-05",
+                "symbol": "MU",
+                "adjusted_close": "N/A",
+            },
+            {
+                "date": "2026-01-06",
+                "symbol": "MU",
+                "adjusted_close": ".",
+            },
+            {
+                "date": "2026-01-07",
+                "symbol": "MU",
+                "adjusted_close": 103.0,
+            },
+        ]
+    )
+
+    result = build_dynamic_universe(
+        frame,
+        min_price_observations=2,
+    )
+
+    assert result["price_history_observations"].tolist() == [
+        1,
+        1,
+        1,
+        2,
+    ]
+
+    assert result["is_investable"].tolist() == [
+        False,
+        False,
+        False,
+        True,
+    ]

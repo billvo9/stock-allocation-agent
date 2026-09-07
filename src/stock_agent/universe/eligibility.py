@@ -74,9 +74,12 @@ def build_dynamic_universe(
         ]
     ).copy()
 
-    chronological["has_valid_price"] = chronological["adjusted_close"].notna() & (
-        chronological["adjusted_close"] > 0
+    price_values = pd.to_numeric(
+        chronological["adjusted_close"],
+        errors="coerce",
     )
+
+    chronological["has_valid_price"] = price_values.notna() & price_values.gt(0)
 
     chronological["price_history_observations"] = (
         chronological["has_valid_price"].astype(int).groupby(chronological["symbol"]).cumsum()
