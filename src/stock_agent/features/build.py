@@ -5,26 +5,34 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from stock_agent.config import load_asset_symbols
-
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 SQL_PATH = PROJECT_ROOT / "sql" / "rolling_features.sql"
 
-CONFIG_PATH = PROJECT_ROOT / "config" / "assets.yaml"
+REQUIRED_MODEL_FEATURES = [
+    "daily_return",
+    "momentum_20d",
+    "volatility_20d",
+]
 
 
 def load_feature_query() -> str:
     """Read the SQL feature query from disk."""
+
     return SQL_PATH.read_text(encoding="utf-8")
 
 
 def run_feature_query() -> pd.DataFrame:
-    """Execute rolling feature SQL against the raw parquet data."""
+    """
+    Execute rolling-feature SQL against
+    the raw market data.
+    """
+
     query = load_feature_query()
 
     try:
         frame = duckdb.sql(query).df()
+
     except Exception as exc:
         raise RuntimeError(
             f"Unable to build SQL market features. Check {SQL_PATH}. Original error: {exc}"
@@ -40,7 +48,14 @@ def find_common_investable_dates(
     frame: pd.DataFrame,
     investable_symbols: list[str],
 ) -> pd.Index:
-    """Return dates for which all investable symbols are available."""
+    """
+    Return dates for which all requested
+    symbols are available.
+
+    This helper is intended for synchronized
+    evaluation and comparison. It should not
+    define the master research dataset.
+    """
 
     investable = frame[frame["symbol"].isin(investable_symbols)]
 
@@ -50,26 +65,38 @@ def find_common_investable_dates(
 
 
 def build_model_dataset() -> pd.DataFrame:
+    """
+    Build the market-feature research panel.
+
+    Assets retain their independently available
+    histories. Newly listed assets do not truncate
+    older assets to a common start date.
+    """
+
     frame = run_feature_query()
 
-    frame = frame.dropna(
-        subset=[
-            "daily_return",
-            "momentum_20d",
-            "volatility_20d",
-        ]
-    )
+    missing_columns = [column for column in REQUIRED_MODEL_FEATURES if column not in frame.columns]
 
-    symbols = load_asset_symbols(CONFIG_PATH)
+    if missing_columns:
+        raise RuntimeError(f"Feature query is missing required model columns: {missing_columns}")
 
-    common_dates = find_common_investable_dates(
-        frame,
-        symbols,
-    )
-
-    frame = frame[frame["date"].isin(common_dates)].copy()
+    frame = frame.dropna(subset=REQUIRED_MODEL_FEATURES).copy()
 
     if frame.empty:
-        raise RuntimeError("No common dates remain after feature filtering.")
+        raise RuntimeError("No feature rows remain after required-feature filtering.")
 
-    return frame.sort_values(["date", "symbol"]).reset_index(drop=True)
+    if frame.duplicated(
+        subset=[
+            "date",
+            "symbol",
+        ]
+    ).any():
+        raise RuntimeError("Feature dataset contains duplicate (date, symbol) rows.")
+
+    return frame.sort_values(
+        [
+            "date",
+            "symbol",
+        ],
+        kind="stable",
+    ).reset_index(drop=True)

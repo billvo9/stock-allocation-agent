@@ -28,9 +28,18 @@ def main() -> None:
     print(f"Output: {OUTPUT_PATH}")
     print()
 
-    print("Rows by symbol:")
-    print(features.groupby("symbol").size())
-    print()
+    history_summary = (
+        features.groupby("symbol")
+        .agg(
+            rows=("date", "size"),
+            first_date=("date", "min"),
+            last_date=("date", "max"),
+        )
+        .sort_index()
+    )
+
+    print("Feature history by symbol:")
+    print(history_summary)
 
     print("Feature date range:")
     print(
