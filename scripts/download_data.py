@@ -19,7 +19,7 @@ def load_config() -> dict:
 
 
 def download_all_prices(
-    start: str = "2024-01-01",
+    start: str = "2015-01-01",
     end: str | None = None,
 ) -> pd.DataFrame:
     config = load_config()
