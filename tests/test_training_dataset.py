@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pandas.testing as pdt
 import pytest
 
 from stock_agent.features.training import (
@@ -564,6 +565,244 @@ def test_training_pipeline_excludes_labels_that_cross_cutoff():
         safe_train["target_end_date"]
         < pd.Timestamp(
             "2025-01-01",
+            tz="UTC",
+        )
+    ).all()
+
+
+def test_training_window_excludes_warmup_year():
+    frame = pd.DataFrame(
+        [
+            _price_row(
+                date="2015-06-01",
+                symbol="MU",
+                price=90.0,
+            ),
+            _price_row(
+                date="2016-01-04",
+                symbol="MU",
+                price=100.0,
+            ),
+            _price_row(
+                date="2024-12-30",
+                symbol="MU",
+                price=200.0,
+            ),
+            _price_row(
+                date="2025-01-02",
+                symbol="MU",
+                price=210.0,
+            ),
+        ]
+    )
+
+    split = split_temporal_dataset(frame)
+
+    train_dates = pd.to_datetime(
+        split.train["date"],
+        utc=True,
+    )
+
+    assert not split.train.empty
+    assert 2015 not in set(train_dates.dt.year)
+    assert train_dates.min() >= pd.Timestamp(
+        "2016-01-01",
+        tz="UTC",
+    )
+    assert train_dates.max() <= pd.Timestamp(
+        "2024-12-31",
+        tz="UTC",
+    )
+
+
+def test_training_target_cannot_cross_into_validation():
+    frame = pd.DataFrame(
+        [
+            _price_row(
+                date="2024-12-30",
+                symbol="MU",
+                price=100.0,
+            ),
+            _price_row(
+                date="2024-12-31",
+                symbol="MU",
+                price=110.0,
+            ),
+            _price_row(
+                date="2025-01-02",
+                symbol="MU",
+                price=120.0,
+            ),
+        ]
+    )
+
+    targeted = add_forward_return_target(
+        frame,
+        horizon=1,
+    )
+
+    split = split_temporal_dataset(targeted)
+
+    safe_train = select_training_rows_asof(
+        split.train,
+        as_of="2025-01-01",
+    )
+
+    safe_dates = pd.to_datetime(
+        safe_train["date"],
+        utc=True,
+    )
+    target_end_dates = pd.to_datetime(
+        safe_train["target_end_date"],
+        utc=True,
+    )
+
+    assert len(safe_train) == 1
+
+    assert safe_dates.iloc[0] == pd.Timestamp(
+        "2024-12-30",
+        tz="UTC",
+    )
+
+    assert (
+        target_end_dates
+        < pd.Timestamp(
+            "2025-01-01",
+            tz="UTC",
+        )
+    ).all()
+
+    assert pd.Timestamp(
+        "2024-12-31",
+        tz="UTC",
+    ) not in set(safe_dates)
+
+
+def test_new_asset_does_not_shorten_training_history():
+    mu_frame = pd.DataFrame(
+        [
+            _price_row(
+                date="2016-01-04",
+                symbol="MU",
+                price=100.0,
+            ),
+            _price_row(
+                date="2020-06-01",
+                symbol="MU",
+                price=150.0,
+            ),
+            _price_row(
+                date="2024-12-30",
+                symbol="MU",
+                price=200.0,
+            ),
+        ]
+    )
+
+    sndk_frame = pd.DataFrame(
+        _price_series(
+            symbol="SNDK",
+            start="2025-02-24",
+            prices=[
+                50.0,
+                51.0,
+                52.0,
+            ],
+        )
+    )
+
+    base_split = split_temporal_dataset(mu_frame)
+
+    combined_frame = pd.concat(
+        [
+            mu_frame,
+            sndk_frame,
+        ],
+        ignore_index=True,
+    )
+
+    combined_split = split_temporal_dataset(combined_frame)
+
+    base_mu_train = (
+        base_split.train[base_split.train["symbol"] == "MU"]
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+
+    combined_mu_train = (
+        combined_split.train[combined_split.train["symbol"] == "MU"]
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+
+    pdt.assert_frame_equal(
+        base_mu_train,
+        combined_mu_train,
+    )
+
+    mu_dates = pd.to_datetime(
+        combined_mu_train["date"],
+        utc=True,
+    )
+
+    assert mu_dates.min() == pd.Timestamp(
+        "2016-01-04",
+        tz="UTC",
+    )
+
+
+def test_test_window_begins_in_2026():
+    frame = pd.DataFrame(
+        [
+            _price_row(
+                date="2025-12-31",
+                symbol="MU",
+                price=100.0,
+            ),
+            _price_row(
+                date="2026-01-02",
+                symbol="MU",
+                price=101.0,
+            ),
+            _price_row(
+                date="2026-06-01",
+                symbol="MU",
+                price=120.0,
+            ),
+        ]
+    )
+
+    split = split_temporal_dataset(frame)
+
+    test_dates = pd.to_datetime(
+        split.test["date"],
+        utc=True,
+    )
+
+    assert not split.test.empty
+
+    assert test_dates.min() == pd.Timestamp(
+        "2026-01-02",
+        tz="UTC",
+    )
+
+    assert (
+        test_dates
+        >= pd.Timestamp(
+            "2026-01-01",
+            tz="UTC",
+        )
+    ).all()
+
+    validation_dates = pd.to_datetime(
+        split.validation["date"],
+        utc=True,
+    )
+
+    assert (
+        validation_dates
+        < pd.Timestamp(
+            "2026-01-01",
             tz="UTC",
         )
     ).all()
