@@ -4,6 +4,12 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+DEFAULT_TRAIN_START = pd.Timestamp("2016-01-01")
+DEFAULT_TRAIN_END = pd.Timestamp("2024-12-31")
+DEFAULT_VALIDATION_START = pd.Timestamp("2025-01-01")
+DEFAULT_VALIDATION_END = pd.Timestamp("2025-12-31")
+DEFAULT_TEST_START = pd.Timestamp("2026-01-01")
+
 
 @dataclass(frozen=True)
 class TemporalSplit:
