@@ -5,6 +5,7 @@ series:
     country: US
     category: labor
     expected_frequency: monthly
+    units: percent
 
   - macro_id: us_consumer_price_index
     provider: FRED
@@ -12,6 +13,7 @@ series:
     country: US
     category: inflation
     expected_frequency: monthly
+    units: index
 
   - macro_id: us_real_gdp
     provider: FRED
@@ -19,6 +21,7 @@ series:
     country: US
     category: growth
     expected_frequency: quarterly
+    units: billions_chained_2017_dollars
 
   - macro_id: us_fed_funds_rate
     provider: FRED
@@ -26,10 +29,12 @@ series:
     country: US
     category: monetary_policy
     expected_frequency: monthly
+    units: percent
 
-  - macro_id: us_money_supply_m2
+  - macro_id: us_m2_money_supply
     provider: FRED
     provider_series_id: M2SL
     country: US
     category: liquidity
     expected_frequency: monthly
+    units: billions_usd
