@@ -249,3 +249,239 @@ def test_fred_source_requires_cursor_when_more_data_exists():
             start="2026-08-20",
             end="2026-08-21",
         )
+
+
+class _FakeResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeSession:
+    def __init__(self, payloads: list[dict]):
+        self._payloads = list(payloads)
+        self.calls: list[dict] = []
+
+    def get(
+        self,
+        url: str,
+        *,
+        params: dict,
+        headers: dict | None = None,
+        timeout: int | None = None,
+    ) -> _FakeResponse:
+        self.calls.append(
+            {
+                "url": url,
+                "params": params,
+                "headers": headers,
+                "timeout": timeout,
+            }
+        )
+
+        return _FakeResponse(self._payloads.pop(0))
+
+
+def test_series_observations_preserve_vintage_metadata():
+    session = _FakeSession(
+        [
+            {
+                "count": 2,
+                "offset": 0,
+                "limit": 100000,
+                "observations": [
+                    {
+                        "realtime_start": "2024-02-02",
+                        "realtime_end": "2024-03-01",
+                        "date": "2024-01-01",
+                        "value": "3.7",
+                    },
+                    {
+                        "realtime_start": "2024-03-02",
+                        "realtime_end": "9999-12-31",
+                        "date": "2024-02-01",
+                        "value": "3.9",
+                    },
+                ],
+            }
+        ]
+    )
+
+    source = FredDataSource(
+        api_key="test-key",
+        session=session,
+    )
+
+    result = source.get_series_observations(
+        series_id="UNRATE",
+    )
+
+    assert len(result) == 2
+
+    assert result["provider_series_id"].tolist() == [
+        "UNRATE",
+        "UNRATE",
+    ]
+
+    assert result["value"].tolist() == [
+        "3.7",
+        "3.9",
+    ]
+
+    assert result["realtime_start"].tolist() == [
+        "2024-02-02",
+        "2024-03-02",
+    ]
+
+    assert result["source"].tolist() == [
+        "FRED",
+        "FRED",
+    ]
+
+
+def test_series_observations_preserve_missing_provider_value():
+    session = _FakeSession(
+        [
+            {
+                "count": 1,
+                "offset": 0,
+                "limit": 100000,
+                "observations": [
+                    {
+                        "realtime_start": "2024-02-01",
+                        "realtime_end": "9999-12-31",
+                        "date": "2024-01-01",
+                        "value": ".",
+                    }
+                ],
+            }
+        ]
+    )
+
+    source = FredDataSource(
+        api_key="test-key",
+        session=session,
+    )
+
+    result = source.get_series_observations(
+        series_id="UNRATE",
+    )
+
+    assert result.loc[0, "value"] == "."
+
+
+def test_series_observations_follow_offset_pagination():
+    session = _FakeSession(
+        [
+            {
+                "count": 3,
+                "offset": 0,
+                "limit": 2,
+                "observations": [
+                    {
+                        "realtime_start": "2024-02-01",
+                        "realtime_end": "9999-12-31",
+                        "date": "2024-01-01",
+                        "value": "3.7",
+                    },
+                    {
+                        "realtime_start": "2024-03-01",
+                        "realtime_end": "9999-12-31",
+                        "date": "2024-02-01",
+                        "value": "3.8",
+                    },
+                ],
+            },
+            {
+                "count": 3,
+                "offset": 2,
+                "limit": 2,
+                "observations": [
+                    {
+                        "realtime_start": "2024-04-01",
+                        "realtime_end": "9999-12-31",
+                        "date": "2024-03-01",
+                        "value": "3.9",
+                    }
+                ],
+            },
+        ]
+    )
+
+    source = FredDataSource(
+        api_key="test-key",
+        session=session,
+    )
+
+    result = source.get_series_observations(
+        series_id="UNRATE",
+    )
+
+    assert len(result) == 3
+    assert len(session.calls) == 2
+
+    assert session.calls[0]["params"]["offset"] == 0
+    assert session.calls[1]["params"]["offset"] == 2
+
+
+def test_vintage_dates_follow_offset_pagination():
+    session = _FakeSession(
+        [
+            {
+                "count": 3,
+                "offset": 0,
+                "limit": 2,
+                "vintage_dates": [
+                    "2024-01-10",
+                    "2024-02-10",
+                ],
+            },
+            {
+                "count": 3,
+                "offset": 2,
+                "limit": 2,
+                "vintage_dates": [
+                    "2024-03-10",
+                ],
+            },
+        ]
+    )
+
+    source = FredDataSource(
+        api_key="test-key",
+        session=session,
+    )
+
+    result = source.get_series_vintage_dates(
+        series_id="UNRATE",
+    )
+
+    assert result == [
+        "2024-01-10",
+        "2024-02-10",
+        "2024-03-10",
+    ]
+
+    assert len(session.calls) == 2
+
+
+def test_vintage_dates_cannot_be_combined_with_realtime_range():
+    source = FredDataSource(
+        api_key="test-key",
+        session=_FakeSession([]),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="vintage_dates cannot be combined",
+    ):
+        source.get_series_observations(
+            series_id="UNRATE",
+            realtime_start="2024-01-01",
+            vintage_dates=["2024-02-01"],
+        )
