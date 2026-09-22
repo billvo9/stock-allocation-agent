@@ -4,6 +4,8 @@ from collections.abc import Mapping
 
 import pandas as pd
 
+from stock_agent.features.macro import build_macro_features
+
 PANEL_KEY_COLUMNS = [
     "date",
     "symbol",
@@ -165,3 +167,53 @@ def build_dynamic_feature_panel(
         PANEL_KEY_COLUMNS[::-1],
         kind="stable",
     ).reset_index(drop=True)
+
+
+def attach_macro_features(
+    asset_panel: pd.DataFrame,
+    macro_vintages: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Attach point-in-time macro features to an asset-date panel.
+
+    Asset rows are never removed because macro information is
+    unavailable.
+    """
+
+    if "date" not in asset_panel.columns:
+        raise ValueError("Asset panel must contain a 'date' column.")
+
+    if asset_panel.empty:
+        return asset_panel.copy()
+
+    panel = asset_panel.copy()
+
+    panel["date"] = pd.to_datetime(
+        panel["date"],
+        errors="raise",
+        utc=True,
+    ).dt.normalize()
+
+    decision_dates = panel["date"].drop_duplicates().sort_values()
+
+    macro_features = build_macro_features(
+        decision_dates=decision_dates,
+        macro_vintages=macro_vintages,
+    )
+
+    if macro_features["date"].duplicated().any():
+        raise ValueError("Macro feature frame contains duplicate dates.")
+
+    original_rows = len(panel)
+
+    result = panel.merge(
+        macro_features,
+        on="date",
+        how="left",
+        validate="many_to_one",
+    )
+
+    if len(result) != original_rows:
+        raise RuntimeError("Macro integration changed the number of asset rows.")
+
+    return result
