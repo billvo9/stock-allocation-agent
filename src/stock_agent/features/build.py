@@ -5,6 +5,8 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
+from stock_agent.features.panel import attach_macro_features
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 SQL_PATH = PROJECT_ROOT / "sql" / "rolling_features.sql"
@@ -64,13 +66,18 @@ def find_common_investable_dates(
     return counts[counts == len(investable_symbols)].index
 
 
-def build_model_dataset() -> pd.DataFrame:
+def build_model_dataset(
+    macro_vintages: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """
-    Build the market-feature research panel.
+    Build the model-ready asset-date feature panel.
 
-    Assets retain their independently available
-    histories. Newly listed assets do not truncate
-    older assets to a common start date.
+    Assets retain their independently available histories.
+    Newly listed assets do not truncate older assets to a
+    common start date.
+
+    Optional point-in-time macro features are attached
+    without changing the asset-date universe.
     """
 
     frame = run_feature_query()
@@ -85,18 +92,43 @@ def build_model_dataset() -> pd.DataFrame:
     if frame.empty:
         raise RuntimeError("No feature rows remain after required-feature filtering.")
 
-    if frame.duplicated(
-        subset=[
-            "date",
-            "symbol",
-        ]
-    ).any():
-        raise RuntimeError("Feature dataset contains duplicate (date, symbol) rows.")
+    frame = frame.copy()
 
-    return frame.sort_values(
-        [
-            "date",
-            "symbol",
-        ],
-        kind="stable",
-    ).reset_index(drop=True)
+    frame["date"] = pd.to_datetime(
+        frame["date"],
+        errors="raise",
+        utc=True,
+    ).dt.normalize()
+
+    if frame.duplicated(["date", "symbol"]).any():
+        raise ValueError("Model feature frame contains duplicate (date, symbol) rows.")
+
+    if macro_vintages is not None:
+        original_row_count = len(frame)
+
+        original_keys = set(
+            zip(
+                frame["date"],
+                frame["symbol"],
+            )
+        )
+
+        frame = attach_macro_features(
+            asset_panel=frame,
+            macro_vintages=macro_vintages,
+        )
+
+        if len(frame) != original_row_count:
+            raise RuntimeError("Macro integration changed the number of asset-date rows.")
+
+        resulting_keys = set(
+            zip(
+                frame["date"],
+                frame["symbol"],
+            )
+        )
+
+        if resulting_keys != original_keys:
+            raise RuntimeError("Macro integration changed asset-date keys.")
+
+    return frame.sort_values(["date", "symbol"]).reset_index(drop=True)
