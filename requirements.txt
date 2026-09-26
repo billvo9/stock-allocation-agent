@@ -8,3 +8,4 @@ pytest
 ruff
 matplotlib
 lxml
+edgartools==5.58.0
