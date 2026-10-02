@@ -126,15 +126,14 @@ def test_build_edgar_quarter_maps_core_income_metrics():
     assert row["net_income"] == pytest.approx(20.0)
 
 
-def test_build_edgar_quarter_derives_cash_flow_from_ytd():
+def test_build_edgar_quarter_defers_cross_filing_ytd_derivation():
     result = _build()
 
     row = result.iloc[0]
 
-    # Q3 standalone operating cash flow:
-    #
-    # 70 YTD - 45 previous YTD = 25
-    assert row["operating_cash_flow"] == pytest.approx(25.0)
+    # Q2/Q3 standalone flows that require a previous filing
+    # are deliberately deferred to the history layer.
+    assert pd.isna(row["operating_cash_flow"])
 
 
 def test_build_edgar_quarter_preserves_missing_optional_metric():

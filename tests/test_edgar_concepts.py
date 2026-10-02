@@ -133,3 +133,108 @@ def test_resolve_statement_concept_rejects_ambiguous_top_level_rows():
             frame,
             "revenue",
         )
+
+
+def test_preferred_raw_concept_wins_over_standard_concept_candidates():
+    frame = pd.DataFrame(
+        [
+            {
+                "concept": ("us-gaap_IncreaseDecreaseInOtherNoncurrentLiabilities"),
+                "label": "Other noncurrent liabilities",
+                "standard_concept": "NetCashFromOperatingActivities",
+                "abstract": False,
+                "dimension": False,
+                "is_breakdown": False,
+            },
+            {
+                "concept": ("us-gaap_NetCashProvidedByUsedInOperatingActivities"),
+                "label": ("Net cash provided by operating activities"),
+                "standard_concept": "NetCashFromOperatingActivities",
+                "abstract": False,
+                "dimension": False,
+                "is_breakdown": False,
+            },
+        ]
+    )
+
+    result = resolve_statement_concept(
+        frame,
+        canonical_name="operating_cash_flow",
+        symbol="MU",
+        accession_number="TEST",
+    )
+
+    assert result["concept"] == "us-gaap_NetCashProvidedByUsedInOperatingActivities"
+
+
+def test_preferred_raw_concept_ignores_dimensional_rows():
+    concept = "us-gaap_NetCashProvidedByUsedInOperatingActivities"
+
+    frame = pd.DataFrame(
+        [
+            {
+                "concept": concept,
+                "label": "Segment operating cash flow",
+                "standard_concept": "NetCashFromOperatingActivities",
+                "abstract": False,
+                "dimension": True,
+                "is_breakdown": True,
+            },
+            {
+                "concept": concept,
+                "label": ("Net cash provided by operating activities"),
+                "standard_concept": "NetCashFromOperatingActivities",
+                "abstract": False,
+                "dimension": False,
+                "is_breakdown": False,
+            },
+        ]
+    )
+
+    result = resolve_statement_concept(
+        frame,
+        canonical_name="operating_cash_flow",
+        symbol="MU",
+        accession_number="TEST",
+    )
+
+    assert result is not None
+    assert result["label"] == "Net cash provided by operating activities"
+    assert not bool(result["dimension"])
+    assert not bool(result["is_breakdown"])
+
+
+def test_preferred_raw_concept_remains_ambiguous_with_two_consolidated_rows():
+    concept = "us-gaap_NetCashProvidedByUsedInOperatingActivities"
+
+    frame = pd.DataFrame(
+        [
+            {
+                "concept": concept,
+                "label": "Operating cash flow A",
+                "standard_concept": "NetCashFromOperatingActivities",
+                "abstract": False,
+                "dimension": False,
+                "is_breakdown": False,
+            },
+            {
+                "concept": concept,
+                "label": "Operating cash flow B",
+                "standard_concept": "NetCashFromOperatingActivities",
+                "abstract": False,
+                "dimension": False,
+                "is_breakdown": False,
+            },
+        ]
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="Ambiguous EDGAR preferred concept",
+    ):
+        resolve_statement_concept(
+            frame,
+            canonical_name="operating_cash_flow",
+            symbol="MU",
+            accession_number="TEST",
+        )

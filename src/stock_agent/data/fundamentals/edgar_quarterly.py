@@ -9,7 +9,6 @@ from stock_agent.data.fundamentals.edgar_concepts import (
 )
 from stock_agent.data.fundamentals.edgar_periods import (
     derive_quarter_from_ytd,
-    find_period_columns,
     get_direct_quarter_value,
     get_ytd_value,
 )
@@ -134,40 +133,6 @@ def _resolve_metric_row(
         ) from exc
 
 
-def _find_previous_ytd_value(
-    row: pd.Series,
-    *,
-    period_end: pd.Timestamp,
-) -> float | None:
-    """
-    Find the most recent YTD value before period_end.
-
-    This avoids assuming every company's fiscal periods
-    are separated by exactly three calendar months.
-    """
-
-    row_frame = row.to_frame().T
-
-    candidates = [
-        period
-        for period in find_period_columns(row_frame)
-        if (period.period_label == "YTD" and period.period_end < period_end)
-    ]
-
-    if not candidates:
-        return None
-
-    previous_period = max(
-        candidates,
-        key=lambda period: period.period_end,
-    )
-
-    return get_ytd_value(
-        row,
-        previous_period.period_end,
-    )
-
-
 def _extract_quarterly_flow(
     row: pd.Series | None,
     *,
@@ -178,12 +143,10 @@ def _extract_quarterly_flow(
     Extract one quarterly flow metric.
 
     Priority:
-        1. Direct standalone-quarter value.
-        2. Derive Q1/Q2/Q3 from YTD data.
-        3. Return missing rather than guess.
-
-    Q4 YTD/FY derivation is deliberately deferred until
-    the period layer explicitly supports FY minus Q3 YTD.
+        1. Use a direct standalone-quarter value when available.
+        2. For Q1, use YTD because Q1 YTD equals standalone Q1.
+        3. Defer Q2/Q3/Q4 cross-filing derivation to edgar_history.
+        4. Return missing rather than guess.
     """
 
     if row is None:
@@ -198,6 +161,11 @@ def _extract_quarterly_flow(
     if direct_value is not None:
         return direct_value
 
+    # Only Q1 can be derived safely from one filing because
+    # Q1 YTD is identical to standalone Q1.
+    if fiscal_quarter != 1:
+        return None
+
     current_ytd = get_ytd_value(
         row,
         period_end=period_end,
@@ -206,30 +174,11 @@ def _extract_quarterly_flow(
     if current_ytd is None:
         return None
 
-    if fiscal_quarter == 1:
-        return derive_quarter_from_ytd(
-            current_ytd=current_ytd,
-            previous_ytd=None,
-            fiscal_quarter=1,
-        )
-
-    if fiscal_quarter in {2, 3}:
-        previous_ytd = _find_previous_ytd_value(
-            row,
-            period_end=period_end,
-        )
-
-        if previous_ytd is None:
-            return None
-
-        return derive_quarter_from_ytd(
-            current_ytd=current_ytd,
-            previous_ytd=previous_ytd,
-            fiscal_quarter=fiscal_quarter,
-        )
-
-    # Q4 fallback is intentionally unsupported for now.
-    return None
+    return derive_quarter_from_ytd(
+        current_ytd=current_ytd,
+        previous_ytd=None,
+        fiscal_quarter=1,
+    )
 
 
 def _extract_statement_flow(

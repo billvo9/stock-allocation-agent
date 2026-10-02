@@ -7,6 +7,7 @@ from stock_agent.data.fundamentals.edgar_periods import (
     derive_quarter_from_ytd,
     find_period_columns,
     get_direct_quarter_value,
+    get_fy_value,
     get_instant_value,
     get_ytd_value,
     parse_edgar_period_column,
@@ -175,3 +176,48 @@ def test_q4_is_not_generically_derived_from_ytd():
             previous_ytd=75.0,
             fiscal_quarter=4,
         )
+
+
+def test_get_fy_value_returns_matching_fiscal_year_value():
+    row = pd.Series(
+        {
+            "2025-08-28 (FY)": 37_780_000_000.0,
+        }
+    )
+
+    result = get_fy_value(
+        row,
+        period_end="2025-08-28",
+    )
+
+    assert result == 37_780_000_000.0
+
+
+def test_get_fy_value_returns_none_for_wrong_period_end():
+    row = pd.Series(
+        {
+            "2025-08-28 (FY)": 37_780_000_000.0,
+        }
+    )
+
+    result = get_fy_value(
+        row,
+        period_end="2025-05-29",
+    )
+
+    assert result is None
+
+
+def test_get_fy_value_returns_none_for_missing_value():
+    row = pd.Series(
+        {
+            "2025-08-28 (FY)": float("nan"),
+        }
+    )
+
+    result = get_fy_value(
+        row,
+        period_end="2025-08-28",
+    )
+
+    assert result is None
