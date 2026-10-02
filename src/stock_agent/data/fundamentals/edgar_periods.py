@@ -147,6 +147,39 @@ def get_ytd_value(
     return None
 
 
+def get_fy_value(
+    row: pd.Series,
+    period_end: str | pd.Timestamp,
+) -> float | None:
+    """Return the full-fiscal-year value for one period end."""
+
+    target_date = pd.Timestamp(period_end)
+
+    if target_date.tzinfo is None:
+        target_date = target_date.tz_localize("UTC")
+    else:
+        target_date = target_date.tz_convert("UTC")
+
+    for column in row.index:
+        parsed = parse_edgar_period_column(column)
+
+        if parsed is None:
+            continue
+
+        if parsed.period_end == target_date and parsed.period_label == "FY":
+            value = pd.to_numeric(
+                row[column],
+                errors="coerce",
+            )
+
+            if pd.isna(value):
+                return None
+
+            return float(value)
+
+    return None
+
+
 def get_instant_value(
     row: pd.Series,
     period_end: str | pd.Timestamp,
