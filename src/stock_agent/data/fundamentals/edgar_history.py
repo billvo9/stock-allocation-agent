@@ -7,6 +7,10 @@ from typing import Any
 import pandas as pd
 from edgar import find
 
+from stock_agent.data.fundamentals.edgar_fiscal import (
+    EdgarFiscalIdentityError,
+    infer_edgar_fiscal_identity,
+)
 from stock_agent.data.fundamentals.edgar_periods import (
     find_period_columns,
 )
@@ -266,6 +270,12 @@ def build_edgar_history(
                 )
                 continue
 
+            fiscal_identity = infer_edgar_fiscal_identity(
+                form=str(filing_row["form"]),
+                period_end=filing_row["period_end"],
+                reporting_periods=xbrl.reporting_periods,
+            )
+
             statements = xbrl.statements
 
             income_statement = _statement_frame(
@@ -299,15 +309,7 @@ def build_edgar_history(
                     f"for {symbol}, accession={accession_number}."
                 )
 
-            fiscal_quarter = _infer_fiscal_quarter(
-                form=str(filing_row["form"]),
-                period_end=filing_row["period_end"],
-                statement_frames=[
-                    income_statement,
-                    balance_sheet,
-                    cash_flow_statement,
-                ],
-            )
+            fiscal_quarter = fiscal_identity.fiscal_quarter
 
             accepted_at = filing_row["accepted_at"]
 
@@ -340,6 +342,21 @@ def build_edgar_history(
                     filing=filing_row,
                     status="success",
                     reason="ok",
+                )
+            )
+
+        except EdgarFiscalIdentityError as exc:
+            if strict:
+                raise
+
+            diagnostic_rows.append(
+                _diagnostic_row(
+                    symbol=symbol,
+                    provider_symbol=provider_symbol,
+                    filing=filing_row,
+                    status="skipped",
+                    reason="fiscal_identity_error",
+                    detail=str(exc),
                 )
             )
 
