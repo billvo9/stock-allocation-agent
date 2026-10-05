@@ -10,6 +10,9 @@ from stock_agent.data.fundamentals.edgar_history import (
     DIAGNOSTIC_COLUMNS,
     build_edgar_history,
 )
+from stock_agent.data.fundamentals.edgar_quarterly import (
+    EdgarQuarterlyBuildError,
+)
 from stock_agent.data.fundamentals.quarterly_schema import (
     QUARTERLY_FUNDAMENTAL_COLUMNS,
 )
@@ -58,8 +61,11 @@ class FakeXbrl:
     def __init__(
         self,
         statements: FakeStatements,
+        *,
+        reporting_periods: list[dict[str, Any]],
     ) -> None:
         self.statements = statements
+        self.reporting_periods = reporting_periods
 
 
 class FakeFiling:
@@ -106,33 +112,37 @@ def _filings_frame() -> pd.DataFrame:
     )
 
 
-def _fake_quarter_builder(**kwargs):
-    row = {column: None for column in QUARTERLY_FUNDAMENTAL_COLUMNS}
+def _fake_xbrl(
+    statements: FakeStatements,
+    *,
+    period_end: str,
+    fiscal_year: int,
+    fiscal_period: str,
+) -> FakeXbrl:
+    return FakeXbrl(
+        statements,
+        reporting_periods=_reporting_period(
+            period_end=period_end,
+            fiscal_year=fiscal_year,
+            fiscal_period=fiscal_period,
+        ),
+    )
 
-    accepted_at = kwargs["accepted_at"]
 
-    row: dict[str, Any] = {column: None for column in QUARTERLY_FUNDAMENTAL_COLUMNS}
-
-    row.update(
+def _reporting_period(
+    *,
+    period_end: str,
+    fiscal_year: int,
+    fiscal_period: str,
+) -> list[dict[str, Any]]:
+    return [
         {
-            "symbol": kwargs["symbol"],
-            "provider_symbol": (kwargs["provider_symbol"]),
-            "period_end": pd.Timestamp(kwargs["period_end"]),
-            "available_at": accepted_at,
-            "retrieved_at": kwargs["retrieved_at"],
-            "filing_date": pd.Timestamp(kwargs["filing_date"]),
-            "sec_form_type": kwargs["sec_form_type"],
-            "sec_accession_number": kwargs["sec_accession_number"],
-            "availability_source": ("sec_acceptance_datetime"),
-            "currency": kwargs["currency"],
-            "source": kwargs["source"],
+            "type": "duration",
+            "end_date": period_end,
+            "fiscal_year": fiscal_year,
+            "fiscal_period": fiscal_period,
         }
-    )
-
-    return pd.DataFrame(
-        [row],
-        columns=QUARTERLY_FUNDAMENTAL_COLUMNS,
-    )
+    ]
 
 
 @pytest.fixture
@@ -194,8 +204,34 @@ def test_build_history_from_multiple_filings(
     )
 
     filing_map = {
-        "A1": FakeFiling(FakeXbrl(FakeStatements(income=pd.DataFrame({"2026-02-26 (Q2)": [1.0]})))),
-        "A2": FakeFiling(FakeXbrl(FakeStatements(income=pd.DataFrame({"2026-05-28 (Q3)": [1.0]})))),
+        "A1": FakeFiling(
+            _fake_xbrl(
+                FakeStatements(
+                    income=pd.DataFrame(
+                        {
+                            "2026-02-26 (Q2)": [1.0],
+                        }
+                    )
+                ),
+                period_end="2026-02-26",
+                fiscal_year=2026,
+                fiscal_period="Q2",
+            )
+        ),
+        "A2": FakeFiling(
+            _fake_xbrl(
+                FakeStatements(
+                    income=pd.DataFrame(
+                        {
+                            "2026-05-28 (Q3)": [1.0],
+                        }
+                    )
+                ),
+                period_end="2026-05-28",
+                fiscal_year=2026,
+                fiscal_period="Q3",
+            )
+        ),
     }
 
     result = build_edgar_history(
@@ -276,7 +312,7 @@ def _fake_quarter_builder(
     row.update(
         {
             "symbol": kwargs["symbol"],
-            "provider_symbol": (kwargs["provider_symbol"]),
+            "provider_symbol": kwargs["provider_symbol"],
             "period_end": pd.Timestamp(kwargs["period_end"]),
             "available_at": available_at,
             "retrieved_at": kwargs["retrieved_at"],
@@ -339,23 +375,29 @@ def test_history_is_sorted_by_available_at(
 
     filing_map = {
         "A1": FakeFiling(
-            FakeXbrl(
+            _fake_xbrl(
                 FakeStatements(
                     income=_quarter_statement(
                         period_end="2026-02-26",
                         fiscal_quarter=2,
                     )
-                )
+                ),
+                period_end="2026-02-26",
+                fiscal_year=2026,
+                fiscal_period="Q2",
             )
         ),
         "A2": FakeFiling(
-            FakeXbrl(
+            _fake_xbrl(
                 FakeStatements(
                     income=_quarter_statement(
                         period_end="2026-05-28",
                         fiscal_quarter=3,
                     )
-                )
+                ),
+                period_end="2026-05-28",
+                fiscal_year=2026,
+                fiscal_period="Q3",
             )
         ),
     }
@@ -394,13 +436,16 @@ def test_history_preserves_accession_numbers(
     )
 
     filing = FakeFiling(
-        FakeXbrl(
+        _fake_xbrl(
             FakeStatements(
                 income=_quarter_statement(
                     period_end="2026-05-28",
                     fiscal_quarter=3,
                 )
-            )
+            ),
+            period_end="2026-05-28",
+            fiscal_year=2026,
+            fiscal_period="Q3",
         )
     )
 
@@ -447,8 +492,26 @@ def test_history_preserves_original_and_amended_filing(
     )
 
     filing_map = {
-        "ORIGINAL": FakeFiling(FakeXbrl(FakeStatements(income=statement))),
-        "AMENDMENT": FakeFiling(FakeXbrl(FakeStatements(income=statement))),
+        "ORIGINAL": FakeFiling(
+            _fake_xbrl(
+                FakeStatements(
+                    income=statement,
+                ),
+                period_end="2026-05-28",
+                fiscal_year=2026,
+                fiscal_period="Q3",
+            )
+        ),
+        "AMENDMENT": FakeFiling(
+            _fake_xbrl(
+                FakeStatements(
+                    income=statement,
+                ),
+                period_end="2026-05-28",
+                fiscal_year=2026,
+                fiscal_period="Q3",
+            )
+        ),
     }
 
     result = build_edgar_history(
@@ -508,7 +571,7 @@ def test_history_skips_non_xbrl_filing_with_diagnostic():
 
 
 def test_history_skips_bad_quarter_without_losing_good_quarters(
-    quarter_calls,
+    monkeypatch,
 ):
     filings = pd.DataFrame(
         [
@@ -540,9 +603,39 @@ def test_history_skips_bad_quarter_without_losing_good_quarters(
     )
 
     filing_map = {
-        "GOOD": FakeFiling(FakeXbrl(FakeStatements(income=good_statement))),
-        "BAD": FakeFiling(FakeXbrl(FakeStatements(income=bad_statement))),
+        "GOOD": FakeFiling(
+            _fake_xbrl(
+                FakeStatements(
+                    income=good_statement,
+                ),
+                period_end="2026-02-26",
+                fiscal_year=2026,
+                fiscal_period="Q2",
+            )
+        ),
+        "BAD": FakeFiling(
+            _fake_xbrl(
+                FakeStatements(
+                    income=bad_statement,
+                ),
+                period_end="2026-05-28",
+                fiscal_year=2026,
+                fiscal_period="Q3",
+            )
+        ),
     }
+
+    def fake_builder(**kwargs: Any) -> pd.DataFrame:
+        if kwargs["sec_accession_number"] == "BAD":
+            raise EdgarQuarterlyBuildError("Synthetic bad-quarter failure.")
+
+        return _fake_quarter_builder(**kwargs)
+
+    monkeypatch.setattr(
+        history_module,
+        "build_edgar_quarter",
+        fake_builder,
+    )
 
     result = build_edgar_history(
         symbol="MU",
@@ -576,7 +669,14 @@ def test_history_records_missing_statement_failure():
         ]
     )
 
-    filing = FakeFiling(FakeXbrl(FakeStatements()))
+    filing = FakeFiling(
+        _fake_xbrl(
+            FakeStatements(),
+            period_end="2026-05-28",
+            fiscal_year=2026,
+            fiscal_period="Q3",
+        )
+    )
 
     result = build_edgar_history(
         symbol="MU",
@@ -618,7 +718,16 @@ def test_history_infers_10k_as_q4(
         }
     )
 
-    filing = FakeFiling(FakeXbrl(FakeStatements(income=statement)))
+    filing = FakeFiling(
+        _fake_xbrl(
+            FakeStatements(
+                income=statement,
+            ),
+            period_end="2026-08-31",
+            fiscal_year=2026,
+            fiscal_period="FY",
+        )
+    )
 
     build_edgar_history(
         symbol="MU",
@@ -655,7 +764,16 @@ def test_history_uses_statement_label_for_10q_quarter(
         fiscal_quarter=3,
     )
 
-    filing = FakeFiling(FakeXbrl(FakeStatements(income=statement)))
+    filing = FakeFiling(
+        _fake_xbrl(
+            FakeStatements(
+                income=statement,
+            ),
+            period_end="2026-05-28",
+            fiscal_year=2026,
+            fiscal_period="Q3",
+        )
+    )
 
     build_edgar_history(
         symbol="MU",
