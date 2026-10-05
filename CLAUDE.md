@@ -22,6 +22,11 @@ Claude-specific operating instructions. If they conflict, AGENTS.md wins.
   (architecture / cross-file questions) are optional. Use them only
   when installed. Verify Graphify conclusions against source and tests.
 
+## Workflow commands
+
+- Use `/project-verify` before reporting implementation work as complete.
+- Use `/project-checkpoint` when updating `docs/PROJECT_STATE.md`.
+
 ## Reporting
 
 - Never claim work was committed, pushed, or passing unless verified

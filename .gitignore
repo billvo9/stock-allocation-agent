@@ -10,6 +10,9 @@ __pycache__/
 .env
 .env.*
 
+# Claude Code personal overrides (project settings in .claude/settings.json are shared)
+.claude/settings.local.json
+
 # VS Code
 .vscode/
 
