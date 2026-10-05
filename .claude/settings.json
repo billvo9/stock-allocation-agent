@@ -1,0 +1,103 @@
+{
+  "permissions": {
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(git restore *)",
+      "Bash(git checkout -- *)",
+      "Bash(git checkout . *)",
+      "Bash(git checkout -f *)",
+      "Bash(git checkout --force *)",
+      "Bash(git switch --discard-changes *)",
+      "Bash(git switch -f *)",
+      "Bash(git stash drop *)",
+      "Bash(git stash clear *)",
+      "Bash(git branch -d *)",
+      "Bash(git branch --delete *)",
+      "Bash(git filter-branch *)",
+      "Bash(git filter-repo *)",
+      "Bash(pip install *)",
+      "Bash(pip uninstall *)",
+      "Bash(pip3 install *)",
+      "Bash(pip3 uninstall *)",
+      "Bash(python -m pip install *)",
+      "Bash(python -m pip uninstall *)",
+      "Bash(python3 -m pip install *)",
+      "Bash(python3 -m pip uninstall *)",
+      "Bash(uv add *)",
+      "Bash(uv remove *)",
+      "Bash(uv sync *)",
+      "Bash(uv pip install *)",
+      "Bash(uv pip uninstall *)",
+      "Bash(uv pip sync *)",
+      "Bash(gh pr create *)",
+      "Bash(gh pr merge *)"
+    ],
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(git push --force-with-lease *)",
+      "Bash(git push -f *)",
+      "Bash(git push * --force *)",
+      "Bash(git push * --force-with-lease *)",
+      "Bash(git push * -f *)",
+      "Bash(git reset --hard *)",
+      "Bash(git reset * --hard *)",
+      "Bash(git clean -f *)",
+      "Bash(git clean -fd *)",
+      "Bash(git clean -df *)",
+      "Bash(git clean -fdx *)",
+      "Bash(git clean -fxd *)",
+      "Bash(git clean -dfx *)",
+      "Bash(git clean -xdf *)",
+      "Bash(git clean -xf *)",
+      "Bash(git clean --force *)",
+      "Bash(git branch -D *)",
+      "Bash(git branch --delete --force *)",
+      "Bash(rm -rf *)",
+      "Bash(rm -fr *)",
+      "Bash(rm -Rf *)",
+      "Bash(rm -r -f *)",
+      "Bash(rm -f -r *)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session_context.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_commands.py\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/ruff_on_edit.py\"",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}
