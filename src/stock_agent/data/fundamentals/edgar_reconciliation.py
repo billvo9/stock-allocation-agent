@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import pandas as pd
@@ -63,6 +64,34 @@ class FiscalFlowReconciliation:
 
     current_accession_number: str
     prior_accession_number: str | None = None
+    prior_value_source: str | None = None
+
+
+@dataclass(frozen=True)
+class PriorSelection:
+    """
+    Result of choosing one prior observation from several candidates.
+
+    prior is None whenever reason != "ok". The accession tuples are
+    sorted so the selection is a pure function of the candidate set.
+
+    skipped_prior_accessions:
+        eligible candidates that carry no usable prior input value
+        (for example an exhibit-only 10-Q/A).
+
+    equivalent_prior_accessions:
+        latest-available candidates with exactly equal input values;
+        prior is the smallest accession among them.
+
+    conflicting_prior_accessions:
+        latest-available candidates whose input values differ.
+    """
+
+    prior: FiscalFlowObservation | None
+    reason: str
+    skipped_prior_accessions: tuple[str, ...] = ()
+    equivalent_prior_accessions: tuple[str, ...] = ()
+    conflicting_prior_accessions: tuple[str, ...] = ()
 
 
 def _require_nonempty_string(
@@ -320,6 +349,238 @@ def is_valid_prior_fiscal_observation(
     )
 
 
+@dataclass(frozen=True)
+class _PriorInput:
+    value: float | None
+    source: str | None
+    reason: str
+
+
+def _prior_input_value(
+    prior: FiscalFlowObservation,
+) -> _PriorInput:
+    """
+    Return the cumulative value a prior contributes to subtraction.
+
+    YTD is always preferred. Only for an authoritative fiscal-Q1
+    prior may the direct value stand in for a missing YTD value,
+    because standalone Q1 and Q1 YTD cover the same duration.
+    Standalone Q2 or Q3 never equals Q2 or Q3 YTD, so no other
+    quarter gets this fallback.
+    """
+
+    ytd_value = _optional_float(
+        prior.ytd_value,
+        name="prior.ytd_value",
+    )
+
+    if prior.fiscal_quarter != 1:
+        if ytd_value is None:
+            return _PriorInput(None, None, "missing_prior_ytd")
+
+        return _PriorInput(ytd_value, "ytd", "ok")
+
+    direct_value = _optional_float(
+        prior.direct_value,
+        name="prior.direct_value",
+    )
+
+    if ytd_value is not None and direct_value is not None and ytd_value != direct_value:
+        return _PriorInput(None, None, "prior_q1_direct_ytd_conflict")
+
+    if ytd_value is not None:
+        return _PriorInput(ytd_value, "ytd", "ok")
+
+    if direct_value is not None:
+        return _PriorInput(direct_value, "q1_direct", "ok")
+
+    return _PriorInput(None, None, "missing_prior_ytd")
+
+
+def select_prior_fiscal_observation(
+    *,
+    current: FiscalFlowObservation,
+    candidates: Iterable[FiscalFlowObservation],
+) -> PriorSelection:
+    """
+    Choose the prior observation used to reconcile current.
+
+    Rule:
+        1. Keep candidates that pass the prior safety checks,
+           including available_at <= current.available_at.
+           Filtering happens before ranking, so a later amendment
+           can never win and then be rejected.
+        2. Keep candidates with a usable prior input value.
+        3. Take the candidates with the latest available_at.
+        4. Equal values: choose the smallest accession number.
+           Different values: ambiguous, nothing is chosen.
+
+    The result does not depend on candidate order.
+    """
+
+    _validate_observation(current)
+
+    candidate_list = tuple(candidates)
+
+    seen_accessions: set[str] = set()
+
+    for candidate in candidate_list:
+        _validate_observation(candidate)
+
+        accession = candidate.accession_number.strip()
+
+        if accession in seen_accessions:
+            raise EdgarReconciliationError(
+                f"Duplicate prior candidate accession: {accession}.",
+            )
+
+        seen_accessions.add(accession)
+
+    if current.fiscal_quarter == 1:
+        return PriorSelection(
+            prior=None,
+            reason="no_prior_expected",
+        )
+
+    eligible: list[FiscalFlowObservation] = []
+    rejected_only_for_availability = False
+
+    for candidate in candidate_list:
+        reason = _prior_validation_reason(
+            current=current,
+            prior=candidate,
+        )
+
+        if reason == "ok":
+            eligible.append(candidate)
+        elif reason == "prior_available_after_current":
+            rejected_only_for_availability = True
+
+    valued: list[tuple[FiscalFlowObservation, float]] = []
+    skipped: list[str] = []
+    unusable_reasons: set[str] = set()
+
+    for candidate in eligible:
+        prior_input = _prior_input_value(candidate)
+
+        if prior_input.value is None:
+            skipped.append(candidate.accession_number.strip())
+            unusable_reasons.add(prior_input.reason)
+        else:
+            valued.append((candidate, prior_input.value))
+
+    skipped_accessions = tuple(sorted(skipped))
+
+    if not valued:
+        if rejected_only_for_availability:
+            reason = "prior_available_after_current"
+        elif unusable_reasons == {"prior_q1_direct_ytd_conflict"}:
+            reason = "prior_q1_direct_ytd_conflict"
+        elif eligible:
+            reason = "missing_prior_ytd"
+        else:
+            reason = "missing_prior_fiscal_observation"
+
+        return PriorSelection(
+            prior=None,
+            reason=reason,
+            skipped_prior_accessions=skipped_accessions,
+        )
+
+    def _available_at(observation: FiscalFlowObservation) -> pd.Timestamp:
+        return _normalize_timestamp(
+            observation.available_at,
+            name="available_at",
+            normalize=False,
+        )
+
+    latest_available_at = max(_available_at(candidate) for candidate, _ in valued)
+
+    latest = sorted(
+        (
+            (candidate.accession_number.strip(), candidate, value)
+            for candidate, value in valued
+            if _available_at(candidate) == latest_available_at
+        ),
+        key=lambda item: item[0],
+    )
+
+    latest_accessions = tuple(accession for accession, _, _ in latest)
+
+    if len({value for _, _, value in latest}) > 1:
+        return PriorSelection(
+            prior=None,
+            reason="ambiguous_prior_observation",
+            skipped_prior_accessions=skipped_accessions,
+            conflicting_prior_accessions=latest_accessions,
+        )
+
+    return PriorSelection(
+        prior=latest[0][1],
+        reason="ok",
+        skipped_prior_accessions=skipped_accessions,
+        equivalent_prior_accessions=latest_accessions,
+    )
+
+
+def find_superseding_prior_observations(
+    *,
+    current: FiscalFlowObservation,
+    prior: FiscalFlowObservation,
+    candidates: Iterable[FiscalFlowObservation],
+) -> tuple[FiscalFlowObservation, ...]:
+    """
+    Return priors that became available AFTER current and would have
+    changed the subtraction input that was actually used.
+
+    These are never used to rewrite the derived value: that would
+    backdate later information. They exist so the history can flag
+    derived quarters whose inputs were later superseded.
+
+    A candidate qualifies when it fails the prior checks only because
+    it became available after current, and its prior input value is
+    usable and differs from the used prior's input value.
+
+    Sorted by (available_at, accession_number).
+    """
+
+    used_value = _prior_input_value(prior).value
+
+    superseding: list[tuple[pd.Timestamp, str, FiscalFlowObservation]] = []
+
+    for candidate in candidates:
+        _validate_observation(candidate)
+
+        reason = _prior_validation_reason(
+            current=current,
+            prior=candidate,
+        )
+
+        if reason != "prior_available_after_current":
+            continue
+
+        candidate_value = _prior_input_value(candidate).value
+
+        if candidate_value is None or candidate_value == used_value:
+            continue
+
+        superseding.append(
+            (
+                _normalize_timestamp(
+                    candidate.available_at,
+                    name="available_at",
+                    normalize=False,
+                ),
+                candidate.accession_number.strip(),
+                candidate,
+            )
+        )
+
+    superseding.sort(key=lambda item: (item[0], item[1]))
+
+    return tuple(candidate for _, _, candidate in superseding)
+
+
 def _result(
     *,
     current: FiscalFlowObservation,
@@ -327,6 +588,7 @@ def _result(
     method: str,
     reason: str,
     prior: FiscalFlowObservation | None = None,
+    prior_value_source: str | None = None,
 ) -> FiscalFlowReconciliation:
     return FiscalFlowReconciliation(
         symbol=_require_nonempty_string(
@@ -354,6 +616,7 @@ def _result(
                 name="prior.accession_number",
             )
         ),
+        prior_value_source=prior_value_source,
     )
 
 
@@ -425,6 +688,36 @@ def reconcile_fiscal_flow(
             reason="ok",
         )
 
+    # The current filing's own input is checked before any prior, so a
+    # missing current value is never reported as a prior problem.
+    if current.fiscal_quarter in {2, 3}:
+        current_ytd = _optional_float(
+            current.ytd_value,
+            name="current.ytd_value",
+        )
+
+        if current_ytd is None:
+            return _result(
+                current=current,
+                value=None,
+                method="unavailable",
+                reason="missing_current_ytd",
+            )
+
+    if current.fiscal_quarter == 4:
+        current_fy = _optional_float(
+            current.fy_value,
+            name="current.fy_value",
+        )
+
+        if current_fy is None:
+            return _result(
+                current=current,
+                value=None,
+                method="unavailable",
+                reason="missing_current_fy",
+            )
+
     if prior is None:
         return _result(
             current=current,
@@ -449,66 +742,121 @@ def reconcile_fiscal_flow(
             reason=prior_reason,
         )
 
-    prior_ytd = _optional_float(
-        prior.ytd_value,
-        name="prior.ytd_value",
-    )
+    prior_input = _prior_input_value(prior)
 
-    if prior_ytd is None:
+    if prior_input.value is None:
         return _result(
             current=current,
             prior=prior,
             value=None,
             method="unavailable",
-            reason="missing_prior_ytd",
+            reason=prior_input.reason,
         )
+
+    prior_ytd = prior_input.value
 
     if current.fiscal_quarter in {2, 3}:
-        current_ytd = _optional_float(
-            current.ytd_value,
-            name="current.ytd_value",
-        )
-
-        if current_ytd is None:
-            return _result(
-                current=current,
-                prior=prior,
-                value=None,
-                method="unavailable",
-                reason="missing_current_ytd",
-            )
-
         return _result(
             current=current,
             prior=prior,
             value=current_ytd - prior_ytd,
             method="ytd_minus_prior_ytd",
             reason="ok",
+            prior_value_source=prior_input.source,
         )
 
     if current.fiscal_quarter == 4:
-        current_fy = _optional_float(
-            current.fy_value,
-            name="current.fy_value",
-        )
-
-        if current_fy is None:
-            return _result(
-                current=current,
-                prior=prior,
-                value=None,
-                method="unavailable",
-                reason="missing_current_fy",
-            )
-
         return _result(
             current=current,
             prior=prior,
             value=current_fy - prior_ytd,
             method="fy_minus_q3_ytd",
             reason="ok",
+            prior_value_source=prior_input.source,
         )
 
     raise EdgarReconciliationError(
         "Unsupported fiscal quarter.",
+    )
+
+
+@dataclass(frozen=True)
+class CandidateReconciliation:
+    """
+    Reconciliation of one observation against its prior candidates.
+
+    selection is None when no prior was needed (direct value, fiscal
+    Q1, nothing reported, or a missing current input).
+    """
+
+    result: FiscalFlowReconciliation
+    selection: PriorSelection | None
+
+
+def reconcile_fiscal_flow_from_candidates(
+    *,
+    current: FiscalFlowObservation,
+    candidates: Iterable[FiscalFlowObservation],
+) -> CandidateReconciliation:
+    """
+    Reconcile current, selecting a prior only when subtraction is needed.
+
+    Order:
+        1. Nothing reported for this metric -> no_reported_value.
+        2. Direct standalone value, or fiscal Q1 -> no prior needed.
+        3. Missing current YTD (Q2/Q3) or FY (Q4) -> unavailable,
+           reported as the current filing's problem.
+        4. Otherwise select a prior; if none qualifies, the selection
+           reason is the unavailable reason.
+    """
+
+    _validate_observation(current)
+
+    reported = (
+        current.direct_value,
+        current.ytd_value,
+        current.fy_value,
+    )
+
+    if all(_optional_float(value, name="value") is None for value in reported):
+        return CandidateReconciliation(
+            result=_result(
+                current=current,
+                value=None,
+                method="unavailable",
+                reason="no_reported_value",
+            ),
+            selection=None,
+        )
+
+    without_prior = reconcile_fiscal_flow(current=current)
+
+    if without_prior.reason != "missing_prior_fiscal_observation":
+        return CandidateReconciliation(
+            result=without_prior,
+            selection=None,
+        )
+
+    selection = select_prior_fiscal_observation(
+        current=current,
+        candidates=candidates,
+    )
+
+    if selection.prior is None:
+        return CandidateReconciliation(
+            result=_result(
+                current=current,
+                value=None,
+                method="unavailable",
+                reason=selection.reason,
+            ),
+            selection=selection,
+        )
+
+    return CandidateReconciliation(
+        result=reconcile_fiscal_flow(
+            current=current,
+            prior=selection.prior,
+        ),
+        selection=selection,
     )

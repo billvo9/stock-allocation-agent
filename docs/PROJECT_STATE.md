@@ -3,7 +3,7 @@
 Changing project state only. Permanent policy lives in `AGENTS.md`.
 Git is authoritative: verify everything here before relying on it.
 
-Last reviewed: 2026-10-04
+Last reviewed: 2026-10-05
 
 
 ## Current branch
@@ -13,36 +13,33 @@ Last reviewed: 2026-10-04
 
 ## Last verified pushed commit
 
-`ee003eb` feat: use authoritative fiscal identity in EDGAR history
+`17d3d4a` docs: add agent development guidance and project state
 
-Verified 2026-10-04: local HEAD and
+Verified 2026-10-05: local HEAD and
 `origin/feature/edgar-cross-filing-reconciliation` both point to
-`ee003eb979c3a78fd617c912d6c45aba2c2aafa0`.
+`17d3d4a41a4a9c970a973672740ad94707964715`.
 
 Branch commits since `main` merge of PR #33 (`b7f1a6e`):
 
 - `ec006a4` feat: add authoritative EDGAR fiscal identity resolution
 - `06bcfe8` feat: add deterministic fiscal flow reconciliation
 - `ee003eb` feat: use authoritative fiscal identity in EDGAR history
+- `17d3d4a` docs: add agent development guidance and project state
 
 
 ## Current working tree
 
-Uncommitted, intentional, unfinished owner work in
-`src/stock_agent/data/fundamentals/edgar_history.py`:
+Verified 2026-10-05. The cross-filing reconciliation ticket is
+implemented, reviewed, and owner-approved, but uncommitted and unstaged:
 
-Import-only change preparing reconciliation integration:
+- `src/stock_agent/data/fundamentals/edgar_history.py` (modified)
+- `src/stock_agent/data/fundamentals/edgar_quarterly.py` (modified)
+- `src/stock_agent/data/fundamentals/edgar_reconciliation.py` (modified)
+- `tests/test_edgar_quarterly.py` (modified)
+- `tests/test_edgar_reconciliation.py` (modified)
+- `tests/test_edgar_history_reconciliation.py` (new, untracked)
 
-- `resolve_statement_concept` (edgar_concepts)
-- `get_direct_quarter_value`, `get_ytd_value`, `get_fy_value`
-  (edgar_periods; `find_period_columns` import moved into this block)
-- `FiscalFlowObservation`, `FiscalFlowReconciliation`,
-  `reconcile_fiscal_flow` (edgar_reconciliation)
-
-None are used yet. Do not modify this file unless the owner asks.
-
-Patch backup: `~/Desktop/stock-agent-edgar-wip.patch`
-(verified 2026-10-04 to exist and to be identical to `git diff`).
+No other files differ from HEAD.
 
 
 ## Current EDGAR architecture
@@ -55,112 +52,114 @@ Modules under `src/stock_agent/data/fundamentals/`:
 | `edgar_fiscal.py` | `infer_edgar_fiscal_identity`: authoritative fiscal year / period / quarter from XBRL reporting periods |
 | `edgar_concepts.py` | `resolve_statement_concept`: map XBRL concepts to canonical metrics |
 | `edgar_periods.py` | Parse statement period columns; get direct-quarter, YTD, FY, instant values |
-| `edgar_quarterly.py` | `build_edgar_quarter`: one filing to one quarterly row; resolves `available_at` |
-| `edgar_reconciliation.py` | `reconcile_fiscal_flow`: deterministic cross-filing standalone-quarter derivation with lineage |
-| `edgar_history.py` | `build_edgar_history`: iterate filings, build quarters, emit diagnostics |
+| `edgar_quarterly.py` | `build_edgar_quarter`: one filing to one canonical row; availability rule (`resolve_edgar_available_at`); `extract_fiscal_flow_observations`: single-filing direct / YTD / FY observations |
+| `edgar_reconciliation.py` | Prior selection and cross-filing reconciliation (`select_prior_fiscal_observation`, `reconcile_fiscal_flow`, `reconcile_fiscal_flow_from_candidates`, `find_superseding_prior_observations`) |
+| `edgar_history.py` | `build_edgar_history`: collect filings, then reconcile flows across filings; returns canonical frame, reconciliation lineage, diagnostics |
 | `quarterly_schema.py` | Quarterly fundamental schema and validation |
 | `point_in_time.py` | `align_quarterly_fundamentals_asof`: as-of join to market dates |
 
-Current behavior:
 
-- `build_edgar_history` uses `infer_edgar_fiscal_identity` (since `ee003eb`).
-- `available_at` = SEC acceptance datetime, else filing date + 1 day.
-- Per-filing extraction (`edgar_quarterly._extract_quarterly_flow`) returns
-  direct standalone-quarter values, or Q1 from Q1 YTD. Q2/Q3/Q4 flows
-  without a direct value are currently missing. Cross-filing derivation
-  is deferred to `edgar_history`.
-- `reconcile_fiscal_flow` exists and is unit-tested but is not yet called
-  by `build_edgar_history`.
-- Original and amended filings are both preserved as separate rows.
+## Completed in the current ticket (uncommitted)
 
-Known cleanup candidate (not yet approved):
-`edgar_history._infer_fiscal_quarter` (label-based) has no callers since
-`ee003eb`.
-
-
-## Current reconciliation objective
-
-Integrate `reconcile_fiscal_flow` into `build_edgar_history` so Q2, Q3,
-and Q4 flow metrics without a direct value are derived across filings,
-point-in-time safely, with lineage (method, reason, accession numbers).
-
-
-## Reconciliation invariants
-
-Enforced in `edgar_reconciliation.py` (unit-tested):
-
-- Direct standalone-quarter value wins when present.
-- Q1 = Q1 YTD; Q2 = Q2 YTD - Q1 YTD; Q3 = Q3 YTD - Q2 YTD;
-  Q4 = FY - Q3 YTD.
-- Prior must match symbol, metric, and fiscal year.
-- Prior must be exactly the preceding fiscal quarter.
-- Prior must come from a different accession.
-- Prior period end must be strictly before current period end.
-- Prior `available_at` must be <= current `available_at`.
-- Missing inputs return `method="unavailable"` with a reason code
-  (e.g. `missing_prior_fiscal_observation`, `missing_prior_ytd`,
-  `missing_current_ytd`, `missing_current_fy`,
-  `prior_available_after_current`).
+- Authoritative EDGAR fiscal identity (committed earlier on this branch)
+  drives every observation; quarters never come from calendar months.
+- Deterministic cross-filing fiscal-flow reconciliation integrated into
+  `build_edgar_history`; reconciliation is the single authority for flow
+  values in the history and is independent of filing order.
+- Prior-observation selection: filtered by availability before ranking;
+  latest available wins; equal-value ties take the smallest accession;
+  conflicting values are unavailable (`ambiguous_prior_observation`); a
+  newer amendment without a usable value is skipped and recorded.
+- Fiscal-Q1 direct-value fallback for Q2 derivation
+  (`prior_value_source="q1_direct"`); conflicting Q1 direct/YTD values
+  are rejected; never applied to Q2/Q3 priors.
+- Reconciliation lineage in `EdgarHistoryResult.reconciliation`
+  (additive field), key `(symbol, sec_accession_number, metric_name)`.
+- Late prior amendments never rewrite derived values; they emit
+  `derived_quarter_input_superseded`, attached to the superseding filing.
+- P1 prefix-stability protection for canonical frame, lineage, and
+  diagnostics; mutation checks (leaky selector, backdated availability,
+  misplaced diagnostic) each made the tests fail.
+- Corrected deferred SEC availability semantics (below), with DST-safe
+  06:00 America/New_York construction.
+- `not_yet_available` pre-load filtering: filings whose `available_at` is
+  after the run time are skipped before loading, in strict and
+  non-strict modes.
+- Real-shaped MU regression fixtures (offline, values from the smoke
+  test).
+- Controlled real MU validation (below).
+- Canonical fundamental schema unchanged: `quarterly_schema.py` has no
+  diff against HEAD.
 
 
-## Required integration scenarios
+## EDGAR availability semantics
 
-Integration tests for `build_edgar_history` must cover:
+```text
+accepted_at   SEC acceptance time
+filing_date   SEC-assigned filing date
+available_at  earliest timestamp this pipeline permits the information
+              to be consumed
+```
 
-1. Q3 derivation: Q3 10-Q with only YTD, prior Q2 10-Q YTD available
-   earlier, gives Q3 = Q3 YTD - Q2 YTD with both accessions recorded.
-2. Q4 derivation: 10-K with FY, prior Q3 10-Q YTD, gives
-   Q4 = FY - Q3 YTD.
-3. Amendment leakage: a Q2 10-Q/A accepted after the Q3 10-Q must not
-   be used to derive the Q3 value available at the Q3 filing time.
-4. Fiscal-year boundary: Q1 of a new fiscal year never uses the prior
-   year's observations.
-5. Non-calendar fiscal year: quarters are assigned from fiscal metadata,
-   not calendar months.
-6. Missing prior: Q2/Q3/Q4 without an eligible prior yields an
-   unavailable result with a reason, not a guess.
+- `accepted_at` missing: `filing_date + 1 day` (`sec_filing_date_plus_1d`).
+- Deferred filing (SEC `filing_date` later than the America/New_York date
+  of `accepted_at`): `filing_date` at 06:00 America/New_York, converted
+  to UTC (`sec_deferred_filing_date_6am`).
+- Otherwise: `accepted_at` (`sec_acceptance_datetime`).
+- `available_at` is never earlier than `accepted_at`.
 
-
-## Open design questions (owner decision)
-
-- When both an original and an amended prior are available before the
-  current filing, which is used? (Candidate: latest available at or
-  before current `available_at`.)
-- Should a later amendment produce a new, later-available version of an
-  already-derived quarter?
-- Where is reconciliation lineage stored: schema columns, diagnostics,
-  or a separate frame? (A schema change requires approval.)
-- Where are YTD / FY values extracted: in `build_edgar_quarter` or in
-  `edgar_history`?
+06:00 ET for deferred filings is a conservative modeling proxy based on
+the SEC filing rule (submissions after 5:30 p.m. ET receive the next
+business day's 6:00 a.m. ET filing date and are not disseminated until
+that day). It is not a measured dissemination timestamp.
 
 
-## Last known quality baseline
+## Controlled real-data validation (MU)
 
-Measured 2026-10-04 on the working tree (HEAD `ee003eb` plus the
-uncommitted import change):
+Seven MU XBRL filings, FY2025 Q1 through FY2026 Q3, edgartools 5.58.0,
+validation only:
 
-- pytest: 346 passed
-- `ruff check .`: 8 errors, all in `edgar_history.py` from the
-  unfinished imports (7 x F401 unused import, 1 x I001 import order).
-  HEAD's version of that file passes.
-- `ruff format --check .`: 119 files already formatted
-
-
-## Next implementation stage
-
-1. Resolve the open design questions above.
-2. Write failing integration tests for the required scenarios.
-3. Implement reconciliation in `build_edgar_history` using the
-   prepared imports.
-4. Restore a clean Ruff baseline.
-5. Decide on removing `_infer_fiscal_quarter`.
+- Fiscal identity matched MU's 52/53-week calendar.
+- Adapter `accepted_at` is true UTC (API `23:52:13Z` equals SEC header
+  `ACCEPTANCE-DATETIME 18:52:13` EST).
+- FY2025 operating cash flow 3,244 / 3,942 / 4,609 / 5,730 USD M sums to
+  the reported FY 17,525.
+- Six of seven filings were accepted after 5:30 p.m. ET; their
+  `available_at` moved to 06:00 ET on the SEC filing date (about 11 hours
+  later). Values, methods, and selected priors were unchanged.
+- Real-data prefix stability held at every knowledge time; no artifacts
+  entered the repository.
 
 
-## Future work
+## Last verified quality baseline
 
-- Merge this branch to `main` via pull request (owner approval).
-- Feed reconciled fundamentals into `point_in_time` alignment and
-  fundamental features.
-- Deterministic and statistical data-quality checks on EDGAR history.
-- Data-quality dashboard built from diagnostics and reconciliation
-  reasons.
+Measured 2026-10-05 on the working tree (HEAD `17d3d4a` plus the
+uncommitted ticket changes):
+
+- `pytest -q`: 452 passed
+- `python -m pytest -q`: 452 passed
+- `ruff format --check src tests scripts`: 116 files already formatted
+- `ruff check src tests scripts`: all checks passed
+
+
+## Open items
+
+1. Versioned derived observations: a late prior amendment does not yet
+   produce a new version of an already-derived quarter (flagged, never
+   rewritten), so the history is prefix-stable but not as-of complete
+   for those cells.
+2. `align_quarterly_fundamentals_asof` daily-date semantics: midnight-UTC
+   market dates versus decision time, and same-instant rows.
+3. No real XBRL amendment validated yet (MU's amendments predate XBRL).
+4. FY accounting-consistency checks (Q1+Q2+Q3+Q4 = FY).
+5. Remove the duplicate flow logic in `build_edgar_quarter`.
+6. Remove unused `edgar_history._infer_fiscal_quarter`.
+7. Lineage does not yet store the numeric derivation inputs.
+
+
+## Next steps
+
+1. Commit the ticket on this branch (owner approval).
+2. Push and open a pull request to `main` (owner approval).
+3. Next major data ticket: "Versioned derived observations and
+   amendment-aware as-of fundamentals" (items 1 and 2).

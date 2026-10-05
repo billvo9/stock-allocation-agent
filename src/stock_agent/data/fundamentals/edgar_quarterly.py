@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pandas as pd
@@ -10,7 +11,11 @@ from stock_agent.data.fundamentals.edgar_concepts import (
 from stock_agent.data.fundamentals.edgar_periods import (
     derive_quarter_from_ytd,
     get_direct_quarter_value,
+    get_fy_value,
     get_ytd_value,
+)
+from stock_agent.data.fundamentals.edgar_reconciliation import (
+    FiscalFlowObservation,
 )
 from stock_agent.data.fundamentals.quarterly_schema import (
     QUARTERLY_FUNDAMENTAL_COLUMNS,
@@ -20,6 +25,16 @@ from stock_agent.data.fundamentals.quarterly_schema import (
 
 class EdgarQuarterlyBuildError(ValueError):
     """Raised when an EDGAR quarterly row cannot be assembled safely."""
+
+
+# Canonical flow metric -> statement it is read from.
+FLOW_METRIC_STATEMENTS = {
+    "revenue": "income_statement",
+    "gross_profit": "income_statement",
+    "operating_income": "income_statement",
+    "net_income": "income_statement",
+    "operating_cash_flow": "cash_flow_statement",
+}
 
 
 def _require_nonempty_string(
@@ -58,36 +73,114 @@ def _to_utc_timestamp(
     return timestamp
 
 
+_SEC_TIMEZONE = "America/New_York"
+
+# SEC-assigned filing time (ET wall clock) for submissions deferred to the
+# next business day. Built as a wall-clock time, not midnight + 6 hours, so
+# it stays 06:00 on daylight-saving transition dates.
+_SEC_DEFERRED_FILING_TIME = "06:00"
+
+
 def _resolve_available_at(
     *,
     filing_date: pd.Timestamp,
     accepted_at: Any | None,
 ) -> tuple[pd.Timestamp, str]:
     """
-    Determine when the filing became usable.
+    Determine the earliest time the pipeline may use the filing.
 
-    Prefer the SEC acceptance timestamp when available.
+    Three distinct timestamps:
 
-    When it is unavailable, use filing date + one day.
-    The fallback is deliberately conservative so that a
-    historical model does not accidentally see a filing
-    before it was realistically available.
+        accepted_at  = SEC acceptance time (when EDGAR accepted it)
+        filing_date  = SEC-assigned filing date (a business day)
+        available_at = earliest timestamp our point-in-time pipeline
+                       permits use (what this function returns)
+
+    EDGAR rule (Regulation S-T Rule 13; EDGAR Filer Manual): most live
+    submissions transmitted after 5:30 p.m. ET receive a filing date of
+    6:00 a.m. ET on the next business day and are not disseminated until
+    that business day. 10-Q, 10-K, and their amendments have no same-day
+    exception. Ownership and certain registration forms (3, 4, 5, 144,
+    *MEF, POS 462B) do, but this pipeline does not ingest them.
+
+    The SEC-assigned filing_date is the signal: SEC applies the cutoff and
+    per-form exceptions, and weekends and holidays, when assigning it.
+
+        accepted_at missing:
+            filing_date + 1 day                (sec_filing_date_plus_1d)
+
+        filing_date later than the ET calendar date of accepted_at:
+            06:00 ET on filing_date, in UTC    (sec_deferred_filing_date_6am)
+
+            06:00 ET is the SEC-assigned next-business-day filing time,
+            used as our modeling proxy for availability under the
+            documented EDGAR rule. It is not an independently measured
+            dissemination time.
+
+        otherwise (same-day filing date, or inconsistent metadata where
+        the filing date precedes acceptance):
+            accepted_at                        (sec_acceptance_datetime)
+
+    available_at is never earlier than accepted_at.
     """
 
-    if accepted_at is not None:
-        available_at = _to_utc_timestamp(
-            accepted_at,
-            name="accepted_at",
+    if accepted_at is None:
+        return (
+            filing_date + pd.Timedelta(days=1),
+            "sec_filing_date_plus_1d",
+        )
+
+    accepted = _to_utc_timestamp(
+        accepted_at,
+        name="accepted_at",
+    )
+
+    accepted_et_date = accepted.tz_convert(_SEC_TIMEZONE).date()
+
+    if filing_date.date() > accepted_et_date:
+        deferred = (
+            pd.Timestamp(f"{filing_date.date()} {_SEC_DEFERRED_FILING_TIME}")
+            .tz_localize(_SEC_TIMEZONE)
+            .tz_convert("UTC")
         )
 
         return (
-            available_at,
-            "sec_acceptance_datetime",
+            deferred,
+            "sec_deferred_filing_date_6am",
         )
 
     return (
-        filing_date + pd.Timedelta(days=1),
-        "sec_filing_date_plus_1d",
+        accepted,
+        "sec_acceptance_datetime",
+    )
+
+
+def resolve_edgar_available_at(
+    *,
+    filing_date: Any,
+    accepted_at: Any | None,
+) -> tuple[pd.Timestamp, str]:
+    """
+    Public entry point to the availability rule for raw filing metadata.
+
+    Normalizes filing_date to its SEC calendar date and treats a missing
+    accepted_at (None or NaT) as absent, exactly as build_edgar_quarter
+    does, so callers can decide whether a filing is usable yet before
+    loading it.
+    """
+
+    normalized_filing_date = _to_utc_timestamp(
+        filing_date,
+        name="filing_date",
+        normalize=True,
+    )
+
+    if accepted_at is not None and pd.isna(accepted_at):
+        accepted_at = None
+
+    return _resolve_available_at(
+        filing_date=normalized_filing_date,
+        accepted_at=accepted_at,
     )
 
 
@@ -202,6 +295,115 @@ def _extract_statement_flow(
         period_end=period_end,
         fiscal_quarter=fiscal_quarter,
     )
+
+
+def extract_fiscal_flow_observations(
+    *,
+    symbol: str,
+    fiscal_year: int,
+    fiscal_quarter: int,
+    period_end: str | pd.Timestamp,
+    available_at: str | pd.Timestamp,
+    accession_number: str,
+    income_statement: pd.DataFrame | None,
+    cash_flow_statement: pd.DataFrame | None,
+) -> list[FiscalFlowObservation]:
+    """
+    Read what ONE filing reports for each flow metric.
+
+    For the filing's own period end, each observation carries the
+    direct standalone-quarter value, the YTD value, and the
+    full-fiscal-year value, whichever are reported. Nothing is
+    derived here: cross-filing arithmetic belongs to reconciliation.
+
+    One observation is returned per flow metric. A metric whose
+    concept or statement is missing yields an observation with no
+    values, so the gap stays visible downstream.
+
+    Ambiguous concept resolution raises EdgarQuarterlyBuildError.
+    """
+
+    symbol = _require_nonempty_string(
+        symbol,
+        name="symbol",
+    )
+
+    accession_number = _require_nonempty_string(
+        accession_number,
+        name="accession_number",
+    )
+
+    if fiscal_quarter not in {1, 2, 3, 4}:
+        raise EdgarQuarterlyBuildError("fiscal_quarter must be between 1 and 4.")
+
+    normalized_period_end = _to_utc_timestamp(
+        period_end,
+        name="period_end",
+        normalize=True,
+    )
+
+    normalized_available_at = _to_utc_timestamp(
+        available_at,
+        name="available_at",
+    )
+
+    statements = {
+        "income_statement": income_statement,
+        "cash_flow_statement": cash_flow_statement,
+    }
+
+    observations: list[FiscalFlowObservation] = []
+
+    for metric_name, statement_name in FLOW_METRIC_STATEMENTS.items():
+        row = _resolve_metric_row(
+            statements[statement_name],
+            canonical_name=metric_name,
+            symbol=symbol,
+            accession_number=accession_number,
+        )
+
+        direct_value = ytd_value = fy_value = None
+
+        if row is not None:
+            direct_value = get_direct_quarter_value(
+                row,
+                period_end=normalized_period_end,
+                fiscal_quarter=fiscal_quarter,
+            )
+
+            ytd_value = get_ytd_value(
+                row,
+                period_end=normalized_period_end,
+            )
+
+            fy_value = get_fy_value(
+                row,
+                period_end=normalized_period_end,
+            )
+
+        for value in (direct_value, ytd_value, fy_value):
+            if value is not None and not math.isfinite(value):
+                raise EdgarQuarterlyBuildError(
+                    f"EDGAR {metric_name} for {symbol}, accession "
+                    f"{accession_number} contains a non-finite value."
+                )
+
+        observations.append(
+            FiscalFlowObservation(
+                symbol=symbol,
+                metric_name=metric_name,
+                fiscal_year=fiscal_year,
+                fiscal_quarter=fiscal_quarter,
+                period_end=normalized_period_end,
+                available_at=normalized_available_at,
+                accession_number=accession_number,
+                direct_value=direct_value,
+                ytd_value=ytd_value,
+                fy_value=fy_value,
+            )
+        )
+
+    return observations
 
 
 def build_edgar_quarter(
