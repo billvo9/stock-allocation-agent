@@ -325,22 +325,32 @@ Corrections are explicit, recorded, and reviewable.
 
 ## Testing and Ruff quality gates
 
-Before proposing a commit, all of these must pass:
+Before any commit, the canonical gate script must pass:
+
+```bash
+python3 scripts/verify.py
+```
+
+It runs every gate with the project virtual environment's tools
+(`.venv/bin`), all gates even when one fails:
 
 ```bash
 pytest -q
 python -m pytest -q
-ruff format --check src tests scripts
-ruff check src tests scripts
+ruff format --check src tests scripts .claude/hooks
+ruff check src tests scripts .claude/hooks
 ```
 
-If formatting is required during implementation, it may run:
-
-```bash
-ruff format src tests scripts
-```
-
-Do not silently change this established repository workflow.
+- It refuses to run (exit 2) if `.venv` is missing or is not Python 3.12.
+  It never falls back to another interpreter on `PATH`.
+- CI runs the same script inside a `.venv`, so local and CI gates are
+  identical.
+- Never judge a gate with bare `pytest` or `ruff`: they may resolve to a
+  non-project interpreter. Focused tests during development:
+  `.venv/bin/python -m pytest -q <paths>`.
+- Formatting during implementation:
+  `.venv/bin/ruff format src tests scripts .claude/hooks`.
+- Changing the gate set or `scripts/verify.py` requires owner approval.
 
 - Ruff line length is 100 (`pyproject.toml`).
 - New behavior requires tests. Bug fixes require a regression test.
@@ -355,45 +365,97 @@ Do not silently change this established repository workflow.
 
 ## Git safeguards
 
-- Work on feature branches, never directly on `main`.
+- Work on feature branches. Never commit or push to `main`.
+- Never merge pull requests. Merging is the owner's decision.
+- Never force-push, `git reset --hard`, `git clean -f`, or `rm -rf`.
 - Check `git status` before and after every change.
 - Stage only files related to the current task. Never sweep unrelated or
   owner-owned uncommitted work into a commit.
 - Use conventional commit messages (`feat:`, `fix:`, `test:`, `docs:`,
-  `refactor:`).
-- Never rewrite published history, force-push, `reset --hard`, or discard
-  uncommitted work without explicit owner approval.
+  `refactor:`, `chore:`).
+- Never rewrite published history or discard uncommitted work without
+  explicit owner approval.
 - Never claim work was committed, pushed, or merged unless verified
   from Git.
+
+`.claude/hooks/guard_commands.py` enforces these mechanically, as defense
+in depth. GitHub branch protection on `main` is the authoritative control.
+
+
+## Autonomy
+
+Default to acting, not asking. Without owner approval an agent may:
+
+- edit code, tests, and documentation;
+- run tests, linting, and formatting;
+- stage the task's files and commit on a non-main branch;
+- push that branch and open a pull request (when the GitHub CLI is
+  available).
+
+`/project-verify` is the gate between implementation and commit, and the
+lead runs it without being asked. Its verdict decides the next step:
+`READY` means commit and push, `NEEDS OWNER` means stop and ask (an
+approval gate was hit), and `BLOCKED` means fix and re-verify.
+
+Interrupt the owner only for an approval gate, a genuine product or design
+decision, or a failure the agent cannot resolve. Autonomy never relaxes
+point-in-time, leakage, or test-integrity rules.
+
+Autonomy does not change the learning-core split. For ML, RL, and
+substantial statistical-model cores, agents deliver the design, equations,
+tests, and a bounded skeleton; the owner implements the core (see
+`.claude/agents/data-scientist.md` and `quant-researcher.md`).
 
 
 ## Owner approval gates
 
 Explicit owner approval is required before:
 
-- pushing, merging, or opening pull requests
+- merging pull requests (agents never merge)
 - deleting or renaming branches
-- rewriting Git history
-- adding, removing, or upgrading dependencies
-- changing secrets, credentials, or environment configuration
-- modifying production or cloud infrastructure
-- changing data schemas or data contracts
+- rewriting Git history or discarding uncommitted work
+- adding, removing, upgrading, or re-pinning dependencies
+- breaking schema or data-contract changes
 - changing point-in-time or availability semantics
+- changing financial or accounting formulas (fiscal reconciliation,
+  returns, risk and performance metrics, rewards)
+- changing secrets, credentials, authentication, or environment
+  configuration
+- cloud / IAM, infrastructure, deployment, or CI workflow changes
+- changing agent guardrails: `.claude/` (settings, hooks, skills,
+  agents), `scripts/verify.py`, `AGENTS.md`, `CLAUDE.md`
+- weakening or deleting tests
 - deleting stored data
 - major architectural restructuring
+
+A schema or data-contract change is **breaking** if it removes, renames,
+or retypes a column or field; changes a key, uniqueness, or ordering
+contract; changes the meaning or units of an existing value; or makes
+previously valid data invalid (or invalid data valid). Additive,
+backward-compatible changes covered by tests are not breaking.
+
+Approval must come from the owner explicitly in the current session, or be
+recorded as an owner decision in `docs/PROJECT_STATE.md`. It is never
+inferred. Settings ask rules and the command guard enforce the gates that
+can be detected mechanically; `/project-verify` review covers the rest.
 
 
 ## Agent workflow
 
 1. Inspect (see "Inspect before editing").
 2. Restate the task and identify affected contracts.
-3. Plan. For non-trivial work, share the plan before editing.
+3. Plan. For non-trivial work, share the plan before editing. Wait for
+   approval only if the plan crosses an approval gate or makes a product
+   or design decision.
 4. Write or update tests first where practical.
 5. Implement the smallest change that satisfies the tests.
-6. Run the quality gates.
-7. Review the diff for leakage, unrelated changes, and dead code.
+6. Run `/project-verify`: the gates, plus diff review for leakage,
+   unrelated changes, dead code, and approval-gated changes.
+7. On `READY`, commit, push the branch, and open a pull request when
+   possible. Never merge.
 8. Report what changed, what was verified, and what remains.
-9. Propose an update to `docs/PROJECT_STATE.md`.
+9. At a milestone, checkpoint `docs/PROJECT_STATE.md` in the same branch
+   (`/project-checkpoint`).
 
 
 ## Learning notes
@@ -414,14 +476,20 @@ include a `Learning Notes` section covering:
 
 ## Session continuity
 
-`docs/PROJECT_STATE.md` carries state between sessions and tools.
+`docs/PROJECT_STATE.md` carries milestone state between sessions and tools.
 
 - Read it at the start of every session, then verify it against Git.
-- It records facts that change: branch, last verified commit, working-tree
-  state, current objective, quality baseline, next stage, open questions.
+- It records milestone facts: the last checkpoint (date, verified commit),
+  recently merged work, current objective, quality baseline, open items,
+  next steps, and owner decisions.
+- Live Git state (current branch, working tree, upstream) comes from Git
+  and the SessionStart hook, not from this file.
 - It does not restate permanent policy from this file.
 - Every factual claim should be verifiable or dated.
-- Update it at the end of substantial work, with owner approval.
+- Update it at milestones only (`/project-checkpoint` lists the triggers),
+  as a commit in the milestone's own branch. Never open a separate
+  docs-only pull request to checkpoint; an ordinary ticket is recorded by
+  its pull request description.
 
 
 ## Dashboard and observability direction

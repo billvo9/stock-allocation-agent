@@ -6,24 +6,18 @@ Git is authoritative: verify everything here before relying on it.
 Last reviewed: 2026-10-06
 
 
-## Current branch
+## Last checkpoint
 
-`docs/checkpoint-versioned-fundamentals` (local only; no upstream
-configured). Created at `668a37c`; no commits of its own.
+2026-10-06, milestone "guarded-autonomy workflow", verified on branch
+`chore/claude-fast-workflow` based on `44efae1` (merge pending). Live Git
+state (current branch, working tree, upstream) comes from Git and the
+SessionStart hook, not from this file.
 
+Recently merged to `main` (`origin/main` = `44efae1` as of last fetch,
+verified 2026-10-06):
 
-## Last verified commit
-
-`668a37c` Merge pull request #37 from
-billvo9/feature/versioned-derived-observations
-
-Verified 2026-10-06: local HEAD, `main`, `origin/main` (as of last
-fetch), and `git merge-base HEAD origin/main` all equal
-`668a37ca1440b2c2af60876dbfdc344ec6e583ad`. The merge tree is identical
-to its feature commit `b014e28` (empty `git diff b014e28 668a37c`).
-
-Recently merged to `main`:
-
+- PR #38 (`44efae1`): `1cfc901` docs: checkpoint project state after
+  versioned fundamentals merge.
 - PR #37 (`668a37c`): `b014e28` feat: add versioned point-in-time
   fundamentals (10 source / test files plus this file).
 - PR #36 (`2025c1f`): `60fc6e7` chore: add Claude specialist agent team
@@ -35,11 +29,6 @@ Recently merged to `main`:
   fiscal reconciliation.
 
 
-## Current working tree
-
-Verified 2026-10-06: clean before this checkpoint. The only change is
-`docs/PROJECT_STATE.md` (this checkpoint, uncommitted). Nothing staged.
-
 Three older stashes (from `feature/macro-ingestion`,
 `feature/fundamental-data-foundation`, `feature/equal-weight-baseline`)
 are owner-owned and untouched.
@@ -47,9 +36,23 @@ are owner-owned and untouched.
 
 ## Current objective
 
-Record the post-merge state of PR #37 and the SMCI real-amendment
-validation (this branch). The next ticket has not been chosen; see
-"Next steps".
+Guarded high-autonomy development workflow (owner request, 2026-10-06;
+this branch, merge pending): Claude edits, verifies, commits, and pushes
+non-main branches without routine approvals; hard protections and
+approval gates are in AGENTS.md "Autonomy" and "Owner approval gates".
+
+- `scripts/verify.py` is the single gate runner for local runs and CI;
+  it always uses `.venv` and refuses to fall back to another interpreter.
+- CI builds a `.venv` and runs the same script (pytest twice, Ruff format
+  check, Ruff lint; Ruff now also covers `.claude/hooks`).
+- `.claude/hooks/guard_commands.py` is branch-aware: it denies commits and
+  pushes targeting `main`, PR merges, and destructive commands, and asks
+  at approval gates. Tested in `tests/test_guard_commands.py`, including
+  real throwaway repositories.
+- `/project-verify` is model-invoked and ends with a commit-gate verdict;
+  `/project-checkpoint` runs at milestones inside the milestone's branch.
+
+The next domain ticket has not been chosen; see "Next steps".
 
 
 ## Current EDGAR architecture
@@ -208,19 +211,27 @@ Coverage limitations found are tracked as open item 2.
 
 ## Last verified quality baseline
 
-Measured 2026-10-06 via `/project-verify` on HEAD `668a37c` (clean
-tree), inside the project `.venv` (Python 3.12.2): each gate run
-unpiped with `.venv/bin` first on `PATH`, judged by exit status.
+Measured 2026-10-06 with `python3 scripts/verify.py` on
+`chore/claude-fast-workflow` (base `44efae1` plus this milestone's
+changes), launched from Anaconda `python3`; every gate ran with `.venv`
+tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2). Exit 0.
 
-- `pytest -q`: 521 passed
-- `python -m pytest -q`: 521 passed
-- `ruff format --check src tests scripts`: 116 files already formatted
-- `ruff check src tests scripts`: all checks passed
-- `scan_changes.sh origin/main`: 0 changed paths, 0 hits
+- `pytest -q`: 696 passed (521 before + 175 workflow tests)
+- `python -m pytest -q`: 696 passed
+- `ruff format --check src tests scripts .claude/hooks`: 121 files
+  already formatted
+- `ruff check src tests scripts .claude/hooks`: all checks passed
+- `scan_changes.sh origin/main`: 21 changed paths; 0 artifact, large-file,
+  or secret hits; 18 guardrail paths flagged, all within the owner's
+  2026-10-06 request
+- Mutation checks: 8 of 8 caught (guard allowing protected pushes,
+  commits on `main`, `gh pr merge`, ignoring upstream, failing open,
+  unguarded protected files; verify falling back without `.venv`,
+  stopping at the first failing gate)
 
-The same four commands failed in a shell without the venv active
-(`/opt/anaconda3` Python lacks `duckdb` / `edgar`; `ruff` not on
-`PATH`). See open item 7.
+The `.venv` interpreter is built on the Anaconda 3.12.2 base (standard
+library from `/opt/anaconda3`); its packages are isolated in `.venv`.
+CI has not yet run this script (it runs on the pull request).
 
 
 ## Open items
@@ -247,9 +258,17 @@ The same four commands failed in a shell without the venv active
 5. YoY: no refresh when a prior-year amendment arrives later; nearest-
    match fallback when the nearest prior-year row is not yet available.
 6. `split_temporal_dataset` has no purge / embargo for label horizons.
-7. CI runs `ruff check` and `pytest -q` only, not the full AGENTS.md
-   gates (verified 2026-10-06 in `.github/workflows/ci.yml`). Locally,
-   the gates pass only inside the project `.venv`.
+7. Workflow follow-ups (owner decisions):
+   - Resolved 2026-10-06 (owner-approved): `ruff==0.16.2` and
+     `pytest==9.1.1` are pinned in `requirements.txt`, matching the
+     verified `.venv`; a gate test fails if the installed version differs
+     from the pin. Their transitive dependencies (e.g. `pluggy`) remain
+     unpinned.
+   - GitHub branch protection on `main` is not verified (`gh` is not
+     installed locally). It is the authoritative control against direct
+     pushes and merges; the local guard is defense in depth.
+   - Confirm in a fresh session that the new `Edit(...)` ask rules prompt
+     for `.claude/**`, `AGENTS.md`, and dependency manifests.
 8. Smaller items: lineage lacks current-side tie lists; as-of change log
    trusts `period_end`; mixed availability rules at one trigger instant;
    FY consistency checks (Q1+Q2+Q3+Q4 = FY); duplicate flow logic in
@@ -259,8 +278,10 @@ The same four commands failed in a shell without the venv active
 
 ## Next steps
 
-1. Owner reviews this checkpoint; commit it on
-   `docs/checkpoint-versioned-fundamentals` (owner approval).
-2. Push and open a docs pull request to `main` (owner approval).
-3. Choose the next ticket from the open items (candidates: decision
+1. Owner reviews and merges the `chore/claude-fast-workflow` pull request
+   (merging is owner-only); confirm CI passes with `scripts/verify.py`.
+2. Start a fresh Claude session after merge so the new settings and
+   hooks load.
+3. Owner decision from open item 7: enable branch protection on `main`.
+4. Choose the next ticket from the open items (candidates: decision
    timestamp (1), SMCI coverage gaps (2), purge / embargo (6)).

@@ -1,58 +1,67 @@
 ---
 name: project-checkpoint
-description: Draft an update to docs/PROJECT_STATE.md from verified Git state and verification results, show the diff, and write it only after explicit owner approval.
-disable-model-invocation: true
-argument-hint: "[short note on what this checkpoint covers]"
-allowed-tools: Read Grep Glob Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git rev-parse *) Bash(git branch --show-current) Bash(git merge-base *) Bash(git rev-list *) Bash(diff -u docs/PROJECT_STATE.md *) Bash(cmp docs/PROJECT_STATE.md *)
+description: Update docs/PROJECT_STATE.md at a milestone (not after every ticket) from verified Git state and this session's /project-verify results, committed in the same branch as the milestone work. Use when a milestone trigger applies or the owner asks for a checkpoint.
+argument-hint: "[short note on what this milestone covers]"
+allowed-tools: Read Grep Glob Edit Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git rev-parse *) Bash(git branch --show-current) Bash(git merge-base *) Bash(git rev-list *)
 ---
 
-# Project-state checkpoint
+# Milestone checkpoint
 
-Update `docs/PROJECT_STATE.md` so it matches reality. Context for this
+Bring `docs/PROJECT_STATE.md` up to date at a milestone. Context for this
 checkpoint: $ARGUMENTS
+
+## When (milestones only)
+
+Checkpoint when the current branch:
+
+- changes a data contract, point-in-time / availability semantics, a
+  financial formula, or the architecture;
+- completes a multi-ticket objective, or changes the current objective or
+  next steps;
+- changes the quality baseline materially (gate set, test count by more
+  than routine additions, environment), or resolves / adds an open item;
+- or the owner asks.
+
+Ordinary tickets do not checkpoint: their pull request description is the
+record. Never open a docs-only pull request just to checkpoint; the
+checkpoint is a commit in the milestone's own branch.
 
 ## Hard rules
 
 - Git is authoritative. Record only facts verified by commands run in this
   session, and date them. When `docs/PROJECT_STATE.md` disagrees with Git,
-  Git wins: list each discrepancy explicitly.
+  Git wins: list each discrepancy in your report.
+- Record milestone state, not live Git state. Do not record the current
+  branch, working tree, or upstream as "current" facts: they go stale at
+  merge and the SessionStart hook reports them live. Record the commit the
+  checkpoint was verified on and, for the branch being checkpointed, say
+  "merge pending"; the next checkpoint records the merge from Git.
 - Never claim a commit, push, merge, or PR that Git does not show.
-  "Pushed" requires `HEAD == @{u}`; say "as of last fetch". Do not fetch.
-- Test and Ruff results come only from commands run in this session (or a
-  `/project-verify` report from this session). Otherwise write
-  "not re-verified" - never carry old numbers forward as current.
-- `docs/PROJECT_STATE.md` holds changing state only. Permanent policy
-  belongs in `AGENTS.md`: do not copy rules into the state file. If a
-  policy change seems needed, propose it separately for owner approval.
-- Do not write `docs/PROJECT_STATE.md` until the owner explicitly approves
-  the exact diff shown. Do not stage or commit it.
+- Test and Ruff results come only from `python3 scripts/verify.py` run in
+  this session. Otherwise write "not re-verified"; never carry old
+  numbers forward as current.
+- Owner decisions (approvals, rejected options) are recorded only when the
+  owner stated them; quote or paraphrase with the date. Never infer one.
+- `docs/PROJECT_STATE.md` holds changing state only. Policy belongs in
+  `AGENTS.md`; propose policy changes separately (owner approval gate).
 
 ## Steps
 
-1. **Verify Git**
-   - `git branch --show-current`, `git rev-parse HEAD`, HEAD subject
-   - upstream: `git rev-parse --abbrev-ref --symbolic-full-name @{u}`;
-     compare `git rev-parse HEAD` with `git rev-parse @{u}`
-   - `git status --short`, staged files (`git diff --cached --name-only`)
-   - `git log --oneline -10`, `git log --oneline -5 origin/main`
-   - `git merge-base HEAD origin/main`
-2. **Read** `docs/PROJECT_STATE.md` and list every stale or contradicted
-   statement with the Git evidence.
-3. **Verification evidence**: use gate results from this session. If there
-   are none and the owner wants current numbers, run `/project-verify`
-   first (or ask).
-4. **Draft** the complete new file outside the repository (the system temp
-   or scratch directory, never inside the repo). Keep the existing
-   structure where it still fits:
-   - current branch; last verified pushed commit; working tree
-   - current objective / ticket
-   - completed work (brief)
-   - key semantics in effect (brief; point to code or AGENTS.md)
-   - last verified quality baseline (with date and commands)
-   - open items (short and prioritized, not a backlog dump)
-   - next steps (approval-gated actions marked as such)
-5. **Show** `diff -u docs/PROJECT_STATE.md <draft>` and a short summary of
-   what changed and why. Stop and wait for approval.
-6. **Only after explicit approval**: write the file exactly as shown,
-   confirm with `cmp docs/PROJECT_STATE.md <draft>`, and show
-   `git status --short`. Do not stage or commit.
+1. **Verify Git**: `git branch --show-current`, `git rev-parse HEAD`,
+   `git status --short`, `git log --oneline -10`,
+   `git log --oneline -5 origin/main`, `git merge-base HEAD origin/main`.
+2. **Read** `docs/PROJECT_STATE.md`; list stale or contradicted statements
+   with the Git evidence.
+3. **Evidence**: use this session's `/project-verify` result. If there is
+   none, run `/project-verify` first.
+4. **Edit** `docs/PROJECT_STATE.md` in place, keeping its structure:
+   last checkpoint (date, verified commit, milestone), recently merged
+   work, current objective, key semantics in effect (brief; point to code
+   or AGENTS.md), last verified quality baseline (date, command, counts),
+   open items (short, prioritized), next steps (approval-gated actions
+   marked as such).
+5. **Report** `git diff docs/PROJECT_STATE.md` with a short summary of
+   what changed and why. The owner reviews it in the pull request.
+6. Commit it with the milestone work (`docs: checkpoint ...`) under the
+   normal autonomy rules. Do not commit if `/project-verify` was not
+   `READY`.

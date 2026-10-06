@@ -24,12 +24,28 @@ Claude-specific operating instructions. If they conflict, AGENTS.md wins.
 
 ## Workflow commands
 
-- Use `/project-verify` before reporting implementation work as complete.
-- Use `/project-checkpoint` when updating `docs/PROJECT_STATE.md`.
+- Invoke `/project-verify` yourself at the end of every implementation
+  task, before committing. Do not wait for the owner to ask. Act on its
+  verdict as AGENTS.md "Autonomy" describes.
+- Run gates only through `python3 scripts/verify.py`, never bare
+  `pytest` or `ruff`. Focused tests use `.venv/bin/python -m pytest -q`.
+- Invoke `/project-checkpoint` at milestones only, and commit the
+  checkpoint in the milestone's own branch.
+- When `gh` is unavailable, push the branch and give the owner the
+  compare URL instead of a PR link.
+
+## Permissions and guardrails
+
+- `.claude/settings.json` allows routine Git and gate commands; the
+  `guard_commands.py` PreToolUse hook denies protected-branch writes,
+  merges, and destructive commands, and asks at approval gates.
+- Edits to guardrail files (`.claude/`, `AGENTS.md`, `CLAUDE.md`,
+  `scripts/verify.py`, CI, dependency manifests, `.env*`) prompt the
+  owner. Never route around a prompt or denial (for example by writing
+  the file another way). Ask instead.
 
 ## Reporting
 
 - Never claim work was committed, pushed, or passing unless verified
   in this session from Git or tool output.
-- At the end of a substantial session, propose an update to
-  `docs/PROJECT_STATE.md`; write it only with owner approval.
+- Report the commit hashes, the pushed branch, and the PR or compare URL.
