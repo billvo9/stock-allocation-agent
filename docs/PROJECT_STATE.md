@@ -8,38 +8,57 @@ Last reviewed: 2026-10-05
 
 ## Current branch
 
-`feature/edgar-cross-filing-reconciliation`
+`chore/claude-agent-team` (local only; no upstream configured).
 
 
-## Last verified pushed commit
+## Last verified commit
 
-`17d3d4a` docs: add agent development guidance and project state
+`d866fd4` Merge pull request #35 from billvo9/chore/claude-project-workflow
 
-Verified 2026-10-05: local HEAD and
-`origin/feature/edgar-cross-filing-reconciliation` both point to
-`17d3d4a41a4a9c970a973672740ad94707964715`.
+Verified 2026-10-05: local HEAD, `origin/main` (as of last fetch), and
+`git merge-base HEAD origin/main` all equal
+`d866fd41d7dfb054537a387d9af63eb7f2a08f2f`. The current branch has no
+commits of its own.
 
-Branch commits since `main` merge of PR #33 (`b7f1a6e`):
+Recently merged to `main`:
 
-- `ec006a4` feat: add authoritative EDGAR fiscal identity resolution
-- `06bcfe8` feat: add deterministic fiscal flow reconciliation
-- `ee003eb` feat: use authoritative fiscal identity in EDGAR history
-- `17d3d4a` docs: add agent development guidance and project state
+- PR #34 (`0b7b1b8`): `add55fd` feat: integrate point-in-time EDGAR
+  fiscal reconciliation (on top of `ec006a4`, `06bcfe8`, `ee003eb`,
+  `17d3d4a`).
+- PR #35 (`d866fd4`): `3258e72` chore: add Claude project workflow
+  automation (`.claude/settings.json`, hooks, `project-verify` and
+  `project-checkpoint` skills).
 
 
 ## Current working tree
 
-Verified 2026-10-05. The cross-filing reconciliation ticket is
-implemented, reviewed, and owner-approved, but uncommitted and unstaged:
+Verified 2026-10-05:
 
-- `src/stock_agent/data/fundamentals/edgar_history.py` (modified)
-- `src/stock_agent/data/fundamentals/edgar_quarterly.py` (modified)
-- `src/stock_agent/data/fundamentals/edgar_reconciliation.py` (modified)
-- `tests/test_edgar_quarterly.py` (modified)
-- `tests/test_edgar_reconciliation.py` (modified)
-- `tests/test_edgar_history_reconciliation.py` (new, untracked)
+Uncommitted and unstaged (this ticket):
 
-No other files differ from HEAD.
+- `.claude/agents/*.md` (8 new, untracked): the specialist agent team.
+- `.claude/skills/project-verify/SKILL.md` (modified): gate commands must
+  run unpiped; pass/fail comes from exit status.
+- `docs/PROJECT_STATE.md` (modified): this checkpoint.
+
+Nothing staged.
+
+
+## Current objective
+
+Ticket: project-scoped specialist agent team (`chore/claude-agent-team`).
+Owner-approved design, 2026-10-05:
+
+- Eight agents under `.claude/agents/`: quant-researcher, data-scientist,
+  data-engineer, backend-engineer, frontend-engineer (implementers), and
+  security-reviewer, test-reviewer, architect (read-only: no Edit/Write;
+  Bash for inspection and verification only).
+- `model: inherit` for all; no WebSearch/WebFetch.
+- Learning-core ML/RL/statistical-model work: agents deliver design,
+  tests, and a bounded skeleton; the owner writes the core.
+
+Status: the eight agent definitions and the project-verify edit are
+being added in the working tree, pending owner review. Not committed.
 
 
 ## Current EDGAR architecture
@@ -59,9 +78,9 @@ Modules under `src/stock_agent/data/fundamentals/`:
 | `point_in_time.py` | `align_quarterly_fundamentals_asof`: as-of join to market dates |
 
 
-## Completed in the current ticket (uncommitted)
+## EDGAR reconciliation (merged in PR #34)
 
-- Authoritative EDGAR fiscal identity (committed earlier on this branch)
+- Authoritative EDGAR fiscal identity (`ec006a4`)
   drives every observation; quarters never come from calendar months.
 - Deterministic cross-filing fiscal-flow reconciliation integrated into
   `build_edgar_history`; reconciliation is the single authority for flow
@@ -133,8 +152,8 @@ validation only:
 
 ## Last verified quality baseline
 
-Measured 2026-10-05 on the working tree (HEAD `17d3d4a` plus the
-uncommitted ticket changes):
+Measured 2026-10-05 via `/project-verify` on HEAD `d866fd4` plus the
+uncommitted ticket changes (each gate run unpiped, judged by exit status):
 
 - `pytest -q`: 452 passed
 - `python -m pytest -q`: 452 passed
@@ -159,7 +178,9 @@ uncommitted ticket changes):
 
 ## Next steps
 
-1. Commit the ticket on this branch (owner approval).
-2. Push and open a pull request to `main` (owner approval).
-3. Next major data ticket: "Versioned derived observations and
-   amendment-aware as-of fundamentals" (items 1 and 2).
+1. Owner reviews the agent definitions and this checkpoint.
+2. Commit the agent team and the project-verify edit on this branch
+   (owner approval).
+3. Push and open a pull request to `main` (owner approval).
+4. Next major data ticket: "Versioned derived observations and
+   amendment-aware as-of fundamentals" (open items 1 and 2).
