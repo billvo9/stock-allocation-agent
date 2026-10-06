@@ -41,6 +41,13 @@ fi
 echo "- recent commits:"
 git log --oneline -5 2>/dev/null | cut -c1-100 | sed 's/^/    /'
 
+if [ -x .venv/bin/python ]; then
+    venv_version=$(.venv/bin/python -c 'import sys; print(*sys.version_info[:3], sep=".")' 2>/dev/null)
+    echo "- project venv: .venv (Python ${venv_version:-unknown}); gates: python3 scripts/verify.py"
+else
+    echo "- project venv: MISSING (.venv/bin/python); scripts/verify.py will refuse to run"
+fi
+
 reviewed=$(grep -m1 '^Last reviewed:' docs/PROJECT_STATE.md 2>/dev/null)
 if [ -n "$reviewed" ]; then
     echo "- docs/PROJECT_STATE.md $reviewed"

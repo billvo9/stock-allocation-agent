@@ -1,43 +1,38 @@
 ---
 name: project-verify
-description: End-of-implementation verification for this repository - Git state, focused and full tests, Ruff, diff review, scope/artifact/secret scan, and classified findings. Read-only. Never commits, pushes, merges, formats, or edits files.
-disable-model-invocation: true
+description: Run at the end of every implementation task in this repository, before committing - canonical quality gates via scripts/verify.py, diff review for leakage and approval-gated changes, scope/artifact/secret scan, and a commit-gate verdict. Read-only. Use it yourself without waiting to be asked; also when the owner asks to verify.
 argument-hint: "[base-ref (default: origin/main)]"
-allowed-tools: Read Grep Glob Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git rev-parse *) Bash(git branch --show-current) Bash(git merge-base *) Bash(git ls-files *) Bash(git grep *) Bash(pytest -q) Bash(pytest -q tests/*) Bash(python -m pytest -q) Bash(ruff format --check src tests scripts) Bash(ruff check src tests scripts) Bash(bash .claude/skills/project-verify/scripts/scan_changes.sh*)
+allowed-tools: Read Grep Glob Bash(git status *) Bash(git diff *) Bash(git log *) Bash(git rev-parse *) Bash(git branch --show-current) Bash(git merge-base *) Bash(git ls-files *) Bash(git grep *) Bash(python3 scripts/verify.py) Bash(.venv/bin/python -m pytest -q *) Bash(bash .claude/skills/project-verify/scripts/scan_changes.sh*)
 ---
 
 # Project verification (read-only)
 
-Verify the current work against the AGENTS.md quality gates and report
-facts. Git and command output are the only sources of truth.
+Verify the current work against the AGENTS.md quality gates and decide
+whether it may be committed autonomously. Git and command output are the
+only sources of truth.
 
 ## Hard rules
 
 - Do not edit, create, delete, format, stage, commit, push, merge, or
-  fetch anything. This includes `ruff format` without `--check`,
-  `ruff check --fix`, `git add`, `git commit`, `git push`, `git fetch`,
-  `git stash`, `git reset`, `git checkout`, and any install command.
+  fetch anything during verification. Committing happens afterwards, per
+  the verdict below.
 - If a gate fails, report it with its output. Never change code, tests, or
-  configuration to make verification pass.
+  configuration to make verification pass, and never weaken a test.
+- Run gates only through `python3 scripts/verify.py`. Never run bare
+  `pytest` or `ruff`: they may resolve to a non-project interpreter (this
+  happened with Anaconda). Focused tests use `.venv/bin/python -m pytest`.
+- Run the gate script directly. Never pipe it through `tail`, `grep`,
+  `head`, `tee`, or anything else; its exit status is the result
+  (0 pass, 1 gate failed, 2 environment unusable).
 - Quote each command exactly as run, with its key result lines.
-- The full gates in step 4 are authoritative. Focused tests are only an
-  optimization and never replace them.
-- Run each authoritative gate command directly, exactly as listed. Never
-  pipe it through `tail`, `grep`, `head`, `tee`, or any other command,
-  and never chain it in a way that can hide or replace its exit status.
-- Pass/fail for each gate is the command's actual exit status (0 = pass).
-  Output may be summarized after the command finishes, but a summary or
-  matched text never overrides the exit status.
 
 ## Steps
 
 1. **Git state**
-   - `git branch --show-current`
-   - `git rev-parse HEAD`
+   - `git branch --show-current`, `git rev-parse HEAD`
    - `git rev-parse --abbrev-ref --symbolic-full-name @{u}` (report
      "no upstream" if it fails)
-   - `git status -sb`
-   - `git log --oneline -5`
+   - `git status -sb`, `git log --oneline -5`
 
    Remote-tracking refs are as of the last fetch. Do not fetch.
 
@@ -47,32 +42,32 @@ facts. Git and command output are the only sources of truth.
    - Changed = `git diff --name-status <merge-base>` (committed plus
      working tree) and untracked files from `git status --short`.
 
-3. **Focused tests (optional optimization)**
-   - Include changed `tests/test_*.py` files directly.
-   - For a changed `src/stock_agent/<path>.py`, find tests that import that
-     exact module with `git grep -l "stock_agent.<dotted.module>" tests`.
-   - If the mapping is uncertain or empty, skip focused tests and say so.
-   - Run `pytest -q <files>` only for a clearly determined set.
+3. **Focused tests (optional, fast feedback only)**
+   - Changed `tests/test_*.py` files, plus tests importing a changed
+     module (`git grep -l "stock_agent.<dotted.module>" tests`).
+   - `.venv/bin/python -m pytest -q <files>` for a clearly determined set;
+     otherwise skip and say so. Never a substitute for step 4.
 
-4. **Full gates (authoritative)** - run all four, even if one fails:
-   - `pytest -q`
-   - `python -m pytest -q`
-   - `ruff format --check src tests scripts`
-   - `ruff check src tests scripts`
+4. **Full gates (authoritative)**: `python3 scripts/verify.py`
 
 5. **Diff review**
    - `git diff --stat <merge-base>` and `git diff <merge-base>`.
-   - Check for point-in-time leakage, unrelated changes, dead code, and
-     removed or weakened tests (`-` lines in existing test files).
-   - Flag approval-gated changes (never approve them yourself): data
-     schemas or contracts, financial formulas, point-in-time or
-     availability semantics, dependencies (`pyproject.toml`,
-     `requirements*.txt`), CI (`.github/`), Claude configuration
-     (`.claude/`), secrets or environment configuration.
+   - Point-in-time leakage: availability timestamps, as-of joins,
+     feature/label construction, train/test boundaries.
+   - Unrelated changes, dead code, debug output.
+   - Removed or weakened tests (`-` lines in existing test files).
+   - Approval-gated changes (AGENTS.md "Owner approval gates"). The scan in
+     step 6 lists review-required paths mechanically; judge each:
+     dependencies, breaking schema / data-contract changes, point-in-time
+     or availability semantics, financial or accounting formulas,
+     secrets / auth, cloud / IAM / deployment / CI, Claude guardrails
+     (`.claude/`, `scripts/verify.py`, `AGENTS.md`, `CLAUDE.md`), deleted
+     data, major restructuring. A gated change is cleared only by the
+     owner's explicit approval in this session; quote it.
 
 6. **Scope / artifact / secret scan**
    - `bash .claude/skills/project-verify/scripts/scan_changes.sh <base>`
-   - Treat every listed item as needing a decision. The scan is heuristic.
+   - Every listed item needs a decision. The scan is heuristic.
 
 ## Report
 
@@ -80,7 +75,15 @@ facts. Git and command output are the only sources of truth.
 2. Commands and results table: exact command, pass/fail, counts.
 3. Findings grouped as **BLOCKER**, **SHOULD FIX**, **FOLLOW-UP**,
    **NO ISSUE**, each with file and evidence. Failing gates, leaked
-   secrets, and committed generated data are BLOCKERs.
-4. Approval-gated changes detected (listed, not approved).
-5. One-line verdict. Never claim commit, push, or merge state that Git
-   does not show.
+   secrets, committed generated data, and leakage are BLOCKERs.
+4. Approval-gated changes: each listed with "approved (quote)" or
+   "NOT approved".
+5. **Commit gate verdict** (exactly one):
+   - `READY` - all gates pass, no BLOCKER, every gated change approved.
+     The lead may stage the task's files, commit, push the branch, and
+     open a PR (AGENTS.md "Autonomy"). Never merge.
+   - `NEEDS OWNER` - an unapproved gated change; stop and ask before
+     committing.
+   - `BLOCKED` - failing gate or BLOCKER; fix and re-verify.
+
+Never claim commit, push, or merge state that Git does not show.

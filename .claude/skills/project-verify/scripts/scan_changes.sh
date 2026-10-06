@@ -64,6 +64,22 @@ while IFS= read -r path; do
 done <<< "$changed"
 
 echo
+echo "== review-required paths (approval-gated if the change is breaking or semantic) =="
+# Guardrails, dependencies, secrets, CI, and modules holding schemas,
+# point-in-time / availability logic, or financial formulas. Heuristic: the
+# verifier decides whether each listed change actually needs owner approval.
+guardrail_re='(^|/)(pyproject\.toml|requirements[^/]*\.txt|setup\.(py|cfg)|AGENTS\.md|CLAUDE\.md)$|(^|/)\.env($|\.)|^\.github/|^\.claude/|^scripts/verify\.py$'
+domain_re='^src/.*(schema|point_in_time|availability|eligibility)[^/]*\.py$|^src/stock_agent/data/fundamentals/(edgar_(fiscal|quarterly|reconciliation|history)|features)\.py$|^src/stock_agent/(features/training|evaluation/(metrics|performance|risk_adjusted|benchmark)|environment/(portfolio_math|reward)|data/rates/transform)\.py$'
+while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if printf '%s' "$path" | grep -Eq "$guardrail_re"; then
+        echo "  [review:guardrail] $path"
+    elif printf '%s' "$path" | grep -Eq "$domain_re"; then
+        echo "  [review:domain] $path"
+    fi
+done <<< "$changed"
+
+echo
 echo "== tracked files that match .gitignore =="
 git ls-files -ci --exclude-standard 2>/dev/null | while IFS= read -r path; do
     echo "  [tracked-but-ignored] $path"
