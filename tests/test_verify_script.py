@@ -12,6 +12,7 @@ import importlib.util
 import io
 import json
 import sys
+from importlib.metadata import version as installed_version
 from pathlib import Path
 
 import pytest
@@ -179,6 +180,24 @@ def test_ci_does_not_run_gates_outside_the_canonical_script():
         for line in step.get("run", "").splitlines():
             command = line.strip()
             assert not command.startswith(("pytest", "ruff", "python -m pytest")), command
+
+
+def _requirement_pins():
+    pins = {}
+    for line in (ROOT / "requirements.txt").read_text().splitlines():
+        name, separator, pinned = line.strip().partition("==")
+        if separator:
+            pins[name.strip().lower()] = pinned.strip()
+    return pins
+
+
+@pytest.mark.parametrize("tool", ["pytest", "ruff"])
+def test_gate_tools_are_pinned_and_installed_at_the_pin(tool):
+    # CI installs exactly the pin; this fails if a local .venv drifts from it.
+    pins = _requirement_pins()
+
+    assert tool in pins, f"{tool} must be pinned with == in requirements.txt"
+    assert installed_version(tool) == pins[tool]
 
 
 def test_ci_installs_into_the_project_venv():

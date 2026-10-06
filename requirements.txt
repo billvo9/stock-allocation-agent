@@ -4,8 +4,8 @@ yfinance
 duckdb
 pyarrow
 pyyaml
-pytest
-ruff
+pytest==9.1.1
+ruff==0.16.2
 matplotlib
 lxml
 edgartools==5.58.0

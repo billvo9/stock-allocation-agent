@@ -216,8 +216,8 @@ Measured 2026-10-06 with `python3 scripts/verify.py` on
 changes), launched from Anaconda `python3`; every gate ran with `.venv`
 tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2). Exit 0.
 
-- `pytest -q`: 694 passed (521 before + 173 workflow tests)
-- `python -m pytest -q`: 694 passed
+- `pytest -q`: 696 passed (521 before + 175 workflow tests)
+- `python -m pytest -q`: 696 passed
 - `ruff format --check src tests scripts .claude/hooks`: 121 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
@@ -259,11 +259,11 @@ CI has not yet run this script (it runs on the pull request).
    match fallback when the nearest prior-year row is not yet available.
 6. `split_temporal_dataset` has no purge / embargo for label horizons.
 7. Workflow follow-ups (owner decisions):
-   - `ruff` and `pytest` are unpinned in `requirements.txt`, so CI
-     installs the latest while local `.venv` has ruff 0.16.2 / pytest
-     9.1.1. Ruff's default rule set varies by version (0.16.2 enables 826
-     rules with this config), so CI and local gates can diverge. Pinning
-     is a dependency change. `scripts/verify.py` prints both versions.
+   - Resolved 2026-10-06 (owner-approved): `ruff==0.16.2` and
+     `pytest==9.1.1` are pinned in `requirements.txt`, matching the
+     verified `.venv`; a gate test fails if the installed version differs
+     from the pin. Their transitive dependencies (e.g. `pluggy`) remain
+     unpinned.
    - GitHub branch protection on `main` is not verified (`gh` is not
      installed locally). It is the authoritative control against direct
      pushes and merges; the local guard is defense in depth.
@@ -282,7 +282,6 @@ CI has not yet run this script (it runs on the pull request).
    (merging is owner-only); confirm CI passes with `scripts/verify.py`.
 2. Start a fresh Claude session after merge so the new settings and
    hooks load.
-3. Owner decisions from open item 7: pin `ruff` / `pytest`; enable
-   branch protection on `main`.
+3. Owner decision from open item 7: enable branch protection on `main`.
 4. Choose the next ticket from the open items (candidates: decision
    timestamp (1), SMCI coverage gaps (2), purge / embargo (6)).
