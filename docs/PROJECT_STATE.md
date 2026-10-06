@@ -3,63 +3,53 @@
 Changing project state only. Permanent policy lives in `AGENTS.md`.
 Git is authoritative: verify everything here before relying on it.
 
-Last reviewed: 2026-10-05
+Last reviewed: 2026-10-06
 
 
 ## Current branch
 
-`feature/versioned-derived-observations` (local only; no upstream
-configured).
+`docs/checkpoint-versioned-fundamentals` (local only; no upstream
+configured). Created at `668a37c`; no commits of its own.
 
 
 ## Last verified commit
 
-`2025c1f` Merge pull request #36 from billvo9/chore/claude-agent-team
+`668a37c` Merge pull request #37 from
+billvo9/feature/versioned-derived-observations
 
-Verified 2026-10-05: local HEAD, `origin/main` (as of last fetch), and
-`git merge-base HEAD origin/main` all equal
-`2025c1f02b442c7e0c216c6111490deeca17bfc3`. The current branch has no
-commits of its own.
+Verified 2026-10-06: local HEAD, `main`, `origin/main` (as of last
+fetch), and `git merge-base HEAD origin/main` all equal
+`668a37ca1440b2c2af60876dbfdc344ec6e583ad`. The merge tree is identical
+to its feature commit `b014e28` (empty `git diff b014e28 668a37c`).
 
 Recently merged to `main`:
 
-- PR #34 (`0b7b1b8`): `add55fd` feat: integrate point-in-time EDGAR
-  fiscal reconciliation (on top of `ec006a4`, `06bcfe8`, `ee003eb`,
-  `17d3d4a`).
+- PR #37 (`668a37c`): `b014e28` feat: add versioned point-in-time
+  fundamentals (10 source / test files plus this file).
+- PR #36 (`2025c1f`): `60fc6e7` chore: add Claude specialist agent team
+  (`.claude/agents/`, eight agents).
 - PR #35 (`d866fd4`): `3258e72` chore: add Claude project workflow
   automation (`.claude/settings.json`, hooks, `project-verify` and
   `project-checkpoint` skills).
-- PR #36 (`2025c1f`): `60fc6e7` chore: add Claude specialist agent team
-  (`.claude/agents/`, eight agents).
+- PR #34 (`0b7b1b8`): `add55fd` feat: integrate point-in-time EDGAR
+  fiscal reconciliation.
 
 
 ## Current working tree
 
-Verified 2026-10-05:
+Verified 2026-10-06: clean before this checkpoint. The only change is
+`docs/PROJECT_STATE.md` (this checkpoint, uncommitted). Nothing staged.
 
-Uncommitted and unstaged (this ticket), 11 modified files total: 10
-ticket files plus `docs/PROJECT_STATE.md` (this checkpoint):
-
-- `src/stock_agent/data/fundamentals/`: `edgar_history.py`,
-  `edgar_reconciliation.py`, `point_in_time.py`, `features.py`,
-  `quarterly_schema.py`.
-- `tests/`: `test_edgar_history_reconciliation.py`,
-  `test_edgar_reconciliation.py`, `test_point_in_time_fundamentals.py`,
-  `test_fundamental_features.py`, `test_quarterly_fundamental_schema.py`.
-
-Nothing staged. No untracked files.
+Three older stashes (from `feature/macro-ingestion`,
+`feature/fundamental-data-foundation`, `feature/equal-weight-baseline`)
+are owner-owned and untouched.
 
 
 ## Current objective
 
-Ticket: "Versioned derived observations and amendment-aware as-of
-fundamentals" (`feature/versioned-derived-observations`). Design
-owner-approved 2026-10-05, including the contract changes below and the
-AGENTS.md interpretation that per-metric carry-forward is not a
-"substitution" (no AGENTS.md change).
-
-Status: all five slices implemented and verified in the working tree;
-not committed. Owner review of the diff, commit, push, and PR pending.
+Record the post-merge state of PR #37 and the SMCI real-amendment
+validation (this branch). The next ticket has not been chosen; see
+"Next steps".
 
 
 ## Current EDGAR architecture
@@ -101,9 +91,13 @@ Modules under `src/stock_agent/data/fundamentals/`:
   validation (below).
 
 
-## Versioned EDGAR history (this ticket, uncommitted)
+## Versioned EDGAR history (merged in PR #37)
 
-Verified 2026-10-05 against the working tree:
+Design owner-approved 2026-10-05, including the contract changes below
+and the AGENTS.md interpretation that per-metric carry-forward is not a
+"substitution" (no AGENTS.md change). Described as verified 2026-10-05
+against the pre-commit working tree; committed as `b014e28` and merged
+as `668a37c`:
 
 - Versions are period-centric. For each fiscal period, each DISTINCT
   `available_at` of its own filings or the immediately preceding fiscal
@@ -138,6 +132,10 @@ Verified 2026-10-05 against the working tree:
 - YoY: prior-year rows must be available no later than the current row;
   unknown availability is never eligible (NaN growth). Matching and
   growth formulas unchanged.
+- Reconciliation formulas unchanged (checked 2026-10-06 with
+  `git diff 2025c1f b014e28`): no arithmetic lines removed; the
+  prior-availability guard now compares against an `as_of` knowledge
+  time that defaults to, and may never precede, `current.available_at`.
 - Verification: two independent reviews (test-reviewer, data-engineer)
   found no blockers; 12 of 12 mutation checks caught (backdating,
   filing-centric re-derivation, availability-only as-of, latest-overall
@@ -171,7 +169,7 @@ that day). It is not a measured dissemination timestamp.
 ## Controlled real-data validation (MU)
 
 Seven MU XBRL filings, FY2025 Q1 through FY2026 Q3, edgartools 5.58.0,
-validation only (run before this ticket; not re-run on the versioned
+validation only (run before PR #37; not re-run on the versioned
 history):
 
 - Fiscal identity matched MU's 52/53-week calendar.
@@ -186,16 +184,43 @@ history):
   entered the repository.
 
 
+## Real XBRL amendment validation (SMCI)
+
+Owner-reported 2026-10-06: run after the PR #37 merge on Super Micro
+Computer (SMCI) FY2017 filings, including amendments. Validation only;
+not re-run in this session. No artifacts entered the repository
+(verified 2026-10-06: clean tree, no SMCI references in tracked files).
+
+No point-in-time correctness defect was found:
+
+- Original versions stayed historically visible; amended versions
+  became visible only at their own `available_at`.
+- Later filings did not alter earlier histories.
+- Downstream quarter re-derivation after amendments was correct.
+- Lineage source / prior timestamps and accessions were correct.
+- As-of selection chose the newest fiscal period first, then that
+  period's newest version.
+- Manual operating cash-flow reconciliation matched the reported FY
+  values.
+
+Coverage limitations found are tracked as open item 2.
+
+
 ## Last verified quality baseline
 
-Measured 2026-10-05 via `/project-verify` on HEAD `2025c1f` plus the
-uncommitted ticket changes (each gate run unpiped, judged by exit status):
+Measured 2026-10-06 via `/project-verify` on HEAD `668a37c` (clean
+tree), inside the project `.venv` (Python 3.12.2): each gate run
+unpiped with `.venv/bin` first on `PATH`, judged by exit status.
 
 - `pytest -q`: 521 passed
 - `python -m pytest -q`: 521 passed
 - `ruff format --check src tests scripts`: 116 files already formatted
 - `ruff check src tests scripts`: all checks passed
-- `scan_changes.sh origin/main`: 0 artifact / large-file / secret hits
+- `scan_changes.sh origin/main`: 0 changed paths, 0 hits
+
+The same four commands failed in a shell without the venv active
+(`/opt/anaconda3` Python lacks `duckdb` / `edgar`; `ruff` not on
+`PATH`). See open item 7.
 
 
 ## Open items
@@ -203,8 +228,17 @@ uncommitted ticket changes (each gate run unpiped, judged by exit status):
 1. Decision timestamp vs midnight-UTC market dates in
    `align_quarterly_fundamentals_asof` (stale-by-a-day, not leaking;
    availability-semantics change, owner-gated).
-2. No real XBRL amendment validated yet; versioned scenarios are
-   synthetic, single-symbol fixtures.
+2. Real-data coverage gaps from the SMCI validation (coverage and
+   diagnostics; no point-in-time defect found), in suggested priority:
+   - edgartools can mislabel 52/53-week fiscal calendars; confirm
+     whether affected filings are rejected or accepted.
+   - Later comparative restatements are not ingested.
+   - One ambiguous concept mapping rejects the entire filing.
+   - Part-III-only 10-K/As are skipped under the same reason code as
+     genuine errors.
+   - Current-period columns can sometimes be missing.
+   - Synthetic amendment fixtures are cleaner and more staggered than
+     some real filings.
 3. Version rows copy non-flow columns from the anchor; extend
    per-metric carry-forward before EDGAR populates balance-sheet / EPS /
    capex columns.
@@ -214,7 +248,8 @@ uncommitted ticket changes (each gate run unpiped, judged by exit status):
    match fallback when the nearest prior-year row is not yet available.
 6. `split_temporal_dataset` has no purge / embargo for label horizons.
 7. CI runs `ruff check` and `pytest -q` only, not the full AGENTS.md
-   gates.
+   gates (verified 2026-10-06 in `.github/workflows/ci.yml`). Locally,
+   the gates pass only inside the project `.venv`.
 8. Smaller items: lineage lacks current-side tie lists; as-of change log
    trusts `period_end`; mixed availability rules at one trigger instant;
    FY consistency checks (Q1+Q2+Q3+Q4 = FY); duplicate flow logic in
@@ -224,9 +259,8 @@ uncommitted ticket changes (each gate run unpiped, judged by exit status):
 
 ## Next steps
 
-1. Owner reviews the ticket diff and this checkpoint.
-2. Commit the ticket on `feature/versioned-derived-observations`
-   (owner approval).
-3. Push and open a pull request to `main` (owner approval).
-4. Choose the next ticket from the open items (candidates: decision
-   timestamp, real XBRL amendment validation, purge / embargo).
+1. Owner reviews this checkpoint; commit it on
+   `docs/checkpoint-versioned-fundamentals` (owner approval).
+2. Push and open a docs pull request to `main` (owner approval).
+3. Choose the next ticket from the open items (candidates: decision
+   timestamp (1), SMCI coverage gaps (2), purge / embargo (6)).
