@@ -7,6 +7,7 @@ import pytest
 
 from stock_agent.data.fundamentals.edgar_reconciliation import (
     CandidateReconciliation,
+    CurrentSelection,
     EdgarReconciliationError,
     FiscalFlowObservation,
     PriorSelection,
@@ -14,6 +15,7 @@ from stock_agent.data.fundamentals.edgar_reconciliation import (
     is_valid_prior_fiscal_observation,
     reconcile_fiscal_flow,
     reconcile_fiscal_flow_from_candidates,
+    select_current_fiscal_observation,
     select_prior_fiscal_observation,
 )
 
@@ -1160,3 +1162,341 @@ def test_selected_prior_is_used_for_subtraction():
     assert outcome.result.value == pytest.approx(26.0)
     assert outcome.result.prior_accession_number == "Q2A"
     assert outcome.selection.prior == amendment
+
+
+# ---------------------------------------------------------------------------
+# as_of: reconciliation of a derived observation available at as_of
+# ---------------------------------------------------------------------------
+
+
+def _asof_q3_current(**overrides: object) -> FiscalFlowObservation:
+    values: dict[str, object] = {
+        "fiscal_quarter": 3,
+        "period_end": "2025-05-29",
+        "available_at": "2025-06-27 20:00",
+        "accession_number": "Q3",
+        "ytd_value": 25000.0,
+    }
+    values.update(overrides)
+    return _observation(**values)
+
+
+def _asof_q2_prior(
+    accession_number: str,
+    available_at: str,
+    ytd_value: float | None,
+) -> FiscalFlowObservation:
+    return _observation(
+        fiscal_quarter=2,
+        period_end="2025-02-27",
+        available_at=available_at,
+        accession_number=accession_number,
+        ytd_value=ytd_value,
+    )
+
+
+def _asof_late_q2a() -> FiscalFlowObservation:
+    return _asof_q2_prior("Q2A-LATE", "2025-07-15 20:00", 15800.0)
+
+
+def _asof_original_q2() -> FiscalFlowObservation:
+    return _asof_q2_prior("Q2", "2025-03-26 20:00", 16000.0)
+
+
+def test_as_of_defaults_to_current_available_at():
+    current = _asof_q3_current()
+    candidates = [_asof_original_q2(), _asof_late_q2a()]
+
+    default = reconcile_fiscal_flow_from_candidates(current=current, candidates=candidates)
+    explicit = reconcile_fiscal_flow_from_candidates(
+        current=current,
+        candidates=candidates,
+        as_of=current.available_at,
+    )
+
+    assert default == explicit
+    assert default.result.value == pytest.approx(9000.0)
+    assert default.result.prior_accession_number == "Q2"
+
+
+def test_as_of_admits_priors_available_by_as_of():
+    current = _asof_q3_current()
+
+    outcome = reconcile_fiscal_flow_from_candidates(
+        current=current,
+        candidates=[_asof_original_q2(), _asof_late_q2a()],
+        as_of=pd.Timestamp("2025-07-15 20:00", tz="UTC"),
+    )
+
+    assert outcome.result.value == pytest.approx(9200.0)
+    assert outcome.result.prior_accession_number == "Q2A-LATE"
+    assert outcome.selection is not None
+    assert outcome.selection.prior == _asof_late_q2a()
+
+
+def test_as_of_still_rejects_priors_after_as_of():
+    current = _asof_q3_current()
+
+    outcome = reconcile_fiscal_flow_from_candidates(
+        current=current,
+        candidates=[_asof_late_q2a()],
+        as_of=pd.Timestamp("2025-07-15 19:59:59", tz="UTC"),
+    )
+
+    assert outcome.result.value is None
+    assert outcome.result.reason == "prior_available_after_current"
+
+
+def test_as_of_applies_to_select_and_reconcile_directly():
+    current = _asof_q3_current()
+    as_of = pd.Timestamp("2025-07-15 20:00", tz="UTC")
+
+    selection = select_prior_fiscal_observation(
+        current=current,
+        candidates=[_asof_original_q2(), _asof_late_q2a()],
+        as_of=as_of,
+    )
+    assert selection.prior == _asof_late_q2a()
+
+    assert reconcile_fiscal_flow(current=current, prior=_asof_late_q2a()).reason == (
+        "prior_available_after_current"
+    )
+
+    result = reconcile_fiscal_flow(current=current, prior=_asof_late_q2a(), as_of=as_of)
+    assert result.value == pytest.approx(9200.0)
+    assert result.method == "ytd_minus_prior_ytd"
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda current, as_of: select_prior_fiscal_observation(
+            current=current, candidates=[_asof_original_q2()], as_of=as_of
+        ),
+        lambda current, as_of: reconcile_fiscal_flow(
+            current=current, prior=_asof_original_q2(), as_of=as_of
+        ),
+        lambda current, as_of: reconcile_fiscal_flow(current=current, as_of=as_of),
+        lambda current, as_of: reconcile_fiscal_flow_from_candidates(
+            current=current, candidates=[_asof_original_q2()], as_of=as_of
+        ),
+    ],
+    ids=["select", "reconcile_with_prior", "reconcile_without_prior", "from_candidates"],
+)
+def test_as_of_before_current_availability_raises(call):
+    current = _asof_q3_current()
+
+    with pytest.raises(EdgarReconciliationError, match="as_of"):
+        call(current, pd.Timestamp("2025-06-27 19:59:59", tz="UTC"))
+
+
+# ---------------------------------------------------------------------------
+# select_current_fiscal_observation
+# ---------------------------------------------------------------------------
+
+
+def _asof_q3_candidate(
+    accession_number: str,
+    available_at: str,
+    **values: float | None,
+) -> FiscalFlowObservation:
+    return _asof_q3_current(
+        accession_number=accession_number,
+        available_at=available_at,
+        ytd_value=values.get("ytd_value"),
+        direct_value=values.get("direct_value"),
+        fy_value=values.get("fy_value"),
+    )
+
+
+_AS_OF = pd.Timestamp("2027-12-31", tz="UTC")
+
+
+def test_current_selection_takes_latest_usable_available_by_as_of():
+    original = _asof_q3_candidate("Q3", "2025-06-27 20:00", ytd_value=25000.0)
+    amendment = _asof_q3_candidate("Q3A", "2025-08-01 20:00", ytd_value=25500.0)
+
+    before = select_current_fiscal_observation(
+        candidates=[original, amendment],
+        as_of=pd.Timestamp("2025-08-01 19:59:59", tz="UTC"),
+    )
+    after = select_current_fiscal_observation(
+        candidates=[original, amendment],
+        as_of=pd.Timestamp("2025-08-01 20:00", tz="UTC"),
+    )
+
+    assert before == CurrentSelection(
+        current=original,
+        reason="ok",
+        equivalent_current_accessions=("Q3",),
+    )
+    assert after == CurrentSelection(
+        current=amendment,
+        reason="ok",
+        equivalent_current_accessions=("Q3A",),
+    )
+
+
+def test_current_selection_skips_partial_amendment_without_input():
+    original = _asof_q3_candidate("Q3", "2025-06-27 20:00", ytd_value=25000.0)
+    no_input = _asof_q3_candidate("Q3A-EXHIBIT", "2025-08-01 20:00")
+    fy_only = _asof_q3_candidate("Q3A-FY", "2025-08-02 20:00", fy_value=1.0)
+
+    selection = select_current_fiscal_observation(
+        candidates=[fy_only, no_input, original],
+        as_of=_AS_OF,
+    )
+
+    assert selection.current == original
+    assert selection.reason == "ok"
+    assert selection.skipped_current_accessions == ("Q3A-EXHIBIT", "Q3A-FY")
+
+
+@pytest.mark.parametrize(
+    ("fiscal_quarter", "values"),
+    [
+        (1, {"ytd_value": 1.0}),
+        (1, {"direct_value": 1.0}),
+        (2, {"ytd_value": 1.0}),
+        (2, {"direct_value": 1.0}),
+        (3, {"ytd_value": 1.0}),
+        (4, {"fy_value": 1.0}),
+        (4, {"direct_value": 1.0}),
+    ],
+)
+def test_current_selection_usable_inputs_mirror_reconciliation(fiscal_quarter, values):
+    candidate = _observation(fiscal_quarter=fiscal_quarter, accession_number="X", **values)
+
+    selection = select_current_fiscal_observation(candidates=[candidate], as_of=_AS_OF)
+
+    assert selection.current == candidate
+    assert selection.reason == "ok"
+
+
+@pytest.mark.parametrize(
+    ("fiscal_quarter", "values", "reason"),
+    [
+        (1, {}, "no_reported_value"),
+        (1, {"fy_value": 1.0}, "missing_current_ytd"),
+        (2, {"fy_value": 1.0}, "missing_current_ytd"),
+        (3, {"fy_value": 1.0}, "missing_current_ytd"),
+        (4, {"ytd_value": 1.0}, "missing_current_fy"),
+        (4, {}, "no_reported_value"),
+    ],
+)
+def test_current_selection_unusable_reports_latest_candidate_reason(fiscal_quarter, values, reason):
+    older = _observation(
+        fiscal_quarter=fiscal_quarter,
+        accession_number="OLD",
+        available_at="2025-01-01",
+    )
+    latest = _observation(
+        fiscal_quarter=fiscal_quarter,
+        accession_number="NEW",
+        available_at="2025-02-01",
+        **values,
+    )
+
+    selection = select_current_fiscal_observation(candidates=[latest, older], as_of=_AS_OF)
+
+    assert selection.current is None
+    assert selection.reason == reason
+    assert selection.skipped_current_accessions == ("NEW", "OLD")
+
+
+def test_current_selection_unusable_tie_uses_smallest_accession_reason():
+    a = _asof_q3_candidate("A", "2025-08-01 20:00", fy_value=1.0)
+    b = _asof_q3_candidate("B", "2025-08-01 20:00")
+
+    for candidates in ([a, b], [b, a]):
+        selection = select_current_fiscal_observation(candidates=candidates, as_of=_AS_OF)
+        assert selection.current is None
+        assert selection.reason == "missing_current_ytd"
+
+
+def test_current_selection_nothing_available_is_missing_current_observation():
+    later = _asof_q3_candidate("Q3", "2025-06-27 20:00", ytd_value=25000.0)
+
+    empty = select_current_fiscal_observation(candidates=[], as_of=_AS_OF)
+    too_early = select_current_fiscal_observation(
+        candidates=[later],
+        as_of=pd.Timestamp("2025-06-27 19:59:59", tz="UTC"),
+    )
+
+    for selection in (empty, too_early):
+        assert selection == CurrentSelection(
+            current=None,
+            reason="missing_current_observation",
+        )
+
+
+def test_current_selection_equal_inputs_at_same_time_use_smallest_accession():
+    b = _asof_q3_candidate("B", "2025-08-01 20:00", ytd_value=25500.0)
+    a = _asof_q3_candidate("A", "2025-08-01 20:00", ytd_value=25500.0)
+    older = _asof_q3_candidate("0-OLD", "2025-06-27 20:00", ytd_value=25000.0)
+
+    selection = select_current_fiscal_observation(candidates=[b, older, a], as_of=_AS_OF)
+
+    assert selection.current == a
+    assert selection.reason == "ok"
+    assert selection.equivalent_current_accessions == ("A", "B")
+    assert selection.conflicting_current_accessions == ()
+
+
+def test_current_selection_different_inputs_at_same_time_are_ambiguous():
+    a = _asof_q3_candidate("A", "2025-08-01 20:00", ytd_value=25500.0)
+    b = _asof_q3_candidate("B", "2025-08-01 20:00", ytd_value=25400.0)
+    # Same YTD but a direct value only on one side: inputs differ.
+    c = _asof_q3_candidate("C", "2025-08-01 20:00", ytd_value=25500.0, direct_value=9700.0)
+
+    selection = select_current_fiscal_observation(candidates=[a, b], as_of=_AS_OF)
+    assert selection.current is None
+    assert selection.reason == "ambiguous_current_observation"
+    assert selection.conflicting_current_accessions == ("A", "B")
+
+    selection = select_current_fiscal_observation(candidates=[c, a], as_of=_AS_OF)
+    assert selection.reason == "ambiguous_current_observation"
+    assert selection.conflicting_current_accessions == ("A", "C")
+
+
+def test_current_selection_is_independent_of_candidate_order():
+    candidates = [
+        _asof_q3_candidate("Q3", "2025-06-27 20:00", ytd_value=25000.0),
+        _asof_q3_candidate("Q3A", "2025-08-01 20:00", ytd_value=25500.0),
+        _asof_q3_candidate("Q3A-SAME", "2025-08-01 20:00", ytd_value=25500.0),
+        _asof_q3_candidate("Q3A-EXHIBIT", "2025-08-02 20:00"),
+        _asof_q3_candidate("Q3A-FUTURE", "2028-08-02 20:00", ytd_value=1.0),
+    ]
+
+    baseline = select_current_fiscal_observation(candidates=candidates, as_of=_AS_OF)
+
+    assert baseline.current is not None
+    assert baseline.current.accession_number == "Q3A"
+    assert baseline.skipped_current_accessions == ("Q3A-EXHIBIT",)
+    assert baseline.equivalent_current_accessions == ("Q3A", "Q3A-SAME")
+
+    for permutation in itertools.permutations(candidates):
+        assert select_current_fiscal_observation(candidates=permutation, as_of=_AS_OF) == baseline
+
+
+def test_current_selection_rejects_mixed_identity():
+    q3 = _asof_q3_candidate("Q3", "2025-06-27 20:00", ytd_value=25000.0)
+
+    mixed = [
+        _observation(metric_name="revenue", accession_number="X", ytd_value=1.0),
+        _observation(symbol="NVDA", accession_number="X", ytd_value=1.0),
+        _observation(fiscal_year=2024, accession_number="X", ytd_value=1.0),
+        _observation(fiscal_quarter=2, accession_number="X", ytd_value=1.0),
+    ]
+
+    for other in mixed:
+        with pytest.raises(EdgarReconciliationError, match="identity"):
+            select_current_fiscal_observation(candidates=[q3, other], as_of=_AS_OF)
+
+
+def test_current_selection_rejects_duplicate_accession():
+    q3 = _asof_q3_candidate("Q3", "2025-06-27 20:00", ytd_value=25000.0)
+    duplicate = _asof_q3_candidate(" Q3 ", "2025-08-01 20:00", ytd_value=25500.0)
+
+    with pytest.raises(EdgarReconciliationError, match="Duplicate"):
+        select_current_fiscal_observation(candidates=[q3, duplicate], as_of=_AS_OF)

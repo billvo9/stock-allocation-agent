@@ -26,6 +26,7 @@ from stock_agent.data.fundamentals.edgar_history import (
     build_edgar_history,
 )
 from stock_agent.data.fundamentals.edgar_quarterly import FLOW_METRIC_STATEMENTS
+from stock_agent.data.fundamentals.point_in_time import align_quarterly_fundamentals_asof
 from stock_agent.data.fundamentals.quarterly_schema import (
     QUARTERLY_FUNDAMENTAL_COLUMNS,
     validate_quarterly_fundamental_frame,
@@ -371,8 +372,32 @@ def _full_timeline() -> list[MuFiling]:
     ]
 
 
-def _row(result: EdgarHistoryResult, accession: str) -> pd.Series:
-    rows = result.frame[result.frame["sec_accession_number"].eq(accession)]
+def _at_version(
+    frame: pd.DataFrame,
+    accession: str,
+    at: pd.Timestamp | None,
+) -> pd.DataFrame:
+    """
+    Rows of the version anchored by accession at knowledge time at.
+
+    Default (at=None): the filing's OWN version, i.e. the version emitted
+    at the filing's own available_at. A filing is the anchor of versions
+    only from its own available_at onward, so this is its earliest one.
+    Later re-versions with the same anchor are selected with at.
+    """
+
+    rows = frame[frame["sec_accession_number"].eq(accession)]
+    available_at = pd.to_datetime(rows["available_at"], utc=True)
+    target = available_at.min() if at is None else pd.Timestamp(at)
+    return rows[available_at.eq(target)]
+
+
+def _row(
+    result: EdgarHistoryResult,
+    accession: str,
+    at: pd.Timestamp | None = None,
+) -> pd.Series:
+    rows = _at_version(result.frame, accession, at)
     assert len(rows) == 1
     return rows.iloc[0]
 
@@ -381,13 +406,33 @@ def _lineage(
     result: EdgarHistoryResult,
     accession: str,
     metric_name: str = "revenue",
+    at: pd.Timestamp | None = None,
 ) -> pd.Series:
-    rows = result.reconciliation[
-        result.reconciliation["sec_accession_number"].eq(accession)
-        & result.reconciliation["metric_name"].eq(metric_name)
-    ]
+    lineage = result.reconciliation
+    rows = _at_version(lineage[lineage["metric_name"].eq(metric_name)], accession, at)
     assert len(rows) == 1
     return rows.iloc[0]
+
+
+def _versions(
+    result: EdgarHistoryResult,
+    period_end: str,
+    columns: tuple[str, ...] = ("sec_accession_number", "available_at", "revenue"),
+) -> list[tuple[object, ...]]:
+    """Every version of one fiscal period, in knowledge-time order."""
+
+    frame = result.frame
+    rows = frame[
+        pd.to_datetime(frame["period_end"], utc=True).eq(pd.Timestamp(period_end, tz="UTC"))
+    ].sort_values("available_at", kind="mergesort")
+
+    return [
+        tuple(
+            pd.Timestamp(row[column]) if column == "available_at" else row[column]
+            for column in columns
+        )
+        for _, row in rows.iterrows()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -432,8 +477,10 @@ def test_r2_q4_is_fy_minus_prior_q3_ytd():
 def test_r3_amendment_accepted_after_current_is_not_used():
     result = _run([q2_fy25(), q3_fy25(), q2a_fy25_late()])
 
+    # The Q3 version knowable at Q3 time never uses the later amendment.
     assert _row(result, "Q3")["revenue"] == pytest.approx(9000.0)
     assert _lineage(result, "Q3")["prior_accession_number"] == "Q2"
+    assert pd.Timestamp(_row(result, "Q3")["available_at"]) == q3_fy25().available_at
 
     flagged = result.diagnostics[
         result.diagnostics["reason"].eq("derived_quarter_input_superseded")
@@ -634,34 +681,42 @@ def test_p1_history_is_prefix_stable_for_every_knowledge_time():
 
     q3_time = q3_fy25().available_at
     q2a_late_time = q2a_fy25_late().available_at
+    k_time = k_fy25_without_acceptance().available_at
 
-    # Q3 keeps the value that was knowable at the Q3 acceptance time:
-    # 25000 - 16000 (original Q2), not 25000 - 15800 (later amendment).
-    assert _row(full, "Q3")["revenue"] == pytest.approx(9000.0)
+    # Exact versions: (anchor accession, available_at, revenue, OCF).
+    # Q3 keeps 9000 at its own time (25000 - original Q2 16000); the late
+    # Q2 amendment adds a NEW Q3 version at the amendment's time (9200),
+    # it never rewrites the earlier one. Q3A's version carries Q3's OCF
+    # forward (the amendment omits OCF). BROKEN never appears.
+    frame = full.frame
+    assert [
+        (
+            row["sec_accession_number"],
+            pd.Timestamp(row["available_at"]),
+            row["revenue"],
+            row["operating_cash_flow"],
+        )
+        for _, row in frame.iterrows()
+    ] == [
+        ("Q1", q1_fy25().available_at, 8700.0, 3000.0),
+        ("Q2", q2_fy25().available_at, 7300.0, 3000.0),
+        ("Q3", q3_time, 9000.0, 3500.0),
+        ("Q2A-LATE", q2a_late_time, 7100.0, 3000.0),
+        ("Q3", q2a_late_time, 9200.0, 3500.0),
+        ("Q3A", q3a_fy25().available_at, 9700.0, 3500.0),
+        ("K", k_time, 11500.0, 3500.0),
+    ]
+
     assert _lineage(full, "Q3")["prior_accession_number"] == "Q2"
+    assert _lineage(full, "Q3", at=q2a_late_time)["prior_accession_number"] == "Q2A-LATE"
 
-    # The late Q2 amendment did not rewrite earlier state: exactly one Q3
-    # row exists for the original Q3 filing, still available at Q3 time.
-    q3_rows = full.frame[full.frame["sec_accession_number"].eq("Q3")]
-    assert len(q3_rows) == 1
-    assert pd.Timestamp(q3_rows.iloc[0]["available_at"]) == q3_time
-
-    # The amendment appears as additional, later-known information with
-    # its own acceptance timestamp, never backdated - and so does the
-    # diagnostic it causes.
-    amendment = _row(full, "Q2A-LATE")
-    assert pd.Timestamp(amendment["available_at"]) == q2a_late_time
-    assert pd.Timestamp(amendment["available_at"]) > q3_time
+    # Nothing known at Q3 time mentions the later amendment.
     assert "Q2A-LATE" not in set(_known_by(full.frame, q3_time)["sec_accession_number"])
     assert (
         _diagnostics_known_by(full.diagnostics, q3_time, knowable_at)["reason"]
         .ne("derived_quarter_input_superseded")
         .all()
     )
-
-    # Later knowledge is genuinely added, not merged into earlier rows;
-    # only the broken filing is absent.
-    assert len(full.frame) == len(timeline) - 1
     assert "BROKEN" not in set(full.frame["sec_accession_number"])
 
 
@@ -669,10 +724,15 @@ def test_p2_current_amendment_creates_new_later_version():
     without = _run([q2_fy25(), q3_fy25(), q2a_fy25_late()])
     with_amendment = _run([q2_fy25(), q3_fy25(), q2a_fy25_late(), q3a_fy25()])
 
-    original_before = _row(without, "Q3")
-    original_after = _row(with_amendment, "Q3")
+    # Both Q3-anchored versions (own time and the Q2A-LATE re-version)
+    # are unchanged by the later Q3 amendment.
+    for at in (q3_fy25().available_at, q2a_fy25_late().available_at):
+        pd.testing.assert_series_equal(
+            _row(without, "Q3", at=at).drop(labels=_CLOCK_DEPENDENT_COLUMNS),
+            _row(with_amendment, "Q3", at=at).drop(labels=_CLOCK_DEPENDENT_COLUMNS),
+        )
 
-    pd.testing.assert_series_equal(original_before, original_after)
+    original_after = _row(with_amendment, "Q3")
 
     amended = _row(with_amendment, "Q3A")
     assert pd.Timestamp(amended["available_at"]) > pd.Timestamp(original_after["available_at"])
@@ -683,25 +743,42 @@ def test_p2_current_amendment_creates_new_later_version():
     assert _lineage(with_amendment, "Q3A")["prior_accession_number"] == "Q2A-LATE"
 
 
-def test_p3_late_prior_amendment_does_not_rederive_current_quarter():
+def test_p3_late_prior_amendment_rederives_current_quarter_as_new_version():
     result = _run([q2_fy25(), q3_fy25(), q2a_fy25_late()])
 
-    # Documents the accepted limitation: the history is prefix-stable but
-    # not as-of complete. After Q2A-LATE is public, Q3 is still 9000
-    # (not 9200) and no re-derived Q3 version is emitted.
-    q3_period = result.frame[
-        pd.to_datetime(result.frame["period_end"], utc=True).eq(
-            pd.Timestamp("2025-05-29", tz="UTC")
-        )
+    q3_time = q3_fy25().available_at
+    q2a_late_time = q2a_fy25_late().available_at
+
+    # As-of complete: once Q2A-LATE is public, a NEW Q3 version (anchor
+    # Q3, available at the amendment's time) carries 25000 - 15800. The
+    # version knowable at Q3 time is untouched.
+    assert _versions(result, "2025-05-29") == [
+        ("Q3", q3_time, 9000.0),
+        ("Q3", q2a_late_time, 9200.0),
     ]
-    assert q3_period["sec_accession_number"].tolist() == ["Q3"]
-    assert q3_period.iloc[0]["revenue"] == pytest.approx(9000.0)
+
+    reversion = _row(result, "Q3", at=q2a_late_time)
+    assert reversion["availability_source"] == "sec_acceptance_datetime"
+    assert reversion["sec_form_type"] == "10-Q"
+
+    lineage = _lineage(result, "Q3", at=q2a_late_time)
+    assert lineage["prior_accession_number"] == "Q2A-LATE"
+    assert lineage["prior_available_at"] == q2a_late_time
+    assert lineage["source_accession_number"] == "Q3"
+    assert lineage["source_available_at"] == q3_time
+    assert lineage["version_trigger_accessions"] == ("Q2A-LATE",)
 
 
-def test_p4_no_duplicate_symbol_available_at():
+def test_p4_no_duplicate_symbol_period_end_available_at():
     result = _run([*_full_timeline(), q2a_fy25_early(), q1_fy26(), q2_fy26()])
 
-    assert not result.frame.duplicated(subset=["symbol", "available_at"]).any()
+    assert not result.frame.duplicated(subset=["symbol", "period_end", "available_at"]).any()
+
+    # Versions of different periods may share an instant (Q2A-LATE and
+    # the Q3 re-version it triggers), so (symbol, available_at) is not a key.
+    reversioned = _run(_full_timeline()).frame
+    assert reversioned.duplicated(subset=["symbol", "available_at"]).any()
+    assert not reversioned.duplicated(subset=["symbol", "period_end", "available_at"]).any()
 
 
 # ---------------------------------------------------------------------------
@@ -730,22 +807,30 @@ def _lineage_fixture() -> EdgarHistoryResult:
     )
 
 
-def test_l1_lineage_key_is_symbol_accession_metric():
+def test_l1_lineage_key_is_symbol_accession_available_at_metric():
     lineage = _lineage_fixture().reconciliation
 
-    assert not lineage.duplicated(subset=["symbol", "sec_accession_number", "metric_name"]).any()
+    key = ["symbol", "sec_accession_number", "available_at", "metric_name"]
+    assert not lineage.duplicated(subset=key).any()
+
+    # The anchor alone is not a key: Q3 anchors two versions.
+    assert lineage.duplicated(subset=["symbol", "sec_accession_number", "metric_name"]).any()
 
 
 def test_l2_every_canonical_flow_value_has_matching_lineage():
     result = _lineage_fixture()
 
-    lineage = result.reconciliation.set_index(["symbol", "sec_accession_number", "metric_name"])
+    lineage = result.reconciliation.set_index(
+        ["symbol", "sec_accession_number", "available_at", "metric_name"]
+    )
 
     assert len(lineage) == len(result.frame) * len(FLOW_METRICS)
 
     for _, row in result.frame.iterrows():
         for metric_name in FLOW_METRICS:
-            entry = lineage.loc[(row["symbol"], row["sec_accession_number"], metric_name)]
+            entry = lineage.loc[
+                (row["symbol"], row["sec_accession_number"], row["available_at"], metric_name)
+            ]
             canonical_value = row[metric_name]
 
             if pd.isna(canonical_value):
@@ -891,13 +976,34 @@ def _filing_variant(
     )
 
 
-def test_history_reason_prior_available_after_current():
+def test_history_reason_when_only_prior_arrives_later_is_missing_prior():
+    # Rewritten: the version at Q3 time is built only from filings known
+    # by then, so it cannot know a prior "arrives later". The amendment's
+    # existence must not leak into the earlier row's reason code.
     result = _run([q3_fy25(), q2a_fy25_late()])
 
     lineage = _lineage(result, "Q3")
     assert lineage["method"] == "unavailable"
-    assert lineage["reason"] == "prior_available_after_current"
+    assert lineage["reason"] == "missing_prior_fiscal_observation"
     assert pd.isna(lineage["prior_accession_number"])
+    assert lineage["skipped_prior_accessions"] == ()
+
+    # Once the amendment is public, Q3 gets a new, derived version.
+    reversion = _lineage(result, "Q3", at=_t(q2a_fy25_late()))
+    assert reversion["reason"] == "ok"
+    assert reversion["value"] == pytest.approx(25000.0 - 15800.0)
+
+
+def test_only_later_prior_does_not_leak_into_earlier_lineage_row():
+    full = _run([q3_fy25(), q2a_fy25_late()])
+    alone = _run([q3_fy25()], clock=_t(q3_fy25()) + pd.Timedelta(days=1))
+
+    at_q3 = full.reconciliation[full.reconciliation["available_at"].eq(_t(q3_fy25()))]
+
+    pd.testing.assert_frame_equal(
+        at_q3.reset_index(drop=True),
+        alone.reconciliation.reset_index(drop=True),
+    )
 
 
 def test_history_reason_missing_current_ytd_wins_over_prior_problems():
@@ -997,11 +1103,19 @@ def test_lineage_and_canonical_available_at_match_fixture_knowledge_time():
 
     result = _run(timeline)
 
-    canonical = result.frame.set_index("sec_accession_number")["available_at"]
-    assert {accession: pd.Timestamp(value) for accession, value in canonical.items()} == expected
+    # Each filing's own version is available exactly at the fixture time.
+    own = {
+        accession: pd.Timestamp(_row(result, accession)["available_at"]) for accession in expected
+    }
+    assert own == expected
 
+    # Every version (including re-versions) is available at some filing's
+    # fixture time, and every lineage row belongs to exactly one version.
+    assert set(pd.to_datetime(result.frame["available_at"], utc=True)) <= set(expected.values())
+
+    versions = set(zip(result.frame["sec_accession_number"], result.frame["available_at"]))
     for _, row in result.reconciliation.iterrows():
-        assert row["available_at"] == canonical[row["sec_accession_number"]]
+        assert (row["sec_accession_number"], row["available_at"]) in versions
 
 
 # ---------------------------------------------------------------------------
@@ -1169,7 +1283,19 @@ def test_missing_acceptance_time_uses_conservative_fallback():
     assert pd.Timestamp(q2_row["available_at"]) == pd.Timestamp("2025-06-28", tz="UTC")
     assert q2_row["availability_source"] == "sec_filing_date_plus_1d"
 
-    assert _lineage(result, "Q3")["reason"] == "prior_available_after_current"
+    # Rewritten: at Q3's own time the fallback-dated Q2 is not yet known,
+    # so the Q3 version has no prior (no leak of the later Q2).
+    assert _lineage(result, "Q3")["reason"] == "missing_prior_fiscal_observation"
+
+    # Q2 becomes usable only at its conservative time (filing date + 1
+    # day); the derived Q3 version appears then, never earlier.
+    reversion = _lineage(result, "Q3", at=pd.Timestamp("2025-06-28", tz="UTC"))
+    assert reversion["prior_accession_number"] == "Q2"
+    assert reversion["value"] == pytest.approx(9000.0)
+    assert (
+        _row(result, "Q3", at=pd.Timestamp("2025-06-28", tz="UTC"))["availability_source"]
+        == "sec_filing_date_plus_1d"
+    )
 
 
 def test_second_flow_metric_is_reconciled_independently():
@@ -1500,3 +1626,777 @@ def test_not_yet_available_filings_do_not_block_earlier_ones():
 
     skipped = result.diagnostics[result.diagnostics["reason"].eq("not_yet_available")]
     assert sorted(skipped["accession_number"]) == sorted([MU_Q3, MU_K])
+
+
+# ---------------------------------------------------------------------------
+# Versioned derived observations (T1-T12)
+#
+# A fiscal period p gets a new version whenever one of its own filings is
+# accepted, or a prior-quarter filing changes any reconciled metric. Each
+# version is available at the instant of the event that produced it.
+# ---------------------------------------------------------------------------
+
+
+def q1a_fy25(accepted_at: str = "2025-07-20 20:00") -> MuFiling:
+    # Q1 amendment restating revenue only (no cash-flow statement).
+    return _mu_filing(
+        accession="Q1A",
+        form="10-Q/A",
+        period_end="2024-11-28",
+        accepted_at=accepted_at,
+        fiscal_year=2025,
+        fiscal_period="Q1",
+        revenue={"YTD": 8600.0},
+    )
+
+
+def q2a_fy25_noop() -> MuFiling:
+    # Repeats the already-current Q2 YTD (15800) after Q2A-LATE.
+    return _mu_filing(
+        accession="Q2A-NOOP",
+        form="10-Q/A",
+        period_end="2025-02-27",
+        accepted_at="2025-07-25 20:00",
+        fiscal_year=2025,
+        fiscal_period="Q2",
+        revenue={"YTD": 15800.0},
+    )
+
+
+def q3a_fy25_partial(accepted_at: str = "2025-09-05 20:00") -> MuFiling:
+    # Partial own-period amendment: restates OCF only, omits revenue.
+    return _mu_filing(
+        accession="Q3A-PARTIAL",
+        form="10-Q/A",
+        period_end="2025-05-29",
+        accepted_at=accepted_at,
+        fiscal_year=2025,
+        fiscal_period="Q3",
+        revenue={},
+        operating_cash_flow={"YTD": 9600.0},
+    )
+
+
+def _versioned_timeline() -> list[MuFiling]:
+    return [
+        q1_fy25(),
+        q2_fy25(),
+        q3_fy25(),
+        q2a_fy25_late(),
+        q1a_fy25(),
+        q2a_fy25_noop(),
+        q3a_fy25(),
+        broken_filing(),
+        q3a_fy25_partial(),
+        k_fy25(),
+    ]
+
+
+def _t(filing: MuFiling) -> pd.Timestamp:
+    return filing.available_at
+
+
+Q1_END, Q2_END, Q3_END, K_END = "2024-11-28", "2025-02-27", "2025-05-29", "2025-08-28"
+
+# (period_end, anchor, available_at, revenue, operating_cash_flow)
+_VERSIONED_EXPECTED = [
+    (Q1_END, "Q1", _t(q1_fy25()), 8700.0, 3000.0),
+    (Q2_END, "Q2", _t(q2_fy25()), 7300.0, 3000.0),
+    (Q3_END, "Q3", _t(q3_fy25()), 9000.0, 3500.0),
+    (Q2_END, "Q2A-LATE", _t(q2a_fy25_late()), 7100.0, 3000.0),
+    (Q3_END, "Q3", _t(q2a_fy25_late()), 9200.0, 3500.0),
+    (Q1_END, "Q1A", _t(q1a_fy25()), 8600.0, 3000.0),
+    (Q2_END, "Q2A-LATE", _t(q1a_fy25()), 7200.0, 3000.0),
+    (Q2_END, "Q2A-NOOP", _t(q2a_fy25_noop()), 7200.0, 3000.0),
+    (Q3_END, "Q3A", _t(q3a_fy25()), 9700.0, 3500.0),
+    (Q3_END, "Q3A-PARTIAL", _t(q3a_fy25_partial()), 9700.0, 3600.0),
+    (K_END, "K", _t(k_fy25()), 11500.0, 3400.0),
+]
+
+
+def _version_tuples(result: EdgarHistoryResult) -> list[tuple[object, ...]]:
+    return [
+        (
+            str(pd.Timestamp(row["period_end"]).date()),
+            row["sec_accession_number"],
+            pd.Timestamp(row["available_at"]),
+            row["revenue"],
+            row["operating_cash_flow"],
+        )
+        for _, row in result.frame.iterrows()
+    ]
+
+
+def _assert_prefix_stable(timeline: list[MuFiling]) -> EdgarHistoryResult:
+    knowable_at = {filing.accession: filing.available_at for filing in timeline}
+
+    full = _run(timeline, strict=False)
+
+    for cutoff in sorted(set(knowable_at.values())):
+        known_filings = [filing for filing in timeline if filing.available_at <= cutoff]
+        prefix = _run(known_filings, clock=cutoff + pd.Timedelta(days=1), strict=False)
+
+        pd.testing.assert_frame_equal(
+            _known_by(full.frame, cutoff),
+            _known_by(prefix.frame, cutoff),
+            obj=f"canonical history known by {cutoff}",
+        )
+        pd.testing.assert_frame_equal(
+            _lineage_known_by(full.reconciliation, cutoff),
+            _lineage_known_by(prefix.reconciliation, cutoff),
+            obj=f"reconciliation lineage known by {cutoff}",
+        )
+        pd.testing.assert_frame_equal(
+            _diagnostics_known_by(full.diagnostics, cutoff, knowable_at),
+            _diagnostics_known_by(prefix.diagnostics, cutoff, knowable_at),
+            obj=f"diagnostics known by {cutoff}",
+        )
+
+        # The prefix run has nothing beyond the cutoff.
+        assert (pd.to_datetime(prefix.frame["available_at"], utc=True) <= cutoff).all()
+
+    return full
+
+
+def test_t1_versioned_history_is_prefix_stable_at_every_knowledge_time():
+    """
+    history(all filings) restricted to knowledge time <= t
+    == history(only filings knowable by t), for frame, lineage and
+    diagnostics, at every filing time - including the times at which
+    earlier periods are re-versioned (Q2A-LATE, Q1A, Q2A-NOOP).
+    """
+
+    full = _assert_prefix_stable(_versioned_timeline())
+
+    assert _version_tuples(full) == _VERSIONED_EXPECTED
+
+
+def test_t1_prefix_stable_when_only_prior_arrives_later():
+    # Q3 and the 10-K precede every Q2 filing: the Q3 version at Q3 time
+    # must not know that a prior will arrive later.
+    full = _assert_prefix_stable([q3_fy25(), k_fy25(), q2a_fy25_late()])
+
+    versions = _versions(full, Q3_END)
+    assert [(anchor, at) for anchor, at, _ in versions] == [
+        ("Q3", _t(q3_fy25())),
+        ("Q3", _t(q2a_fy25_late())),
+    ]
+    assert pd.isna(versions[0][2])
+    assert versions[1][2] == pytest.approx(9200.0)
+    assert _lineage(full, "Q3")["reason"] == "missing_prior_fiscal_observation"
+
+
+# Independent oracle input, written from the fixture definitions above:
+# accession -> (fiscal quarter, own-period input per metric). Inputs are
+# YTD for fiscal Q1-Q3 and FY for Q4; a missing metric is omitted.
+_ORACLE_FILINGS: dict[str, tuple[int, dict[str, float]]] = {
+    "Q1": (1, {"revenue": 8700.0, "operating_cash_flow": 3000.0}),
+    "Q2": (2, {"revenue": 16000.0, "operating_cash_flow": 6000.0}),
+    "Q3": (3, {"revenue": 25000.0, "operating_cash_flow": 9500.0}),
+    "Q2A-LATE": (2, {"revenue": 15800.0}),
+    "Q1A": (1, {"revenue": 8600.0}),
+    "Q2A-NOOP": (2, {"revenue": 15800.0}),
+    "Q3A": (3, {"revenue": 25500.0}),
+    "Q3A-PARTIAL": (3, {"operating_cash_flow": 9600.0}),
+    "K": (4, {"revenue": 37000.0, "operating_cash_flow": 13000.0}),
+}
+
+_ORACLE_PERIOD_ENDS = {1: Q1_END, 2: Q2_END, 3: Q3_END, 4: K_END}
+
+
+def _oracle_value(
+    available_at: dict[str, pd.Timestamp],
+    t: pd.Timestamp,
+    quarter: int,
+    metric: str,
+) -> float | None:
+    """Brute force: latest knowable own input minus latest knowable prior input."""
+
+    def latest_input(q: int) -> float | None:
+        known = [
+            (available_at[accession], values[metric])
+            for accession, (fiscal_quarter, values) in _ORACLE_FILINGS.items()
+            if fiscal_quarter == q and metric in values and available_at[accession] <= t
+        ]
+        if not known:
+            return None
+
+        latest_time = max(time for time, _ in known)
+        latest_values = {value for time, value in known if time == latest_time}
+
+        # Equal-time filings with different values are ambiguous: the
+        # design makes the value unavailable rather than picking one.
+        return latest_values.pop() if len(latest_values) == 1 else None
+
+    current = latest_input(quarter)
+
+    if current is None or quarter == 1:
+        return current
+
+    prior = latest_input(quarter - 1)
+    return None if prior is None else current - prior
+
+
+def test_t2_history_is_as_of_complete_against_brute_force_oracle():
+    timeline = _versioned_timeline()
+    available_at = {filing.accession: filing.available_at for filing in timeline}
+
+    result = _run(timeline, strict=False)
+    frame = result.frame.assign(
+        _available_at=pd.to_datetime(result.frame["available_at"], utc=True),
+        _period_end=pd.to_datetime(result.frame["period_end"], utc=True),
+    )
+
+    filing_times = sorted(set(available_at.values()))
+    query_times = sorted(
+        {
+            *filing_times,
+            *(time + pd.Timedelta(seconds=1) for time in filing_times),
+            *(time - pd.Timedelta(seconds=1) for time in filing_times),
+            pd.Timestamp("2026-12-31", tz="UTC"),
+        }
+    )
+
+    checked = 0
+
+    for t in query_times:
+        for quarter, period_end in _ORACLE_PERIOD_ENDS.items():
+            own_known = any(
+                fiscal_quarter == quarter and available_at[accession] <= t
+                for accession, (fiscal_quarter, _) in _ORACLE_FILINGS.items()
+            )
+
+            versions = frame[
+                frame["_period_end"].eq(pd.Timestamp(period_end, tz="UTC"))
+                & frame["_available_at"].le(t)
+            ]
+
+            if not own_known:
+                assert versions.empty, (t, quarter)
+                continue
+
+            latest = versions.sort_values("_available_at").iloc[-1]
+
+            for metric in ("revenue", "operating_cash_flow"):
+                expected = _oracle_value(available_at, t, quarter, metric)
+                if expected is None:
+                    assert pd.isna(latest[metric]), (t, quarter, metric)
+                else:
+                    assert latest[metric] == pytest.approx(expected), (t, quarter, metric)
+                checked += 1
+
+    assert checked > 100
+
+    # Literal pins, independent of the oracle.
+    end = pd.Timestamp("2026-12-31", tz="UTC")
+    assert _oracle_value(available_at, end, 3, "revenue") == 9700.0
+    assert _oracle_value(available_at, end, 4, "revenue") == 11500.0
+    assert _oracle_value(available_at, end, 4, "operating_cash_flow") == 3400.0
+    assert _oracle_value(available_at, _t(q2a_fy25_late()), 3, "revenue") == 9200.0
+    assert _row(result, "Q3", at=_t(q2a_fy25_late()))["revenue"] == 9200.0
+    assert _row(result, "K")["revenue"] == 11500.0
+
+
+def test_t3_versions_are_never_backdated():
+    timeline = _versioned_timeline()
+    filing_times = {filing.available_at for filing in timeline}
+
+    result = _run(timeline, strict=False)
+    lineage = result.reconciliation
+
+    assert set(pd.to_datetime(result.frame["available_at"], utc=True)) <= filing_times
+    assert set(lineage["available_at"]) <= filing_times
+
+    with_source = lineage[lineage["source_available_at"].notna()]
+    # Every reconciled value has a source filing; only metrics with no
+    # usable current-side input (e.g. never reported) have none.
+    assert lineage[lineage["value"].notna()].index.isin(with_source.index).all()
+    assert lineage.loc[~lineage.index.isin(with_source.index), "method"].eq("unavailable").all()
+    assert (with_source["source_available_at"] <= with_source["available_at"]).all()
+
+    with_prior = lineage[lineage["prior_available_at"].notna()]
+    assert not with_prior.empty
+    assert (with_prior["prior_available_at"] <= with_prior["available_at"]).all()
+
+
+def _asof_rows(result: EdgarHistoryResult, dates: list[pd.Timestamp]) -> pd.DataFrame:
+    market = pd.DataFrame({"date": dates, "symbol": "MU"})
+    return align_quarterly_fundamentals_asof(market_frame=market, fundamentals=result.frame)
+
+
+def _daily_and_event_dates(filings: list[MuFiling]) -> list[pd.Timestamp]:
+    daily = pd.date_range("2024-12-01", "2025-12-31", freq="D", tz="UTC")
+    events = {filing.available_at for filing in filings}
+    return sorted({*daily, *events, *(time - pd.Timedelta(seconds=1) for time in events)})
+
+
+def test_t4_late_prior_amendment_is_never_the_current_asof_row():
+    timeline = _full_timeline()
+    result = _run(timeline)
+    dates = _daily_and_event_dates(timeline)
+    aligned = _asof_rows(result, dates)
+
+    late, q3a = _t(q2a_fy25_late()), _t(q3a_fy25())
+
+    # Q2A-LATE (accepted after Q3) is never the current row.
+    assert not aligned["sec_accession_number"].eq("Q2A-LATE").any()
+
+    after_q3 = aligned[aligned["date"] >= _t(q3_fy25())]
+    assert (
+        not pd.to_datetime(after_q3["period_end"], utc=True)
+        .eq(pd.Timestamp(Q2_END, tz="UTC"))
+        .any()
+    )
+
+    # The Q3 re-version (9200) is current exactly on [Q2A-LATE, Q3A).
+    window = aligned[(aligned["date"] >= late) & (aligned["date"] < q3a)]
+    assert not window.empty
+    assert window["sec_accession_number"].eq("Q3").all()
+    assert window["revenue"].eq(9200.0).all()
+    assert (window["available_at"] == late).all()
+
+    reversion_current = aligned[aligned["available_at"] == late]
+    assert reversion_current["date"].min() == late
+    assert reversion_current["date"].max() < q3a
+
+
+def test_t4_early_prior_amendment_is_current_only_until_q3():
+    timeline = [*_full_timeline(), q2a_fy25_early()]
+    result = _run(timeline)
+    aligned = _asof_rows(result, _daily_and_event_dates(timeline))
+
+    early, q3 = _t(q2a_fy25_early()), _t(q3_fy25())
+
+    current_early = aligned[aligned["sec_accession_number"].eq("Q2A-EARLY")]
+    assert not current_early.empty
+    assert current_early["date"].min() == early
+    assert current_early["date"].max() < q3
+    assert (
+        aligned[(aligned["date"] >= early) & (aligned["date"] < q3)]["sec_accession_number"]
+        .eq("Q2A-EARLY")
+        .all()
+    )
+
+
+def test_t5_versioned_history_is_independent_of_filing_order():
+    timeline = _versioned_timeline()
+    baseline = _run(timeline, strict=False)
+
+    rng = random.Random(20261005)
+
+    for _ in range(10):
+        shuffled = timeline[:]
+        rng.shuffle(shuffled)
+
+        result = _run(shuffled, strict=False)
+
+        pd.testing.assert_frame_equal(result.frame, baseline.frame)
+        pd.testing.assert_frame_equal(result.reconciliation, baseline.reconciliation)
+        pd.testing.assert_frame_equal(
+            _sorted_diagnostics(result.diagnostics),
+            _sorted_diagnostics(baseline.diagnostics),
+        )
+
+
+def test_t6a_partial_own_period_amendment_carries_omitted_metrics_forward():
+    partial = q3a_fy25_partial(accepted_at="2025-07-01 20:00")
+    result = _run([q1_fy25(), q2_fy25(), q3_fy25(), partial])
+
+    assert _versions(
+        result, Q3_END, ("sec_accession_number", "revenue", "operating_cash_flow")
+    ) == [
+        ("Q3", 9000.0, 3500.0),
+        ("Q3A-PARTIAL", 9000.0, 3600.0),
+    ]
+
+    revenue = _lineage(result, "Q3A-PARTIAL", "revenue")
+    assert revenue["source_accession_number"] == "Q3"
+    assert revenue["source_available_at"] == _t(q3_fy25())
+    assert revenue["method"] == "ytd_minus_prior_ytd"
+
+    ocf = _lineage(result, "Q3A-PARTIAL", "operating_cash_flow")
+    assert ocf["source_accession_number"] == "Q3A-PARTIAL"
+    assert ocf["version_trigger_accessions"] == ("Q3A-PARTIAL",)
+
+
+@pytest.mark.parametrize(
+    "amendment",
+    [
+        _filing_variant(
+            q2_fy25(),
+            accession="Q2A-SAME",
+            form="10-Q/A",
+            accepted_at="2025-07-15 20:00",
+            revenue={"YTD": 16000.0},
+        ),
+        _filing_variant(
+            q2_fy25(),
+            accession="Q2A-EXHIBIT",
+            form="10-Q/A",
+            accepted_at="2025-07-15 20:00",
+            revenue={},
+        ),
+    ],
+    ids=["same_value", "metric_missing"],
+)
+def test_t6b_prior_amendment_without_changed_input_emits_no_version(amendment):
+    result = _run([q1_fy25(), q2_fy25(), q3_fy25(), amendment])
+
+    # The amendment's own period is re-versioned (filings stay visible)...
+    assert [v[0] for v in _versions(result, Q2_END)] == ["Q2", amendment.accession]
+
+    # ...but Q3's (value, method, reason) is unchanged, so no Q3 version.
+    assert _versions(result, Q3_END) == [("Q3", _t(q3_fy25()), 9000.0)]
+
+
+def test_t7_q3_amendment_then_late_q2_amendment():
+    late_after_q3a = _filing_variant(
+        q2a_fy25_late(),
+        accession="Q2A-AFTER-Q3A",
+        accepted_at="2025-08-15 20:00",
+        revenue={"YTD": 15800.0},
+    )
+
+    result = _run([q1_fy25(), q2_fy25(), q3_fy25(), q3a_fy25(), late_after_q3a])
+
+    assert _versions(result, Q3_END) == [
+        ("Q3", _t(q3_fy25()), 9000.0),
+        ("Q3A", _t(q3a_fy25()), 9500.0),
+        ("Q3A", _t(late_after_q3a), 9700.0),
+    ]
+
+    # Once Q3A exists, the original Q3 is never re-derived.
+    lineage = result.reconciliation
+    after_q3a = lineage[
+        lineage["available_at"].ge(_t(q3a_fy25()))
+        & lineage["period_end"].eq(pd.Timestamp(Q3_END, tz="UTC"))
+        & lineage["metric_name"].eq("revenue")
+    ]
+    assert after_q3a["source_accession_number"].eq("Q3A").all()
+    assert after_q3a["sec_accession_number"].eq("Q3A").all()
+
+
+def test_t8_q1_amendment_reversions_q2_amendment_not_q3():
+    result = _run([q1_fy25(), q2_fy25(), q3_fy25(), q2a_fy25_late(), q1a_fy25()])
+
+    assert _versions(result, Q2_END) == [
+        ("Q2", _t(q2_fy25()), 7300.0),
+        ("Q2A-LATE", _t(q2a_fy25_late()), 7100.0),
+        ("Q2A-LATE", _t(q1a_fy25()), 7200.0),
+    ]
+    assert _versions(result, Q3_END) == [
+        ("Q3", _t(q3_fy25()), 9000.0),
+        ("Q3", _t(q2a_fy25_late()), 9200.0),
+    ]
+
+    reversion = _lineage(result, "Q2A-LATE", at=_t(q1a_fy25()))
+    assert reversion["prior_accession_number"] == "Q1A"
+    assert reversion["version_trigger_accessions"] == ("Q1A",)
+
+
+def test_t9_q3_amendment_after_10k_reversions_q4_within_fiscal_year():
+    q3a_after_k = _filing_variant(
+        q3a_fy25(),
+        accession="Q3A-AFTER-K",
+        accepted_at="2025-11-01 20:00",
+        revenue={"YTD": 25500.0},
+    )
+
+    result = _run([q2_fy25(), q3_fy25(), k_fy25(), q3a_after_k, q1_fy26(), q2_fy26()])
+
+    assert _versions(result, K_END) == [
+        ("K", _t(k_fy25()), 12000.0),
+        ("K", _t(q3a_after_k), 37000.0 - 25500.0),
+    ]
+
+    lineage = _lineage(result, "K", at=_t(q3a_after_k))
+    assert lineage["prior_accession_number"] == "Q3A-AFTER-K"
+    assert lineage["method"] == "fy_minus_q3_ytd"
+
+    # FY2026 is never touched by FY2025 filings.
+    assert _versions(result, "2025-11-27") == [("Q1-FY26", _t(q1_fy26()), 8900.0)]
+    q2_fy26_lineage = _lineage(result, "Q2-FY26")
+    assert q2_fy26_lineage["prior_accession_number"] == "Q1-FY26"
+    assert len(_versions(result, "2026-02-26")) == 1
+
+
+def test_t11_reconciliation_inputs_are_raw_filings_only():
+    timeline = [q1_fy25(), q2_fy25(), q3_fy25(), q1a_fy25("2025-07-01 20:00"), k_fy25()]
+    raw_times = {filing.accession: filing.available_at for filing in timeline}
+
+    result = _run(timeline)
+    lineage = result.reconciliation
+
+    for _, row in lineage.iterrows():
+        for accession_column, time_column in (
+            ("source_accession_number", "source_available_at"),
+            ("prior_accession_number", "prior_available_at"),
+        ):
+            if pd.isna(row[accession_column]):
+                assert pd.isna(row[time_column])
+                continue
+            assert row[accession_column] in raw_times
+            assert row[time_column] == raw_times[row[accession_column]]
+
+    # Q1A re-versions Q2 from the RAW Q1A YTD...
+    assert _versions(result, Q2_END) == [
+        ("Q2", _t(q2_fy25()), 7300.0),
+        ("Q2", raw_times["Q1A"], 16000.0 - 8600.0),
+    ]
+    # ...and Q3 (= raw Q3 YTD - raw Q2 YTD) is unchanged, with no version.
+    assert _versions(result, Q3_END) == [("Q3", _t(q3_fy25()), 9000.0)]
+
+    # Q4 = FY - raw Q3 YTD (not FY minus any derived standalone value).
+    k = _lineage(result, "K")
+    assert k["prior_accession_number"] == "Q3"
+    assert _row(result, "K")["revenue"] == 37000.0 - 25000.0
+
+
+def test_t12_same_timestamp_events_are_coalesced():
+    q1a_with_q2 = q1a_fy25(accepted_at="2025-03-26 20:00")
+    result = _run([q1_fy25(), q2_fy25(), q1a_with_q2])
+
+    q2_versions = _versions(result, Q2_END)
+    assert q2_versions == [("Q2", _t(q2_fy25()), 16000.0 - 8600.0)]
+
+    lineage = _lineage(result, "Q2")
+    assert lineage["version_trigger_accessions"] == ("Q1A", "Q2")
+    assert lineage["prior_accession_number"] == "Q1A"
+
+
+def test_t12_same_instant_prior_amendment_and_reversion_asof_is_order_independent():
+    result = _run(_full_timeline())
+    late = _t(q2a_fy25_late())
+
+    # Q2A-LATE and the Q3 re-version share one instant; Q3 is current.
+    at_late = result.frame[pd.to_datetime(result.frame["available_at"], utc=True).eq(late)]
+    assert sorted(at_late["sec_accession_number"]) == ["Q2A-LATE", "Q3"]
+
+    dates = _daily_and_event_dates(_full_timeline())
+    market = pd.DataFrame({"date": dates, "symbol": "MU"})
+
+    baseline = align_quarterly_fundamentals_asof(market_frame=market, fundamentals=result.frame)
+    at = baseline[baseline["date"].eq(late)].iloc[0]
+    assert at["sec_accession_number"] == "Q3"
+    assert at["revenue"] == 9200.0
+
+    canonical = baseline.sort_values("date", kind="mergesort").reset_index(drop=True)
+
+    orders = [
+        (market.iloc[::-1], result.frame.iloc[::-1]),
+        *(
+            (
+                market.sample(frac=1.0, random_state=seed),
+                result.frame.sample(frac=1.0, random_state=seed + 100),
+            )
+            for seed in (1, 2, 3)
+        ),
+    ]
+
+    for shuffled_market, shuffled_fundamentals in orders:
+        shuffled_market = shuffled_market.reset_index(drop=True)
+        aligned = align_quarterly_fundamentals_asof(
+            market_frame=shuffled_market,
+            fundamentals=shuffled_fundamentals.reset_index(drop=True),
+        )
+
+        assert aligned["date"].equals(shuffled_market["date"])
+        pd.testing.assert_frame_equal(
+            aligned.sort_values("date", kind="mergesort").reset_index(drop=True),
+            canonical,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Conflicting period ends within one fiscal period
+# ---------------------------------------------------------------------------
+
+
+def _q3_with_other_period_end(
+    accession: str = "Q3-ODD",
+    accepted_at: str = "2025-07-01 20:00",
+) -> MuFiling:
+    # Same fiscal identity (FY2025 Q3) but a different period end, with a
+    # YTD that would visibly change Q3 and Q4 if it were ever used.
+    return _mu_filing(
+        accession=accession,
+        form="10-Q/A",
+        period_end="2025-05-30",
+        accepted_at=accepted_at,
+        fiscal_year=2025,
+        fiscal_period="Q3",
+        revenue={"YTD": 26000.0},
+    )
+
+
+def _conflict_timeline() -> list[MuFiling]:
+    return [q2_fy25(), q3_fy25(), _q3_with_other_period_end(), q3a_fy25(), k_fy25()]
+
+
+def test_conflicting_period_end_raises_when_strict():
+    with pytest.raises(history_module.EdgarHistoryBuildError, match="period_end"):
+        _run([q2_fy25(), q3_fy25(), _q3_with_other_period_end()], strict=True)
+
+
+def test_conflicting_period_end_rejects_only_the_disagreeing_filing():
+    result = _run(_conflict_timeline(), strict=False)
+
+    conflicts = result.diagnostics[result.diagnostics["reason"].eq("conflicting_period_end")]
+    assert conflicts["accession_number"].tolist() == ["Q3-ODD"]
+    assert conflicts["status"].tolist() == ["skipped"]
+
+    # The rejected filing has no success diagnostic.
+    odd = result.diagnostics[result.diagnostics["accession_number"].eq("Q3-ODD")]
+    assert odd["reason"].tolist() == ["conflicting_period_end"]
+
+    # Earlier versions are unaffected; Q3-ODD is never anchor, trigger,
+    # source, or prior, and never feeds the 10-K.
+    assert _versions(result, Q3_END) == [
+        ("Q3", _t(q3_fy25()), 9000.0),
+        ("Q3A", _t(q3a_fy25()), 25500.0 - 16000.0),
+    ]
+    assert _row(result, "K")["revenue"] == pytest.approx(37000.0 - 25500.0)
+
+    lineage = result.reconciliation
+    assert "Q3-ODD" not in set(result.frame["sec_accession_number"])
+    for column in ("sec_accession_number", "source_accession_number", "prior_accession_number"):
+        assert not lineage[column].eq("Q3-ODD").any()
+    for column in (
+        "version_trigger_accessions",
+        "skipped_prior_accessions",
+        "equivalent_prior_accessions",
+        "conflicting_prior_accessions",
+    ):
+        assert not any("Q3-ODD" in value for value in lineage[column])
+
+
+def test_rejected_filing_never_feeds_next_quarter_prior():
+    # Without Q3A, the latest Q3-identity filing before the 10-K is the
+    # rejected Q3-ODD (YTD 26000). Q4 must still use the original Q3.
+    result = _run([q2_fy25(), q3_fy25(), _q3_with_other_period_end(), k_fy25()], strict=False)
+
+    k = _lineage(result, "K")
+    assert k["prior_accession_number"] == "Q3"
+    assert _row(result, "K")["revenue"] == pytest.approx(37000.0 - 25000.0)
+
+
+def test_conflicting_period_end_is_prefix_stable():
+    _assert_prefix_stable(_conflict_timeline())
+
+
+def test_conflicting_period_end_is_order_independent():
+    timeline = _conflict_timeline()
+    baseline = _run(timeline, strict=False)
+
+    rng = random.Random(7)
+
+    for _ in range(10):
+        shuffled = timeline[:]
+        rng.shuffle(shuffled)
+        result = _run(shuffled, strict=False)
+
+        pd.testing.assert_frame_equal(result.frame, baseline.frame)
+        pd.testing.assert_frame_equal(result.reconciliation, baseline.reconciliation)
+        pd.testing.assert_frame_equal(
+            _sorted_diagnostics(result.diagnostics),
+            _sorted_diagnostics(baseline.diagnostics),
+        )
+
+
+def test_earliest_same_instant_period_end_tie_rejects_all_and_moves_reference():
+    # Q3 and Q3-TIE are the earliest Q3 filings, at the same instant, with
+    # different period ends: both are rejected. Q3A becomes the reference.
+    tie = _q3_with_other_period_end(accession="Q3-TIE", accepted_at="2025-06-27 20:00")
+
+    result = _run([q2_fy25(), q3_fy25(), tie, q3a_fy25(), k_fy25()], strict=False)
+
+    conflicts = result.diagnostics[result.diagnostics["reason"].eq("conflicting_period_end")]
+    assert sorted(conflicts["accession_number"]) == ["Q3", "Q3-TIE"]
+
+    assert _versions(result, Q3_END) == [("Q3A", _t(q3a_fy25()), 25500.0 - 16000.0)]
+    assert _row(result, "K")["revenue"] == pytest.approx(37000.0 - 25500.0)
+
+    _assert_prefix_stable([q2_fy25(), q3_fy25(), tie, q3a_fy25(), k_fy25()])
+
+
+def test_lineage_new_columns_have_explicit_dtypes():
+    lineage = _run(_full_timeline()).reconciliation
+
+    assert lineage.columns.tolist() == RECONCILIATION_COLUMNS
+    assert RECONCILIATION_COLUMNS[-3:] == [
+        "source_accession_number",
+        "source_available_at",
+        "version_trigger_accessions",
+    ]
+    assert isinstance(lineage["source_accession_number"].dtype, pd.StringDtype)
+    assert str(lineage["source_available_at"].dtype) == "datetime64[ns, UTC]"
+    assert all(isinstance(value, tuple) for value in lineage["version_trigger_accessions"])
+
+
+# ---------------------------------------------------------------------------
+# Same-instant own-period filings
+# ---------------------------------------------------------------------------
+
+
+def _same_instant_q3_timeline(second_q3_ytd: float) -> list[MuFiling]:
+    second = _filing_variant(q3_fy25(), accession="Q3-B", revenue={"YTD": second_q3_ytd})
+    return [q1_fy25(), q2_fy25(), q3_fy25(), second, k_fy25()]
+
+
+def _assert_order_independent(timeline: list[MuFiling], seed: int) -> None:
+    baseline = _run(timeline, strict=False)
+    rng = random.Random(seed)
+
+    for _ in range(10):
+        shuffled = timeline[:]
+        rng.shuffle(shuffled)
+        result = _run(shuffled, strict=False)
+
+        pd.testing.assert_frame_equal(result.frame, baseline.frame)
+        pd.testing.assert_frame_equal(result.reconciliation, baseline.reconciliation)
+        pd.testing.assert_frame_equal(
+            _sorted_diagnostics(result.diagnostics),
+            _sorted_diagnostics(baseline.diagnostics),
+        )
+
+
+def test_same_instant_own_filings_with_different_values_are_ambiguous():
+    timeline = _same_instant_q3_timeline(25100.0)
+    result = _run(timeline, strict=False)
+    q3_time = _t(q3_fy25())
+
+    q3_versions = _versions(result, Q3_END)
+    assert [(anchor, at) for anchor, at, _ in q3_versions] == [("Q3", q3_time)]
+    assert pd.isna(q3_versions[0][2])
+
+    lineage = _lineage(result, "Q3", "revenue", at=q3_time)
+    assert lineage["method"] == "unavailable"
+    assert lineage["reason"] == "ambiguous_current_observation"
+    assert pd.isna(lineage["value"])
+    assert pd.isna(lineage["source_accession_number"])
+    assert lineage["version_trigger_accessions"] == ("Q3", "Q3-B")
+
+    # Q3-B omits OCF, so OCF is not ambiguous: Q3 supplies it.
+    ocf = _lineage(result, "Q3", "operating_cash_flow", at=q3_time)
+    assert ocf["value"] == pytest.approx(3500.0)
+    assert ocf["source_accession_number"] == "Q3"
+
+    _assert_prefix_stable(timeline)
+    _assert_order_independent(timeline, seed=31)
+
+
+def test_same_instant_own_filings_with_equal_values_use_smallest_accession():
+    timeline = _same_instant_q3_timeline(25000.0)
+    result = _run(timeline, strict=False)
+    q3_time = _t(q3_fy25())
+
+    assert _versions(result, Q3_END) == [("Q3", q3_time, 9000.0)]
+
+    lineage = _lineage(result, "Q3", "revenue", at=q3_time)
+    assert lineage["method"] == "ytd_minus_prior_ytd"
+    assert lineage["reason"] == "ok"
+    assert lineage["source_accession_number"] == "Q3"
+    assert lineage["version_trigger_accessions"] == ("Q3", "Q3-B")
+
+    _assert_prefix_stable(timeline)
+    _assert_order_independent(timeline, seed=37)

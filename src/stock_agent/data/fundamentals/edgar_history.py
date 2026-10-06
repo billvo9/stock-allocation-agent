@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 import pandas as pd
@@ -27,6 +28,7 @@ from stock_agent.data.fundamentals.edgar_reconciliation import (
     PriorSelection,
     find_superseding_prior_observations,
     reconcile_fiscal_flow_from_candidates,
+    select_current_fiscal_observation,
 )
 from stock_agent.data.fundamentals.edgar_source import (
     list_financial_filings,
@@ -50,9 +52,14 @@ DIAGNOSTIC_COLUMNS = [
 ]
 
 
-# Reconciliation lineage: one row per (symbol, sec_accession_number,
-# metric_name). (symbol, sec_accession_number) maps back to the canonical
-# filing row. Kept outside the canonical quarterly schema on purpose.
+# Reconciliation lineage: one row per (emitted version, metric), keyed by
+# (symbol, sec_accession_number, available_at, metric_name).
+# (symbol, sec_accession_number, available_at) maps back to the canonical
+# version row; sec_accession_number is the version's ANCHOR filing.
+# source_accession_number / source_available_at identify the raw filing
+# whose current-side value was used; version_trigger_accessions lists the
+# filings (own period and prior quarter) available exactly at the
+# version's available_at. Kept outside the canonical quarterly schema.
 RECONCILIATION_COLUMNS = [
     "symbol",
     "sec_accession_number",
@@ -71,6 +78,9 @@ RECONCILIATION_COLUMNS = [
     "skipped_prior_accessions",
     "equivalent_prior_accessions",
     "conflicting_prior_accessions",
+    "source_accession_number",
+    "source_available_at",
+    "version_trigger_accessions",
 ]
 
 _SUBTRACTION_METHODS = {
@@ -95,7 +105,43 @@ class _BuiltFiling:
     accession_number: str
     filing_row: pd.Series
     quarter: pd.DataFrame
-    observations: list[FiscalFlowObservation]
+    observations: tuple[FiscalFlowObservation, ...]
+    fiscal_year: int
+    fiscal_quarter: int
+    period_end: pd.Timestamp
+    available_at: pd.Timestamp
+
+    @property
+    def fiscal_period(self) -> tuple[int, int]:
+        return (self.fiscal_year, self.fiscal_quarter)
+
+
+# Raw SEC observations keyed by (metric_name, fiscal_year, fiscal_quarter).
+# Built once, read-only; versioned outputs are never fed back into it.
+_CandidateIndex = Mapping[tuple[str, int, int], tuple[FiscalFlowObservation, ...]]
+
+
+@dataclass(frozen=True)
+class _MetricVersion:
+    metric_name: str
+    value: float | None
+    method: str
+    reason: str
+    source: FiscalFlowObservation | None
+    result: FiscalFlowReconciliation | None
+    selection: PriorSelection | None
+
+    def outcome(self) -> tuple[float | None, str, str]:
+        return (self.value, self.method, self.reason)
+
+
+@dataclass(frozen=True)
+class _Version:
+    available_at: pd.Timestamp
+    anchor: _BuiltFiling
+    availability_source: str
+    trigger_accessions: tuple[str, ...]
+    metrics: tuple[_MetricVersion, ...]
 
 
 @dataclass(frozen=True)
@@ -261,10 +307,66 @@ def _reconcile_observation(
     )
 
 
-def _reconcile_flows(
+def _period_end_rejections(
     built_filings: list[_BuiltFiling],
-) -> list[_ReconciledFlow]:
-    observations_by_quarter: dict[tuple[str, int, int], list[FiscalFlowObservation]] = {}
+) -> dict[str, pd.Timestamp | None]:
+    """
+    Return rejected accession -> reference period_end of its fiscal period
+    (None when rejected because the earliest filings disagreed).
+
+    For each fiscal period the reference period_end is that of the
+    earliest-available own-period filing. If the earliest filings (same
+    available_at) disagree among themselves, all of them are rejected and
+    the next-earliest remaining filing time is tried. Any later filing
+    whose period_end differs from the reference is rejected.
+
+    Only earlier-or-equal filings decide a filing's fate, so rejection
+    never changes earlier results (prefix stability), and nothing depends
+    on filing order.
+    """
+
+    by_period: dict[tuple[int, int], dict[pd.Timestamp, list[_BuiltFiling]]] = {}
+
+    for built in built_filings:
+        by_period.setdefault(built.fiscal_period, {}).setdefault(built.available_at, []).append(
+            built
+        )
+
+    rejected: dict[str, pd.Timestamp | None] = {}
+
+    for by_time in by_period.values():
+        reference: pd.Timestamp | None = None
+
+        for available_at in sorted(by_time):
+            filings = by_time[available_at]
+
+            if reference is None:
+                period_ends = {built.period_end for built in filings}
+
+                if len(period_ends) == 1:
+                    reference = period_ends.pop()
+                else:
+                    for built in filings:
+                        rejected[built.accession_number] = None
+                continue
+
+            for built in filings:
+                if built.period_end != reference:
+                    rejected[built.accession_number] = reference
+
+    return rejected
+
+
+def _build_candidate_index(
+    built_filings: list[_BuiltFiling],
+) -> _CandidateIndex:
+    """
+    Index the raw SEC observations once, before any version is produced.
+
+    Tuples are sorted by accession so nothing depends on filing order.
+    """
+
+    grouped: dict[tuple[str, int, int], list[FiscalFlowObservation]] = {}
 
     for built in built_filings:
         for observation in built.observations:
@@ -273,78 +375,244 @@ def _reconcile_flows(
                 observation.fiscal_year,
                 observation.fiscal_quarter,
             )
-            observations_by_quarter.setdefault(key, []).append(observation)
+            grouped.setdefault(key, []).append(observation)
+
+    return MappingProxyType(
+        {
+            key: tuple(sorted(observations, key=lambda item: item.accession_number))
+            for key, observations in grouped.items()
+        }
+    )
+
+
+def _prior_candidates(
+    index: _CandidateIndex,
+    metric_name: str,
+    fiscal_year: int,
+    fiscal_quarter: int,
+) -> tuple[FiscalFlowObservation, ...]:
+    if fiscal_quarter <= 1:
+        return ()
+
+    return index.get((metric_name, fiscal_year, fiscal_quarter - 1), ())
+
+
+def _reconcile_flows(
+    built_filings: list[_BuiltFiling],
+    index: _CandidateIndex,
+) -> list[_ReconciledFlow]:
+    """
+    Reconcile every raw filing observation at its own available_at.
+
+    Used only for the derived_quarter_input_superseded diagnostic; the
+    versioned history itself is produced by _period_versions.
+    """
 
     reconciled: list[_ReconciledFlow] = []
 
     for built in built_filings:
         for observation in built.observations:
-            prior_candidates = (
-                observations_by_quarter.get(
-                    (
-                        observation.metric_name,
-                        observation.fiscal_year,
-                        observation.fiscal_quarter - 1,
-                    ),
-                    [],
-                )
-                if observation.fiscal_quarter > 1
-                else []
-            )
-
             reconciled.append(
                 _reconcile_observation(
                     observation,
-                    prior_candidates,
+                    list(
+                        _prior_candidates(
+                            index,
+                            observation.metric_name,
+                            observation.fiscal_year,
+                            observation.fiscal_quarter,
+                        )
+                    ),
                 )
             )
 
     return reconciled
 
 
-def _reconciliation_frame(
-    reconciled: list[_ReconciledFlow],
-    built_filings: list[_BuiltFiling],
-) -> pd.DataFrame:
-    if not reconciled:
-        return _empty_reconciliation()
+def _evaluate_metric(
+    index: _CandidateIndex,
+    *,
+    metric_name: str,
+    fiscal_year: int,
+    fiscal_quarter: int,
+    as_of: pd.Timestamp,
+) -> _MetricVersion:
+    """
+    Reconcile one metric of one fiscal period from raw inputs known at as_of.
 
-    forms = {built.accession_number: str(built.filing_row["form"]) for built in built_filings}
+    Only raw observations available at or before as_of are passed in, so
+    nothing about a later filing (not even its existence, via a reason
+    code such as "prior_available_after_current") reaches this version.
+    """
+
+    def known(
+        observations: tuple[FiscalFlowObservation, ...],
+    ) -> tuple[FiscalFlowObservation, ...]:
+        return tuple(
+            observation
+            for observation in observations
+            if pd.Timestamp(observation.available_at) <= as_of
+        )
+
+    selection = select_current_fiscal_observation(
+        candidates=known(index.get((metric_name, fiscal_year, fiscal_quarter), ())),
+        as_of=as_of,
+    )
+
+    if selection.current is None:
+        return _MetricVersion(
+            metric_name=metric_name,
+            value=None,
+            method="unavailable",
+            reason=selection.reason,
+            source=None,
+            result=None,
+            selection=None,
+        )
+
+    outcome = reconcile_fiscal_flow_from_candidates(
+        current=selection.current,
+        candidates=known(_prior_candidates(index, metric_name, fiscal_year, fiscal_quarter)),
+        as_of=as_of,
+    )
+
+    return _MetricVersion(
+        metric_name=metric_name,
+        value=outcome.result.value,
+        method=outcome.result.method,
+        reason=outcome.result.reason,
+        source=selection.current,
+        result=outcome.result,
+        selection=outcome.selection,
+    )
+
+
+def _period_versions(
+    own_filings: list[_BuiltFiling],
+    prior_filings: list[_BuiltFiling],
+    index: _CandidateIndex,
+) -> list[_Version]:
+    """
+    Produce every version of one fiscal period, in knowledge-time order.
+
+    Events are the distinct available_at values of the period's own
+    filings and of the immediately preceding fiscal quarter's filings, at
+    or after the period's first own filing. Each event time t is evaluated
+    once, from all raw filings available at or before t (same-instant
+    filings are coalesced).
+
+    A version is emitted at t when an own filing becomes available at t
+    (filings always stay visible), or when any metric's
+    (value, method, reason) differs from the previously emitted version.
+    """
+
+    own_sorted = sorted(own_filings, key=lambda item: (item.available_at, item.accession_number))
+    first_own_at = own_sorted[0].available_at
+    fiscal_year, fiscal_quarter = own_sorted[0].fiscal_period
+
+    events = sorted(
+        {built.available_at for built in own_filings}
+        | {built.available_at for built in prior_filings if built.available_at >= first_own_at}
+    )
+
+    versions: list[_Version] = []
+    previous: tuple[tuple[float | None, str, str], ...] | None = None
+
+    for event_at in events:
+        visible = [built for built in own_sorted if built.available_at <= event_at]
+        latest_at = visible[-1].available_at
+        anchor = min(
+            (built for built in visible if built.available_at == latest_at),
+            key=lambda item: item.accession_number,
+        )
+
+        metrics = tuple(
+            _evaluate_metric(
+                index,
+                metric_name=metric_name,
+                fiscal_year=fiscal_year,
+                fiscal_quarter=fiscal_quarter,
+                as_of=event_at,
+            )
+            for metric_name in FLOW_METRIC_STATEMENTS
+        )
+
+        outcomes = tuple(metric.outcome() for metric in metrics)
+        own_filing_at_event = any(built.available_at == event_at for built in own_filings)
+
+        if not own_filing_at_event and outcomes == previous:
+            continue
+
+        triggers = sorted(
+            (built for built in (*own_filings, *prior_filings) if built.available_at == event_at),
+            key=lambda item: item.accession_number,
+        )
+
+        source_filing = anchor if anchor.available_at == event_at else triggers[0]
+
+        versions.append(
+            _Version(
+                available_at=event_at,
+                anchor=anchor,
+                availability_source=str(source_filing.quarter.iloc[0]["availability_source"]),
+                trigger_accessions=tuple(built.accession_number for built in triggers),
+                metrics=metrics,
+            )
+        )
+        previous = outcomes
+
+    return versions
+
+
+def _reconciliation_frame(
+    versions: list[_Version],
+) -> pd.DataFrame:
+    if not versions:
+        return _empty_reconciliation()
 
     rows: list[dict[str, object]] = []
 
-    for flow in reconciled:
-        current = flow.current
-        selection = flow.selection
-        prior = None if selection is None else selection.prior
+    for version in versions:
+        anchor = version.anchor
 
-        rows.append(
-            {
-                "symbol": current.symbol,
-                "sec_accession_number": current.accession_number,
-                "sec_form_type": forms[current.accession_number],
-                "metric_name": current.metric_name,
-                "fiscal_year": current.fiscal_year,
-                "fiscal_quarter": current.fiscal_quarter,
-                "period_end": current.period_end,
-                "available_at": current.available_at,
-                "value": flow.result.value,
-                "method": flow.result.method,
-                "reason": flow.result.reason,
-                "prior_accession_number": flow.result.prior_accession_number,
-                "prior_available_at": None if prior is None else prior.available_at,
-                "prior_value_source": flow.result.prior_value_source,
-                "skipped_prior_accessions": (
-                    () if selection is None else selection.skipped_prior_accessions
-                ),
-                "equivalent_prior_accessions": (
-                    () if selection is None else selection.equivalent_prior_accessions
-                ),
-                "conflicting_prior_accessions": (
-                    () if selection is None else selection.conflicting_prior_accessions
-                ),
-            }
-        )
+        for metric in version.metrics:
+            selection = metric.selection
+            prior = None if selection is None else selection.prior
+            result = metric.result
+            source = metric.source
+
+            rows.append(
+                {
+                    "symbol": str(anchor.quarter.iloc[0]["symbol"]),
+                    "sec_accession_number": anchor.accession_number,
+                    "sec_form_type": str(anchor.filing_row["form"]),
+                    "metric_name": metric.metric_name,
+                    "fiscal_year": anchor.fiscal_year,
+                    "fiscal_quarter": anchor.fiscal_quarter,
+                    "period_end": anchor.period_end,
+                    "available_at": version.available_at,
+                    "value": metric.value,
+                    "method": metric.method,
+                    "reason": metric.reason,
+                    "prior_accession_number": (
+                        None if result is None else result.prior_accession_number
+                    ),
+                    "prior_available_at": None if prior is None else prior.available_at,
+                    "prior_value_source": None if result is None else result.prior_value_source,
+                    "skipped_prior_accessions": (
+                        () if selection is None else selection.skipped_prior_accessions
+                    ),
+                    "equivalent_prior_accessions": (
+                        () if selection is None else selection.equivalent_prior_accessions
+                    ),
+                    "conflicting_prior_accessions": (
+                        () if selection is None else selection.conflicting_prior_accessions
+                    ),
+                    "source_accession_number": None if source is None else source.accession_number,
+                    "source_available_at": None if source is None else source.available_at,
+                    "version_trigger_accessions": version.trigger_accessions,
+                }
+            )
 
     frame = pd.DataFrame(
         rows,
@@ -360,19 +628,68 @@ def _reconciliation_frame(
     # Nullable text columns use pandas' missing-value-aware string dtype,
     # so missing stays missing (never the text "None") and the dtype does
     # not depend on whether a subset happens to be all-missing.
-    for column in ("prior_accession_number", "prior_value_source"):
+    for column in ("prior_accession_number", "prior_value_source", "source_accession_number"):
         frame[column] = frame[column].astype("string")
 
-    for column in ("period_end", "available_at", "prior_available_at"):
+    for column in ("period_end", "available_at", "prior_available_at", "source_available_at"):
         frame[column] = pd.to_datetime(frame[column], utc=True).astype("datetime64[ns, UTC]")
 
-    return frame.sort_values(
+    frame = frame.sort_values(
         [
             "available_at",
             "sec_accession_number",
             "metric_name",
         ],
         kind="mergesort",
+    ).reset_index(drop=True)
+
+    if frame.duplicated(
+        subset=["symbol", "sec_accession_number", "available_at", "metric_name"]
+    ).any():
+        raise EdgarHistoryBuildError(
+            "Internal invariant violated: duplicate reconciliation lineage key "
+            "(symbol, sec_accession_number, available_at, metric_name)."
+        )
+
+    return frame
+
+
+def _history_frame(
+    versions: list[_Version],
+) -> pd.DataFrame:
+    """One canonical row per version: the anchor's row at the version's time."""
+
+    rows: list[pd.DataFrame] = []
+    flow_values: dict[str, list[float | None]] = {name: [] for name in FLOW_METRIC_STATEMENTS}
+
+    for version in versions:
+        row = version.anchor.quarter.copy()
+        row["available_at"] = version.available_at
+        row["availability_source"] = version.availability_source
+        rows.append(row)
+
+        for metric in version.metrics:
+            flow_values[metric.metric_name].append(metric.value)
+
+    history = pd.concat(rows, ignore_index=True)
+
+    # Within the history, reconcile_fiscal_flow is the single
+    # authority for standalone-quarter flow values.
+    for metric_name, values in flow_values.items():
+        history[metric_name] = pd.to_numeric(pd.Series(values, index=history.index, dtype=object))
+
+    if history.duplicated(subset=["symbol", "period_end", "available_at"]).any():
+        raise EdgarHistoryBuildError(
+            "Internal invariant violated: duplicate (symbol, period_end, available_at) "
+            "in EDGAR history."
+        )
+
+    return history.sort_values(
+        [
+            "available_at",
+            "period_end",
+            "sec_accession_number",
+        ]
     ).reset_index(drop=True)
 
 
@@ -392,10 +709,15 @@ def _superseded_input_diagnostics(
     superseding filing does. Attaching it to the derived quarter's filing
     would date it before the amendment existed.
 
-    The derived value itself is NOT rewritten: rewriting would backdate
-    the later amendment. Until amendment-aware derived versions exist,
-    the history is prefix-stable but not as-of complete for these cells,
-    and this diagnostic is how they are identified.
+    The earlier derived value itself is NOT rewritten: rewriting would
+    backdate the later amendment. A re-derived version of the derived
+    quarter is emitted at the superseding filing's time only when it
+    changes some metric's (value, method, reason); see _period_versions.
+
+    This diagnostic is an informational audit record computed from each
+    derived filing's OWN-time evaluation: used_prior is the prior chosen
+    when that filing was reconciled at its own available_at, which may
+    differ from the prior recorded in a later version's lineage.
     """
 
     filing_rows = {built.accession_number: built.filing_row for built in built_filings}
@@ -698,7 +1020,11 @@ def build_edgar_history(
                     accession_number=accession_number,
                     filing_row=filing_row,
                     quarter=quarter,
-                    observations=observations,
+                    observations=tuple(observations),
+                    fiscal_year=fiscal_identity.fiscal_year,
+                    fiscal_quarter=fiscal_quarter,
+                    period_end=pd.Timestamp(quarter.iloc[0]["period_end"]),
+                    available_at=pd.Timestamp(quarter.iloc[0]["available_at"]),
                 )
             )
 
@@ -760,16 +1086,84 @@ def build_edgar_history(
                 )
             )
 
+    # A filing whose period_end disagrees with its fiscal period's
+    # reference is rejected BEFORE the candidate index is built, so it is
+    # never a current, prior, anchor, or trigger.
+    rejections = _period_end_rejections(built_filings)
+
+    if rejections:
+        rejected_filings = sorted(
+            (built for built in built_filings if built.accession_number in rejections),
+            key=lambda item: item.accession_number,
+        )
+
+        if strict:
+            raise EdgarHistoryBuildError(
+                "Conflicting period_end values within one fiscal period for accessions "
+                f"{[built.accession_number for built in rejected_filings]}."
+            )
+
+        # The rejection replaces the filing's success diagnostic.
+        diagnostic_rows = [
+            row
+            for row in diagnostic_rows
+            if not (row["accession_number"] in rejections and row["status"] == "success")
+        ]
+
+        for built in rejected_filings:
+            reference = rejections[built.accession_number]
+            diagnostic_rows.append(
+                _diagnostic_row(
+                    symbol=symbol,
+                    provider_symbol=provider_symbol,
+                    filing=built.filing_row,
+                    status="skipped",
+                    reason="conflicting_period_end",
+                    detail=(
+                        f"fiscal_year={built.fiscal_year}; "
+                        f"fiscal_quarter={built.fiscal_quarter}; "
+                        f"period_end={built.period_end.date()}; "
+                        + (
+                            "reference_period_end=none (earliest filings disagree)"
+                            if reference is None
+                            else f"reference_period_end={reference.date()}"
+                        )
+                    ),
+                )
+            )
+
+        built_filings = [
+            built for built in built_filings if built.accession_number not in rejections
+        ]
+
     # Cross-filing reconciliation runs only after every filing has been
     # collected, so the result never depends on filing iteration order.
-    # Point-in-time safety comes from prior selection, which only admits
-    # priors available at or before each current filing.
-    reconciled = _reconcile_flows(built_filings)
+    # The raw candidate index is the ONLY reconciliation input; versions
+    # are a pure function of it. Point-in-time safety: each version only
+    # receives raw observations available at or before its own time.
+    index = _build_candidate_index(built_filings)
 
-    reconciliation = _reconciliation_frame(
-        reconciled,
-        built_filings,
-    )
+    filings_by_period: dict[tuple[int, int], list[_BuiltFiling]] = {}
+
+    for built in built_filings:
+        filings_by_period.setdefault(built.fiscal_period, []).append(built)
+
+    versions: list[_Version] = []
+
+    for period in sorted(filings_by_period):
+        own_filings = filings_by_period[period]
+        fiscal_year, fiscal_quarter = period
+        prior_filings = (
+            filings_by_period.get((fiscal_year, fiscal_quarter - 1), [])
+            if fiscal_quarter > 1
+            else []
+        )
+
+        versions.extend(_period_versions(own_filings, prior_filings, index))
+
+    reconciliation = _reconciliation_frame(versions)
+
+    reconciled = _reconcile_flows(built_filings, index)
 
     diagnostic_rows.extend(
         _superseded_input_diagnostics(
@@ -780,35 +1174,8 @@ def build_edgar_history(
         )
     )
 
-    if built_filings:
-        history = pd.concat(
-            [built.quarter for built in built_filings],
-            ignore_index=True,
-        )
-
-        flow_values = {
-            (flow.current.accession_number, flow.current.metric_name): flow.result.value
-            for flow in reconciled
-        }
-
-        # Within the history, reconcile_fiscal_flow is the single
-        # authority for standalone-quarter flow values.
-        for metric_name in FLOW_METRIC_STATEMENTS:
-            history[metric_name] = pd.to_numeric(
-                history["sec_accession_number"].map(
-                    lambda accession, metric_name=metric_name: flow_values.get(
-                        (accession, metric_name)
-                    )
-                ),
-            )
-
-        history = history.sort_values(
-            [
-                "available_at",
-                "period_end",
-                "sec_accession_number",
-            ]
-        ).reset_index(drop=True)
+    if versions:
+        history = _history_frame(versions)
 
         validate_quarterly_fundamental_frame(history)
     else:

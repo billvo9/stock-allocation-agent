@@ -146,3 +146,21 @@ def test_duplicate_quarterly_vintage_fails():
         match="duplicate",
     ):
         validate_quarterly_fundamental_frame(duplicate)
+
+
+def test_versions_of_one_filing_at_different_available_at_are_distinct():
+    # A versioned history re-emits a fiscal period at a later knowledge
+    # time with the same anchor accession; available_at tells them apart.
+    frame = _make_quarterly_frame()
+
+    later = frame.copy()
+    later["available_at"] = pd.to_datetime(later["available_at"], utc=True) + pd.Timedelta(days=30)
+
+    validate_quarterly_fundamental_frame(pd.concat([frame, later], ignore_index=True))
+
+
+def test_duplicate_key_message_includes_available_at():
+    frame = _make_quarterly_frame()
+
+    with pytest.raises(ValueError, match="sec_accession_number, available_at"):
+        validate_quarterly_fundamental_frame(pd.concat([frame, frame], ignore_index=True))
