@@ -8,14 +8,18 @@ Last reviewed: 2026-10-06
 
 ## Last checkpoint
 
-2026-10-06, milestone "guarded-autonomy workflow", verified on branch
-`chore/claude-fast-workflow` based on `44efae1` (merge pending). Live Git
-state (current branch, working tree, upstream) comes from Git and the
+2026-10-06, milestone "ML validation foundation", verified on branch
+`feature/ml-validation-foundation` based on `da21961` (merge pending). Live
+Git state (current branch, working tree, upstream) comes from Git and the
 SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `44efae1` as of last fetch,
+Recently merged to `main` (`origin/main` = `da21961` as of last fetch,
 verified 2026-10-06):
 
+- PR #39 (`da21961`): `b2e443a` chore: adopt guarded high-autonomy Claude
+  workflow; `763b224` docs checkpoint; `28aaff6` chore: pin ruff 0.16.2 and
+  pytest 9.1.1. The development workflow (autonomy, approval gates,
+  `scripts/verify.py`) is described in AGENTS.md.
 - PR #38 (`44efae1`): `1cfc901` docs: checkpoint project state after
   versioned fundamentals merge.
 - PR #37 (`668a37c`): `b014e28` feat: add versioned point-in-time
@@ -36,23 +40,27 @@ are owner-owned and untouched.
 
 ## Current objective
 
-Guarded high-autonomy development workflow (owner request, 2026-10-06;
-this branch, merge pending): Claude edits, verifies, commits, and pushes
-non-main branches without routine approvals; hard protections and
-approval gates are in AGENTS.md "Autonomy" and "Owner approval gates".
+ML phase, ticket 1: leakage-safe model-validation foundation (this branch,
+merge pending). No prediction model is selected or implemented. Design,
+leakage register, evidence, and the next-ticket proposal are in
+`docs/research/model_validation.md`.
 
-- `scripts/verify.py` is the single gate runner for local runs and CI;
-  it always uses `.venv` and refuses to fall back to another interpreter.
-- CI builds a `.venv` and runs the same script (pytest twice, Ruff format
-  check, Ruff lint; Ruff now also covers `.claude/hooks`).
-- `.claude/hooks/guard_commands.py` is branch-aware: it denies commits and
-  pushes targeting `main`, PR merges, and destructive commands, and asks
-  at approval gates. Tested in `tests/test_guard_commands.py`, including
-  real throwaway repositories.
-- `/project-verify` is model-invoked and ends with a commit-gate verdict;
-  `/project-checkpoint` runs at milestones inside the milestone's branch.
+Owner decisions (2026-10-06):
 
-The next domain ticket has not been chosen; see "Next steps".
+- ML labels enter at the close after the feature date:
+  `MODEL_LABEL_SPEC = LabelSpec(horizon=20, entry_lag=1)` in
+  `features/training.py`. `add_forward_return_target` keeps its default
+  `entry_lag=0`, so existing callers and tests are unchanged.
+- Data from 2025-01-01 onward is a lockbox. Development folds end by it and
+  never score labels that mature in it; holdout folds run once per
+  pre-registered model.
+
+In effect on this branch (`src/stock_agent/model_validation/`): expanding
+forward-only folds; strict global purge (train iff
+`target_end_date < test_start`); no embargo, justified and asserted per fold;
+fit-once, train-only transforms with a fresh estimator per fold; a feature
+contract plus a content-based prefix-stability check; canonical fingerprints
+and per-fold metadata.
 
 
 ## Current EDGAR architecture
@@ -212,26 +220,22 @@ Coverage limitations found are tracked as open item 2.
 ## Last verified quality baseline
 
 Measured 2026-10-06 with `python3 scripts/verify.py` on
-`chore/claude-fast-workflow` (base `44efae1` plus this milestone's
-changes), launched from Anaconda `python3`; every gate ran with `.venv`
-tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2). Exit 0.
+`feature/ml-validation-foundation` (base `da21961` plus this milestone's
+changes); gates ran with `.venv` tools (Python 3.12.2, pytest 9.1.1,
+ruff 0.16.2). Exit 0.
 
-- `pytest -q`: 696 passed (521 before + 175 workflow tests)
-- `python -m pytest -q`: 696 passed
-- `ruff format --check src tests scripts .claude/hooks`: 121 files
+- `pytest -q`: 865 passed (696 before + 169 validation and label tests)
+- `python -m pytest -q`: 865 passed
+- `ruff format --check src tests scripts .claude/hooks`: 132 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- `scan_changes.sh origin/main`: 21 changed paths; 0 artifact, large-file,
-  or secret hits; 18 guardrail paths flagged, all within the owner's
-  2026-10-06 request
-- Mutation checks: 8 of 8 caught (guard allowing protected pushes,
-  commits on `main`, `gh pr merge`, ignoring upstream, failing open,
-  unguarded protected files; verify falling back without `.venv`,
-  stopping at the first failing gate)
-
-The `.venv` interpreter is built on the Anaconda 3.12.2 base (standard
-library from `/opt/anaconda3`); its packages are isolated in `.venv`.
-CI has not yet run this script (it runs on the pull request).
+- Mutation checks: 34 of 34 deliberate leakage violations killed by the
+  suite. The list is in `docs/research/model_validation.md`.
+- Real-data evidence (read-only, not committed):
+  - production feature SQL prefix-stable at 5 real cutoffs;
+  - 24 development folds, 84 rows purged per fold;
+  - same-symbol memorizer canary: corr -0.014 purged vs +0.190 unpurged;
+  - the harness refuses an unpurged fold.
 
 
 ## Open items
@@ -257,18 +261,36 @@ CI has not yet run this script (it runs on the pull request).
    non-strict mode (rejection rule is an owner decision).
 5. YoY: no refresh when a prior-year amendment arrives later; nearest-
    match fallback when the nearest prior-year row is not yet available.
-6. `split_temporal_dataset` has no purge / embargo for label horizons.
-7. Workflow follow-ups (owner decisions):
-   - Resolved 2026-10-06 (owner-approved): `ruff==0.16.2` and
-     `pytest==9.1.1` are pinned in `requirements.txt`, matching the
-     verified `.venv`; a gate test fails if the installed version differs
-     from the pin. Their transitive dependencies (e.g. `pluggy`) remain
-     unpinned.
+6. ML validation follow-ups:
+   - The universe is 5 semiconductor names chosen with hindsight
+     (selection and survivorship bias). Validation cannot fix this. A
+     point-in-time universe (historical index membership or a rules-based
+     liquidity universe) is the prerequisite for generalizable claims.
+   - `run_rebalanced_backtest` executes at the same close; add a matching
+     execution lag before portfolio-level model metrics (model ticket).
+   - `build_model_dataset` still includes benchmark index rows
+     (DOW_JONES, NASDAQ_COMPOSITE, SP500); validation excludes them via
+     `restrict_to_symbols`. Removing them upstream is a data-contract
+     change (owner-gated).
+   - Legacy `split_temporal_dataset` and `select_training_rows_asof` are
+     kept with warning docstrings: no purge, and intraday cutoffs could
+     admit unmatured labels. Deprecating them changes contracts and tests.
+   - Labels are computed after `build_model_dataset` drops rows with
+     missing required features. An interior gap would stretch a label's
+     span. Not present today; purging stays correct because it uses the
+     recorded `target_end_date`.
+   - Macro `available_at` is date-level. Release times of day (e.g. H.15
+     at 16:15 ET) are unverified from memory; entry lag 1 makes
+     after-close releases harmless for labels.
+7. Workflow follow-ups:
    - GitHub branch protection on `main` is not verified (`gh` is not
      installed locally). It is the authoritative control against direct
      pushes and merges; the local guard is defense in depth.
-   - Confirm in a fresh session that the new `Edit(...)` ask rules prompt
-     for `.claude/**`, `AGENTS.md`, and dependency manifests.
+   - Confirm in a fresh session that the `Edit(...)` ask rules prompt for
+     `.claude/**`, `AGENTS.md`, and dependency manifests. They did not
+     prompt in the session that added them.
+   - `numpy` and `pandas` are unpinned; tests use the legacy `RandomState`
+     stream and canonical fingerprints so results do not depend on them.
 8. Smaller items: lineage lacks current-side tie lists; as-of change log
    trusts `period_end`; mixed availability rules at one trigger instant;
    FY consistency checks (Q1+Q2+Q3+Q4 = FY); duplicate flow logic in
@@ -278,10 +300,14 @@ CI has not yet run this script (it runs on the pull request).
 
 ## Next steps
 
-1. Owner reviews and merges the `chore/claude-fast-workflow` pull request
-   (merging is owner-only); confirm CI passes with `scripts/verify.py`.
-2. Start a fresh Claude session after merge so the new settings and
-   hooks load.
+1. Owner reviews and merges the `feature/ml-validation-foundation` pull
+   request (merging is owner-only); confirm CI passes.
+2. Next ticket: compare Ridge, Lasso, and Elastic Net under identical folds
+   and preprocessing (`docs/research/model_validation.md`). Owner decisions
+   first:
+   - raw vs excess-over-equal-weight label (excess recommended);
+   - the scikit-learn dependency;
+   - the learning-core split for the estimator core.
 3. Owner decision from open item 7: enable branch protection on `main`.
-4. Choose the next ticket from the open items (candidates: decision
-   timestamp (1), SMCI coverage gaps (2), purge / embargo (6)).
+4. Strategic: a point-in-time universe (open item 6) before any claim
+   beyond "relative skill within this hindsight-selected universe".
