@@ -22,6 +22,12 @@ facts. Git and command output are the only sources of truth.
 - Quote each command exactly as run, with its key result lines.
 - The full gates in step 4 are authoritative. Focused tests are only an
   optimization and never replace them.
+- Run each authoritative gate command directly, exactly as listed. Never
+  pipe it through `tail`, `grep`, `head`, `tee`, or any other command,
+  and never chain it in a way that can hide or replace its exit status.
+- Pass/fail for each gate is the command's actual exit status (0 = pass).
+  Output may be summarized after the command finishes, but a summary or
+  matched text never overrides the exit status.
 
 ## Steps
 
