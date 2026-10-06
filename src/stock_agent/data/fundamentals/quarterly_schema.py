@@ -206,10 +206,11 @@ def validate_quarterly_fundamental_frame(
             "period_end",
             "retrieved_at",
             "sec_accession_number",
+            "available_at",
         ]
     ).any():
         raise ValueError(
             "Quarterly fundamental data contain duplicate "
             "(symbol, period_end, retrieved_at, "
-            "sec_accession_number) rows."
+            "sec_accession_number, available_at) rows."
         )

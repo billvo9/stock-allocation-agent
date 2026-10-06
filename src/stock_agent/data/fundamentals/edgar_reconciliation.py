@@ -223,17 +223,63 @@ def _validate_observation(
     )
 
 
+def _resolve_as_of(
+    *,
+    current: FiscalFlowObservation,
+    as_of: object | None,
+) -> pd.Timestamp:
+    """
+    Return the availability time of the derived observation.
+
+    "current" is the derived observation being produced. Its
+    availability is as_of, which defaults to current.available_at and may
+    never be earlier: a derived value is available no earlier than the
+    latest availability of every input (AGENTS.md).
+    """
+
+    current_available_at = _normalize_timestamp(
+        current.available_at,
+        name="current.available_at",
+        normalize=False,
+    )
+
+    if as_of is None:
+        return current_available_at
+
+    resolved = _normalize_timestamp(
+        as_of,
+        name="as_of",
+        normalize=False,
+    )
+
+    if resolved < current_available_at:
+        raise EdgarReconciliationError(
+            "as_of cannot be earlier than current.available_at.",
+        )
+
+    return resolved
+
+
 def _prior_validation_reason(
     *,
     current: FiscalFlowObservation,
     prior: FiscalFlowObservation,
+    as_of: pd.Timestamp | None = None,
 ) -> str:
     """
     Return 'ok' when prior is eligible for cross-filing arithmetic.
 
     This function contains the deterministic leakage and identity
     guardrails used before any subtraction occurs.
+
+    "current" means the derived observation being produced, whose
+    availability is as_of (default: current.available_at). A prior is
+    point-in-time eligible when prior.available_at <= as_of, consistent
+    with AGENTS.md: every derived value is available no earlier than the
+    latest availability of every input.
     """
+
+    resolved_as_of = _resolve_as_of(current=current, as_of=as_of)
 
     current_symbol = _require_nonempty_string(
         current.symbol,
@@ -300,19 +346,13 @@ def _prior_validation_reason(
     if prior_period_end >= current_period_end:
         return "prior_period_not_before_current"
 
-    current_available_at = _normalize_timestamp(
-        current.available_at,
-        name="current.available_at",
-        normalize=False,
-    )
-
     prior_available_at = _normalize_timestamp(
         prior.available_at,
         name="prior.available_at",
         normalize=False,
     )
 
-    if prior_available_at > current_available_at:
+    if prior_available_at > resolved_as_of:
         return "prior_available_after_current"
 
     return "ok"
@@ -401,13 +441,17 @@ def select_prior_fiscal_observation(
     *,
     current: FiscalFlowObservation,
     candidates: Iterable[FiscalFlowObservation],
+    as_of: pd.Timestamp | None = None,
 ) -> PriorSelection:
     """
     Choose the prior observation used to reconcile current.
 
+    as_of is the availability of the derived observation being produced
+    (default: current.available_at; never earlier).
+
     Rule:
         1. Keep candidates that pass the prior safety checks,
-           including available_at <= current.available_at.
+           including available_at <= as_of.
            Filtering happens before ranking, so a later amendment
            can never win and then be rejected.
         2. Keep candidates with a usable prior input value.
@@ -419,6 +463,8 @@ def select_prior_fiscal_observation(
     """
 
     _validate_observation(current)
+
+    resolved_as_of = _resolve_as_of(current=current, as_of=as_of)
 
     candidate_list = tuple(candidates)
 
@@ -449,6 +495,7 @@ def select_prior_fiscal_observation(
         reason = _prior_validation_reason(
             current=current,
             prior=candidate,
+            as_of=resolved_as_of,
         )
 
         if reason == "ok":
@@ -624,9 +671,14 @@ def reconcile_fiscal_flow(
     *,
     current: FiscalFlowObservation,
     prior: FiscalFlowObservation | None = None,
+    as_of: pd.Timestamp | None = None,
 ) -> FiscalFlowReconciliation:
     """
     Convert fiscal flow information into one standalone-quarter value.
+
+    as_of is the availability of the derived value (default:
+    current.available_at; never earlier). The prior must be available
+    no later than as_of.
 
     Accounting hierarchy:
 
@@ -653,6 +705,8 @@ def reconcile_fiscal_flow(
     """
 
     _validate_observation(current)
+
+    resolved_as_of = _resolve_as_of(current=current, as_of=as_of)
 
     direct_value = _optional_float(
         current.direct_value,
@@ -731,6 +785,7 @@ def reconcile_fiscal_flow(
     prior_reason = _prior_validation_reason(
         current=current,
         prior=prior,
+        as_of=resolved_as_of,
     )
 
     if prior_reason != "ok":
@@ -797,9 +852,14 @@ def reconcile_fiscal_flow_from_candidates(
     *,
     current: FiscalFlowObservation,
     candidates: Iterable[FiscalFlowObservation],
+    as_of: pd.Timestamp | None = None,
 ) -> CandidateReconciliation:
     """
     Reconcile current, selecting a prior only when subtraction is needed.
+
+    as_of is the availability of the derived value (default:
+    current.available_at; never earlier). Only priors available by
+    as_of may be selected.
 
     Order:
         1. Nothing reported for this metric -> no_reported_value.
@@ -811,6 +871,8 @@ def reconcile_fiscal_flow_from_candidates(
     """
 
     _validate_observation(current)
+
+    resolved_as_of = _resolve_as_of(current=current, as_of=as_of)
 
     reported = (
         current.direct_value,
@@ -829,7 +891,7 @@ def reconcile_fiscal_flow_from_candidates(
             selection=None,
         )
 
-    without_prior = reconcile_fiscal_flow(current=current)
+    without_prior = reconcile_fiscal_flow(current=current, as_of=resolved_as_of)
 
     if without_prior.reason != "missing_prior_fiscal_observation":
         return CandidateReconciliation(
@@ -840,6 +902,7 @@ def reconcile_fiscal_flow_from_candidates(
     selection = select_prior_fiscal_observation(
         current=current,
         candidates=candidates,
+        as_of=resolved_as_of,
     )
 
     if selection.prior is None:
@@ -857,6 +920,212 @@ def reconcile_fiscal_flow_from_candidates(
         result=reconcile_fiscal_flow(
             current=current,
             prior=selection.prior,
+            as_of=resolved_as_of,
         ),
         selection=selection,
+    )
+
+
+@dataclass(frozen=True)
+class CurrentSelection:
+    """
+    Result of choosing the current-side observation for one fiscal period.
+
+    current is None whenever reason != "ok". Accession tuples are sorted
+    so the selection is a pure function of the candidate set.
+
+    skipped_current_accessions:
+        candidates available by as_of that carry no usable current-side
+        input (for example a partial amendment omitting this metric).
+
+    equivalent_current_accessions:
+        latest-available usable candidates with equal inputs; current is
+        the smallest accession among them.
+
+    conflicting_current_accessions:
+        latest-available usable candidates whose inputs differ.
+    """
+
+    current: FiscalFlowObservation | None
+    reason: str
+    skipped_current_accessions: tuple[str, ...] = ()
+    equivalent_current_accessions: tuple[str, ...] = ()
+    conflicting_current_accessions: tuple[str, ...] = ()
+
+
+_USABLE_CURRENT_REASONS = frozenset({"ok", "missing_prior_fiscal_observation"})
+
+
+def _current_input_reason(
+    observation: FiscalFlowObservation,
+) -> str:
+    """
+    Reason reconciliation gives for observation's own current-side input.
+
+    "ok" or "missing_prior_fiscal_observation" means the current input
+    is usable (direct value; else YTD for Q1-Q3; else FY for Q4), exactly
+    as reconcile_fiscal_flow decides. Nothing reported at all is
+    "no_reported_value", as in reconcile_fiscal_flow_from_candidates.
+    """
+
+    reported = (
+        observation.direct_value,
+        observation.ytd_value,
+        observation.fy_value,
+    )
+
+    if all(_optional_float(value, name="value") is None for value in reported):
+        return "no_reported_value"
+
+    return reconcile_fiscal_flow(current=observation).reason
+
+
+def _current_inputs(
+    observation: FiscalFlowObservation,
+) -> tuple[float | None, float | None, float | None]:
+    # _optional_float maps None and NaN to None, so comparison is NaN-safe.
+    return (
+        _optional_float(observation.direct_value, name="direct_value"),
+        _optional_float(observation.ytd_value, name="ytd_value"),
+        _optional_float(observation.fy_value, name="fy_value"),
+    )
+
+
+def select_current_fiscal_observation(
+    *,
+    candidates: Iterable[FiscalFlowObservation],
+    as_of: pd.Timestamp,
+) -> CurrentSelection:
+    """
+    Choose the current-side observation for one fiscal period at as_of.
+
+    candidates are raw observations for one (symbol, metric, fiscal_year,
+    fiscal_quarter); mixed identity or duplicate accessions raise.
+
+    Rule:
+        1. Keep candidates with available_at <= as_of.
+        2. Skip candidates without a usable current-side input, so a
+           partial amendment never erases an earlier valid value.
+        3. Among usable candidates take the latest available_at.
+           Equal inputs: smallest accession. Different inputs:
+           "ambiguous_current_observation", nothing is chosen.
+        4. No usable candidate: the reason reconciliation gives for the
+           latest available candidate (tie: smallest accession), or
+           "missing_current_observation" when nothing is available.
+
+    The result does not depend on candidate order.
+    """
+
+    resolved_as_of = _normalize_timestamp(
+        as_of,
+        name="as_of",
+        normalize=False,
+    )
+
+    candidate_list = tuple(candidates)
+
+    seen_accessions: set[str] = set()
+    identities: set[tuple[str, str, int, int]] = set()
+
+    for candidate in candidate_list:
+        _validate_observation(candidate)
+
+        accession = candidate.accession_number.strip()
+
+        if accession in seen_accessions:
+            raise EdgarReconciliationError(
+                f"Duplicate current candidate accession: {accession}.",
+            )
+
+        seen_accessions.add(accession)
+
+        identities.add(
+            (
+                candidate.symbol.strip(),
+                candidate.metric_name.strip(),
+                candidate.fiscal_year,
+                candidate.fiscal_quarter,
+            )
+        )
+
+    if len(identities) > 1:
+        raise EdgarReconciliationError(
+            "Current candidates must share one (symbol, metric, fiscal_year, "
+            "fiscal_quarter) identity.",
+        )
+
+    def _available_at(observation: FiscalFlowObservation) -> pd.Timestamp:
+        return _normalize_timestamp(
+            observation.available_at,
+            name="available_at",
+            normalize=False,
+        )
+
+    available = sorted(
+        (
+            (_available_at(candidate), candidate.accession_number.strip(), candidate)
+            for candidate in candidate_list
+            if _available_at(candidate) <= resolved_as_of
+        ),
+        key=lambda item: (item[0], item[1]),
+    )
+
+    if not available:
+        return CurrentSelection(
+            current=None,
+            reason="missing_current_observation",
+        )
+
+    usable: list[tuple[pd.Timestamp, str, FiscalFlowObservation]] = []
+    skipped: list[str] = []
+    unusable_reasons: dict[str, str] = {}
+
+    for available_at, accession, candidate in available:
+        reason = _current_input_reason(candidate)
+
+        if reason in _USABLE_CURRENT_REASONS:
+            usable.append((available_at, accession, candidate))
+        else:
+            skipped.append(accession)
+            unusable_reasons[accession] = reason
+
+    skipped_accessions = tuple(sorted(skipped))
+
+    if not usable:
+        latest_available_at = available[-1][0]
+        latest_accession = min(
+            accession
+            for available_at, accession, _ in available
+            if available_at == latest_available_at
+        )
+
+        return CurrentSelection(
+            current=None,
+            reason=unusable_reasons[latest_accession],
+            skipped_current_accessions=skipped_accessions,
+        )
+
+    latest_available_at = usable[-1][0]
+
+    latest = [
+        (accession, candidate)
+        for available_at, accession, candidate in usable
+        if available_at == latest_available_at
+    ]
+
+    latest_accessions = tuple(accession for accession, _ in latest)
+
+    if len({_current_inputs(candidate) for _, candidate in latest}) > 1:
+        return CurrentSelection(
+            current=None,
+            reason="ambiguous_current_observation",
+            skipped_current_accessions=skipped_accessions,
+            conflicting_current_accessions=latest_accessions,
+        )
+
+    return CurrentSelection(
+        current=latest[0][1],
+        reason="ok",
+        skipped_current_accessions=skipped_accessions,
+        equivalent_current_accessions=latest_accessions,
     )
