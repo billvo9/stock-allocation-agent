@@ -127,7 +127,7 @@ rank, and a block-permutation null.
 
 **Predictive metrics.**
 - Out-of-sample R² against the zero forecast.
-- Mean per-date rank IC with Newey-West standard errors (lag at least 21) or
+- Mean per-date rank IC with Newey-West standard errors (lag ≥ 40, false-positive rate checked by simulation) or
   non-overlapping subsamples.
 - Calibration slope.
 - Clark-West test against the null.

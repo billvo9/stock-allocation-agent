@@ -8,14 +8,18 @@ Last reviewed: 2026-10-08
 
 ## Last checkpoint
 
-2026-10-06, milestone "ML validation foundation", verified on branch
-`feature/ml-validation-foundation` based on `da21961` (merge pending). Live
-Git state (current branch, working tree, upstream) comes from Git and the
-SessionStart hook, not from this file.
+2026-10-08, milestone "universe and market-context research", verified on
+branch `research/universe-market-context` based on `145c7bf` (merge pending).
+Live Git state (current branch, working tree, upstream) comes from Git and
+the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `da21961` as of last fetch,
-verified 2026-10-06):
+Recently merged to `main` (`origin/main` = `145c7bf` as of last fetch,
+verified 2026-10-08):
 
+- PR #40 (`145c7bf`): `6f34788` feat: explicit label timing with next-close
+  entry; `8d80b6e` feat: purged walk-forward model-validation foundation;
+  `8f6d15b` docs: checkpoint; `d98cd92` docs: diagnostics and visualization
+  plan.
 - PR #39 (`da21961`): `b2e443a` chore: adopt guarded high-autonomy Claude
   workflow; `763b224` docs checkpoint; `28aaff6` chore: pin ruff 0.16.2 and
   pytest 9.1.1. The development workflow (autonomy, approval gates,
@@ -40,10 +44,25 @@ are owner-owned and untouched.
 
 ## Current objective
 
-ML phase, ticket 1: leakage-safe model-validation foundation (this branch,
-merge pending). No prediction model is selected or implemented. Design,
-leakage register, evidence, and the next-ticket proposal are in
-`docs/research/model_validation.md`.
+ML phase.
+
+- The leakage-safe validation foundation is merged (PR #40); see
+  `docs/research/model_validation.md`.
+- This branch adds research and design only:
+  - a point-in-time universe track (U);
+  - a market-context feature track (C);
+
+  both in `docs/research/universe_and_market_context.md`.
+- Findings:
+  - **The current 4-name universe can verify the pipeline but cannot
+    support product-grade evidence.** It is hindsight-selected and
+    survivorship-biased, and its minimum detectable rank IC is about 0.12.
+  - **The minimum for product-grade evidence is about 100 point-in-time
+    large caps** on survivorship-free data with history from 2010 (MDE
+    about 0.020-0.025).
+  - **Context series are date-common.** They can affect cross-sectional
+    ranking only through pre-registered interactions.
+- No prediction model is selected or implemented yet.
 
 Owner decisions (2026-10-06):
 
@@ -55,7 +74,7 @@ Owner decisions (2026-10-06):
   never score labels that mature in it; holdout folds run once per
   pre-registered model.
 
-In effect on this branch (`src/stock_agent/model_validation/`): expanding
+In effect on `main` (`src/stock_agent/model_validation/`): expanding
 forward-only folds; strict global purge (train iff
 `target_end_date < test_start`); no embargo, justified and asserted per fold;
 fit-once, train-only transforms with a fresh estimator per fold; a feature
@@ -240,9 +259,15 @@ ruff 0.16.2). Exit 0.
 
 ## Open items
 
-1. Decision timestamp vs midnight-UTC market dates in
-   `align_quarterly_fundamentals_asof` (stale-by-a-day, not leaking;
-   availability-semantics change, owner-gated).
+1. One decision timestamp. The code has three implicit decision times:
+   - macro uses all of calendar day d;
+   - fundamentals and the panel validator use 00:00 UTC on d.
+
+   Proposed: `decision_at` = 18:00 America/New_York on session d, with
+   timestamp-level `available_at` (source publication time) for all sources
+   (`docs/research/universe_and_market_context.md`). This is an
+   availability-semantics change, so it is owner-gated. Not leaking today;
+   fundamentals are stale by a day.
 2. Real-data coverage gaps from the SMCI validation (coverage and
    diagnostics; no point-in-time defect found), in suggested priority:
    - edgartools can mislabel 52/53-week fiscal calendars; confirm
@@ -262,10 +287,25 @@ ruff 0.16.2). Exit 0.
 5. YoY: no refresh when a prior-year amendment arrives later; nearest-
    match fallback when the nearest prior-year row is not yet available.
 6. ML validation follow-ups:
-   - The universe is 5 semiconductor names chosen with hindsight
-     (selection and survivorship bias). Validation cannot fix this. A
-     point-in-time universe (historical index membership or a rules-based
-     liquidity universe) is the prerequisite for generalizable claims.
+   - **Blocker for product-grade evidence: no security master and no
+     survivorship-free prices.**
+     - yfinance returns nothing for delisted tickers (XLNX, MXIM, LLTC
+       verified empty).
+     - Tickers are reused (SNDK) and CIKs change (MRVL in 2021).
+     - The universe is 5 semiconductor names chosen with hindsight.
+
+     The U track in `docs/research/universe_and_market_context.md` covers
+     the contract, rules R1-R8, and source options. Data licence and cost
+     are an owner decision.
+   - The risk-free rate (FRED DGS3MO) has local history only from
+     2024-01-02: `scripts/download_rates.py` hard-codes a first start of
+     2024-01-01. Backfill to at least 2009 before T5 portfolio metrics. Rates
+     storage also overwrites revisions and has no `available_at`.
+   - Inference correction: under a true null, Newey-West with lag 20
+     rejected 7-13% of the time at a nominal 5% (simulation). Use lag ≥ 40
+     or a 63-session block bootstrap, and check the false-positive rate (T2).
+   - `requests` is imported by the FRED adapters but not pinned in
+     `requirements.txt` (dependency gate).
    - `run_rebalanced_backtest` executes at the same close; add a matching
      execution lag before portfolio-level model metrics (model ticket).
    - `build_model_dataset` still includes benchmark index rows
@@ -330,7 +370,7 @@ ruff 0.16.2). Exit 0.
 
 ## Next steps
 
-1. Owner reviews and merges the `feature/ml-validation-foundation` pull
+1. Owner reviews and merges the `research/universe-market-context` pull
    request (merging is owner-only); confirm CI passes.
 2. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
@@ -347,5 +387,15 @@ ruff 0.16.2). Exit 0.
    - scikit-learn and the learning-core split for the estimator core
      (before T4).
 3. Owner decision from open item 7: enable branch protection on `main`.
-4. Strategic: a point-in-time universe (open item 6) before any claim
-   beyond "relative skill within this hindsight-selected universe".
+4. U and C tracks, in parallel with T2-T4 (see "Sequencing against T4" in
+   `docs/research/universe_and_market_context.md`). Owner decisions:
+   - product scope (broad large caps vs semiconductors only);
+   - the survivorship-free data source (check Georgia Tech WRDS access);
+   - `decision_at`;
+   - calendar and vendor dependencies;
+   - compliance exclusions (NS-CMIC).
+
+   T4 runs on the current universe count as engineering exercises only.
+   Results become product-grade evidence only on U1 (about 100 point-in-time
+   large caps from 2010) with the V1 context layer, the T2 inference
+   checks, and the T5 costs.
