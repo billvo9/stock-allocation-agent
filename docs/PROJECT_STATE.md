@@ -3,7 +3,7 @@
 Changing project state only. Permanent policy lives in `AGENTS.md`.
 Git is authoritative: verify everything here before relying on it.
 
-Last reviewed: 2026-10-06
+Last reviewed: 2026-10-08
 
 
 ## Last checkpoint
@@ -274,14 +274,42 @@ ruff 0.16.2). Exit 0.
      change (owner-gated).
    - Legacy `split_temporal_dataset` and `select_training_rows_asof` are
      kept with warning docstrings: no purge, and intraday cutoffs could
-     admit unmatured labels. Deprecating them changes contracts and tests.
+     admit unmatured labels. Nothing outside tests calls them. Two gaps:
+     - there is no runtime guard (a `DeprecationWarning` would be
+       non-breaking);
+     - the split's defaults (validation 2025, test 2026) lie entirely
+       inside the lockbox.
+
+     Deprecating them changes contracts and tests.
+   - SNDK has no rows dated before the lockbox. In holdout folds its first
+     trainable label matures in mid-April 2025, so early holdout folds
+     score it with no SNDK training history.
+   - Audit gaps found in the pre-merge review (2026-10-08). The manifest
+     lacks:
+     - a dirty-tree flag;
+     - the estimator spec, hyperparameters, and seeds;
+     - fitted transform parameters;
+     - a variant and holdout-use ledger;
+     - versions of duckdb, pyarrow, yfinance, and edgartools, plus platform;
+     - raw-data retrieval times;
+     - hashes of the fold table and the predictions;
+     - a writer that saves it.
+
+     Planned in T2 (`docs/research/diagnostics_and_visualization_plan.md`).
    - Labels are computed after `build_model_dataset` drops rows with
      missing required features. An interior gap would stretch a label's
      span. Not present today; purging stays correct because it uses the
      recorded `target_end_date`.
-   - Macro `available_at` is date-level. Release times of day (e.g. H.15
-     at 16:15 ET) are unverified from memory; entry lag 1 makes
-     after-close releases harmless for labels.
+   - Macro `available_at` is date-level only (no time of day stored), so a
+     row dated d includes releases published after that day's close. Times
+     verified 2026-10-08 against Federal Reserve sources:
+     - H.15 (fed funds) at 4:15 p.m. ET;
+     - weekly H.6 (M2) on Thursdays at 4:30 p.m. until 2021-02-11.
+
+     This is harmless for ML labels (entry at the close of d+1). It is still
+     unsafe for `entry_lag=0` labels and the same-close backtest if they are
+     combined with macro. Macro values are vintage-correct: ALFRED's full
+     real-time range, with each revision kept as its own row.
 7. Workflow follow-ups:
    - GitHub branch protection on `main` is not verified (`gh` is not
      installed locally). It is the authoritative control against direct
@@ -291,6 +319,8 @@ ruff 0.16.2). Exit 0.
      prompt in the session that added them.
    - `numpy` and `pandas` are unpinned; tests use the legacy `RandomState`
      stream and canonical fingerprints so results do not depend on them.
+   - `.gitignore` line 44 reads `*.logreports/`: a missing newline, so
+     `*.log` files are not ignored (`reports/` is ignored by the next line).
 8. Smaller items: lineage lacks current-side tie lists; as-of change log
    trusts `period_end`; mixed availability rules at one trigger instant;
    FY consistency checks (Q1+Q2+Q3+Q4 = FY); duplicate flow logic in
@@ -302,12 +332,20 @@ ruff 0.16.2). Exit 0.
 
 1. Owner reviews and merges the `feature/ml-validation-foundation` pull
    request (merging is owner-only); confirm CI passes.
-2. Next ticket: compare Ridge, Lasso, and Elastic Net under identical folds
-   and preprocessing (`docs/research/model_validation.md`). Owner decisions
-   first:
+2. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
+   part of the roadmap, not an afterthought). Tickets T2-T6 are in
+   `docs/research/diagnostics_and_visualization_plan.md`:
+   - T2: diagnostics layer, run outputs and ledger, null models;
+   - T3: Plotly and Streamlit dashboard, run on the null models;
+   - T4: Ridge, Lasso, and Elastic Net, with coefficient stability;
+   - T5: portfolio readiness;
+   - T6: holdout evaluation, once per pre-registered model.
+
+   Owner decisions:
+   - plotly and streamlit dependencies (before T3);
    - raw vs excess-over-equal-weight label (excess recommended);
-   - the scikit-learn dependency;
-   - the learning-core split for the estimator core.
+   - scikit-learn and the learning-core split for the estimator core
+     (before T4).
 3. Owner decision from open item 7: enable branch protection on `main`.
 4. Strategic: a point-in-time universe (open item 6) before any claim
    beyond "relative skill within this hindsight-selected universe".

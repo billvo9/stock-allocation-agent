@@ -62,7 +62,8 @@ test labels.
 | Overlapping labels crossing into the test window | Mitigated: strict global purge |
 | Legacy `split_temporal_dataset` (no purge) | Documented: its docstring warns. With entry lag 1 it puts 84 training rows with 2025+ labels into training |
 | Same-close execution | Mitigated for ML labels (entry lag 1). The backtest engine still executes at the same close; it gets a matching lag in the model ticket |
-| Macro releases after the close (fed funds, pre-2021 weekly M2) | Removed by entry lag 1. Macro `available_at` is date-level |
+| Macro releases after the close | Harmless for ML labels: entry is at the close of d+1, and validation rejects same-close labels. Still unsafe for `entry_lag=0` labels and the same-close backtest if they are combined with macro features. Release times verified 2026-10-08 against Federal Reserve sources: H.15 (fed funds) at 4:15 p.m.; weekly H.6 (M2) Thursdays at 4:30 p.m. until 2021-02-11, monthly at 1:00 p.m. since. Availability is date-level only: no time of day is stored, and a row dated d includes every release dated d |
+| Macro revisions | Vintage-correct. The provider requests ALFRED's full real-time range, so each revision is its own row with its own release date (CPI up to 7 vintages, M2 up to 43, GDP 12, unemployment 5; fed funds unrevised). First-release lags match release calendars |
 | Intraday cutoffs admitting unmatured labels | Mitigated in the new folds. Legacy `select_training_rows_asof` documents it |
 | Price and volume levels (vendor back-adjustment) | Mitigated: rejected by the feature contract |
 | Benchmark index rows in the asset panel | Mitigated in validation (`restrict_to_symbols`). `build_model_dataset` still includes them (data-contract follow-up) |
@@ -100,7 +101,11 @@ test labels.
   synthetic vintages.
 
 
-## Next ticket: Ridge vs Lasso vs Elastic Net
+## Linear baselines: Ridge vs Lasso vs Elastic Net (roadmap ticket T4)
+
+**Sequencing.** The diagnostics layer and null models (T2) and the dashboard
+(T3) come first. `docs/research/diagnostics_and_visualization_plan.md` holds
+the roadmap and details every diagnostic named below.
 
 **Setup.** Identical outer folds, identical in-fold preprocessing (median
 impute, then standardize). Nested selection runs inner purged forward folds
