@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 DEFAULT_TRAIN_START = pd.Timestamp("2016-01-01")
@@ -9,6 +10,19 @@ DEFAULT_TRAIN_END = pd.Timestamp("2024-12-31")
 DEFAULT_VALIDATION_START = pd.Timestamp("2025-01-01")
 DEFAULT_VALIDATION_END = pd.Timestamp("2025-12-31")
 DEFAULT_TEST_START = pd.Timestamp("2026-01-01")
+
+TARGET_RETURN_COLUMN = "target_return"
+TARGET_START_COLUMN = "target_start_date"
+TARGET_END_COLUMN = "target_end_date"
+
+
+def _require_int(value: object, name: str, minimum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be an integer >= {minimum}; got {value!r}.")
+    if value < minimum:
+        qualifier = "positive" if minimum == 1 else f">= {minimum}"
+        raise ValueError(f"{name} must be {qualifier}; got {value!r}.")
+    return int(value)
 
 
 @dataclass(frozen=True)
@@ -18,22 +32,65 @@ class TemporalSplit:
     test: pd.DataFrame
 
 
+@dataclass(frozen=True)
+class LabelSpec:
+    """
+    Explicit forward-return label definition.
+
+    A row dated t carries features through the close of t. The position is
+    entered at the close `entry_lag` observations later and held for
+    `horizon` observations of the same symbol:
+
+        target_return = price(t + entry_lag + horizon) / price(t + entry_lag) - 1
+
+    The fields have no defaults so every experiment states its timing.
+    """
+
+    horizon: int
+    entry_lag: int
+    price_column: str = "adjusted_close"
+
+    def __post_init__(self) -> None:
+        _require_int(self.horizon, "horizon", minimum=1)
+        _require_int(self.entry_lag, "entry_lag", minimum=0)
+
+    def apply(self, frame: pd.DataFrame) -> pd.DataFrame:
+        return add_forward_return_target(
+            frame,
+            horizon=self.horizon,
+            price_column=self.price_column,
+            entry_lag=self.entry_lag,
+        )
+
+
+# Label convention for model evaluation (owner decision, 2026-10-06): enter at
+# the close after the feature date. End-of-day data arrives after the close,
+# so trading at the observed close is infeasible, and some macro series are
+# published after the close on their release dates.
+MODEL_LABEL_SPEC = LabelSpec(horizon=20, entry_lag=1)
+
+
 def add_forward_return_target(
     frame: pd.DataFrame,
     horizon: int = 20,
     price_column: str = "adjusted_close",
+    entry_lag: int = 0,
 ) -> pd.DataFrame:
     """
     Add a forward-return target independently for each asset.
 
     target_return:
-        price(t + horizon) / price(t) - 1
+        price(t + entry_lag + horizon) / price(t + entry_lag) - 1
 
-    target_end_date records when the forward return becomes observable.
+    Offsets count observations of the same symbol, never another symbol's
+    rows. target_start_date is the entry observation's date and
+    target_end_date the exit observation's date: the label is known only
+    after the close of target_end_date. The default entry_lag=0 keeps the
+    historical same-close convention; model evaluation uses MODEL_LABEL_SPEC.
     """
 
-    if horizon <= 0:
-        raise ValueError("horizon must be positive.")
+    horizon = _require_int(horizon, "horizon", minimum=1)
+    entry_lag = _require_int(entry_lag, "entry_lag", minimum=0)
 
     required = {
         "date",
@@ -66,11 +123,13 @@ def add_forward_return_target(
         sort=False,
     )
 
-    future_price = grouped[price_column].shift(-horizon)
+    entry_price = grouped[price_column].shift(-entry_lag)
+    exit_price = grouped[price_column].shift(-(entry_lag + horizon))
 
-    result["target_return"] = future_price / result[price_column] - 1.0
+    result[TARGET_RETURN_COLUMN] = exit_price / entry_price - 1.0
 
-    result["target_end_date"] = grouped["date"].shift(-horizon)
+    result[TARGET_START_COLUMN] = grouped["date"].shift(-entry_lag)
+    result[TARGET_END_COLUMN] = grouped["date"].shift(-(entry_lag + horizon))
 
     return result
 
@@ -84,6 +143,12 @@ def select_training_rows_asof(
     before the specified training date.
 
     This prevents future target information from leaking into training.
+
+    Pass a date, not an intraday time: target_end_date is a midnight-UTC
+    market date whose label is known only after that day's close, so an
+    intraday cutoff on that date would admit a label not yet observable.
+    Model evaluation should use stock_agent.model_validation, which
+    enforces date-level boundaries.
     """
 
     required = {
@@ -135,6 +200,11 @@ def split_temporal_dataset(
 
     This does not decide whether a label was available for training.
     Use select_training_rows_asof() for that purpose.
+
+    Warning: this split does not purge. Training rows near train_end carry
+    labels that end inside the validation period, and validation labels
+    cross into the test period. Do not use it to evaluate models; use
+    stock_agent.model_validation (purged expanding walk-forward folds).
     """
 
     result = frame.copy()
