@@ -34,8 +34,10 @@ are (`docs/research/model_validation.md`).
    collinear feature is decided per fold on training rows, or decided once
    from development exploration and recorded as a new variant.
 4. **Always show uncertainty.**
-   - Use Newey-West standard errors with lag ≥ 20, or a block bootstrap with
-     blocks of ≥ 21 sessions.
+   - Use Newey-West standard errors with lag ≥ 40, or a block bootstrap with
+     63-session blocks. Check the false-positive rate by simulation before
+     reporting: under a true null, lag 20 rejected 7-13% of the time at a
+     nominal 5% (`docs/research/universe_and_market_context.md`).
    - Show the effective sample size beside every estimate. Adjacent
      overlapping labels share 19 of 20 returns, so naive standard errors are
      about √20 too small.
@@ -177,7 +179,7 @@ standardization (exactly what the model sees):
   coefficient is nonzero.
 - Regularization paths per fold (coefficient vs log α), with the chosen α
   marked.
-- Within-fold block-bootstrap intervals (date blocks of ≥ 21 sessions), and
+- Within-fold block-bootstrap intervals (63-session date blocks), and
   bootstrap selection probability (stability selection).
 - Ridge effective degrees of freedom: df(α) = Σ dᵢ² / (dᵢ² + α), where dᵢ are
   the design's singular values.
@@ -239,7 +241,7 @@ rarely selected.
 
 **What is computed.**
 - **Cross-sectional rank IC per date** (Spearman across the eligible names):
-  - mean IC, its Newey-West t-statistic (lag ≥ 20), and IC information
+  - mean IC, its Newey-West t-statistic (lag ≥ 40, calibrated), and IC information
     ratio;
   - a rolling 63-session mean, cumulative IC, and the share of dates with
     IC > 0.
@@ -341,7 +343,7 @@ This replaces "Next ticket: Ridge vs Lasso vs Elastic Net" in
 | T4 | Ridge, Lasso, Elastic Net with nested purged selection; coefficient outputs; section 3 | Pages 4, 6 | scikit-learn decision; label choice; learning-core split (owner implements the estimator core) |
 | T5 | Portfolio readiness: backtest execution lag 1, forecast-to-weight rule, cost-aware evaluation | Page 7 | Financial-formula review |
 | T6 | Holdout evaluation, once per pre-registered model | Page 8 | Pre-registration recorded |
-| Parallel | Point-in-time universe expansion | All pages gain cross-sectional power | Data-contract decision |
+| Parallel: U and C tracks | Point-in-time universe (about 100 large caps from 2010) and market-context layer V1, per `docs/research/universe_and_market_context.md` | All pages gain cross-sectional power; context ablation views | Data source and licence, `decision_at`, data-contract decisions. Both gate whether T4 results count as product-grade evidence |
 
 **Why diagnostics come before models (T2 and T3 before T4).**
 - Every diagnostic and chart is validated on models whose correct answer is
