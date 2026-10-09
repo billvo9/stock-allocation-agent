@@ -343,7 +343,7 @@ This replaces "Next ticket: Ridge vs Lasso vs Elastic Net" in
 | T4 | Ridge, Lasso, Elastic Net with nested purged selection; coefficient outputs; section 3 | Pages 4, 6 | scikit-learn decision; label choice; learning-core split (owner implements the estimator core) |
 | T5 | Portfolio readiness: backtest execution lag 1, forecast-to-weight rule, cost-aware evaluation | Page 7 | Financial-formula review |
 | T6 | Holdout evaluation, once per pre-registered model | Page 8 | Pre-registration recorded |
-| Parallel: U and C tracks | Point-in-time universe (about 100 large caps from 2010) and market-context layer V1, per `docs/research/universe_and_market_context.md` | All pages gain cross-sectional power; context ablation views | Data source and licence, `decision_at`, data-contract decisions. Both gate whether T4 results count as product-grade evidence |
+| Parallel: U and C tracks | Point-in-time universe (planning target about 100 large caps from 2010) and market-context layer V1, per `docs/research/universe_and_market_context.md` | All pages gain cross-sectional power; context ablation views | Data source and licence, `signal_cutoff_at`, data-contract decisions. Both shape when T4 results can be treated as product evidence |
 
 **Why diagnostics come before models (T2 and T3 before T4).**
 - Every diagnostic and chart is validated on models whose correct answer is

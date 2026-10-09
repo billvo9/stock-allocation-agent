@@ -3,19 +3,21 @@
 Changing project state only. Permanent policy lives in `AGENTS.md`.
 Git is authoritative: verify everything here before relying on it.
 
-Last reviewed: 2026-10-08
+Last reviewed: 2026-10-09
 
 
 ## Last checkpoint
 
-2026-10-08, milestone "universe and market-context research", verified on
-branch `research/universe-market-context` based on `145c7bf` (merge pending).
+2026-10-09, milestone "universe and market-context refinements", verified on
+branch `docs/universe-context-refinements` based on `d82fb90` (merge pending).
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `145c7bf` as of last fetch,
-verified 2026-10-08):
+Recently merged to `main` (`origin/main` = `d82fb90` as of last fetch,
+verified 2026-10-09):
 
+- PR #41 (`d82fb90`): `18c0864` docs: design point-in-time universe and
+  market-context tracks.
 - PR #40 (`145c7bf`): `6f34788` feat: explicit label timing with next-close
   entry; `8d80b6e` feat: purged walk-forward model-validation foundation;
   `8f6d15b` docs: checkpoint; `d98cd92` docs: diagnostics and visualization
@@ -55,11 +57,14 @@ ML phase.
   both in `docs/research/universe_and_market_context.md`.
 - Findings:
   - **The current 4-name universe can verify the pipeline but cannot
-    support product-grade evidence.** It is hindsight-selected and
-    survivorship-biased, and its minimum detectable rank IC is about 0.12.
-  - **The minimum for product-grade evidence is about 100 point-in-time
-    large caps** on survivorship-free data with history from 2010 (MDE
-    about 0.020-0.025).
+    support product evidence.** It is hindsight-selected and
+    survivorship-biased, and its simulated minimum detectable rank IC is
+    about 0.12.
+  - **Planning target: about 100 point-in-time large caps** on
+    survivorship-free data with history from 2010 (simulated MDE about
+    0.020-0.025). This holds under the stated simulation assumptions; it is
+    not a universal threshold, and it is re-estimated on the real panel
+    before results are read.
   - **Context series are date-common.** They can affect cross-sectional
     ranking only through pre-registered interactions.
 - No prediction model is selected or implemented yet.
@@ -263,11 +268,15 @@ ruff 0.16.2). Exit 0.
    - macro uses all of calendar day d;
    - fundamentals and the panel validator use 00:00 UTC on d.
 
-   Proposed: `decision_at` = 18:00 America/New_York on session d, with
-   timestamp-level `available_at` (source publication time) for all sources
-   (`docs/research/universe_and_market_context.md`). This is an
-   availability-semantics change, so it is owner-gated. Not leaking today;
-   fundamentals are stale by a day.
+   Proposed: `signal_cutoff_at` = 18:00 America/New_York on session d,
+   with timestamp-level `available_at` (source publication time) for all
+   sources (`docs/research/universe_and_market_context.md`). It is kept
+   separate from:
+   - any later pre-execution event and news review;
+   - `execution_at`, the close of d+1.
+
+   This is an availability-semantics change, so it is owner-gated. Not
+   leaking today; fundamentals are stale by a day.
 2. Real-data coverage gaps from the SMCI validation (coverage and
    diagnostics; no point-in-time defect found), in suggested priority:
    - edgartools can mislabel 52/53-week fiscal calendars; confirm
@@ -287,8 +296,8 @@ ruff 0.16.2). Exit 0.
 5. YoY: no refresh when a prior-year amendment arrives later; nearest-
    match fallback when the nearest prior-year row is not yet available.
 6. ML validation follow-ups:
-   - **Blocker for product-grade evidence: no security master and no
-     survivorship-free prices.**
+   - **Blocker for treating results as product evidence: no security master
+     and no survivorship-free prices.**
      - yfinance returns nothing for delisted tickers (XLNX, MXIM, LLTC
        verified empty).
      - Tickers are reused (SNDK) and CIKs change (MRVL in 2021).
@@ -391,11 +400,26 @@ ruff 0.16.2). Exit 0.
    `docs/research/universe_and_market_context.md`). Owner decisions:
    - product scope (broad large caps vs semiconductors only);
    - the survivorship-free data source (check Georgia Tech WRDS access);
-   - `decision_at`;
+   - `signal_cutoff_at`;
    - calendar and vendor dependencies;
    - compliance exclusions (NS-CMIC).
 
    T4 runs on the current universe count as engineering exercises only.
-   Results become product-grade evidence only on U1 (about 100 point-in-time
-   large caps from 2010) with the V1 context layer, the T2 inference
-   checks, and the T5 costs.
+   Results are treated as product evidence only on U1 (planning target
+   about 100 point-in-time large caps from 2010, with the MDE re-estimated
+   on that panel), with the V1 context layer, the T2 inference checks, and
+   the T5 costs.
+5. Documented follow-ups (not implemented), in
+   `docs/research/universe_and_market_context.md`:
+   - evaluate a two-layer architecture: a cross-sectional alpha model plus
+     a market/regime model for risk and cash exposure;
+   - verify the DGS3MO quote-to-period-return conversion used in Sharpe and
+     excess returns;
+   - gold, silver, and copper as V2 candidates through documented proxies
+     (GLD, SLV, CPER or licensed COMEX futures), one representation per
+     factor;
+   - reserve "rejected" for licensing or data-contract constraints;
+     low-priority series (WTI, silver, ETH, gold/silver) are deferred
+     candidates;
+   - label HYG, LQD, and IEF measures as credit-risk proxies, never as
+     credit spreads.
