@@ -122,8 +122,10 @@ A short, pre-registered hyperparameter grid; every variant recorded.
 - Expect the three to be statistically indistinguishable. Judge each against
   the null models and on stability, not against each other.
 
-**Null models.** Zero forecast, per-symbol expanding mean, unfitted momentum
-rank, and a block-permutation null.
+**Null models.** Zero forecast, pooled expanding mean, seeded noise, and a
+block-permutation null; controls: unfitted momentum score and per-symbol
+expanding mean (a selection control on this universe, not a null). Built in
+T2: `docs/research/model_diagnostics.md`.
 
 **Predictive metrics.**
 - Out-of-sample R² against the zero forecast.
