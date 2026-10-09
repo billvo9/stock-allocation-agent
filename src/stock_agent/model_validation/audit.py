@@ -12,6 +12,8 @@ or timezone representation, the NaN bit pattern, or the sign of zero.
   differently.
 - frame_rows_sha256: the keys in the frame's current row order. Folds bind to
   it because they store row positions.
+- table_sha256: every column in the current row and column order, for
+  derived output tables without unique (date, symbol) keys.
 
 Nothing here reads a clock or writes files: callers decide where metadata is
 stored, and identical inputs always produce identical metadata.
@@ -147,6 +149,16 @@ def frame_content_sha256(frame: pd.DataFrame, columns: Iterable[str]) -> str:
 
     extra = [column for column in columns if column not in KEY_COLUMNS]
     return _sha256_frame(frame, [*KEY_COLUMNS, *extra])
+
+
+def table_sha256(frame: pd.DataFrame) -> str:
+    """
+    Fingerprint of a whole table: every column (names included) in the
+    frame's current row and column order. For derived output tables, which
+    are produced in a deterministic order and need not have unique keys.
+    """
+
+    return _sha256_frame(frame, list(frame.columns), canonical_order=False)
 
 
 def file_sha256(path: str | Path) -> str:
