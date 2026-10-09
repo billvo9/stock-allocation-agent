@@ -49,3 +49,8 @@ Claude-specific operating instructions. If they conflict, AGENTS.md wins.
 - Never claim work was committed, pushed, or passing unless verified
   in this session from Git or tool output.
 - Report the commit hashes, the pushed branch, and the PR or compare URL.
+- After a non-main branch is verified, committed, and pushed, end the task
+  with a GitHub-ready PR title and a description with `Summary`,
+  `What changed`, `Validation`, `Key decisions`, and `Follow-ups`, even when
+  `gh` is unavailable. Write both in the repository's professional voice;
+  never state or imply that an AI or automated tool wrote the code or text.
