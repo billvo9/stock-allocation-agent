@@ -228,3 +228,60 @@ def test_every_written_metric_has_a_scope_and_a_status(run):
     unavailable = run.tables["metrics"].query("status == 'unavailable'")
     assert unavailable["reason"].notna().all()
     assert np.isnan(unavailable.loc[unavailable["inference_method"] != "point", "se"]).all()
+
+
+def _rewrite_manifest(directory, change):
+    path = directory / "manifest.json"
+    manifest = json.loads(path.read_text())
+    change(manifest)
+    path.write_text(json.dumps(manifest))
+
+
+@pytest.mark.parametrize(
+    ("change", "match"),
+    [
+        (
+            lambda m: m["files"].update({"../outside.parquet": {"file_sha256": "x"}}),
+            "unexpected files",
+        ),
+        (lambda m: m["files"].pop("record.json"), "lacks"),
+        (lambda m: m.update(run_id="20990101T000000Z-000000000000"), "!= directory"),
+        (lambda m: m.pop("files"), "missing"),
+    ],
+    ids=["path_outside_the_run", "record_not_listed", "run_id_mismatch", "no_file_list"],
+)
+def test_reader_reads_only_the_files_a_run_may_contain(run, tmp_path, change, match):
+    directory = artifacts.write_run(run, tmp_path)
+    _rewrite_manifest(directory, change)
+    with pytest.raises(ValueError, match=match):
+        artifacts.read_run(directory)
+
+
+def test_reader_refuses_symlinked_tables_and_directories(run, tmp_path):
+    directory = artifacts.write_run(run, tmp_path / "a")
+    outside = tmp_path / "outside.parquet"
+    (directory / "checks.parquet").rename(outside)
+    (directory / "checks.parquet").symlink_to(outside)
+    with pytest.raises(ValueError, match="inside the run directory"):
+        artifacts.read_run(directory)
+    clean = artifacts.write_run(run, tmp_path / "b")
+    link = tmp_path / "link" / run.run_id
+    link.parent.mkdir()
+    link.symlink_to(clean, target_is_directory=True)
+    with pytest.raises(ValueError, match="not a run directory"):
+        artifacts.read_run(link)
+
+
+def test_the_reader_does_not_import_the_statistical_runner():
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, stock_agent.model_diagnostics.artifacts as a;"
+        "print(sorted(m for m in sys.modules if m.startswith('stock_agent')))"
+    )
+    loaded = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    ).stdout
+    for module in ("runner", "scoring", "inference", "harness", "controls"):
+        assert f".{module}'" not in loaded, module

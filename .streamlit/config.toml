@@ -1,0 +1,15 @@
+# Local research dashboard. This file covers launches from the repository
+# root; scripts/run_dashboard.py passes the same settings explicitly, so they
+# also hold for launches from anywhere else.
+[server]
+address = "127.0.0.1"
+headless = true
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "viewer"
+
+[theme]
+base = "light"

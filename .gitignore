@@ -43,3 +43,6 @@ models/
 # Logs
 *.logreports/
 reports/
+
+# Streamlit local secrets (never committed)
+.streamlit/secrets.toml

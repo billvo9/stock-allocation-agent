@@ -251,7 +251,9 @@ rarely selected.
 
 **What is computed.**
 - **Cross-sectional rank IC per date** (Spearman across the eligible names):
-  - mean IC, its Newey-West t-statistic (lag ≥ 40, calibrated), and IC information
+  - mean IC with T2's three inference methods (fold-block t decides; Newey-West
+    at lag ≥ 40 over-rejects somewhat in simulation, see
+    `docs/research/model_diagnostics.md`), and IC information
     ratio;
   - a rolling 63-session mean, cumulative IC, and the share of dates with
     IC > 0.
@@ -288,10 +290,16 @@ rarely selected.
 
 ## 6. Interactive dashboard (Plotly + Streamlit)
 
+Implemented in T3 for pages 0-3 and 5 plus calibration, uncertainty and
+research-warning pages: `docs/research/diagnostics_dashboard.md`. The plan
+below is kept for the later pages.
+
 **Architecture.**
 - A thin, read-only Streamlit app over run outputs.
 - It never fits a model and never reads raw data.
-- It shows lockbox results only for runs whose manifest mode is `holdout`.
+- It refuses every run whose recorded mode is not `development` until a
+  recorded holdout run exists (T6). The mode is stored in `record.json`, not
+  the manifest.
 - Plotly figure builders are pure and unit-tested; the app code only picks
   runs and folds and lays out figures.
 - It runs on localhost only.
@@ -300,7 +308,7 @@ rarely selected.
 
 | Page | Content |
 |---|---|
-| 0. Run overview | Manifest (git SHA, dirty flag, label spec, lockbox, universe, features, data hashes), gate status, variant count and ledger. A "leakage health" banner turns red if the canary or null models show skill. |
+| 0. Run overview | Manifest (git SHA, dirty flag, label spec, lockbox, universe, features, data hashes), gate status, variant count and ledger. A status banner derived only from stored T2 checks (as implemented: VALID / WARNING / INVALID-BLOCKED; a null showing skill is an instrument check, the canary a leakage check). |
 | 1. Fold construction | A timeline per fold showing the training span, the 21-session purge band, the test window, held-out rows, and lockbox shading. Rows per symbol per fold, knowledge cutoffs, purged counts, listing events (SNDK). |
 | 2. Data diagnostics | Section 1. |
 | 3. Multicollinearity | Section 2. |
@@ -313,7 +321,8 @@ rarely selected.
 **Presentation rules** (frontend-engineer standards):
 - Every chart states its scope and knowledge time.
 - Units and dates are labelled.
-- Uncertainty bands are shown wherever an estimate is.
+- Uncertainty is shown wherever T2 stored it, from stored interval columns
+  only; the dashboard computes no bands.
 - No dual axes.
 - A colorblind-safe palette, with each model in a consistent color.
 - Cached reads of run outputs.
@@ -327,10 +336,13 @@ rarely selected.
 
 ## Dependencies (owner approval required)
 
+Approved 2026-10-09 for T3: `plotly==7.1.0` and `streamlit==1.64.0`, pinned;
+pyarrow moved 25.0.0 to 25.0.1 unpinned. scikit-learn remains undecided.
+
 | Package | Value | Alternatives | Cost and risk |
 |---|---|---|---|
 | plotly | Interactive, publication-quality charts that also export to standalone HTML | matplotlib (present, static), altair | Moderate size, stable API; no server |
-| streamlit | Fast multi-page interactive app in Python | Dash (more code), Panel, static Plotly HTML reports (no server) | Large dependency tree (tornado, protobuf, altair, ...), frequent releases. Runs a local web server: bind to localhost and never expose it without authentication. Later AWS hosting would need an authentication proxy. |
+| streamlit | Fast multi-page interactive app in Python | Dash (more code), Panel, static Plotly HTML reports (no server) | Large dependency tree (starlette, uvicorn, protobuf, altair, ...), frequent releases; 1.64 requires pyarrow `!=25.0.0,<26`. Runs a local web server: bind to localhost and never expose it without authentication. Later AWS hosting would need an authentication proxy. |
 | scikit-learn | Ridge, Lasso, Elastic Net, coordinate descent | Owner-implemented closed-form Ridge and coordinate descent (a learning exercise) | Separate decision, made in the linear-model ticket |
 
 **Recommendation.** Pin plotly and streamlit in `requirements.txt` so that
@@ -349,7 +361,7 @@ This replaces "Next ticket: Ridge vs Lasso vs Elastic Net" in
 |---|---|---|---|
 | T1 (pending merge) | Validation foundation | — | — |
 | T2 (implemented) | `model_diagnostics` (sections 1, 2, 4, 5 and inference), run outputs and ledger, null models and canary through the harness. Accepted when the nulls show no skill and planted signal is recovered. See `docs/research/model_diagnostics.md`. | — | None. numpy and pandas only. Newey-West was implemented in T2 (the T2 request made it a completion criterion); owner exercise: fixed-b critical values. |
-| T3 | Plotly figure builders and the Streamlit app, run on null models | Pages 0, 1, 2, 3, 5 | Dependency approval |
+| T3 (implemented) | Plotly figure builders and the Streamlit app, run on null models. See `docs/research/diagnostics_dashboard.md` | Pages 0, 1, 2, 3, 5 plus calibration, uncertainty and research warnings | Dependency approval (granted 2026-10-09) |
 | T4 | Ridge, Lasso, Elastic Net with nested purged selection; coefficient outputs; section 3 | Pages 4, 6 | scikit-learn decision; label choice; learning-core split (owner implements the estimator core) |
 | T5 | Portfolio readiness: backtest execution lag 1, forecast-to-weight rule, cost-aware evaluation | Page 7 | Financial-formula review |
 | T6 | Holdout evaluation, once per pre-registered model | Page 8 | Pre-registration recorded |
