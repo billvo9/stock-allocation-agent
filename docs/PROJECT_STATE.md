@@ -8,14 +8,17 @@ Last reviewed: 2026-10-09
 
 ## Last checkpoint
 
-2026-10-09, milestone "universe and market-context refinements", verified on
-branch `docs/universe-context-refinements` based on `d82fb90` (merge pending).
+2026-10-09, milestone "T2: ML diagnostics, null models and run outputs",
+verified on branch `feature/ml-diagnostics-null-models` at `479d59f`, based
+on `51ca2a1` (merge pending).
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `d82fb90` as of last fetch,
+Recently merged to `main` (`origin/main` = `51ca2a1` as of last fetch,
 verified 2026-10-09):
 
+- PR #42 (`51ca2a1`): `9470375` docs: refine universe and market-context
+  research; `386df3f` chore: add PR handoff rule and pull request template.
 - PR #41 (`d82fb90`): `18c0864` docs: design point-in-time universe and
   market-context tracks.
 - PR #40 (`145c7bf`): `6f34788` feat: explicit label timing with next-close
@@ -50,12 +53,30 @@ ML phase.
 
 - The leakage-safe validation foundation is merged (PR #40); see
   `docs/research/model_validation.md`.
-- This branch adds research and design only:
-  - a point-in-time universe track (U);
-  - a market-context feature track (C);
+- The universe (U) and market-context (C) research is merged (PRs #41, #42);
+  see `docs/research/universe_and_market_context.md`.
+- This branch implements roadmap ticket T2, the measurement layer
+  (`src/stock_agent/model_diagnostics/`,
+  `docs/research/model_diagnostics.md`):
+  - nulls, controls and the canary run through the unchanged harness;
+  - model-agnostic out-of-sample metrics;
+  - Newey-West (lag 40), fold-block t and circular block bootstrap
+    inference, with simulated false-positive rates recorded per run;
+  - training- vs evaluation-scope feature diagnostics;
+  - a run record and a versioned saved-output contract for T3.
 
-  both in `docs/research/universe_and_market_context.md`.
-- Findings:
+  No model is fitted.
+- T2 findings on the development run (2019-2024, 24 folds):
+  - Nulls show no skill. The purged canary shows none either, while its
+    unpurged reference shows spurious skill (rank IC 0.26).
+  - The per-symbol mean reaches rank IC 0.126 (fold-block t 2.3) from
+    hindsight selection alone. It is classified as a selection control, not
+    a null.
+  - Newey-West at lag 40 still over-rejects for persistent signals
+    (simulated 7.6-9.2% at a nominal 5%). Fold-block t stays at 5.3-5.6%
+    and decides the run checks.
+  - Minimum detectable rank IC is about 0.16 at 4 names.
+- Earlier findings (U and C research):
   - **The current 4-name universe can verify the pipeline but cannot
     support product evidence.** It is hindsight-selected and
     survivorship-biased, and its simulated minimum detectable rank IC is
@@ -243,23 +264,28 @@ Coverage limitations found are tracked as open item 2.
 
 ## Last verified quality baseline
 
-Measured 2026-10-06 with `python3 scripts/verify.py` on
-`feature/ml-validation-foundation` (base `da21961` plus this milestone's
-changes); gates ran with `.venv` tools (Python 3.12.2, pytest 9.1.1,
-ruff 0.16.2). Exit 0.
+Measured 2026-10-09 with `python3 scripts/verify.py` on
+`feature/ml-diagnostics-null-models` (base `51ca2a1` plus the T2 commits
+`4e8a830`, `59570da`, `479d59f` and this checkpoint); gates ran with
+`.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2). Exit 0.
 
-- `pytest -q`: 865 passed (696 before + 169 validation and label tests)
-- `python -m pytest -q`: 865 passed
-- `ruff format --check src tests scripts .claude/hooks`: 132 files
+- `pytest -q`: 1005 passed (865 before + 140 T2 tests)
+- `python -m pytest -q`: 1005 passed
+- `ruff format --check src tests scripts .claude/hooks`: 152 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- Mutation checks: 34 of 34 deliberate leakage violations killed by the
-  suite. The list is in `docs/research/model_validation.md`.
-- Real-data evidence (read-only, not committed):
-  - production feature SQL prefix-stable at 5 real cutoffs;
-  - 24 development folds, 84 rows purged per fold;
-  - same-symbol memorizer canary: corr -0.014 purged vs +0.190 unpurged;
-  - the harness refuses an unpurged fold.
+- Suite runtime about 16.5 s per pass (T2 adds about 5 s).
+- Mutation checks (T2): 46 of 47 deliberate violations killed. The
+  survivor (the runner's early frame-binding check removed) is equivalent:
+  the harness refuses the same frame first. List in
+  `docs/research/model_diagnostics.md`. The 34 validation mutants from PR
+  #40 were not re-run.
+- Real-data evidence (read-only; outputs written only under a scratch
+  directory, not committed):
+  - `scripts/run_null_diagnostics.py`: 24 development folds, 5,956 scored
+    rows over 1,489 dates, about 15 s;
+  - 0 leakage and 0 instrument checks failed;
+  - 1 research warning (per-symbol mean).
 
 
 ## Open items
@@ -310,9 +336,13 @@ ruff 0.16.2). Exit 0.
      2024-01-02: `scripts/download_rates.py` hard-codes a first start of
      2024-01-01. Backfill to at least 2009 before T5 portfolio metrics. Rates
      storage also overwrites revisions and has no `available_at`.
-   - Inference correction: under a true null, Newey-West with lag 20
-     rejected 7-13% of the time at a nominal 5% (simulation). Use lag ≥ 40
-     or a 63-session block bootstrap, and check the false-positive rate (T2).
+   - Inference (addressed in T2 on this branch, merge pending):
+     - Newey-West defaults to lag 40, beside a fold-block t and a 63-session
+       block bootstrap. Simulated sizes are recorded in every run.
+     - Remaining: lag 40 with normal critical values still over-rejects
+       (7.6-9.2%) for persistent signals. Fixed-b critical values are the
+       owner exercise. Driscoll-Kraay (Mincer-Zarnowitz) size is not yet
+       simulated.
    - `requests` is imported by the FRED adapters but not pinned in
      `requirements.txt` (dependency gate).
    - `run_rebalanced_backtest` executes at the same close; add a matching
@@ -333,18 +363,28 @@ ruff 0.16.2). Exit 0.
    - SNDK has no rows dated before the lockbox. In holdout folds its first
      trainable label matures in mid-April 2025, so early holdout folds
      score it with no SNDK training history.
-   - Audit gaps found in the pre-merge review (2026-10-08). The manifest
-     lacks:
-     - a dirty-tree flag;
-     - the estimator spec, hyperparameters, and seeds;
-     - fitted transform parameters;
-     - a variant and holdout-use ledger;
-     - versions of duckdb, pyarrow, yfinance, and edgartools, plus platform;
-     - raw-data retrieval times;
-     - hashes of the fold table and the predictions;
-     - a writer that saves it.
+   - Audit gaps from the pre-merge review (2026-10-08). The T2 run record
+     closes most of them (this branch, merge pending):
+     - git SHA, dirty flag and diff hash;
+     - estimator spec, parameters, seeds and variant ids;
+     - package versions and platform;
+     - fold-table, prediction and output hashes;
+     - a writer and reader with manifest hashes;
+     - an append-only JSONL run ledger.
 
-     Planned in T2 (`docs/research/diagnostics_and_visualization_plan.md`).
+     Still open:
+     - fitted transform parameters (with fitted models, T4);
+     - raw-data retrieval times (the downloaders do not record them);
+     - a holdout-use record kept in Git. The ledger lives under ignored
+       `reports/`, so it can be deleted; T6 needs a Git-tracked record
+       (owner decision).
+   - T2 follow-ups (`docs/research/model_diagnostics.md`):
+     - `validate_feature_columns` does not reject `control_*` columns; only
+       `ModelSpec` refuses them for candidates (contract change, T4);
+     - a sharper canary check (IC in the first `horizon` sessions of each
+       window);
+     - a rank-based hit rate;
+     - an offline test for `scripts/run_null_diagnostics.py`.
    - Labels are computed after `build_model_dataset` drops rows with
      missing required features. An interior gap would stretch a label's
      span. Not present today; purging stays correct because it uses the
@@ -379,12 +419,13 @@ ruff 0.16.2). Exit 0.
 
 ## Next steps
 
-1. Owner reviews and merges the `research/universe-market-context` pull
-   request (merging is owner-only); confirm CI passes.
+1. Owner reviews and merges the `feature/ml-diagnostics-null-models` pull
+   request (T2; merging is owner-only); confirm CI passes.
 2. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
    `docs/research/diagnostics_and_visualization_plan.md`:
-   - T2: diagnostics layer, run outputs and ledger, null models;
+   - T2: diagnostics layer, run outputs and ledger, null models
+     (implemented on this branch, merge pending);
    - T3: Plotly and Streamlit dashboard, run on the null models;
    - T4: Ridge, Lasso, and Elastic Net, with coefficient stability;
    - T5: portfolio readiness;
@@ -393,6 +434,8 @@ ruff 0.16.2). Exit 0.
    Owner decisions:
    - plotly and streamlit dependencies (before T3);
    - raw vs excess-over-equal-weight label (excess recommended);
+   - whether T4 must beat the per-symbol-mean selection control on paired
+     per-date differences, not only the nulls (T2 finding);
    - scikit-learn and the learning-core split for the estimator core
      (before T4).
 3. Owner decision from open item 7: enable branch protection on `main`.

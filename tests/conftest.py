@@ -52,3 +52,10 @@ def build_labeled_panel(
 @pytest.fixture
 def labeled_panel() -> Callable[..., pd.DataFrame]:
     return build_labeled_panel
+
+
+@pytest.fixture(scope="session")
+def panel_factory() -> Callable[..., pd.DataFrame]:
+    """build_labeled_panel for module-scoped fixtures (expensive shared runs)."""
+
+    return build_labeled_panel

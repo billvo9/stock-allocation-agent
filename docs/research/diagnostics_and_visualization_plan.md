@@ -21,12 +21,13 @@ are (`docs/research/model_validation.md`).
      anything.
    - This follows the AGENTS.md dashboard direction: structured diagnostics,
      not log text.
-2. **Every diagnostic says which data it used.** Each one carries a `scope`:
-   - `train`: one fold's training rows. These are the only diagnostics
+2. **Every diagnostic says which data it used.** Each one carries a `scope`
+   (implemented names in T2):
+   - `training`: one fold's training rows. These are the only diagnostics
      allowed to inform choices inside that fold.
-   - `test`: out-of-sample rows, for evaluation only.
-   - `development`: exploration across the development period
-     (before 2025-01-01).
+   - `evaluation`: out-of-sample rows, for evaluation only.
+   - The run's `mode` (`development`, before 2025-01-01) is recorded once
+     per run, not per row.
 
    Nothing reads the lockbox except a recorded holdout run.
 3. **No hidden feedback loop.** A diagnostic may change a fold's fit only if
@@ -42,14 +43,15 @@ are (`docs/research/model_validation.md`).
      overlapping labels share 19 of 20 returns, so naive standard errors are
      about √20 too small.
 5. **Null models first.** The same diagnostics run on:
-   - a zero forecast;
-   - a per-symbol expanding mean;
-   - an unfitted momentum rank;
-   - a block-permutation null;
-   - the memorizer canary.
+   - nulls: a zero forecast, the pooled expanding mean, seeded noise, and a
+     block-permutation null;
+   - controls: an unfitted momentum score and a per-symbol expanding mean;
+   - the memorizer canary, with an unpurged positive control.
 
-   They must show no skill on these, and must recover planted signal in
-   synthetic data, *before* any learned model is judged.
+   Nulls must show no skill. Controls have a known non-zero source of
+   score: on this hindsight-selected universe the per-symbol mean shows
+   rank IC ≈ 0.12 from selection alone, so it is a selection control, not
+   a null (T2 finding, `docs/research/model_diagnostics.md`).
 6. **Be honest about the small universe.** Development folds have only 4
    symbols, so per-date cross-sectional statistics are coarse:
    - A Spearman correlation across 4 names can only take 11 values, from −1
@@ -59,6 +61,12 @@ are (`docs/research/model_validation.md`).
 
 
 ## Foundation: run outputs and a run ledger
+
+Implemented in T2 (`docs/research/model_diagnostics.md`): `record.json`,
+`manifest.json` and one Parquet file per table (`inputs`, `folds`,
+`predictions`, `metrics`, `curves`, `null_draws`, `feature_stats`,
+`feature_pairs`, `checks`); `fit_params` and `coefficients` arrive with
+fitted models in T4. The original plan follows.
 
 Every evaluation run writes to `reports/runs/<run_id>/` (already ignored by
 Git):
@@ -72,9 +80,11 @@ Git):
 | `coefficients.parquet` | standardized coefficients per fold, feature, and penalty |
 | `diagnostics/*.parquet` | the tables from sections 1–5 |
 
-- `run_id` is the SHA-256 of the manifest, so identical inputs give the same
-  id.
-- A separate append-only ledger (`reports/ledger.parquet`) records:
+- `run_id` is the start time plus the first 12 hex digits of the SHA-256 of
+  the run spec (as implemented). Identical inputs give the same spec hash,
+  and every attempt still gets its own id and ledger line.
+- A separate append-only ledger (`reports/ledger.jsonl`, as implemented; a
+  Parquet file cannot be appended to) records:
   - every run (run id, variant, mode, git SHA, and an injected timestamp);
   - the variant count, which feeds multiple-testing corrections;
   - holdout runs. A second holdout run of the same pre-registered model is
@@ -338,7 +348,7 @@ This replaces "Next ticket: Ridge vs Lasso vs Elastic Net" in
 | Ticket | Delivers | Dashboard | Gates |
 |---|---|---|---|
 | T1 (pending merge) | Validation foundation | — | — |
-| T2 | `model_diagnostics` (sections 1, 2, 4, 5 and inference), run outputs and ledger, null models and canary through the harness. Accepted when the nulls show no skill and planted signal is recovered. | — | None. numpy and pandas only. Owner exercise: Newey-West standard errors. |
+| T2 (implemented) | `model_diagnostics` (sections 1, 2, 4, 5 and inference), run outputs and ledger, null models and canary through the harness. Accepted when the nulls show no skill and planted signal is recovered. See `docs/research/model_diagnostics.md`. | — | None. numpy and pandas only. Newey-West was implemented in T2 (the T2 request made it a completion criterion); owner exercise: fixed-b critical values. |
 | T3 | Plotly figure builders and the Streamlit app, run on null models | Pages 0, 1, 2, 3, 5 | Dependency approval |
 | T4 | Ridge, Lasso, Elastic Net with nested purged selection; coefficient outputs; section 3 | Pages 4, 6 | scikit-learn decision; label choice; learning-core split (owner implements the estimator core) |
 | T5 | Portfolio readiness: backtest execution lag 1, forecast-to-weight rule, cost-aware evaluation | Page 7 | Financial-formula review |
