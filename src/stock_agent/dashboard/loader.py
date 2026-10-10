@@ -24,11 +24,12 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
 
+from stock_agent.dashboard import evaluation
 from stock_agent.model_diagnostics import contract
 from stock_agent.model_diagnostics.artifacts import RUNS_DIRECTORY, read_ledger, read_run
 from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
@@ -96,6 +97,10 @@ class RunView:
     # each: shown as not recorded, or derived from stored rows (labelled).
     legacy_gaps: tuple[str, ...] = ()
     record_issues: tuple[str, ...] = ()
+    # Maturity (dashboard/evaluation.py): the run's evaluation as-of session and
+    # the stored predictions whose labels were not realized by then.
+    evaluation_asof: pd.Timestamp | None = None
+    pending: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def default_root() -> Path:
@@ -344,6 +349,33 @@ def _models(
     return models, gaps
 
 
+def _maturity(
+    record: dict, predictions: pd.DataFrame
+) -> tuple[pd.Timestamp | None, pd.DataFrame, list[str]]:
+    """
+    (evaluation_asof, pending rows, issues). T2 scores every stored prediction,
+    so a stored prediction whose label was not realized by the evaluation
+    as-of means T2's metrics used it: the run is blocked, and the pending
+    rows stay listed. Without a recorded as-of, maturity cannot be verified.
+    """
+
+    asof = evaluation.evaluation_asof(record)
+    pending = evaluation.pending_rows(predictions, asof)
+    if asof is None:
+        issue = (
+            f"evaluation as-of not recorded ({evaluation.EVALUATION_ASOF_SOURCE}): "
+            "the maturity of stored predictions cannot be verified"
+        )
+        return None, pending, [issue]
+    if len(pending):
+        issue = (
+            f"{len(pending)} stored predictions are not mature at the evaluation as-of "
+            f"{asof.date()} (label end after it, or no stored label); T2's metrics include them"
+        )
+        return asof, pending, [issue]
+    return asof, pending, []
+
+
 def load_run(path: str | Path) -> RunView:
     """Verify and load one run directory, or raise RunRefused with a reason."""
 
@@ -372,6 +404,8 @@ def load_run(path: str | Path) -> RunView:
                 gaps.append("checks_summary.families: derived from the stored check rows")
             else:
                 issues.append("record lacks checks_summary.families")
+        asof, pending, maturity_issues = _maturity(record, tables["predictions"])
+        issues += maturity_issues
     except RunRefused:
         raise
     except (KeyError, ValueError, TypeError, AttributeError) as error:
@@ -389,6 +423,8 @@ def load_run(path: str | Path) -> RunView:
         decision_method_source=method_source,
         legacy_gaps=tuple(gaps),
         record_issues=tuple(issues),
+        evaluation_asof=asof,
+        pending=pending,
     )
 
 

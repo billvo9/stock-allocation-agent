@@ -196,3 +196,69 @@ def schema_1_0_root(tmp_path_factory, dashboard_root):
     root = tmp_path_factory.mktemp("schema_1_0_outputs")
     write_schema_1_0_run(run, root)
     return root, run
+
+
+@pytest.fixture(scope="session")
+def varying_universe_root(tmp_path_factory, panel_factory):
+    """
+    A T2 development run whose universe grows during the test period (a fifth
+    name lists partway through) and whose dates overlap the 2020 ex-post
+    episode: the case where date and observation weighting differ.
+    """
+
+    from datetime import UTC, datetime
+
+    from stock_agent.model_diagnostics import artifacts, runner
+    from stock_agent.model_validation.folds import make_expanding_folds, make_test_windows
+
+    symbols = ["A", "B", "C", "D", "E"]
+    spec = LabelSpec(horizon=5, entry_lag=1)
+    raw = panel_factory(
+        symbols=tuple(symbols),
+        sessions=220,
+        horizon=5,
+        seed=11,
+        start="2019-10-01",
+        listing={"E": (60, 220)},
+    )
+    raw = raw.drop(columns=["target_return", "target_start_date", "target_end_date"])
+    lockbox = raw["date"].drop_duplicates().sort_values().iloc[200]
+    labeled, facts = runner.prepare_development_frame(
+        raw, symbols=symbols, label_spec=spec, holdout_start=lockbox
+    )
+    sessions = labeled["date"].drop_duplicates().sort_values()
+    windows = make_test_windows(sessions, start=sessions.iloc[50], end=lockbox, block_sessions=30)
+    folds = make_expanding_folds(labeled, windows, holdout_start=lockbox, lockbox_start=lockbox)
+    config = runner.DiagnosticsConfig(
+        hac_lag=3,
+        block_length=10,
+        bootstrap_reps=19,
+        acf_max_lag=4,
+        permutation_draws=2,
+        permutation_block_length=10,
+        stale_lags=(15,),
+        stale_models=(),
+        permutation_models=(),
+        calibration_reps=20,
+        calibration_bootstrap_reps=9,
+    )
+    run = runner.run_diagnostics(
+        labeled,
+        folds,
+        universe=symbols,
+        label_spec=spec,
+        diagnostic_features=["feature_a", "feature_b"],
+        provenance={
+            "code": {"git_sha": "abc123", "git_dirty": False},
+            "environment": {"python": "3.12"},
+            "truncation": {**facts, "holdout_rows_loaded": True},
+            "universe_note": "Synthetic growing universe.",
+        },
+        started_at=datetime(2026, 10, 9, 13, 0, tzinfo=UTC),
+        models=runner.default_models(score_feature="feature_a"),
+        config=config,
+        lockbox_start=lockbox,
+    )
+    root = tmp_path_factory.mktemp("varying_universe_outputs")
+    artifacts.write_run(run, root, extra_record={"status": "completed"})
+    return root, run

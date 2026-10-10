@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stock_agent.dashboard import figures, loader
+from stock_agent.dashboard import evaluation, figures, loader
 
 PACKAGE = Path(__file__).resolve().parents[1] / "src" / "stock_agent" / "dashboard"
 
@@ -212,13 +212,16 @@ def test_stale_canary_fold_and_curve_builders_use_stored_values(view):
     ]
     assert list(by_fold.data[0].y) == rows.sort_values("fold_id")["estimate"].tolist()
 
-    welch = figures.goyal_welch(curves, "per_symbol_mean", view.folds)
+    comparators = evaluation.comparators(view.record, view.models)
+    welch = figures.goyal_welch_observation_weighted(
+        curves, "per_symbol_mean", view.folds, comparators
+    )
     stored = curves[
         (curves["model"] == "per_symbol_mean")
         & (curves["curve"] == "cumulative_sse_improvement")
         & (curves["group"] == "zero")
     ].sort_values("date")
-    trace = next(t for t in welch.data if t.name == "vs zero")
+    trace = next(t for t in welch.data if t.name == "vs zero: null baseline")
     assert list(trace.y) == stored["value"].tolist()
     assert list(trace.x) == _days(stored["date"])
 

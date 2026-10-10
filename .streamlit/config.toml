@@ -11,5 +11,50 @@ gatherUsageStats = false
 [client]
 toolbarMode = "viewer"
 
+# Kept identical to stock_agent/dashboard/theme.py streamlit_theme() by a test,
+# so change the tokens there. Applied to launches from the repository root,
+# which scripts/run_dashboard.py always uses.
 [theme]
 base = "light"
+primaryColor = "#2D5D6C"
+backgroundColor = "#F7F5F0"
+secondaryBackgroundColor = "#F1EDE6"
+textColor = "#1F1D1A"
+linkColor = "#2D5D6C"
+borderColor = "#E3DDD2"
+dataframeBorderColor = "#E3DDD2"
+dataframeHeaderBackgroundColor = "#F1EDE6"
+showWidgetBorder = true
+baseRadius = "8px"
+buttonRadius = "8px"
+font = "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif"
+headingFont = "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif"
+codeFont = "SF Mono, JetBrains Mono, Menlo, Consolas, monospace"
+baseFontSize = 15
+headingFontSizes = ["1.85rem", "1.35rem", "1.12rem", "1rem", "0.95rem", "0.9rem"]
+headingFontWeights = [650, 600, 600, 600, 600, 600]
+metricValueFontSize = "1.55rem"
+metricValueFontWeight = 600
+greenColor = "#1E6633"
+greenBackgroundColor = "#E6F0E8"
+greenTextColor = "#1E6633"
+yellowColor = "#874A0E"
+yellowBackgroundColor = "#FAEFDF"
+yellowTextColor = "#874A0E"
+orangeColor = "#874A0E"
+orangeBackgroundColor = "#FAEFDF"
+orangeTextColor = "#874A0E"
+redColor = "#99202C"
+redBackgroundColor = "#F7E5E6"
+redTextColor = "#99202C"
+blueColor = "#26505D"
+blueBackgroundColor = "#E5EDEF"
+blueTextColor = "#26505D"
+grayColor = "#6E675C"
+grayBackgroundColor = "#F1EDE6"
+grayTextColor = "#57524A"
+
+[theme.sidebar]
+backgroundColor = "#F1EDE6"
+secondaryBackgroundColor = "#FFFFFF"
+borderColor = "#E3DDD2"

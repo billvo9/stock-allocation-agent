@@ -9,11 +9,14 @@ Visual language shared by every chart.
   stored warning status is shown as text, never by marker fill alone.
 - Status colours are separate from the model palette and are used only for
   stored T2 statuses, never for p-values or rankings.
+- Surfaces, type and motion come from the design tokens in theme.py.
 """
 
 from __future__ import annotations
 
 import hashlib
+
+from stock_agent.dashboard import theme
 
 OKABE_ITO = (
     "#0072B2",  # blue
@@ -61,17 +64,24 @@ ROLE_LABELS = {
     "candidate": "candidate",
 }
 STATUS_COLOURS = {
-    "VALID": "#1B7837",
-    "WARNING": "#B35806",
-    "INVALID/BLOCKED": "#B2182B",
-    "ok": "#4D4D4D",
-    "warning": "#B35806",
-    "unavailable": "#616161",
+    "VALID": theme.STATUS["VALID"]["fg"],
+    "WARNING": theme.STATUS["WARNING"]["fg"],
+    "INVALID/BLOCKED": theme.STATUS["INVALID/BLOCKED"]["fg"],
+    "ok": theme.COLOURS["text_muted"],
+    "warning": theme.STATUS["WARNING"]["fg"],
+    "unavailable": theme.COLOURS["text_subtle"],
 }
 PRIMARY_OPACITY = 1.0
 CORROBORATING_OPACITY = 0.9
 NEUTRAL_SCALE = "Blues"  # sequential, for distances (never red/green)
-FONT = {"family": "Inter, Segoe UI, Helvetica, Arial, sans-serif", "size": 13}
+FONT = {
+    "family": theme.TYPE["sans"],
+    "size": theme.TYPE["chart_px"],
+    "color": theme.COLOURS["text"],
+}
+GRID = theme.COLOURS["grid"]
+FOLD_LINE = {"color": theme.COLOURS["fold_boundary"], "width": 1, "dash": "dot"}
+REFERENCE_LINE = theme.COLOURS["reference_line"]
 PLOTLY_CONFIG = {
     "displaylogo": False,
     "scrollZoom": False,
@@ -106,13 +116,24 @@ def legend_name(name: str, role: str) -> str:
     return f"{name} ({ROLE_LABELS.get(role, role)})"
 
 
-def base_layout(title: str, *, x_title: str = "", y_title: str = "", height: int = 380) -> dict:
-    """Common layout: explicit title and axis labels, white background, no dual axes."""
+def base_layout(
+    title: str,
+    *,
+    x_title: str = "",
+    y_title: str = "",
+    height: int = 380,
+    subtitle: str = "",
+) -> dict:
+    """Common layout: explicit title and axis labels, token surfaces, no dual axes."""
 
     return {
         "title": {
             "text": title,
-            "font": {"size": 15},
+            "subtitle": {
+                "text": subtitle,
+                "font": {"size": theme.TYPE["chart_px"], "color": theme.COLOURS["text_muted"]},
+            },
+            "font": {"size": theme.TYPE["chart_title_px"], "weight": 600},
             "x": 0,
             "xanchor": "left",
             "y": 0.98,
@@ -122,20 +143,28 @@ def base_layout(title: str, *, x_title: str = "", y_title: str = "", height: int
         "xaxis": {
             "title": {"text": x_title},
             "showgrid": True,
-            "gridcolor": "#EEEEEE",
+            "gridcolor": GRID,
+            "zerolinecolor": GRID,
+            "linecolor": theme.COLOURS["border_strong"],
             "automargin": True,
         },
         "yaxis": {
             "title": {"text": y_title},
             "showgrid": True,
-            "gridcolor": "#EEEEEE",
+            "gridcolor": GRID,
+            "zerolinecolor": GRID,
+            "linecolor": theme.COLOURS["border_strong"],
             "automargin": True,
         },
         "font": FONT,
         "height": height,
         "margin": {"l": 60, "r": 20, "t": 110, "b": 50},
-        "plot_bgcolor": "white",
-        "paper_bgcolor": "white",
+        "plot_bgcolor": theme.COLOURS["surface"],
+        "paper_bgcolor": theme.COLOURS["surface"],
         "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.02, "x": 0},
+        "hoverlabel": {"font": {"family": theme.TYPE["sans"]}},
         "hovermode": "closest",
+        # No layout.transition: Plotly would tween traces through values that
+        # were never stored. Charts change in one step; theme.css() fades a
+        # chart in only when it first appears.
     }
