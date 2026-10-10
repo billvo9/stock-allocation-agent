@@ -12,7 +12,9 @@ Layout under an output root (default reports/, ignored by Git):
 A run is written to a temporary sibling directory and renamed into place, so
 a reader never sees a half-written run. An existing run directory is never
 overwritten. Readers check the manifest's schema version, every file's
-SHA-256, and every table's contract.
+SHA-256, and every table's contract, and read only the files a run is
+allowed to contain: record.json and one <table>.parquet per contract table,
+all inside the run directory (no symlinks, no other paths).
 """
 
 from __future__ import annotations
@@ -21,13 +23,16 @@ import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from stock_agent.model_diagnostics import contract
 from stock_agent.model_diagnostics.record import canonical_json
-from stock_agent.model_diagnostics.runner import DiagnosticsRun
 from stock_agent.model_validation.audit import file_sha256, table_sha256
+
+if TYPE_CHECKING:  # the reader must not import the statistical runner
+    from stock_agent.model_diagnostics.runner import DiagnosticsRun
 
 RUNS_DIRECTORY = "runs"
 LEDGER_FILE = "ledger.jsonl"
@@ -93,26 +98,56 @@ def read_ledger(root: str | Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
+def _allowed_files() -> dict[str, str | None]:
+    files: dict[str, str | None] = {f"{name}.parquet": name for name in contract.TABLES}
+    files["record.json"] = None
+    return files
+
+
 def read_run(directory: str | Path) -> tuple[dict, dict[str, pd.DataFrame]]:
     """Read and verify a run directory: (record, tables)."""
 
     directory = Path(directory)
+    if directory.is_symlink() or not directory.is_dir():
+        raise ValueError(f"{directory} is not a run directory.")
     manifest_path = directory / "manifest.json"
     if not manifest_path.exists():
         raise FileNotFoundError(f"{directory} has no manifest.json; the run is incomplete.")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    missing_keys = {"output_schema_version", "run_id", "files"} - set(manifest)
+    if missing_keys:
+        raise ValueError(f"{manifest_path} is missing {sorted(missing_keys)}.")
     contract.check_version(manifest["output_schema_version"])
+    if manifest["run_id"] != directory.name:
+        raise ValueError(f"Manifest run_id {manifest['run_id']!r} != directory {directory.name!r}.")
+    allowed = _allowed_files()
+    listed = manifest["files"]
+    unexpected = sorted(set(listed) - set(allowed))
+    absent = sorted(set(allowed) - set(listed))
+    if unexpected or absent:
+        raise ValueError(
+            f"{manifest_path} lists unexpected files {unexpected} and lacks {absent}; "
+            "a run holds record.json and one Parquet file per contract table."
+        )
+    root = directory.resolve()
     tables = {}
-    for filename, entry in manifest["files"].items():
+    for filename, entry in listed.items():
         path = directory / filename
+        if path.is_symlink() or path.resolve().parent != root:
+            raise ValueError(f"{path} is not a regular file inside the run directory.")
         if file_sha256(path) != entry["file_sha256"]:
             raise ValueError(f"{path} does not match its manifest hash.")
-        if "table" not in entry:
+        table_name = allowed[filename]
+        if table_name is None:
             continue
+        if entry.get("table") != table_name:
+            raise ValueError(f"{path} is listed as table {entry.get('table')!r}.")
         table = pd.read_parquet(path)
-        contract.validate(entry["table"], table)
+        contract.validate(table_name, table)
         if table_sha256(table) != entry["content_sha256"]:
             raise ValueError(f"{path} content does not match its manifest hash.")
-        tables[entry["table"]] = table
+        tables[table_name] = table
     record = json.loads((directory / "record.json").read_text(encoding="utf-8"))
+    if record.get("run_id") != manifest["run_id"]:
+        raise ValueError("record.json run_id does not match the manifest.")
     return record, tables
