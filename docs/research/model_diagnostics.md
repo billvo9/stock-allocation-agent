@@ -143,18 +143,30 @@ beside it. Both are ignored by Git.
   - the spec: code state, environment versions, input hashes, label,
     lockbox truncation facts, universe and symbol codes, fold parameters,
     models with variant ids, config, and the seed rule;
+  - in the spec (1.1): the `decision_method` (`fold_block_t`), an
+    `eligible_as_candidate` flag on every model (true only for role
+    `candidate`), and `reference_predictors`, which describes the unpurged
+    canary reference (role `canary_unsafe_reference`, its output kind,
+    `purged: false`, `eligible_as_candidate: false`);
   - lockbox evidence;
   - estimator audit (fallback counts);
   - simulated inference calibration;
   - output hashes: label-free prediction hashes, labels hash, table hashes,
     and the results hash;
-  - the checks summary.
-- Tables (Parquet, schema version 1.0):
+  - the checks summary. The 1.0 keys keep their meaning
+    (`leakage_checks_failed`, `instrument_checks_failed`: rows with
+    `passed` false; `research_warnings`: rows with `passed` true). Since
+    1.1, `families` gives per severity `total`, `passed`, `failed`,
+    `undetermined` (no stored result) and what `passed` means, with
+    `passed + failed + undetermined = total`.
+- Tables (Parquet, schema version 1.1):
   - `inputs`: the truncated labeled frame used;
   - `folds`;
   - `predictions`;
   - `metrics`;
-  - `curves`;
+  - `curves`; rows with an interval record its `ci_method`
+    (`newey_west_normal_over_dates`), `ci_level` and `hac_lag`, taken from
+    the inference call that produced it (1.1);
   - `null_draws`;
   - `feature_stats`, scope `training` or `evaluation`;
   - `feature_pairs`;
@@ -167,9 +179,15 @@ beside it. Both are ignored by Git.
   - The same spec giving a different `results_sha256` reveals
     nondeterminism.
 - The reader refuses:
-  - an unknown major version;
+  - another major version, or a newer minor than its own;
+  - a record whose schema version differs from the manifest's;
   - any file or table whose hash differs from the manifest;
   - a run without a manifest.
+- Schema versions. 1.0 is T2 as merged (PR #43). 1.1 adds only the fields
+  above; no statistic, threshold, label or lockbox rule changed. Each table
+  is validated against the schema of the version it was written with, so
+  1.0 runs stay readable. A reader never fills a missing 1.1 field with an
+  assumed value (see `docs/research/diagnostics_dashboard.md`).
 
 T3 can build every planned page from these tables without re-running a
 model or reading raw data.
