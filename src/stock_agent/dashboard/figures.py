@@ -811,9 +811,32 @@ def oos_r2_panel(
     return figure
 
 
-def rank_position_bars(
-    curves: pd.DataFrame, model: str, curve: str, *, note: str = "", ci_level: float = 0.95
-):
+CI_METHOD_LABELS = {
+    "newey_west_normal_over_dates": "Newey-West (normal critical values) over dates",
+}
+
+
+def interval_label(rows: pd.DataFrame) -> str:
+    """
+    Describe the stored error bars from the rows' own ci_method / ci_level /
+    hac_lag. Nothing is assumed: legacy rows say "not recorded".
+    """
+
+    if "ci_method" not in rows or rows["ci_method"].isna().all():
+        return "bars: interval method not recorded"
+    recorded = rows.loc[rows["ci_method"].notna(), ["ci_method", "ci_level", "hac_lag"]]
+    combos = recorded.astype(object).drop_duplicates()
+    if len(combos) > 1 or rows["ci_method"].isna().any():
+        return "bars: mixed interval methods (see the stored rows)"
+    method, level, lag = combos.iloc[0]
+    name = CI_METHOD_LABELS.get(str(method), str(method))
+    lag_text = f", lag {int(lag)}" if pd.notna(lag) else ""
+    if pd.isna(level):
+        return f"bars: {name}, level not recorded{lag_text}"
+    return f"bars: nominal {float(level):.0%} {name}{lag_text}"
+
+
+def rank_position_bars(curves: pd.DataFrame, model: str, curve: str, *, note: str = ""):
     """Stored realized outcome by same-date rank position 1..N (one panel per N)."""
 
     rows = curves[(curves["model"] == model) & (curves["curve"] == curve)].sort_values(
@@ -825,7 +848,7 @@ def rank_position_bars(
             go.Bar(
                 x=[f"#{int(x)}" for x in block["x"]],
                 y=block["value"].tolist(),
-                name=f"{group}; bars: nominal {ci_level:.0%} Newey-West",
+                name=f"{group}; {interval_label(block)}",
                 error_y={
                     "type": "data",
                     "symmetric": False,
@@ -887,7 +910,7 @@ def rank_position_occupancy(curves: pd.DataFrame, model: str):
     return figure
 
 
-def pooled_deciles(curves: pd.DataFrame, model: str, output_kind: str, *, ci_level: float = 0.95):
+def pooled_deciles(curves: pd.DataFrame, model: str, output_kind: str):
     """POOLED prediction buckets across all dates (descriptive; not same-date portfolios)."""
 
     rows = curves[(curves["model"] == model) & (curves["curve"] == "pooled_decile_realized")]
@@ -906,10 +929,7 @@ def pooled_deciles(curves: pd.DataFrame, model: str, output_kind: str, *, ci_lev
                 "arrayminus": (rows["value"] - rows["ci_low"]).tolist(),
             },
             text=rows["x_label"].tolist(),
-            name=(
-                f"bucket mean over rows; bars: nominal {ci_level:.0%} Newey-West "
-                "around per-date bucket means"
-            ),
+            name=f"bucket mean over rows; {interval_label(rows)} (per-date bucket means)",
         )
     )
     if output_kind == "forecast" and not warned and len(rows):

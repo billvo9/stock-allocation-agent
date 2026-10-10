@@ -122,3 +122,77 @@ def dashboard_root(tmp_path_factory, panel_factory):
         {"run_id": run.run_id, "spec_sha256": run.record["spec_sha256"], "status": "completed"},
     )
     return root, run
+
+
+SCHEMA_1_0_RUN_ID = "20261009T120000Z-100000000000"
+
+
+def write_schema_1_0_run(run, root, run_id: str = SCHEMA_1_0_RUN_ID):
+    """
+    Write `run` as the schema 1.0 writer (PR #43) laid it out: no 1.1 record
+    fields (decision_method, reference_predictors, eligible_as_candidate,
+    checks_summary.families), curves without ci_method / ci_level / hac_lag,
+    and "1.0" in the manifest and record. Statistics are unchanged between
+    1.0 and 1.1, so every other stored value is what 1.0 wrote.
+    """
+
+    import copy
+    import json
+
+    from stock_agent.model_diagnostics import contract
+    from stock_agent.model_diagnostics.record import canonical_json, sha256_json
+    from stock_agent.model_validation.audit import file_sha256, table_sha256
+
+    def dump(path, value):
+        text = json.dumps(json.loads(canonical_json(value)), indent=2, sort_keys=True)
+        path.write_text(text + "\n", encoding="utf-8")
+
+    record = copy.deepcopy(run.record)
+    spec = record["spec"]
+    for key in ("decision_method", "reference_predictors"):
+        spec.pop(key)
+    for model in spec["models"]:
+        model.pop("eligible_as_candidate")
+    spec["output_schema_version"] = spec["record_schema_version"] = "1.0"
+    record["checks_summary"].pop("families")
+    record["spec_sha256"] = sha256_json(spec)
+    record["run_id"] = run_id
+    directory = root / "runs" / run_id
+    directory.mkdir(parents=True)
+    files = {}
+    for name, table in run.tables.items():
+        if name in contract.SCHEMAS:
+            table = contract.conform(
+                name, table.drop(columns=list(contract.added_after(name, "1.0"))), "1.0"
+            )
+        path = directory / f"{name}.parquet"
+        table.to_parquet(path, index=False)
+        files[path.name] = {
+            "table": name,
+            "rows": len(table),
+            "content_sha256": table_sha256(table),
+        }
+    dump(directory / "record.json", {**record, "status": "completed"})
+    files["record.json"] = {}
+    for filename, entry in files.items():
+        entry["file_sha256"] = file_sha256(directory / filename)
+    dump(
+        directory / "manifest.json",
+        {"output_schema_version": "1.0", "run_id": run_id, "files": files},
+    )
+    return directory
+
+
+@pytest.fixture(scope="session")
+def schema_1_0_writer():
+    return write_schema_1_0_run
+
+
+@pytest.fixture(scope="session")
+def schema_1_0_root(tmp_path_factory, dashboard_root):
+    """The dashboard fixture run, written in the schema 1.0 layout under its own root."""
+
+    _, run = dashboard_root
+    root = tmp_path_factory.mktemp("schema_1_0_outputs")
+    write_schema_1_0_run(run, root)
+    return root, run

@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from stock_agent.dashboard import loader, status
+from stock_agent.model_diagnostics import runner
 
 
 def _checks(rows):
@@ -145,3 +146,140 @@ def test_notices_never_quote_the_unsafe_canary_reference(dashboard_root):
         if notice.rows is not None:
             text += notice.rows.to_csv(index=False)
         assert "canary_unsafe_reference" not in text, notice.title
+
+
+# --- per-family summary cross-checks (fail closed) ---
+
+FAMILY_ROWS = [
+    ("lockbox_closed", None, "leakage", True),
+    ("predictions_complete", None, "leakage", True),
+    ("size", None, "instrument", True),
+    ("control_apparent_skill", "c", "research_warning", False),
+    ("control_apparent_skill", "d", "research_warning", pd.NA),
+    ("fpr", None, "info", False),
+]
+
+
+def _recorded(rows):
+    checks = _checks(rows)
+    return checks, runner.summarize_checks(checks)
+
+
+def test_a_recorded_summary_that_matches_the_rows_does_not_block():
+    checks, summary = _recorded(FAMILY_ROWS)
+    result = status.run_status(checks, summary)
+    assert result.level == status.VALID
+    assert result.summary_matches and result.summary_source == "recorded"
+    assert result.families == {
+        family: {key: entry[key] for key in status.FAMILY_KEYS}
+        for family, entry in summary["families"].items()
+    }
+
+
+def test_the_summary_records_undetermined_blocking_checks():
+    # The T3-found defect: an undetermined leakage check was absent from the
+    # 1.0 summary. 1.1 counts it, the counts match the rows, and the run is
+    # still blocked by the check itself.
+    checks, summary = _recorded([*FAMILY_ROWS, ("canary", "m", "leakage", pd.NA)])
+    assert summary["families"]["leakage"]["undetermined"] == 1
+    result = status.run_status(checks, summary)
+    assert result.summary_matches
+    assert result.level == status.BLOCKED and result.reasons == ["canary: undetermined"]
+
+
+def _bump(family, key, by=1):
+    def change(summary):
+        summary["families"][family][key] += by
+
+    return change
+
+
+def _balanced(family, source, target):
+    def change(summary):  # identity still holds; only the split disagrees with the rows
+        summary["families"][family][source] -= 1
+        summary["families"][family][target] += 1
+
+    return change
+
+
+def _drop_family(summary):
+    summary["families"].pop("instrument")
+
+
+def _extra_family(summary):
+    summary["families"]["custom"] = {"total": 0, "passed": 0, "failed": 0, "undetermined": 0}
+
+
+def _families_not_a_mapping(summary):
+    summary["families"] = [1, 2]
+
+
+def _family_missing_a_count(summary):
+    summary["families"]["leakage"].pop("undetermined")
+
+
+def _legacy_key_disagrees(summary):
+    summary["research_warnings"] = 3
+
+
+SUMMARY_DEFECTS = [
+    ("total_too_high", _bump("leakage", "total"), "passed + failed + undetermined != total"),
+    ("passed_too_high", _bump("leakage", "passed"), "passed + failed + undetermined != total"),
+    ("failed_too_high", _bump("info", "failed"), "passed + failed + undetermined != total"),
+    (
+        "undetermined_hidden",
+        _bump("research_warning", "undetermined", -1),
+        "passed + failed + undetermined != total",
+    ),
+    ("split_disagrees", _balanced("research_warning", "undetermined", "failed"), "but rows give"),
+    ("family_missing", _drop_family, "covers"),
+    ("family_extra", _extra_family, "covers"),
+    ("not_a_mapping", _families_not_a_mapping, "not a mapping"),
+    ("count_missing", _family_missing_a_count, "lacks"),
+    ("legacy_key", _legacy_key_disagrees, "checks_summary.research_warnings"),
+]
+
+
+@pytest.mark.parametrize(
+    ("change", "reason"), [d[1:] for d in SUMMARY_DEFECTS], ids=[d[0] for d in SUMMARY_DEFECTS]
+)
+def test_any_summary_row_disagreement_blocks_the_run(change, reason):
+    checks, summary = _recorded(FAMILY_ROWS)
+    change(summary)
+    result = status.run_status(checks, summary)
+    assert result.level == status.BLOCKED
+    assert not result.summary_matches
+    assert any(reason in item for item in result.reasons), result.reasons
+
+
+def test_a_missing_summary_blocks_the_run():
+    checks, _ = _recorded(FAMILY_ROWS)
+    result = status.run_status(checks, None)
+    assert result.level == status.BLOCKED and "checks_summary is missing" in result.reasons[0]
+
+
+def test_a_legacy_summary_is_checked_on_its_own_keys_and_families_come_from_rows():
+    checks, summary = _recorded(FAMILY_ROWS)
+    summary.pop("families")
+    result = status.run_status(checks, summary)
+    assert result.level == status.VALID and result.summary_matches
+    assert result.summary_source.startswith("legacy")
+    assert result.families == status.family_counts(checks)
+
+
+def test_record_issues_block_the_run():
+    checks, summary = _recorded(FAMILY_ROWS)
+    result = status.run_status(checks, summary, record_issues=("decision method conflict",))
+    assert result.level == status.BLOCKED and result.reasons == ["decision method conflict"]
+
+
+def test_the_fixture_run_summary_matches_its_rows_family_by_family(dashboard_root):
+    root, run = dashboard_root
+    view = loader.load_run(loader.list_runs(root)[0].path)
+    result = status.run_status(
+        view.tables["checks"], view.record["checks_summary"], record_issues=view.record_issues
+    )
+    assert result.summary_matches and result.summary_source == "recorded"
+    for family, entry in run.record["checks_summary"]["families"].items():
+        assert result.families[family] == {key: entry[key] for key in status.FAMILY_KEYS}
+        assert entry["passed"] + entry["failed"] + entry["undetermined"] == entry["total"]

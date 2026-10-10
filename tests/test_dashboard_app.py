@@ -22,7 +22,7 @@ import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from stock_agent.dashboard import loader, status
-from stock_agent.model_diagnostics import artifacts, contract
+from stock_agent.model_diagnostics import artifacts, contract, runner
 
 APP = Path(__file__).resolve().parents[1] / "src" / "stock_agent" / "dashboard" / "app.py"
 PAGES = [
@@ -79,12 +79,9 @@ def _with_checks(run, run_id, *, warnings_active: bool):
         checks.loc[research[research].index[:1], "passed"] = True
     record = copy.deepcopy(run.record)
     record["run_id"] = run_id
-    record["checks_summary"] = {
-        "leakage_checks_failed": 0,
-        "instrument_checks_failed": 0,
-        "research_warnings": int(warnings_active),
-    }
-    tables = {**run.tables, "checks": contract.conform("checks", checks)}
+    checks = contract.conform("checks", checks)
+    record["checks_summary"] = runner.summarize_checks(checks)
+    tables = {**run.tables, "checks": checks}
     return dataclasses.replace(run, run_id=run_id, record=record, tables=tables)
 
 
@@ -115,7 +112,10 @@ def test_the_banner_shows_the_status_derived_from_stored_checks(
         artifacts.write_run(variant, tmp_path)
         root = tmp_path
     view = loader.load_run(loader.list_runs(root)[0].path)
-    assert status.run_status(view.tables["checks"], view.record["checks_summary"]).level == level
+    stored = status.run_status(
+        view.tables["checks"], view.record["checks_summary"], record_issues=view.record_issues
+    )
+    assert stored.level == level
     app = _app(root, monkeypatch)
     banners = getattr(app, element)
     assert banners and banners[0].value.startswith(f"**{level}**")
@@ -285,3 +285,31 @@ def test_a_run_changed_after_loading_is_verified_again(dashboard_root, tmp_path,
     (directory / "checks.parquet").write_bytes(b"tampered")
     app.run()
     assert any("integrity_check_failed" in e.value for e in app.error)
+
+
+def test_every_page_renders_a_schema_1_0_run_and_labels_its_gaps(schema_1_0_root, monkeypatch):
+    root, _ = schema_1_0_root
+    app = _app(root, monkeypatch)
+    for page in PAGES:
+        app.switch_page(page).run()
+        assert not app.exception, (page, [e.value for e in app.exception])
+    app.switch_page("page_scripts/overview.py").run()
+    markdown = " ".join(m.value for m in app.markdown)
+    assert "output schema **1.0**" in markdown
+    assert "derived from stored check names (legacy run)" in markdown
+    info = " ".join(i.value for i in app.info)
+    assert "curves.ci_method: not recorded (schema 1.0)" in info
+    families = next(f.value for f in app.dataframe if "family" in f.value.columns)
+    assert (families["passed"] + families["failed"] + families["undetermined"]).equals(
+        families["total"]
+    )
+
+
+def test_the_overview_shows_the_recorded_contract_fields(dashboard_root, monkeypatch):
+    root, _ = dashboard_root
+    app = _app(root, monkeypatch)
+    markdown = " ".join(m.value for m in app.markdown)
+    assert "output schema **1.1**" in markdown and "fold_block_t** (recorded)" in markdown
+    assert not any("not recorded (schema" in i.value for i in app.info)
+    models = next(f.value for f in app.dataframe if "eligible_as_candidate" in f.value.columns)
+    assert models.loc[models["role"] != "candidate", "eligible_as_candidate"].eq(False).all()
