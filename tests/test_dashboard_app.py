@@ -31,6 +31,7 @@ PAGES = [
     "page_scripts/features.py",
     "page_scripts/nulls.py",
     "page_scripts/validation.py",
+    "page_scripts/forecast_error.py",
     "page_scripts/calibration.py",
     "page_scripts/uncertainty.py",
     "page_scripts/research_warnings.py",
@@ -157,8 +158,8 @@ def test_unsafe_canary_reference_is_confined_to_its_panel(dashboard_root, monkey
             assert "canary_unsafe_reference" not in chart.proto.spec, (page, key)
             assert "UNSAFE" not in chart.proto.spec, (page, key)
         assert "canary_unsafe_reference" not in _rendered_text(app), page
-        for box in app.selectbox:
-            assert "canary_unsafe_reference" not in box.options, (page, box.key)
+        for box in (*app.selectbox, *app.multiselect):
+            assert not any("canary_unsafe_reference" in o for o in box.options), (page, box.key)
     app.switch_page("page_scripts/nulls.py").run()
     canary = [c for c in app.get("plotly_chart") if c.proto.id.endswith("-canary")]
     assert len(canary) == 1 and "UNSAFE reference" in canary[0].proto.spec
@@ -293,6 +294,10 @@ def test_every_page_renders_a_schema_1_0_run_and_labels_its_gaps(schema_1_0_root
     for page in PAGES:
         app.switch_page(page).run()
         assert not app.exception, (page, [e.value for e in app.exception])
+        if page == "page_scripts/forecast_error.py":
+            # max_date was already recorded in 1.0, so its maturity is verifiable.
+            keys = {c.proto.id.rsplit("-", 1)[-1] for c in app.get("plotly_chart")}
+            assert {"gw_primary", "gw_daily", "gw_observation_weighted"} <= keys
     app.switch_page("page_scripts/overview.py").run()
     markdown = " ".join(m.value for m in app.markdown)
     assert "output schema **1.0**" in markdown

@@ -8,10 +8,13 @@ Last reviewed: 2026-10-10
 
 ## Last checkpoint
 
-2026-10-10, milestone "T2 output contract 1.1 (reporting fix after T3)",
-verified on branch `fix/t2-diagnostics-record-contract` at `505de3b`
-(`7594a5b` contract, `a2442c6` dashboard, `505de3b` docs), based on
-`0c0304a` (merge pending).
+2026-10-10, milestone "T3.1 research workspace (Goyal-Welch views,
+maturity rule, design system)", verified on branch
+`feature/dashboard-research-workspace` at `5234102` (`84413b0` code,
+`5234102` docs; merge pending). The branch is stacked on PR #45
+(`fix/t2-diagnostics-record-contract`, head `9492892`, T2 output schema
+1.1), which was open with its CI `test` check passing as of 2026-10-10
+(merge pending); `origin/main` is `0c0304a`.
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
@@ -65,7 +68,34 @@ ML phase.
   `docs/research/model_validation.md`.
 - The universe (U) and market-context (C) research is merged (PRs #41, #42);
   see `docs/research/universe_and_market_context.md`.
-- This branch fixes the T2 reporting contract found by T3 (output schema
+- This branch implements T3.1, a bounded refinement of the dashboard before
+  T4 (`docs/research/diagnostics_dashboard.md`, "Maturity", "Goyal-Welch
+  views", "Design system"). No T2 code changed.
+  - Maturity: the evaluation as-of is the last session of the truncated
+    development frame (`lockbox_evidence.max_date`). Only predictions whose
+    label ended by then enter derived series; pending predictions are
+    listed, and a stored pending prediction blocks the run.
+  - Goyal-Welch page: the running sum of the date-normalized squared-error
+    advantage d_t over identical observations, one line per recorded
+    comparator with its identity; drawn only if it reproduces T2's stored
+    estimates and curve. T2's observation-weighted cumulative is the
+    secondary view. The per-symbol mean is a labelled selection control,
+    never a default.
+  - Descriptive filters (forecast dates, regimes) show counts and plain
+    averages only; no inference is computed for a filtered sample.
+    Point-in-time regimes use earlier-date thresholds; retrospective
+    episodes are flagged ex post.
+  - Design tokens drive the Streamlit theme, a CSS layer and Plotly
+    layouts; shared components are ready for T4's model pages. Portfolio
+    equity is a disabled future state until T5.
+  - Reviewed independently by frontend, data-science and test reviewers on
+    2026-10-10; every blocker and should-fix finding was addressed.
+  - On the 2026-10-10 development run `20261010T192511Z-d967ec9c0ff2`
+    (schema 1.1, produced from `9492892` with a clean tree): no legacy
+    gaps, no record issues, status WARNING (per-symbol-mean selection
+    control), no pending predictions, and all nine forecast
+    model-comparator pairs reproduce T2.
+- PR #45 (open) fixes the T2 reporting contract found by T3 (output schema
   1.1, additive; `docs/research/model_diagnostics.md`, "Saved outputs"):
   - the checks summary adds per-family total / passed / failed /
     undetermined counts (the 1.0 summary omitted checks without a stored
@@ -96,8 +126,8 @@ ML phase.
     merged in PR #44).
   - The `checks_summary` defect and three output gaps (curve interval
     method, decision method, the unsafe reference's role and output kind)
-    are fixed on this branch (schema 1.1). The other additive gaps remain
-    listed in `docs/research/diagnostics_dashboard.md`.
+    are fixed in PR #45 (schema 1.1). The other additive gaps remain listed
+    in `docs/research/diagnostics_dashboard.md`.
 - T2 (merged in PR #43) built the measurement layer
   (`src/stock_agent/model_diagnostics/`,
   `docs/research/model_diagnostics.md`):
@@ -132,6 +162,17 @@ ML phase.
   - **Context series are date-common.** They can affect cross-sectional
     ranking only through pre-registered interactions.
 - No prediction model is selected or implemented yet.
+
+Owner decisions (2026-10-10, T3.1 brief): run T2 once under schema 1.1
+without evaluating the holdout; Goyal-Welch uses identical observations and
+point-in-time comparators with no single hard-coded primary baseline, the
+per-symbol mean kept as a selection control; the date-normalized advantage
+is the primary view and the observation-weighted total secondary; only
+predictions with target_end_date <= evaluation_asof contribute, pending
+ones stay visible; filtering never recomputes inference in T3; regime
+filters separate point-in-time from ex-post labels; keep Streamlit and
+Plotly; no portfolio economics before T5; no new models, inference
+methods, universe or label changes.
 
 Owner decisions (2026-10-10, T2 reporting fix): fix the T3-found defect and
 gaps in the same T2 output-contract ticket with additive fields; keep
@@ -323,31 +364,30 @@ Coverage limitations found are tracked as open item 2.
 ## Last verified quality baseline
 
 Measured 2026-10-10 with `python3 scripts/verify.py` on
-`fix/t2-diagnostics-record-contract` (base `0c0304a`; the working tree then
-held exactly the content committed as `7594a5b`, `a2442c6`, `505de3b`);
-gates ran with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2,
-streamlit 1.64.0, plotly 7.1.0, pyarrow 25.0.1). Exit 0.
+`feature/dashboard-research-workspace` (base `9492892`; the working tree
+then held exactly the content committed as `84413b0` and `5234102`); gates
+ran with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, streamlit
+1.64.0, plotly 7.1.0, pyarrow 25.0.1). Exit 0.
 
-- `pytest -q`: 1140 passed (1089 before + 51 schema 1.1 tests)
-- `python -m pytest -q`: 1140 passed
-- `ruff format --check src tests scripts .claude/hooks`: 175 files
+- `pytest -q`: 1192 passed (1140 before + 52 T3.1 tests)
+- `python -m pytest -q`: 1192 passed
+- `ruff format --check src tests scripts .claude/hooks`: 183 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- Suite runtime about 32 s per pass.
-- `7594a5b` alone also passes the suite (1096 tests, checked in a temporary
-  worktree).
-- Mutation checks (schema 1.1): 21 deliberate violations, each in an
-  isolated copy, all caught (family identity, set and values, record
-  issues, missing summary, hidden undetermined checks, 1.1 treated as
-  legacy, filled legacy interval level, eligibility guards, decision-method
-  cross-check, interval label and level, record/manifest version checks,
-  per-version validation, newer minors, legacy notice). The earlier T3 (20),
-  T2 (47) and PR #40 (34) mutants were not re-run.
-- Real-data check (read-only, not committed): the 2026-10-09 development
-  run (schema 1.0) loads with the new loader: status WARNING as before,
-  stored summary matches its rows, 7 labelled gaps, no record issues.
-  Page rendering on that run was not re-run; AppTest renders every page of
-  the schema 1.0 fixture.
+- Suite runtime about 73-75 s per pass (dashboard tests about 40 s).
+- Mutation checks (T3.1): 22 deliberate violations, each in an isolated
+  copy, all caught (fixed comparator list, observation-weighted mean,
+  same-date regime threshold, inference columns in filtered tables,
+  contrast function, label window / fold / duplicate checks, NaN estimates,
+  pending listing, retrospective label, selection-control default,
+  caption contrast and focus rules, Plotly tweening, stored-results notice,
+  unsafe reference in the pending list, curve tolerance, notice words,
+  live pills, filtered-curve gaps, omitted comparators). Earlier mutants
+  (schema 1.1: 21, T3: 20, T2: 47, PR #40: 34) were not re-run.
+- Real-data check (read-only, not committed): every page renders with no
+  exception on the 2026-10-10 development run (AppTest), each forecast
+  model draws its three Goyal-Welch charts with no blocking notice, and
+  the pages were reviewed in a browser at desktop and phone widths.
 
 
 ## Open items
@@ -448,7 +488,7 @@ streamlit 1.64.0, plotly 7.1.0, pyarrow 25.0.1). Exit 0.
      - a rank-based hit rate;
      - an offline test for `scripts/run_null_diagnostics.py`.
    - T3 findings for T2 (`docs/research/diagnostics_dashboard.md`):
-     - fixed on this branch (schema 1.1): the checks-summary defect, curve
+     - fixed in PR #45 (schema 1.1): the checks-summary defect, curve
        interval method, decision method, the unsafe reference's role and
        output kind;
      - remaining additive gaps: per-fold IC reasons, constant-sign hit-rate
@@ -456,6 +496,18 @@ streamlit 1.64.0, plotly 7.1.0, pyarrow 25.0.1). Exit 0.
        `write_run(extra_record)` key collisions, purge-band dates, the PSI
        floor, degenerate cross-sectional R² for date-constant forecasts, and
        the decile interval estimand.
+   - T3.1 follow-ups (reviews of 2026-10-10):
+     - before T4: model colours are hashed into the 7 Okabe-Ito colours, so
+       candidate names can collide with each other and with T2 models
+       (assign explicit colours); a nested candidate needs a Clark-West
+       comparison rather than a plain MSE difference;
+     - Plotly charts have no text alternative; some figure greys and
+       method colours are still literals outside the tokens; Streamlit's own
+       widget animations do not follow the dashboard's reduced-motion rule;
+     - cross-check the evaluation as-of against the folds'
+       `score_available_at`;
+     - `.claude/launch.json` (a local preview launch config, untracked) is
+       in the guardrail area and was not committed.
    - Dashboard dependencies: Streamlit 1.64 caps pyarrow below 26, tying
      the data layer's pyarrow to Streamlit releases; its web stack
      (starlette, uvicorn) is unpinned. The test suite runs AppTest twice
@@ -495,16 +547,17 @@ streamlit 1.64.0, plotly 7.1.0, pyarrow 25.0.1). Exit 0.
 
 ## Next steps
 
-1. Owner reviews and merges the `fix/t2-diagnostics-record-contract` pull
-   request (T2 output schema 1.1; merging is owner-only); confirm CI
-   passes.
+1. Owner reviews and merges PR #45 (T2 output schema 1.1), then the T3.1
+   pull request stacked on it (merging is owner-only); confirm CI passes.
 2. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
    `docs/research/diagnostics_and_visualization_plan.md`:
    - T2: diagnostics layer, run outputs and ledger, null models (merged,
      PR #43);
    - T3: Plotly and Streamlit dashboard, run on the null models (merged,
-     PR #44); its T2 reporting fix is on this branch (merge pending);
+     PR #44); its T2 reporting fix is PR #45 and the T3.1 workspace is on
+     this branch (both merge pending); T4 pages should build from
+     `dashboard/components.py` and `theme.py`;
    - T4: Ridge, Lasso, and Elastic Net, with coefficient stability;
    - T5: portfolio readiness;
    - T6: holdout evaluation, once per pre-registered model.

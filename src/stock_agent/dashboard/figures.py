@@ -13,8 +13,10 @@ Contract for every builder:
 - models appear grouped by role in run order, never sorted by a metric;
 - colour encodes identity only (model, symbol, method), never a verdict.
 
-The only derived display is the mean of the last N defined daily rank ICs
-(descriptive smoothing, no interval), labelled as such.
+Derived displays are labelled as such and carry no interval: the mean of
+the last N defined daily rank ICs (descriptive smoothing), and the
+date-normalized Goyal-Welch series from dashboard/evaluation.py, which is
+drawn only after it reproduces T2's stored estimates.
 """
 
 from __future__ import annotations
@@ -409,7 +411,7 @@ def rank_ic_forest(
             xanchor="left",
             font={"color": style.STATUS_COLOURS["unavailable"]},
         )
-    figure.add_vline(x=0, line={"color": "#888888", "dash": "dot"})
+    figure.add_vline(x=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
     layout = style.base_layout(title, x_title="mean rank IC", height=160 + 60 * len(labels))
     layout["yaxis"]["categoryorder"] = "array"
     layout["yaxis"]["categoryarray"] = labels[::-1]
@@ -523,7 +525,7 @@ def stale_comparison(metrics: pd.DataFrame, model: str, method: str, decision_me
         figure.add_annotation(
             x=f"{row.lag} sessions", y=0, text=f"unavailable: {row.reason}", showarrow=False
         )
-    figure.add_hline(y=0, line={"color": "#888888", "dash": "dot"})
+    figure.add_hline(y=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
     figure.update_layout(
         **style.base_layout(
             f"{model}: timeliness control, {method_label(method, decision_method)}",
@@ -562,7 +564,7 @@ def canary_panel(
                 name=label,
             )
         )
-    figure.add_hline(y=0, line={"color": "#888888", "dash": "dot"})
+    figure.add_hline(y=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
     figure.update_layout(
         **style.base_layout(
             f"Leakage canary: mean rank IC ({method_label(method, decision_method)})",
@@ -615,8 +617,8 @@ def rank_ic_series(curves: pd.DataFrame, model: str, folds: pd.DataFrame, *, win
             text=f"rank IC unavailable on all {len(rows)} dates (stored reason: {reason})",
         )
     for start in _day(folds["test_start"]):
-        figure.add_vline(x=start, line={"color": "#DDDDDD", "width": 1})
-    figure.add_hline(y=0, line={"color": "#888888", "dash": "dot"})
+        figure.add_vline(x=start, line=style.FOLD_LINE)
+    figure.add_hline(y=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
     figure.update_layout(
         **style.base_layout(
             f"{model}: rank IC by date (thin lines: fold starts)",
@@ -800,9 +802,9 @@ def oos_r2_panel(
                 row=1,
                 col=column,
             )
-    figure.add_vline(x=0, line={"color": "#888888", "dash": "dot"})
+    figure.add_vline(x=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
     layout = style.base_layout(
-        "Out-of-sample error against an explicit baseline", height=180 + 50 * len(models)
+        "Out-of-sample error against a named comparator", height=180 + 50 * len(models)
     )
     del layout["xaxis"]
     del layout["yaxis"]
@@ -860,7 +862,7 @@ def rank_position_bars(curves: pd.DataFrame, model: str, curve: str, *, note: st
         )
     if note:
         figure.add_annotation(x=0.5, y=0.95, xref="paper", yref="paper", text=note, showarrow=False)
-    figure.add_hline(y=0, line={"color": "#888888", "dash": "dot"})
+    figure.add_hline(y=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
     label = (
         "realized minus same-date mean" if curve.endswith("minus_date_mean") else "realized label"
     )
@@ -940,7 +942,7 @@ def pooled_deciles(curves: pd.DataFrame, model: str, output_kind: str):
                 x=[low, high],
                 y=[low, high],
                 mode="lines",
-                line={"color": "#888888", "dash": "dash"},
+                line={"color": style.REFERENCE_LINE, "dash": "dash"},
                 name="45° (calibrated forecast)",
             )
         )
@@ -1012,30 +1014,154 @@ def residual_acf(curves: pd.DataFrame, model: str, series: str, horizon: int):
     return figure
 
 
-def goyal_welch(curves: pd.DataFrame, model: str, folds: pd.DataFrame):
-    """Stored cumulative SSE(baseline) - SSE(model) by date, one line per baseline."""
+def _comparator_line(comparator) -> dict:
+    dash = "solid" if comparator.role == "null" else "dash"
+    return {"color": style.model_colour(comparator.name), "dash": dash, "width": 2}
+
+
+def _fold_lines(figure, folds: pd.DataFrame) -> None:
+    for start in _day(folds["test_start"]):
+        figure.add_vline(x=start, line=style.FOLD_LINE)
+
+
+def goyal_welch_date_normalized(
+    series: Sequence[tuple[object, pd.DataFrame]],
+    model: str,
+    folds: pd.DataFrame,
+    *,
+    sample_note: str = "full sample",
+    pending: int = 0,
+    x_title: str = "forecast date",
+):
+    """
+    PRIMARY Goyal-Welch view: the running sum of d_t, the mean squared-error
+    advantage of `model` over each comparator per date (evaluation.py). Each
+    line names its comparator and kind; selection controls are dashed. A
+    frame with an `included` column is a filtered sample: the sum runs over
+    included dates only and excluded dates are drawn as gaps.
+    """
+
+    figure = go.Figure()
+    for comparator, frame in series:
+        frame = frame.sort_values("date")
+        included = frame["included"] if "included" in frame else pd.Series(True, frame.index)
+        running = frame["d"].where(included, 0.0).cumsum().where(included)
+        figure.add_trace(
+            go.Scatter(
+                x=_day(frame["date"]),
+                y=[_value(value) for value in running],
+                mode="lines",
+                connectgaps=False,
+                name=f"vs {comparator.label}",
+                line=_comparator_line(comparator),
+                customdata=frame[["d", "n_obs"]].to_numpy(),
+                hovertemplate="%{x}<br>cumulative %{y:.4g}<br>d_t %{customdata[0]:.3g} over "
+                "%{customdata[1]} names<extra>%{fullData.name}</extra>",
+            )
+        )
+    _fold_lines(figure, folds)
+    figure.add_hline(y=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
+    if pending:
+        figure.add_annotation(
+            x=1,
+            y=1.0,
+            xref="paper",
+            yref="paper",
+            xanchor="right",
+            text=f"{pending} pending observations not included (labels not yet realized)",
+            showarrow=False,
+            font={"color": style.STATUS_COLOURS["unavailable"]},
+        )
+    figure.update_layout(
+        **style.base_layout(
+            f"{model}: cumulative date-normalized squared-error advantage",
+            subtitle=f"rising = smaller model error · {sample_note}",
+            x_title=x_title,
+            y_title="cumulative d_t (return²)",
+        )
+    )
+    return figure
+
+
+def squared_error_advantage_by_date(
+    frame: pd.DataFrame, comparator, model: str, *, x_title: str = "forecast date"
+):
+    """d_t per date with the number of names behind it (N_t), on aligned panels."""
+
+    frame = frame.sort_values("date")
+    figure = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        row_heights=[0.72, 0.28],
+        vertical_spacing=0.06,
+    )
+    figure.add_trace(
+        go.Bar(
+            x=_day(frame["date"]),
+            y=frame["d"].tolist(),
+            name=f"d_t vs {comparator.label}",
+            marker={"color": style.model_colour(comparator.name)},
+        ),
+        row=1,
+        col=1,
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=_day(frame["date"]),
+            y=frame["n_obs"].tolist(),
+            mode="lines",
+            line={"shape": "hv", "color": style.REFERENCE_LINE},
+            name="names scored (N_t)",
+        ),
+        row=2,
+        col=1,
+    )
+    figure.add_hline(y=0, line={"color": style.REFERENCE_LINE, "dash": "dot"}, row=1, col=1)
+    layout = style.base_layout(
+        f"{model}: squared-error advantage per date (d_t) and names scored (N_t)", height=420
+    )
+    del layout["xaxis"], layout["yaxis"]
+    figure.update_layout(**layout)
+    axis = {"gridcolor": style.GRID, "linecolor": style.theme.COLOURS["border_strong"]}
+    figure.update_yaxes(title_text="d_t (return²)", row=1, col=1, **axis)
+    figure.update_yaxes(title_text="N_t (names)", rangemode="tozero", row=2, col=1, **axis)
+    figure.update_xaxes(automargin=True, **axis)
+    figure.update_xaxes(title_text=x_title, row=2, col=1)
+    return figure
+
+
+def goyal_welch_observation_weighted(
+    curves: pd.DataFrame, model: str, folds: pd.DataFrame, comparators: Sequence[object]
+):
+    """
+    SECONDARY diagnostic: T2's stored cumulative sum over all name-dates of
+    SSE(comparator) - SSE(model). Dates with more names weigh more, so a
+    changing universe size changes its slope mechanically.
+    """
 
     rows = curves[(curves["model"] == model) & (curves["curve"] == "cumulative_sse_improvement")]
     figure = go.Figure()
-    for baseline, block in rows.groupby("group", sort=True):
-        block = block.sort_values("date")
+    for comparator in comparators:
+        block = rows[rows["group"] == comparator.name].sort_values("date")
+        if block.empty:
+            continue
         figure.add_trace(
             go.Scatter(
                 x=_day(block["date"]),
                 y=block["value"].tolist(),
                 mode="lines",
-                name=f"vs {baseline}",
-                line={"color": style.model_colour(str(baseline))},
+                name=f"vs {comparator.label}",
+                line=_comparator_line(comparator),
             )
         )
-    for start in _day(folds["test_start"]):
-        figure.add_vline(x=start, line={"color": "#EEEEEE", "width": 1})
-    figure.add_hline(y=0, line={"color": "#888888", "dash": "dot"})
+    _fold_lines(figure, folds)
+    figure.add_hline(y=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
     figure.update_layout(
         **style.base_layout(
-            f"{model}: cumulative squared-error improvement (rising = model better)",
+            f"{model}: observation-weighted cumulative SSE difference (stored by T2; secondary)",
             x_title="session date",
-            y_title="cumulative SSE difference",
+            y_title="cumulative SSE difference (all name-dates)",
         )
     )
     return figure
@@ -1067,7 +1193,7 @@ def prediction_vs_realized(
                 x=[low, high],
                 y=[low, high],
                 mode="lines",
-                line={"color": "#888888", "dash": "dash"},
+                line={"color": style.REFERENCE_LINE, "dash": "dash"},
                 name="45° (calibrated)",
             )
         )
@@ -1145,7 +1271,7 @@ def uncertainty_forest(
     if null_value is not None:
         figure.add_vline(
             x=null_value,
-            line={"color": "#888888", "dash": "dot"},
+            line={"color": style.REFERENCE_LINE, "dash": "dot"},
             annotation_text=f"stored null value {null_value:g}",
         )
     layout = style.base_layout(

@@ -135,8 +135,47 @@ TERMS: dict[str, str] = {
         "or deciles."
     ),
     "Goyal-Welch curve": (
-        "Cumulative sum over dates of SSE(baseline) - SSE(model). Rising means the model "
-        "is beating the baseline in that period."
+        "Cumulative squared-error advantage of a forecast model over a named comparator, "
+        "on identical observations. Rising means the model's errors were smaller in that "
+        "period. Primary form: date-normalized (below). Secondary form: T2's stored "
+        "observation-weighted sum over all name-dates."
+    ),
+    "Date-normalized advantage": (
+        "d_t = (1/N_t) * sum over the N_t names scored on date t of "
+        "[(label - comparator)^2 - (label - model)^2]. Every date weighs the same, so a "
+        "changing number of names cannot steepen the cumulative curve by itself."
+    ),
+    "Observation-weighted cumulative": (
+        "T2's stored running sum over all name-dates of SSE(comparator) - SSE(model). A "
+        "date with more names weighs more, so a growing universe steepens it mechanically."
+    ),
+    "Comparator": (
+        "The forecast a model is measured against, named with its kind: a null baseline "
+        "(zero; the expanding mean of purged training labels), or the per-symbol mean, a "
+        "selection control that is not a null. No comparator is privileged: which one is "
+        "natural depends on the label (raw returns vs excess returns)."
+    ),
+    "Evaluation as-of": (
+        "The last session of the run's truncated development frame (recorded by T2). A "
+        "prediction is mature when its label ended on or before that session's close; only "
+        "mature predictions enter the series the dashboard derives."
+    ),
+    "Pending forecast": (
+        "A stored prediction whose label was not realized by the evaluation as-of. It is "
+        "listed as pending and never enters a derived series; because T2 scores every stored "
+        "prediction, its presence blocks the run."
+    ),
+    "Point-in-time regime": (
+        "A state label known at each date's close: built from that date's stored features "
+        "and thresholds from earlier dates only."
+    ),
+    "Retrospective regime": (
+        "An episode whose boundaries were known only after it ended (ex post), such as a "
+        "peak-to-trough drawdown. For descriptive slicing only; never a signal."
+    ),
+    "Descriptive filter": (
+        "A reader-chosen subset of dates. Counts and plain averages are shown for it; "
+        "dependence-aware inference exists only for T2's full sample and is not recomputed."
     ),
 }
 
