@@ -342,3 +342,50 @@ def test_pure_modules_do_not_import_streamlit_and_nothing_imports_the_dashboard(
         if PACKAGE in path.parents:
             continue
         assert not any(m.startswith("stock_agent.dashboard") for m in _imports(path)), path
+
+
+def _interval_rows(methods, levels, lags):
+    return pd.DataFrame(
+        {
+            "ci_method": pd.array(methods, dtype="str"),
+            "ci_level": pd.array(levels, dtype="float64"),
+            "hac_lag": pd.array(lags, dtype="Int64"),
+        }
+    )
+
+
+NW = "newey_west_normal_over_dates"
+
+
+@pytest.mark.parametrize(
+    ("methods", "levels", "lags", "label"),
+    [
+        (
+            [NW, NW],
+            [0.9, 0.9],
+            [7, 7],
+            "bars: nominal 90% Newey-West (normal critical values) over dates, lag 7",
+        ),
+        ([None, None], [np.nan, np.nan], [None, None], "bars: interval method not recorded"),
+        ([NW, NW], [0.95, 0.9], [3, 3], "bars: mixed interval methods (see the stored rows)"),
+        (
+            [NW, None],
+            [0.95, np.nan],
+            [3, None],
+            "bars: mixed interval methods (see the stored rows)",
+        ),
+        (["other_method"], [np.nan], [None], "bars: other_method, level not recorded"),
+    ],
+    ids=["recorded", "legacy", "mixed_levels", "partly_recorded", "unknown_method"],
+)
+def test_interval_labels_come_from_the_stored_rows(methods, levels, lags, label):
+    assert figures.interval_label(_interval_rows(methods, levels, lags)) == label
+
+
+def test_curve_figures_label_intervals_from_the_stored_rows(view):
+    curves = view.tables["curves"].copy()
+    bars = figures.rank_position_bars(curves, "feature_a", "rank_position_realized")
+    assert all("nominal 95%" in trace.name and "lag 3" in trace.name for trace in bars.data)
+    curves["ci_level"] = 0.8  # the label follows the data, not a presentation default
+    deciles = figures.pooled_deciles(curves, "feature_a", "score")
+    assert "nominal 80%" in deciles.data[0].name

@@ -8,15 +8,21 @@ Last reviewed: 2026-10-10
 
 ## Last checkpoint
 
-2026-10-10, milestone "T3: research dashboard over T2 outputs", verified on
-branch `feature/ml-diagnostics-dashboard` at `b396096`, based on `f013553`
-(merge pending).
+2026-10-10, milestone "T2 output contract 1.1 (reporting fix after T3)",
+verified on branch `fix/t2-diagnostics-record-contract` at `505de3b`
+(`7594a5b` contract, `a2442c6` dashboard, `505de3b` docs), based on
+`0c0304a` (merge pending).
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `f013553` as of last fetch,
+Recently merged to `main` (`origin/main` = `0c0304a` as of last fetch,
 verified 2026-10-10):
 
+- PR #44 (`0c0304a`): `3addc34` chore: pin plotly and streamlit for the
+  research dashboard; `14b7c40` fix: restrict the run reader to files
+  inside the run directory; `1f56ec3` feat: read-only research dashboard
+  over saved T2 runs; `b396096` docs: T3 dashboard and its T2 findings;
+  `1000e4e` docs: checkpoint.
 - PR #43 (`f013553`): `4e8a830` feat: dependence-aware inference for
   date-level statistics; `59570da` feat: null models, diagnostics runner and
   saved-output contract; `479d59f` docs: T2 design, evidence and learning
@@ -59,8 +65,22 @@ ML phase.
   `docs/research/model_validation.md`.
 - The universe (U) and market-context (C) research is merged (PRs #41, #42);
   see `docs/research/universe_and_market_context.md`.
-- This branch implements roadmap ticket T3, a read-only Plotly and
-  Streamlit dashboard over saved T2 runs (`src/stock_agent/dashboard/`,
+- This branch fixes the T2 reporting contract found by T3 (output schema
+  1.1, additive; `docs/research/model_diagnostics.md`, "Saved outputs"):
+  - the checks summary adds per-family total / passed / failed /
+    undetermined counts (the 1.0 summary omitted checks without a stored
+    result);
+  - the record states `decision_method`, `eligible_as_candidate` per model,
+    and `reference_predictors` (the unpurged canary reference, never
+    eligible); curve intervals record `ci_method`, `ci_level`, `hac_lag`;
+  - the dashboard blocks a run whose summary or record disagrees with its
+    check rows, refuses records that could present a non-candidate as a
+    strategy, and shows 1.0 runs with every missing field labelled (never
+    filled with assumed values);
+  - no statistic, threshold, inference decision, label, lockbox or
+    point-in-time rule changed.
+- T3 (merged in PR #44) is a read-only Plotly and Streamlit dashboard over
+  saved T2 runs (`src/stock_agent/dashboard/`,
   `docs/research/diagnostics_dashboard.md`):
   - it reads only verified run directories, refuses non-development runs
     and any stored date reaching the lockbox, and never fits, recomputes
@@ -70,15 +90,14 @@ ML phase.
     T2 check rows; warnings never escalate;
   - launch with `scripts/run_dashboard.py` (binds 127.0.0.1, usage
     statistics off).
-- T3 findings in T2 (classified, not patched in the UI):
+- T3 findings in T2:
   - `read_run` could follow manifest paths outside a run directory. It now
-    reads only the files a run may contain (owner-approved 2026-10-10).
-  - Defect: `checks_summary` omits leakage or instrument checks whose
-    result is undefined. The dashboard reads the check rows instead.
-  - Additive output gaps are listed in
-    `docs/research/diagnostics_dashboard.md` (for example, curve interval
-    method, decision method and the unsafe reference's output kind are not
-    recorded).
+    reads only the files a run may contain (owner-approved 2026-10-10,
+    merged in PR #44).
+  - The `checks_summary` defect and three output gaps (curve interval
+    method, decision method, the unsafe reference's role and output kind)
+    are fixed on this branch (schema 1.1). The other additive gaps remain
+    listed in `docs/research/diagnostics_dashboard.md`.
 - T2 (merged in PR #43) built the measurement layer
   (`src/stock_agent/model_diagnostics/`,
   `docs/research/model_diagnostics.md`):
@@ -113,6 +132,14 @@ ML phase.
   - **Context series are date-common.** They can affect cross-sectional
     ranking only through pre-registered interactions.
 - No prediction model is selected or implemented yet.
+
+Owner decisions (2026-10-10, T2 reporting fix): fix the T3-found defect and
+gaps in the same T2 output-contract ticket with additive fields; keep
+`decision_method` an explicit record field; store interval method and level
+as data; make the unsafe reference's role machine-readable; fail closed on
+summary-row disagreement; do not coerce missing 1.0 fields; change no
+statistics, thresholds, inference decisions, labels, lockbox or
+point-in-time rules.
 
 Owner decisions (2026-10-09 and 2026-10-10, T3):
 
@@ -296,27 +323,31 @@ Coverage limitations found are tracked as open item 2.
 ## Last verified quality baseline
 
 Measured 2026-10-10 with `python3 scripts/verify.py` on
-`feature/ml-diagnostics-dashboard` (base `f013553` plus the T3 commits
-`3addc34`, `14b7c40`, `1f56ec3`, `b396096` and this checkpoint); gates ran
-with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, streamlit
-1.64.0, plotly 7.1.0, pyarrow 25.0.1). Exit 0.
+`fix/t2-diagnostics-record-contract` (base `0c0304a`; the working tree then
+held exactly the content committed as `7594a5b`, `a2442c6`, `505de3b`);
+gates ran with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2,
+streamlit 1.64.0, plotly 7.1.0, pyarrow 25.0.1). Exit 0.
 
-- `pytest -q`: 1089 passed (1005 before + 84 T3 tests)
-- `python -m pytest -q`: 1089 passed
-- `ruff format --check src tests scripts .claude/hooks`: 174 files
+- `pytest -q`: 1140 passed (1089 before + 51 schema 1.1 tests)
+- `python -m pytest -q`: 1140 passed
+- `ruff format --check src tests scripts .claude/hooks`: 175 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- Suite runtime about 29-31 s per pass on a heavily loaded machine (load
-  average above 20); the dashboard tests take about 15 s of that.
-- Mutation checks (T3): 20 deliberate violations, each in an isolated copy,
-  all caught (lockbox guards, malformed-run mapping, interval columns,
-  rank-position and occupancy values, unsafe-reference confinement, root
-  from a widget, hard-coded banner, cache ignoring changed files, reading of
-  `passed`, reader path escape). T2's 47 and PR #40's 34 mutants were not
-  re-run.
-- Real-data check (read-only, not committed): every dashboard page renders
-  with no exception on the 2026-10-09 development run, and the server binds
-  only to 127.0.0.1.
+- Suite runtime about 32 s per pass.
+- `7594a5b` alone also passes the suite (1096 tests, checked in a temporary
+  worktree).
+- Mutation checks (schema 1.1): 21 deliberate violations, each in an
+  isolated copy, all caught (family identity, set and values, record
+  issues, missing summary, hidden undetermined checks, 1.1 treated as
+  legacy, filled legacy interval level, eligibility guards, decision-method
+  cross-check, interval label and level, record/manifest version checks,
+  per-version validation, newer minors, legacy notice). The earlier T3 (20),
+  T2 (47) and PR #40 (34) mutants were not re-run.
+- Real-data check (read-only, not committed): the 2026-10-09 development
+  run (schema 1.0) loads with the new loader: status WARNING as before,
+  stored summary matches its rows, 7 labelled gaps, no record issues.
+  Page rendering on that run was not re-run; AppTest renders every page of
+  the schema 1.0 fixture.
 
 
 ## Open items
@@ -417,10 +448,10 @@ with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, streamlit
      - a rank-based hit rate;
      - an offline test for `scripts/run_null_diagnostics.py`.
    - T3 findings for T2 (`docs/research/diagnostics_dashboard.md`):
-     - defect: `_checks_summary` counts only `passed == False`, so
-       undetermined leakage or instrument checks are missing from it;
-     - additive gaps: curve interval method, decision method, the unsafe
-       reference's output kind, per-fold IC reasons, constant-sign hit-rate
+     - fixed on this branch (schema 1.1): the checks-summary defect, curve
+       interval method, decision method, the unsafe reference's role and
+       output kind;
+     - remaining additive gaps: per-fold IC reasons, constant-sign hit-rate
        and score-decile statuses, MZ covariance, per-date series,
        `write_run(extra_record)` key collisions, purge-band dates, the PSI
        floor, degenerate cross-sectional R² for date-constant forecasts, and
@@ -464,15 +495,16 @@ with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, streamlit
 
 ## Next steps
 
-1. Owner reviews and merges the `feature/ml-diagnostics-dashboard` pull
-   request (T3; merging is owner-only); confirm CI passes.
+1. Owner reviews and merges the `fix/t2-diagnostics-record-contract` pull
+   request (T2 output schema 1.1; merging is owner-only); confirm CI
+   passes.
 2. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
    `docs/research/diagnostics_and_visualization_plan.md`:
    - T2: diagnostics layer, run outputs and ledger, null models (merged,
      PR #43);
-   - T3: Plotly and Streamlit dashboard, run on the null models
-     (implemented on this branch, merge pending);
+   - T3: Plotly and Streamlit dashboard, run on the null models (merged,
+     PR #44); its T2 reporting fix is on this branch (merge pending);
    - T4: Ridge, Lasso, and Elastic Net, with coefficient stability;
    - T5: portfolio readiness;
    - T6: holdout evaluation, once per pre-registered model.

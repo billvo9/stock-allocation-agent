@@ -31,10 +31,11 @@ from stock_agent.dashboard.status import (
     research_notices,
     run_status,
 )
+from stock_agent.model_diagnostics import contract
 
 RUN_KEY = "selected_run"
 MODELS_KEY = "selected_models"
-UNSAFE_ROLE = "canary_unsafe_reference"
+UNSAFE_ROLE = contract.UNSAFE_REFERENCE_ROLE
 METRIC_COLUMNS = [
     "model",
     "role",
@@ -107,7 +108,7 @@ def sidebar() -> RunView | None:
         st.sidebar.error(f"Refused: {refused.reason}")
         st.error(f"This run is not displayed ({refused.reason}). {refused.detail}")
         return None
-    status = run_status(view.tables["checks"], view.record.get("checks_summary"))
+    status = _status(view)
     st.sidebar.markdown(_status_badge(status.level), unsafe_allow_html=True)
     st.sidebar.caption(
         f"Mode: {view.record['spec']['lockbox']['mode']} · lockbox from {view.holdout_start.date()}"
@@ -139,18 +140,30 @@ def _selected_models(view: RunView) -> pd.DataFrame:
     return frame[frame["name"].isin(names)]
 
 
-def _method(view: RunView) -> str:
-    """Rows of the recorded decision method (fold-block t if the run does not say)."""
+def _status(view: RunView):
+    return run_status(
+        view.tables["checks"],
+        view.record.get("checks_summary"),
+        record_issues=view.record_issues,
+    )
 
-    return view.decision_method or "fold_block_t"
+
+def _method(view: RunView) -> str | None:
+    """The run's decision method; None (no headline rows) when the run cannot say."""
+
+    return view.decision_method
+
+
+def _method_notice(view: RunView) -> None:
+    if view.decision_method is None:
+        st.error(
+            f"Decision method {view.decision_method_source}: headline rows are not selected "
+            "for this run."
+        )
 
 
 def _rates(view: RunView) -> dict:
     return (view.record.get("inference_calibration") or {}).get("rates") or {}
-
-
-def _ci_level(view: RunView) -> float:
-    return float(view.record["spec"]["config"].get("ci_level", 0.95))
 
 
 def _status_badge(level: str) -> str:
@@ -216,7 +229,7 @@ def overview(view: RunView) -> None:
     st.title("Run overview")
     spec = view.record["spec"]
     checks = view.tables["checks"]
-    status = run_status(checks, view.record.get("checks_summary"))
+    status = _status(view)
     message = f"**{status.level}**" + (": " + "; ".join(status.reasons) if status.reasons else "")
     {"VALID": st.success, "WARNING": st.warning}.get(status.level, st.error)(message)
     if status.level == "VALID":
@@ -235,9 +248,16 @@ def overview(view: RunView) -> None:
     scored = predictions[predictions["role"] != UNSAFE_ROLE]
     st.markdown(
         f"Mode **{spec['lockbox']['mode']}** · decision method "
-        f"**{view.decision_method or 'unknown (not derivable from stored checks)'}** · "
-        f"label `{spec['label']['label_id']}`"
+        f"**{view.decision_method or 'unavailable'}** ({view.decision_method_source}) · "
+        f"label `{spec['label']['label_id']}` · output schema **{view.schema_version}**"
     )
+    if view.legacy_gaps:
+        st.info(
+            f"Output schema {view.schema_version}: fields this run did not record are shown as "
+            "not recorded, or as derived from stored rows where labelled. "
+            + "; ".join(view.legacy_gaps)
+            + "."
+        )
     cards = st.columns(5)
     cards[0].metric("Folds", len(view.folds))
     cards[1].metric("Scored dates", scored["date"].nunique())
@@ -307,6 +327,14 @@ def overview(view: RunView) -> None:
         "shown only in the canary panel of the Nulls & controls page."
     )
     st.subheader("Stored T2 checks")
+    families = pd.DataFrame.from_dict(status.families, orient="index").rename_axis("family")
+    st.dataframe(families.reset_index(), hide_index=True)
+    st.caption(
+        f"Counts per check family from the stored rows (summary: {status.summary_source}; "
+        f"matches the rows: {status.summary_matches}). passed + failed + undetermined = total; "
+        "undetermined means no stored result. For research warnings, passed means the "
+        "warning is active."
+    )
     st.dataframe(checks.assign(outcome=check_outcomes(checks)), hide_index=True)
     with st.expander("Artifact hashes (manifest and outputs)"):
         st.json(view.record["outputs"], expanded=False)
@@ -470,6 +498,7 @@ def features(view: RunView) -> None:
 
 def nulls(view: RunView) -> None:
     st.title("Nulls, controls and the leakage canary")
+    _method_notice(view)
     metrics = view.tables["metrics"]
     safe_metrics = metrics[metrics["role"] != UNSAFE_ROLE]
     roles = st.columns(3)
@@ -565,6 +594,11 @@ def nulls(view: RunView) -> None:
             "skill is leakage by construction, which proves the measurement would notice "
             "leakage. It is never a strategy, and this panel is the only place it is drawn."
         )
+        for reference in view.models[view.models["role"] == UNSAFE_ROLE].itertuples(index=False):
+            st.caption(
+                f"Recorded for the unsafe reference: eligible as a candidate "
+                f"**{reference.eligible_as_candidate}** · output kind **{reference.output_kind}**."
+            )
         if canaries and unsafe:
             _chart(
                 figures.canary_panel(
@@ -589,6 +623,7 @@ def validation(view: RunView) -> None:
     name = st.selectbox("Model", names, index=_default_index(view, names), key="validation_model")
     model = view.models[view.models["name"] == name].iloc[0]
     st.caption(f"{style.legend_name(name, model['role'])} · output kind: {model['output_kind']}")
+    _method_notice(view)
     method = _method(view)
     method_name = figures.method_label(method, view.decision_method)
     cards = st.columns(4)
@@ -650,14 +685,14 @@ def validation(view: RunView) -> None:
         else ""
     )
     _chart(
-        figures.rank_position_bars(curves, name, curve, note=note, ci_level=_ci_level(view)),
+        figures.rank_position_bars(curves, name, curve, note=note),
         "rank_positions",
     )
     _chart(figures.rank_position_occupancy(curves, name), "occupancy")
     st.caption(glossary.define("Rank position"))
     st.subheader("Pooled prediction buckets")
     _chart(
-        figures.pooled_deciles(curves, name, model["output_kind"], ci_level=_ci_level(view)),
+        figures.pooled_deciles(curves, name, model["output_kind"]),
         "deciles",
     )
     st.caption(glossary.define("Pooled deciles"))
@@ -758,7 +793,7 @@ def calibration(view: RunView) -> None:
         "prediction_scatter",
     )
     _chart(
-        figures.pooled_deciles(view.tables["curves"], name, "forecast", ci_level=_ci_level(view)),
+        figures.pooled_deciles(view.tables["curves"], name, "forecast"),
         "calibration_deciles",
     )
     residuals = metrics[
@@ -772,10 +807,11 @@ def calibration(view: RunView) -> None:
 def uncertainty(view: RunView) -> None:
     st.title("Statistical uncertainty")
     st.markdown(
-        f"**Decision method: {view.decision_method or 'unknown'}.** T2 fixes fold-block t as its "
-        "decision method in advance (it came closest to nominal size in T2's design "
-        "simulations). Newey-West and the circular block bootstrap are shown as corroborating "
-        "evidence with their nominal intervals and this run's stored simulated sizes."
+        f"**Decision method: {view.decision_method or 'unavailable'}** "
+        f"({view.decision_method_source}). T2 fixes fold-block t as its decision method in "
+        "advance (it came closest to nominal size in T2's design simulations). Newey-West and "
+        "the circular block bootstrap are shown as corroborating evidence with their nominal "
+        "intervals and this run's stored simulated sizes."
     )
     metrics = view.tables["metrics"]
     models = _selected_models(view)

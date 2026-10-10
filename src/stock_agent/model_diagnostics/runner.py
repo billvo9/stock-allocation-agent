@@ -132,6 +132,7 @@ class ModelSpec:
             "seeded": self.seeded,
             "preprocessing": None,
             "note": self.note,
+            "eligible_as_candidate": self.role == contract.CANDIDATE_ROLE,
         }
         description["variant_id"] = variant_id(description)
         return description
@@ -737,8 +738,10 @@ def run_diagnostics(
             "fold_table_sha256": table_sha256(tables["folds"]),
         },
         "models": [spec.describe() for spec in models],
+        "reference_predictors": _reference_predictors(canary_spec if unsafe is not None else None),
         "registered_variants": sorted(spec.describe()["variant_id"] for spec in models),
         "config": asdict(config),
+        "decision_method": DECISION_METHOD,
         "seed_rule": SEED_RULE,
     }
     spec_sha = sha256_json(spec_record)
@@ -767,7 +770,7 @@ def run_diagnostics(
             "tables_sha256": tables_sha,
             "results_sha256": sha256_json(tables_sha),
         },
-        "checks_summary": _checks_summary(tables["checks"]),
+        "checks_summary": summarize_checks(tables["checks"]),
     }
     return DiagnosticsRun(identifier, record, tables)
 
@@ -891,12 +894,62 @@ def _checks(config, specs, scores, predictions, expected, evidence, calibration)
     return rows
 
 
-def _checks_summary(checks: pd.DataFrame) -> dict[str, int]:
+# What a stored passed=True means, per check family (severity).
+PASSED_MEANS = {
+    "leakage": "check held",
+    "instrument": "check held",
+    "research_warning": "warning active",
+    "info": "recorded condition held",
+}
+
+
+def summarize_checks(checks: pd.DataFrame) -> dict[str, object]:
+    """
+    Check outcomes per family. The three legacy keys keep their 1.0 meaning
+    (failed = stored passed is False; research_warnings = passed is True).
+    `families` adds, per severity present, total = passed + failed +
+    undetermined, where undetermined means no stored result (passed is null).
+    """
+
     failed = checks["passed"].eq(False).fillna(False)
     leakage = checks["severity"].eq("leakage")
     warnings = checks["severity"].eq("research_warning") & checks["passed"].eq(True).fillna(False)
+    families = {}
+    for severity, rows in checks.groupby("severity", sort=True):
+        passed = rows["passed"]
+        families[str(severity)] = {
+            "total": len(rows),
+            "passed": int(passed.eq(True).fillna(False).sum()),
+            "failed": int(passed.eq(False).fillna(False).sum()),
+            "undetermined": int(passed.isna().sum()),
+            "passed_means": PASSED_MEANS.get(str(severity), "recorded condition held"),
+        }
     return {
         "leakage_checks_failed": int((failed & leakage).sum()),
         "instrument_checks_failed": int((failed & checks["severity"].eq("instrument")).sum()),
         "research_warnings": int(warnings.sum()),
+        "families": families,
     }
+
+
+def _reference_predictors(canary_spec: ModelSpec | None) -> list[dict[str, object]]:
+    """Machine-readable description of predictors that are never strategies."""
+
+    if canary_spec is None:
+        return []
+    return [
+        {
+            "name": "canary_unsafe_reference",
+            "role": contract.UNSAFE_REFERENCE_ROLE,
+            "reference_for": canary_spec.name,
+            "estimator": canary_spec.describe()["estimator"],
+            "output_kind": canary_spec.output_kind,
+            "purged": False,
+            "through_harness": False,
+            "eligible_as_candidate": False,
+            "purpose": (
+                "positive control: trained without purging so that leakage is visible; "
+                "never a strategy"
+            ),
+        }
+    ]

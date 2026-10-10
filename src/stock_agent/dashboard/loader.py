@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from stock_agent.model_diagnostics import contract
 from stock_agent.model_diagnostics.artifacts import RUNS_DIRECTORY, read_ledger, read_run
 from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
 
@@ -57,7 +58,7 @@ DECISION_METHODS = {
     "newey_west": "newey_west",
     "bootstrap": "circular_block_bootstrap",
 }
-UNSAFE_ROLE = "canary_unsafe_reference"
+UNSAFE_ROLE = contract.UNSAFE_REFERENCE_ROLE
 DATE_COLUMN_NAMES = ("date", "target_start_date", "target_end_date")
 
 
@@ -89,6 +90,12 @@ class RunView:
     holdout_start: pd.Timestamp
     decision_method: str | None
     models: pd.DataFrame
+    schema_version: str = contract.OUTPUT_SCHEMA_VERSION
+    decision_method_source: str = "recorded"
+    # Fields a legacy (1.0) run does not record, and how the dashboard treats
+    # each: shown as not recorded, or derived from stored rows (labelled).
+    legacy_gaps: tuple[str, ...] = ()
+    record_issues: tuple[str, ...] = ()
 
 
 def default_root() -> Path:
@@ -194,36 +201,147 @@ def decision_method(checks: pd.DataFrame) -> str | None:
     return found.pop() if len(found) == 1 else None
 
 
-def _models(record: dict, predictions: pd.DataFrame) -> pd.DataFrame:
-    rows = [
-        {
-            "name": model["name"],
-            "role": model["role"],
-            "output_kind": model["output_kind"],
-            "estimator": model["estimator"].rsplit(".", 1)[-1],
-            "params": json.dumps(model["params"], sort_keys=True),
-            "feature_columns": ", ".join(model["feature_columns"]),
-            "variant_id": model["variant_id"],
-            "note": model.get("note", ""),
-        }
-        for model in record["spec"]["models"]
-    ]
-    known = {row["name"] for row in rows}
-    for name in predictions.loc[predictions["role"] == UNSAFE_ROLE, "model"].unique():
-        if name not in known:
-            rows.append(
+def _decision_method(
+    record: dict, checks: pd.DataFrame, legacy: bool
+) -> tuple[str | None, str, list[str]]:
+    """
+    (method, source, issues). Schema 1.1 records the decision method; only a
+    1.0 run's method is derived from its stored check names, and labelled so.
+    A 1.1 record without the field, or one that disagrees with the stored
+    checks, is an issue (the run is blocked), never silently derived.
+    """
+
+    from_checks = decision_method(checks)
+    recorded = record["spec"].get("decision_method")
+    if recorded is None:
+        if not legacy:
+            return None, "missing from the record", ["record lacks spec.decision_method"]
+        if from_checks is None:
+            return None, "unavailable (not recorded; not derivable from stored checks)", []
+        return from_checks, "derived from stored check names (legacy run)", []
+    if recorded not in DECISION_METHODS.values():
+        raise ValueError(f"Unknown recorded decision_method {recorded!r}.")
+    issues = []
+    if from_checks is not None and from_checks != recorded:
+        issues.append(
+            f"recorded decision_method {recorded} disagrees with the stored checks ({from_checks})"
+        )
+    return recorded, "recorded", issues
+
+
+def _upgrade_tables(tables: dict[str, pd.DataFrame], version: str):
+    """
+    Tables in the current contract layout. Columns a legacy run never wrote
+    are added EMPTY (NA), never filled with assumed values, and listed.
+    """
+
+    upgraded, gaps = {}, []
+    for name, table in tables.items():
+        missing = contract.added_after(name, version) if name in contract.SCHEMAS else ()
+        if missing:
+            table = table.assign(**{column: None for column in missing})
+            gaps += [f"{name}.{column}: not recorded (schema {version})" for column in missing]
+            table = contract.conform(name, table)
+        upgraded[name] = table
+    return upgraded, gaps
+
+
+def _model_row(model: dict, eligible: bool) -> dict:
+    return {
+        "name": model["name"],
+        "role": model["role"],
+        "eligible_as_candidate": eligible,
+        "output_kind": model["output_kind"],
+        "estimator": str(model["estimator"]).rsplit(".", 1)[-1],
+        "params": json.dumps(model["params"], sort_keys=True),
+        "feature_columns": ", ".join(model["feature_columns"]),
+        "variant_id": model["variant_id"],
+        "note": model.get("note", ""),
+    }
+
+
+def _reference_row(reference: dict) -> dict:
+    return {
+        "name": reference["name"],
+        "role": reference["role"],
+        "eligible_as_candidate": False,
+        "output_kind": reference["output_kind"],
+        "estimator": str(reference["estimator"]).rsplit(".", 1)[-1],
+        "params": "",
+        "feature_columns": "",
+        "variant_id": "",
+        "note": reference.get("purpose", ""),
+    }
+
+
+def _models(
+    record: dict, predictions: pd.DataFrame, legacy: bool
+) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Registered models plus reference predictors, each with eligible_as_candidate.
+
+    Schema 1.1 records eligibility and the reference predictors; a 1.1
+    record that omits them, contradicts a role, or leaves a stored unsafe
+    prediction undescribed is refused (ValueError -> malformed_run), because
+    a consumer could otherwise read a non-candidate as a strategy. A 1.0
+    run's eligibility is derived from its stored role and listed as a gap;
+    what 1.0 never recorded (the reference's output kind) is "not recorded".
+    """
+
+    gaps = []
+    rows = []
+    for model in record["spec"]["models"]:
+        if "eligible_as_candidate" in model:
+            eligible = model["eligible_as_candidate"]
+            if not isinstance(eligible, bool):
+                raise ValueError(f"Model {model['name']}: eligible_as_candidate is not a boolean.")
+        elif legacy:
+            eligible = model["role"] == contract.CANDIDATE_ROLE
+        else:
+            raise ValueError(f"Model {model['name']} lacks eligible_as_candidate.")
+        rows.append(_model_row(model, eligible))
+    if legacy and rows:
+        gaps.append("models.eligible_as_candidate: derived from the stored role (legacy run)")
+    unsafe = set(predictions.loc[predictions["role"] == UNSAFE_ROLE, "model"].unique())
+    references = record["spec"].get("reference_predictors")
+    if references is None and not legacy:
+        raise ValueError("The record lacks spec.reference_predictors.")
+    for reference in references or []:
+        if reference.get("eligible_as_candidate") is not False:
+            raise ValueError(
+                f"Reference predictor {reference.get('name')} is not marked ineligible."
+            )
+        if reference["role"] == contract.CANDIDATE_ROLE:
+            raise ValueError(f"Reference predictor {reference['name']} has the candidate role.")
+        rows.append(_reference_row(reference))
+    described = {row["name"] for row in rows}
+    for name in sorted(unsafe - described):
+        if not legacy:
+            raise ValueError(f"Stored predictions of {name} have no reference_predictors entry.")
+        gaps.append(
+            f"reference_predictors: {name} identified by its stored role; its output kind is not "
+            "recorded (legacy run)"
+        )
+        rows.append(
+            _reference_row(
                 {
                     "name": name,
                     "role": UNSAFE_ROLE,
                     "output_kind": "not recorded",
-                    "estimator": "(memorizer without purging; outside the harness)",
-                    "params": "",
-                    "feature_columns": "",
-                    "variant_id": "",
-                    "note": "positive control: leaky by construction, never a strategy",
+                    "estimator": "not recorded",
+                    "purpose": "positive control: leaky by construction, never a strategy",
                 }
             )
-    return pd.DataFrame(rows)
+        )
+    models = pd.DataFrame(rows)
+    wrong = models[
+        models["role"].isin(contract.NON_CANDIDATE_ROLES) & models["eligible_as_candidate"]
+    ]
+    if len(wrong):
+        raise ValueError(
+            f"Non-candidate roles marked eligible as candidates: {wrong['name'].tolist()}"
+        )
+    return models, gaps
 
 
 def load_run(path: str | Path) -> RunView:
@@ -239,10 +357,21 @@ def load_run(path: str | Path) -> RunView:
     except (ValueError, KeyError, TypeError, AttributeError, OSError) as error:
         raise RunRefused("integrity_check_failed", f"{type(error).__name__}: {error}") from None
     try:
+        version = str(record["spec"]["output_schema_version"])  # equals the manifest's
+        legacy = contract.predates(version, "1.1")
         folds = _typed_folds(tables["folds"])
         holdout = _lockbox_guard(record, tables, folds)
-        method = decision_method(tables["checks"])
-        models = _models(record, tables["predictions"])
+        tables, gaps = _upgrade_tables(tables, version)
+        method, method_source, issues = _decision_method(record, tables["checks"], legacy)
+        if legacy and record["spec"].get("decision_method") is None:
+            gaps.append(f"decision_method: {method_source}")
+        models, model_gaps = _models(record, tables["predictions"], legacy)
+        gaps += model_gaps
+        if "families" not in (record.get("checks_summary") or {}):
+            if legacy:
+                gaps.append("checks_summary.families: derived from the stored check rows")
+            else:
+                issues.append("record lacks checks_summary.families")
     except RunRefused:
         raise
     except (KeyError, ValueError, TypeError, AttributeError) as error:
@@ -256,6 +385,10 @@ def load_run(path: str | Path) -> RunView:
         holdout_start=holdout,
         decision_method=method,
         models=models,
+        schema_version=version,
+        decision_method_source=method_source,
+        legacy_gaps=tuple(gaps),
+        record_issues=tuple(issues),
     )
 
 

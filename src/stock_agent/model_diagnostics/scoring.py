@@ -668,6 +668,28 @@ def metric_rows(
     return rows
 
 
+# Curve intervals are computed around the mean of a per-date series (for
+# pooled deciles, the per-date bucket means; the plotted value of a decile is
+# its mean over rows). The stored method, level and lag are the ones the
+# inference call used, so a reader never has to assume them. Bounds are NaN
+# when the interval is unavailable; the method fields still say what was tried.
+CURVE_CI_METHOD = "newey_west_normal_over_dates"
+
+
+def _curve_interval(summary: Inference) -> dict:
+    params = summary.params
+    method = f"{summary.method}_{params['ci_method']}_over_dates"
+    if method != CURVE_CI_METHOD:
+        raise ValueError(f"Unexpected curve interval method {method!r}.")
+    return {
+        "ci_low": summary.ci_low,
+        "ci_high": summary.ci_high,
+        "ci_method": method,
+        "ci_level": params["ci_level"],
+        "hac_lag": params["lag"],
+    }
+
+
 def curve_row(model: str, role: str, curve: str, value: float, **fields: object) -> dict:
     status = fields.pop("status", "ok")
     reason = fields.pop("reason", None)
@@ -686,6 +708,9 @@ def curve_row(model: str, role: str, curve: str, value: float, **fields: object)
         "value": float(value),
         "ci_low": float(fields.get("ci_low", math.nan)),
         "ci_high": float(fields.get("ci_high", math.nan)),
+        "ci_method": fields.get("ci_method"),
+        "ci_level": float(fields.get("ci_level", math.nan)),
+        "hac_lag": fields.get("hac_lag"),
         "n": fields.get("n"),
         "status": status,
         "reason": reason,
@@ -832,9 +857,8 @@ def score_model(
                         float(np.nanmean(series_p)),
                         group=f"n_names={n_names}",
                         x=float(position),
-                        ci_low=summary.ci_low,
-                        ci_high=summary.ci_high,
                         n=len(rows),
+                        **_curve_interval(summary),
                     )
                 )
     spread = np.zeros(len(ctx.sessions))
@@ -875,9 +899,8 @@ def score_model(
                 group="pooled",
                 x=float(scored["prediction"].to_numpy()[in_bin].mean()),
                 x_label=str(int(bin_id)),
-                ci_low=summary.ci_low,
-                ci_high=summary.ci_high,
                 n=int(in_bin.sum()),
+                **_curve_interval(summary),
                 status="warning" if degenerate else "ok",
                 reason=degenerate,
             )

@@ -387,3 +387,27 @@ def test_static_orderings_report_a_share_not_a_p_value():
     assert result.method == "null_enumeration"
     assert math.isnan(result.p_value)
     assert result.estimate == pytest.approx(0.05)
+
+
+def test_curve_intervals_store_the_settings_their_inference_used():
+    rng = np.random.RandomState(5)
+    frame = _frame(rng.randn(40, 4), rng.randn(40, 4))
+    ctx = _context(frame, ci_level=0.8, hac_lag=2)
+    score = s.score_model("m", "control", "score", frame, ctx, baselines={}, horizon=2)
+    with_interval = [
+        r
+        for r in score.curves
+        if r["curve"]
+        in (
+            "rank_position_realized",
+            "rank_position_realized_minus_date_mean",
+            "pooled_decile_realized",
+        )
+    ]
+    assert with_interval
+    for row in with_interval:
+        assert (row["ci_method"], row["ci_level"], row["hac_lag"]) == (s.CURVE_CI_METHOD, 0.8, 2)
+        if not math.isnan(row["ci_low"]):  # the stored bounds are the nominal 80% interval
+            assert row["ci_low"] < row["value"] < row["ci_high"]
+    others = [r for r in score.curves if r not in with_interval]
+    assert all(r["ci_method"] is None and math.isnan(r["ci_level"]) for r in others)

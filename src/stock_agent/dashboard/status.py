@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 
+from stock_agent.model_diagnostics import contract
+
 VALID = "VALID"
 WARNING = "WARNING"
 BLOCKED = "INVALID/BLOCKED"
@@ -29,8 +31,10 @@ STATUS_RULES = (
     (
         BLOCKED,
         (
-            "A stored leakage or instrument check failed or has no stored result, or the "
-            "stored checks_summary is missing or disagrees with the check rows."
+            "A stored leakage or instrument check failed or has no stored result; or the "
+            "stored checks_summary is missing, disagrees with the check rows, or breaks "
+            "passed + failed + undetermined = total for a family; or the recorded decision "
+            "method disagrees with the stored checks."
         ),
     ),
     (WARNING, "No blocking check; a stored research warning is active."),
@@ -38,7 +42,7 @@ STATUS_RULES = (
 )
 
 BLOCKING_SEVERITIES = ("leakage", "instrument")
-UNSAFE_ROLE = "canary_unsafe_reference"
+UNSAFE_ROLE = contract.UNSAFE_REFERENCE_ROLE  # never a candidate strategy
 
 
 def check_outcomes(checks: pd.DataFrame) -> pd.Series:
@@ -66,9 +70,78 @@ class RunStatus:
     reasons: list[str]
     counts: dict[str, int]
     summary_matches: bool
+    families: dict[str, dict[str, int]] = field(default_factory=dict)
+    summary_source: str = "recorded"
 
 
-def run_status(checks: pd.DataFrame, checks_summary: dict | None) -> RunStatus:
+def family_counts(checks: pd.DataFrame) -> dict[str, dict[str, int]]:
+    """Per check family (severity): total, passed, failed, undetermined, from stored rows."""
+
+    families = {}
+    for severity, rows in checks.groupby("severity", sort=True):
+        passed = rows["passed"]
+        families[str(severity)] = {
+            "total": len(rows),
+            "passed": int(passed.eq(True).fillna(False).sum()),
+            "failed": int(passed.eq(False).fillna(False).sum()),
+            "undetermined": int(passed.isna().sum()),
+        }
+    return families
+
+
+FAMILY_KEYS = ("total", "passed", "failed", "undetermined")
+
+
+def _summary_problems(checks: pd.DataFrame, checks_summary: dict | None, counts: dict) -> list[str]:
+    """
+    Every disagreement between the stored summary and the stored rows. Any
+    problem blocks the run (fail closed): the summary is what other readers
+    see, so it must describe the rows exactly.
+    """
+
+    if not isinstance(checks_summary, dict):
+        return ["stored checks_summary is missing"]
+    problems = []
+    expected = {
+        "leakage_checks_failed": counts["leakage_failed"],
+        "instrument_checks_failed": counts["instrument_failed"],
+        "research_warnings": counts["research_warnings"],
+    }
+    for key, value in expected.items():
+        if checks_summary.get(key) != value:
+            problems.append(
+                f"checks_summary.{key} = {checks_summary.get(key)} but rows give {value}"
+            )
+    families = checks_summary.get("families")
+    if families is None:
+        return problems  # legacy (1.0) summary: families are derived from the rows
+    if not isinstance(families, dict):
+        return [*problems, "checks_summary.families is not a mapping"]
+    rows = family_counts(checks)
+    if set(families) != set(rows):
+        problems.append(
+            f"checks_summary.families covers {sorted(families)} but rows have {sorted(rows)}"
+        )
+    for family, stored in families.items():
+        try:
+            values = {key: int(stored[key]) for key in FAMILY_KEYS}
+        except (KeyError, TypeError, ValueError):
+            problems.append(f"checks_summary.families.{family} lacks {list(FAMILY_KEYS)}")
+            continue
+        if values["passed"] + values["failed"] + values["undetermined"] != values["total"]:
+            problems.append(
+                f"checks_summary.families.{family}: passed + failed + undetermined != total"
+            )
+        if family in rows and values != rows[family]:
+            problems.append(
+                f"checks_summary.families.{family} = {values} but rows give {rows[family]}"
+            )
+    return problems
+
+
+def run_status(
+    checks: pd.DataFrame, checks_summary: dict | None, *, record_issues: tuple[str, ...] = ()
+) -> RunStatus:
     """VALID / WARNING / INVALID-BLOCKED from the stored check rows."""
 
     outcomes = check_outcomes(checks)
@@ -79,25 +152,26 @@ def run_status(checks: pd.DataFrame, checks_summary: dict | None) -> RunStatus:
         "undetermined": int((outcomes == "undetermined").sum()),
         "research_warnings": int((outcomes == "warning_active").sum()),
     }
-    expected = {
-        "leakage_checks_failed": counts["leakage_failed"],
-        "instrument_checks_failed": counts["instrument_failed"],
-        "research_warnings": counts["research_warnings"],
-    }
-    summary_matches = checks_summary is not None and all(
-        checks_summary.get(key) == value for key, value in expected.items()
+    problems = _summary_problems(checks, checks_summary, counts)
+    summary_matches = not problems
+    source = (
+        "recorded"
+        if isinstance(checks_summary, dict) and "families" in checks_summary
+        else "legacy: families derived from the stored check rows"
     )
+    families = family_counts(checks)
     reasons = []
     for name, outcome in zip(checks["check"], outcomes, strict=True):
         if outcome in ("fail", "undetermined"):
             reasons.append(f"{name}: {outcome}")
-    if not summary_matches:
-        reasons.append("stored checks_summary does not match the stored check rows")
+    reasons += problems
+    reasons += list(record_issues)
     if reasons:
-        return RunStatus(BLOCKED, reasons, counts, summary_matches)
+        return RunStatus(BLOCKED, reasons, counts, summary_matches, families, source)
     active = checks.loc[outcomes == "warning_active", ["check", "model"]]
     warnings = [f"{row.check}: {row.model}" for row in active.itertuples(index=False)]
-    return RunStatus(WARNING if warnings else VALID, warnings, counts, summary_matches)
+    level = WARNING if warnings else VALID
+    return RunStatus(level, warnings, counts, summary_matches, families, source)
 
 
 @dataclass(frozen=True)
@@ -120,6 +194,32 @@ def research_notices(view) -> list[Notice]:
     checks = tables["checks"]
     outcomes = check_outcomes(checks)
     notices: list[Notice] = []
+
+    issues = view.record_issues
+    if issues:
+        notices.append(
+            Notice(
+                "record",
+                "blocking",
+                "The run record disagrees with its stored rows",
+                " ".join(issues),
+                "record.spec, checks",
+            )
+        )
+    gaps = view.legacy_gaps
+    if gaps:
+        notices.append(
+            Notice(
+                "legacy",
+                "notice",
+                f"Output schema {view.schema_version}: some fields were not recorded",
+                "This run predates these fields. They are shown as not recorded (or as "
+                "derived from stored rows, where labelled), never filled with assumed values: "
+                + "; ".join(gaps)
+                + ".",
+                "manifest.output_schema_version",
+            )
+        )
 
     blocking = checks[outcomes.isin(["fail", "undetermined"])]
     if len(blocking):

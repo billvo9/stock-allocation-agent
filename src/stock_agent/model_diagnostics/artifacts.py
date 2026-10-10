@@ -12,7 +12,8 @@ Layout under an output root (default reports/, ignored by Git):
 A run is written to a temporary sibling directory and renamed into place, so
 a reader never sees a half-written run. An existing run directory is never
 overwritten. Readers check the manifest's schema version, every file's
-SHA-256, and every table's contract, and read only the files a run is
+SHA-256, and every table's contract (the schema of the version the run was
+written with, so 1.0 runs stay readable), and read only the files a run is
 allowed to contain: record.json and one <table>.parquet per contract table,
 all inside the run directory (no symlinks, no other paths).
 """
@@ -117,7 +118,8 @@ def read_run(directory: str | Path) -> tuple[dict, dict[str, pd.DataFrame]]:
     missing_keys = {"output_schema_version", "run_id", "files"} - set(manifest)
     if missing_keys:
         raise ValueError(f"{manifest_path} is missing {sorted(missing_keys)}.")
-    contract.check_version(manifest["output_schema_version"])
+    version = str(manifest["output_schema_version"])
+    contract.check_version(version)
     if manifest["run_id"] != directory.name:
         raise ValueError(f"Manifest run_id {manifest['run_id']!r} != directory {directory.name!r}.")
     allowed = _allowed_files()
@@ -143,11 +145,16 @@ def read_run(directory: str | Path) -> tuple[dict, dict[str, pd.DataFrame]]:
         if entry.get("table") != table_name:
             raise ValueError(f"{path} is listed as table {entry.get('table')!r}.")
         table = pd.read_parquet(path)
-        contract.validate(table_name, table)
+        contract.validate(table_name, table, version)
         if table_sha256(table) != entry["content_sha256"]:
             raise ValueError(f"{path} content does not match its manifest hash.")
         tables[table_name] = table
     record = json.loads((directory / "record.json").read_text(encoding="utf-8"))
     if record.get("run_id") != manifest["run_id"]:
         raise ValueError("record.json run_id does not match the manifest.")
+    # Every T2 record (since 1.0) states its schema version; readers rely on
+    # it matching the manifest to know which fields the run could contain.
+    recorded = (record.get("spec") or {}).get("output_schema_version")
+    if recorded is None or str(recorded) != version:
+        raise ValueError(f"record.json declares schema {recorded} but the manifest says {version}.")
     return record, tables
