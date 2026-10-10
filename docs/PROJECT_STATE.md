@@ -3,20 +3,24 @@
 Changing project state only. Permanent policy lives in `AGENTS.md`.
 Git is authoritative: verify everything here before relying on it.
 
-Last reviewed: 2026-10-09
+Last reviewed: 2026-10-10
 
 
 ## Last checkpoint
 
-2026-10-09, milestone "T2: ML diagnostics, null models and run outputs",
-verified on branch `feature/ml-diagnostics-null-models` at `479d59f`, based
-on `51ca2a1` (merge pending).
+2026-10-10, milestone "T3: research dashboard over T2 outputs", verified on
+branch `feature/ml-diagnostics-dashboard` at `b396096`, based on `f013553`
+(merge pending).
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `51ca2a1` as of last fetch,
-verified 2026-10-09):
+Recently merged to `main` (`origin/main` = `f013553` as of last fetch,
+verified 2026-10-10):
 
+- PR #43 (`f013553`): `4e8a830` feat: dependence-aware inference for
+  date-level statistics; `59570da` feat: null models, diagnostics runner and
+  saved-output contract; `479d59f` docs: T2 design, evidence and learning
+  notes; `3581c7e` docs: checkpoint.
 - PR #42 (`51ca2a1`): `9470375` docs: refine universe and market-context
   research; `386df3f` chore: add PR handoff rule and pull request template.
 - PR #41 (`d82fb90`): `18c0864` docs: design point-in-time universe and
@@ -55,7 +59,27 @@ ML phase.
   `docs/research/model_validation.md`.
 - The universe (U) and market-context (C) research is merged (PRs #41, #42);
   see `docs/research/universe_and_market_context.md`.
-- This branch implements roadmap ticket T2, the measurement layer
+- This branch implements roadmap ticket T3, a read-only Plotly and
+  Streamlit dashboard over saved T2 runs (`src/stock_agent/dashboard/`,
+  `docs/research/diagnostics_dashboard.md`):
+  - it reads only verified run directories, refuses non-development runs
+    and any stored date reaching the lockbox, and never fits, recomputes
+    inference, or reads raw data (tested by a subprocess import check and
+    20 mutation probes);
+  - run status (VALID / WARNING / INVALID-BLOCKED) comes only from stored
+    T2 check rows; warnings never escalate;
+  - launch with `scripts/run_dashboard.py` (binds 127.0.0.1, usage
+    statistics off).
+- T3 findings in T2 (classified, not patched in the UI):
+  - `read_run` could follow manifest paths outside a run directory. It now
+    reads only the files a run may contain (owner-approved 2026-10-10).
+  - Defect: `checks_summary` omits leakage or instrument checks whose
+    result is undefined. The dashboard reads the check rows instead.
+  - Additive output gaps are listed in
+    `docs/research/diagnostics_dashboard.md` (for example, curve interval
+    method, decision method and the unsafe reference's output kind are not
+    recorded).
+- T2 (merged in PR #43) built the measurement layer
   (`src/stock_agent/model_diagnostics/`,
   `docs/research/model_diagnostics.md`):
   - nulls, controls and the canary run through the unchanged harness;
@@ -89,6 +113,13 @@ ML phase.
   - **Context series are date-common.** They can affect cross-sectional
     ranking only through pre-registered interactions.
 - No prediction model is selected or implemented yet.
+
+Owner decisions (2026-10-09 and 2026-10-10, T3):
+
+- Pin `plotly==7.1.0` and `streamlit==1.64.0`. Streamlit excludes pyarrow
+  25.0.0, so pyarrow moves to 25.0.1 and stays unpinned ("Allow 25.0.1, no
+  pin").
+- Keep the stricter `read_run` in the T2 reader ("Keep in T2 reader").
 
 Owner decisions (2026-10-06):
 
@@ -264,28 +295,28 @@ Coverage limitations found are tracked as open item 2.
 
 ## Last verified quality baseline
 
-Measured 2026-10-09 with `python3 scripts/verify.py` on
-`feature/ml-diagnostics-null-models` (base `51ca2a1` plus the T2 commits
-`4e8a830`, `59570da`, `479d59f` and this checkpoint); gates ran with
-`.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2). Exit 0.
+Measured 2026-10-10 with `python3 scripts/verify.py` on
+`feature/ml-diagnostics-dashboard` (base `f013553` plus the T3 commits
+`3addc34`, `14b7c40`, `1f56ec3`, `b396096` and this checkpoint); gates ran
+with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, streamlit
+1.64.0, plotly 7.1.0, pyarrow 25.0.1). Exit 0.
 
-- `pytest -q`: 1005 passed (865 before + 140 T2 tests)
-- `python -m pytest -q`: 1005 passed
-- `ruff format --check src tests scripts .claude/hooks`: 152 files
+- `pytest -q`: 1089 passed (1005 before + 84 T3 tests)
+- `python -m pytest -q`: 1089 passed
+- `ruff format --check src tests scripts .claude/hooks`: 174 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- Suite runtime about 16.5 s per pass (T2 adds about 5 s).
-- Mutation checks (T2): 46 of 47 deliberate violations killed. The
-  survivor (the runner's early frame-binding check removed) is equivalent:
-  the harness refuses the same frame first. List in
-  `docs/research/model_diagnostics.md`. The 34 validation mutants from PR
-  #40 were not re-run.
-- Real-data evidence (read-only; outputs written only under a scratch
-  directory, not committed):
-  - `scripts/run_null_diagnostics.py`: 24 development folds, 5,956 scored
-    rows over 1,489 dates, about 15 s;
-  - 0 leakage and 0 instrument checks failed;
-  - 1 research warning (per-symbol mean).
+- Suite runtime about 29-31 s per pass on a heavily loaded machine (load
+  average above 20); the dashboard tests take about 15 s of that.
+- Mutation checks (T3): 20 deliberate violations, each in an isolated copy,
+  all caught (lockbox guards, malformed-run mapping, interval columns,
+  rank-position and occupancy values, unsafe-reference confinement, root
+  from a widget, hard-coded banner, cache ignoring changed files, reading of
+  `passed`, reader path escape). T2's 47 and PR #40's 34 mutants were not
+  re-run.
+- Real-data check (read-only, not committed): every dashboard page renders
+  with no exception on the 2026-10-09 development run, and the server binds
+  only to 127.0.0.1.
 
 
 ## Open items
@@ -336,7 +367,7 @@ Measured 2026-10-09 with `python3 scripts/verify.py` on
      2024-01-02: `scripts/download_rates.py` hard-codes a first start of
      2024-01-01. Backfill to at least 2009 before T5 portfolio metrics. Rates
      storage also overwrites revisions and has no `available_at`.
-   - Inference (addressed in T2 on this branch, merge pending):
+   - Inference (addressed in T2, merged in PR #43):
      - Newey-West defaults to lag 40, beside a fold-block t and a 63-session
        block bootstrap. Simulated sizes are recorded in every run.
      - Remaining: lag 40 with normal critical values still over-rejects
@@ -364,7 +395,7 @@ Measured 2026-10-09 with `python3 scripts/verify.py` on
      trainable label matures in mid-April 2025, so early holdout folds
      score it with no SNDK training history.
    - Audit gaps from the pre-merge review (2026-10-08). The T2 run record
-     closes most of them (this branch, merge pending):
+     closes most of them (merged in PR #43):
      - git SHA, dirty flag and diff hash;
      - estimator spec, parameters, seeds and variant ids;
      - package versions and platform;
@@ -385,6 +416,20 @@ Measured 2026-10-09 with `python3 scripts/verify.py` on
        window);
      - a rank-based hit rate;
      - an offline test for `scripts/run_null_diagnostics.py`.
+   - T3 findings for T2 (`docs/research/diagnostics_dashboard.md`):
+     - defect: `_checks_summary` counts only `passed == False`, so
+       undetermined leakage or instrument checks are missing from it;
+     - additive gaps: curve interval method, decision method, the unsafe
+       reference's output kind, per-fold IC reasons, constant-sign hit-rate
+       and score-decile statuses, MZ covariance, per-date series,
+       `write_run(extra_record)` key collisions, purge-band dates, the PSI
+       floor, degenerate cross-sectional R² for date-constant forecasts, and
+       the decile interval estimand.
+   - Dashboard dependencies: Streamlit 1.64 caps pyarrow below 26, tying
+     the data layer's pyarrow to Streamlit releases; its web stack
+     (starlette, uvicorn) is unpinned. The test suite runs AppTest twice
+     per gate run; AppTest timeouts use wall-clock time, so a machine
+     sleeping mid-run can fail them.
    - Labels are computed after `build_model_dataset` drops rows with
      missing required features. An interior gap would stretch a label's
      span. Not present today; purging stays correct because it uses the
@@ -419,20 +464,20 @@ Measured 2026-10-09 with `python3 scripts/verify.py` on
 
 ## Next steps
 
-1. Owner reviews and merges the `feature/ml-diagnostics-null-models` pull
-   request (T2; merging is owner-only); confirm CI passes.
+1. Owner reviews and merges the `feature/ml-diagnostics-dashboard` pull
+   request (T3; merging is owner-only); confirm CI passes.
 2. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
    `docs/research/diagnostics_and_visualization_plan.md`:
-   - T2: diagnostics layer, run outputs and ledger, null models
+   - T2: diagnostics layer, run outputs and ledger, null models (merged,
+     PR #43);
+   - T3: Plotly and Streamlit dashboard, run on the null models
      (implemented on this branch, merge pending);
-   - T3: Plotly and Streamlit dashboard, run on the null models;
    - T4: Ridge, Lasso, and Elastic Net, with coefficient stability;
    - T5: portfolio readiness;
    - T6: holdout evaluation, once per pre-registered model.
 
    Owner decisions:
-   - plotly and streamlit dependencies (before T3);
    - raw vs excess-over-equal-weight label (excess recommended);
    - whether T4 must beat the per-symbol-mean selection control on paired
      per-date differences, not only the nulls (T2 finding);
