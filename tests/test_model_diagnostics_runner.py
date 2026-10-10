@@ -463,3 +463,119 @@ def test_the_canary_positive_control_fires_end_to_end(panel_factory):
     checks = run.tables["checks"].set_index("check")
     assert bool(checks.loc["canary_detects_unpurged_leakage", "passed"])
     assert bool(checks.loc["canary_shows_no_skill_through_harness", "passed"])
+
+
+# --- reporting contract (schema 1.1) ---
+
+
+def _check_rows(rows):
+    frame = pd.DataFrame(rows, columns=["check", "severity", "passed"])
+    frame["passed"] = frame["passed"].astype("boolean")
+    return frame
+
+
+def test_the_checks_summary_counts_undetermined_checks_in_every_family():
+    # Regression: the 1.0 summary had no place for checks without a stored
+    # result, so an undetermined leakage check was invisible in it.
+    checks = _check_rows(
+        [
+            ("lockbox_closed", "leakage", True),
+            ("canary", "leakage", False),
+            ("predictions_complete", "leakage", pd.NA),
+            ("size", "instrument", pd.NA),
+            ("control_apparent_skill", "research_warning", True),
+            ("control_apparent_skill", "research_warning", False),
+            ("null_rank_ic_undefined", "research_warning", pd.NA),
+            ("fpr", "info", False),
+        ]
+    )
+    summary = runner.summarize_checks(checks)
+    assert summary["leakage_checks_failed"] == 1  # legacy keys keep their 1.0 meaning
+    assert summary["instrument_checks_failed"] == 0
+    assert summary["research_warnings"] == 1
+    counts = {
+        family: {key: value for key, value in entry.items() if key != "passed_means"}
+        for family, entry in summary["families"].items()
+    }
+    assert counts == {
+        "info": {"total": 1, "passed": 0, "failed": 1, "undetermined": 0},
+        "instrument": {"total": 1, "passed": 0, "failed": 0, "undetermined": 1},
+        "leakage": {"total": 3, "passed": 1, "failed": 1, "undetermined": 1},
+        "research_warning": {"total": 3, "passed": 1, "failed": 1, "undetermined": 1},
+    }
+    assert summary["families"]["research_warning"]["passed_means"] == "warning active"
+    assert summary["families"]["leakage"]["passed_means"] == "check held"
+
+
+def test_family_counts_always_add_up_to_the_family_total():
+    rng = np.random.default_rng(3)
+    severities = np.array(["leakage", "instrument", "research_warning", "info"])
+    for _ in range(200):
+        size = int(rng.integers(0, 25))
+        passed = pd.array(rng.choice([True, False, None], size=size), dtype="boolean")
+        checks = pd.DataFrame(
+            {
+                "check": [f"c{i}" for i in range(size)],
+                "severity": rng.choice(severities, size=size),
+                "passed": passed,
+            }
+        )
+        families = runner.summarize_checks(checks)["families"]
+        assert set(families) == set(checks["severity"])
+        for family, entry in families.items():
+            assert entry["passed"] + entry["failed"] + entry["undetermined"] == entry["total"]
+            assert entry["total"] == int((checks["severity"] == family).sum())
+        assert sum(entry["total"] for entry in families.values()) == size
+
+
+def test_the_record_states_its_decision_method_and_candidate_eligibility(development):
+    *_, run = development
+    spec = run.record["spec"]
+    assert spec["output_schema_version"] == contract.OUTPUT_SCHEMA_VERSION == "1.1"
+    assert spec["decision_method"] == runner.DECISION_METHOD == "fold_block_t"
+    for model in spec["models"]:
+        assert model["eligible_as_candidate"] is (model["role"] == contract.CANDIDATE_ROLE)
+    (reference,) = spec["reference_predictors"]
+    canary = next(m for m in spec["models"] if m["name"] == CONFIG.canary_model)
+    assert reference["role"] == contract.UNSAFE_REFERENCE_ROLE
+    assert reference["eligible_as_candidate"] is False
+    assert reference["output_kind"] == canary["output_kind"]
+    assert reference["reference_for"] == canary["name"]
+    assert reference["purged"] is False and reference["through_harness"] is False
+    stored = run.tables["predictions"]
+    assert set(stored.loc[stored["role"] == reference["role"], "model"]) == {reference["name"]}
+    summary = run.record["checks_summary"]["families"]
+    checks = run.tables["checks"]
+    for family, entry in summary.items():
+        rows = checks[checks["severity"] == family]["passed"]
+        assert entry["total"] == len(rows)
+        assert entry["undetermined"] == int(rows.isna().sum())
+        assert entry["passed"] + entry["failed"] + entry["undetermined"] == entry["total"]
+
+
+def test_eligibility_is_not_part_of_the_variant_identity():
+    spec = next(m for m in runner.default_models() if m.role == "null")
+    description = spec.describe()
+    without = {k: v for k, v in description.items() if k != "eligible_as_candidate"}
+    assert runner.variant_id(without) == description["variant_id"]
+
+
+def test_curve_intervals_record_the_method_level_and_lag_they_used(development):
+    *_, run = development
+    curves = run.tables["curves"]
+    with_interval = curves["curve"].isin(
+        [
+            "rank_position_realized",
+            "rank_position_realized_minus_date_mean",
+            "pooled_decile_realized",
+        ]
+    )
+    recorded = curves[with_interval]
+    assert len(recorded)
+    assert (recorded["ci_method"] == scoring.CURVE_CI_METHOD).all()
+    assert (recorded["ci_level"] == CONFIG.ci_level).all()
+    assert (recorded["hac_lag"] == CONFIG.hac_lag).all()
+    others = curves[~with_interval]
+    assert others["ci_method"].isna().all() and others["hac_lag"].isna().all()
+    assert others["ci_level"].isna().all()
+    assert others["ci_low"].isna().all()  # no interval is ever stored without its method

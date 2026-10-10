@@ -148,8 +148,11 @@ def test_contract_rejects_missing_extra_and_mistyped_columns(run):
         contract.validate("metrics", metrics.assign(estimate=metrics["estimate"].astype(object)))
     with pytest.raises(ValueError, match="violates the contract"):
         contract.validate("predictions", run.tables["predictions"].assign(date=pd.NaT))
-    contract.check_version("1.7")
-    with pytest.raises(ValueError):
+    contract.check_version("1.0")  # every minor up to the reader's own is readable
+    contract.check_version(contract.OUTPUT_SCHEMA_VERSION)
+    with pytest.raises(ValueError, match="newer minor"):
+        contract.check_version("1.7")  # cannot validate columns it does not know
+    with pytest.raises(ValueError, match="major"):
         contract.check_version("2.0")
 
 
@@ -285,3 +288,8 @@ def test_the_reader_does_not_import_the_statistical_runner():
     ).stdout
     for module in ("runner", "scoring", "inference", "harness", "controls"):
         assert f".{module}'" not in loaded, module
+
+
+def test_a_run_without_a_canary_records_no_reference_predictor(run):
+    assert run.record["spec"]["reference_predictors"] == []
+    assert "canary_unsafe_reference" not in set(run.tables["predictions"]["model"])

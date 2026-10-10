@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 import numpy as np
 import pandas as pd
 
-RECORD_SCHEMA_VERSION = "1.0"
+RECORD_SCHEMA_VERSION = "1.1"
 
 
 def _jsonable(value: object) -> object:

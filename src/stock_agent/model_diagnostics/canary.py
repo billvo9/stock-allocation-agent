@@ -27,11 +27,12 @@ from stock_agent.features.training import (
     TARGET_RETURN_COLUMN,
     TARGET_START_COLUMN,
 )
+from stock_agent.model_diagnostics import contract
 from stock_agent.model_validation.audit import LeakageError, datetime_ns
 from stock_agent.model_validation.checks import validate_feature_columns
 from stock_agent.model_validation.folds import MODEL_HOLDOUT_START, WalkForwardFold, is_labeled
 
-UNSAFE_ROLE = "canary_unsafe_reference"
+UNSAFE_ROLE = contract.UNSAFE_REFERENCE_ROLE  # never eligible as a candidate
 
 
 def unpurged_reference_predictions(
