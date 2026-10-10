@@ -59,3 +59,66 @@ def panel_factory() -> Callable[..., pd.DataFrame]:
     """build_labeled_panel for module-scoped fixtures (expensive shared runs)."""
 
     return build_labeled_panel
+
+
+@pytest.fixture(scope="session")
+def dashboard_root(tmp_path_factory, panel_factory):
+    """
+    A compact, internally consistent T2 output root for dashboard tests:
+    one development run written by the real writer (hashes and contract
+    valid), built once per session from a tiny synthetic panel.
+    """
+
+    from datetime import UTC, datetime
+
+    from stock_agent.model_diagnostics import artifacts, runner
+    from stock_agent.model_validation.folds import make_expanding_folds, make_test_windows
+
+    symbols = ["A", "B", "C", "D"]
+    spec = LabelSpec(horizon=5, entry_lag=1)
+    raw = panel_factory(symbols=tuple(symbols), sessions=220, horizon=5, seed=8)
+    raw = raw.drop(columns=["target_return", "target_start_date", "target_end_date"])
+    lockbox = raw["date"].drop_duplicates().sort_values().iloc[200]
+    labeled, facts = runner.prepare_development_frame(
+        raw, symbols=symbols, label_spec=spec, holdout_start=lockbox
+    )
+    sessions = labeled["date"].drop_duplicates().sort_values()
+    windows = make_test_windows(sessions, start=sessions.iloc[80], end=lockbox, block_sessions=30)
+    folds = make_expanding_folds(labeled, windows, holdout_start=lockbox, lockbox_start=lockbox)
+    config = runner.DiagnosticsConfig(
+        hac_lag=3,
+        block_length=10,
+        bootstrap_reps=19,
+        acf_max_lag=4,
+        permutation_draws=3,
+        permutation_block_length=10,
+        stale_lags=(15,),
+        stale_models=("feature_a",),
+        permutation_models=("per_symbol_mean", "feature_a"),
+        calibration_reps=30,
+        calibration_bootstrap_reps=9,
+    )
+    run = runner.run_diagnostics(
+        labeled,
+        folds,
+        universe=symbols,
+        label_spec=spec,
+        diagnostic_features=["feature_a", "feature_b"],
+        provenance={
+            "code": {"git_sha": "abc123", "git_dirty": False},
+            "environment": {"python": "3.12"},
+            "truncation": {**facts, "holdout_rows_loaded": True},
+            "universe_note": "Synthetic test universe.",
+        },
+        started_at=datetime(2026, 10, 9, 12, 0, tzinfo=UTC),
+        models=runner.default_models(score_feature="feature_a"),
+        config=config,
+        lockbox_start=lockbox,
+    )
+    root = tmp_path_factory.mktemp("dashboard_outputs")
+    artifacts.write_run(run, root, extra_record={"status": "completed"})
+    artifacts.append_ledger(
+        root,
+        {"run_id": run.run_id, "spec_sha256": run.record["spec_sha256"], "status": "completed"},
+    )
+    return root, run
