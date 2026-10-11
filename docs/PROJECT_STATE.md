@@ -3,17 +3,17 @@
 Changing project state only. Permanent policy lives in `AGENTS.md`.
 Git is authoritative: verify everything here before relying on it.
 
-Last reviewed: 2026-10-10
+Last reviewed: 2026-10-11
 
 
 ## Last checkpoint
 
-2026-10-11, milestone "T4 phase A: excess label, nested selection plumbing,
-output contract 1.2, owner-core skeleton", verified on branch
-`feature/linear-model-baselines` at `e4939c6` (`99e9000` dependency,
-`d435837` code and tests, `e4939c6` docs), based on `ca68edc` (merge
-pending; phase C still to come). The owner exercise (estimator core) is
-next.
+2026-10-11, milestone "T4 complete: estimator core, real development run,
+independent reviews", verified on branch `feature/linear-model-baselines`
+at `99a8405` plus this checkpoint's docs commit (`99e9000` dependency,
+`d435837` phase A code, `e4939c6` and `37fcaba` phase A docs, `1338674`
+estimator core, `99a8405` review fixes), based on `ca68edc` (merge
+pending, PR #47).
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
@@ -74,8 +74,8 @@ ML phase.
   `docs/research/model_validation.md`.
 - The universe (U) and market-context (C) research is merged (PRs #41, #42);
   see `docs/research/universe_and_market_context.md`.
-- This branch implements T4 (`docs/research/linear_models.md`). Phase A is
-  done; the estimator core is the owner's exercise:
+- This branch implements T4 (`docs/research/linear_models.md`), phases A-C
+  done (merge pending, PR #47):
   - primary label: the point-in-time equal-weight excess forward return
     (each row on a date takes the latest member label end; incomplete
     dates are unlabeled; raw return stored in `inputs.target_return_raw`);
@@ -93,14 +93,30 @@ ML phase.
     (research warning, never a gate);
   - dashboard "Linear models" page; candidate colours and markers in the
     design system;
-  - the owner core (`model_diagnostics/linear.py`) is a skeleton; its 12
-    contract tests are strict xfails, validated against a correct and
-    three wrong implementations before hand-off.
-  - Real-data check (2026-10-11, excess label, T2 models only, scratch
-    output): the as-of cross-check passes on the excess frame (as-of
-    2024-12-31 = max `score_available_at`; 24 of 24 folds equal their
-    latest test label end); each date's excess labels sum to zero; rank IC
-    equals the raw label's (per_symbol_mean +0.1263, fold-block t 2.29).
+  - the estimator core (`model_diagnostics/linear.py`, implemented under
+    the owner's delegation of 2026-10-11): training-row median imputation
+    and population standardization; Ridge alpha = c * n_fit, Lasso
+    alpha = r * lambda_max, Elastic Net alpha = r * lambda_max / l1_ratio
+    (lambda_max from each fit's own standardized rows); exact row-wise
+    prediction; date-normalized inner MSE with a larger-penalty tie rule.
+    The 12 phase A contract tests pass unchanged.
+  - Development run `20261011T191112Z-50c1ca320e9c` (excess label, 49
+    permutation draws, from `1338674` with a clean tree): schema 1.2,
+    status WARNING, every leakage and instrument check passes, no pending
+    predictions. Confirming run `20261011T222805Z-284566803c62` from
+    `99a8405` (clean tree, after the review fixes) reproduced every stored
+    table value for value.
+  - Results (measured; fold-block t): no candidate shows detectable skill.
+    Ridge rank IC +0.020 (t 0.36), d_t vs zero t 0.04, OOS R² +0.02%;
+    Lasso and Elastic Net rank IC +0.070 (t 0.88) on only the 13 of 24
+    folds where they are non-constant (Ridge scores 0.068 on those folds;
+    zero-filled 0.038); OLS rank IC +0.018, d_t t -0.60; Clark-West (ols
+    vs zero) t 0.37 (info). The per-symbol-mean control (rank IC +0.126,
+    t 2.29) beats every candidate (selection, not skill; never a gate).
+    Elastic Net duplicated Lasso's choice of r in 24 of 24 folds.
+  - Reviewed independently (data-science, quantitative, test quality) on
+    2026-10-11: no blockers, no leakage; should-fix items fixed in
+    `99a8405` or recorded as owner decisions in `linear_models.md`.
 - T3.1 (merged in PR #46) refined the dashboard before T4
   (`docs/research/diagnostics_dashboard.md`, "Maturity", "Goyal-Welch
   views", "Design system"). No T2 code changed.
@@ -194,7 +210,22 @@ ML phase.
     before results are read.
   - **Context series are date-common.** They can affect cross-sectional
     ranking only through pre-registered interactions.
-- No prediction model is selected or implemented yet.
+- T4's linear baselines are implemented; no prediction model is selected
+  (none shows detectable skill on the sandbox universe).
+
+Owner decision (2026-10-11, T4 phase B/C): "I explicitly authorize you to
+implement the remaining `linear.py` estimator core, including
+preprocessing, Ridge/Lasso/Elastic Net wrappers, prediction contracts and
+nested hyperparameter-selection logic. This supersedes the earlier
+task-specific requirement for me to manually implement that module."
+The learning objective is kept through explanations, Learning Notes and
+one optional exercise. The same brief: keep Clark-West secondary and
+informational; the per-symbol mean is not a hard gate for the four-stock
+universe; record the variable-universe complete-cross-section and
+delisting problem as mandatory before large-universe validation, and the
+row-weighted fitting versus date-weighted tuning question; do not change
+leakage, label, execution or lockbox semantics without a genuine
+correctness issue.
 
 Owner decisions (2026-10-10, T4 brief and answers): primary alpha target =
 point-in-time cross-sectional equal-weight excess return, raw return
@@ -208,9 +239,10 @@ per-symbol mean is a research warning or control, not a hard gate;
 Clark-West only for truly nested comparisons; candidate colours in the
 design system; cross-check evaluation_asof against fold
 score_available_at before training and stop on disagreement; the owner
-codes the estimator core (learning-core split). The plan approved on
-2026-10-10 covers the excess availability rule, the `diagnostic` role,
-the additive 1.2 tables and the run script's default label.
+codes the estimator core (learning-core split; superseded 2026-10-11).
+The plan approved on 2026-10-10 covers the excess availability rule, the
+`diagnostic` role, the additive 1.2 tables and the run script's default
+label.
 
 Owner decisions (2026-10-10, T3.1 brief): run T2 once under schema 1.1
 without evaluating the holdout; Goyal-Welch uses identical observations and
@@ -414,20 +446,21 @@ Coverage limitations found are tracked as open item 2.
 
 Measured 2026-10-11 with `python3 scripts/verify.py` on
 `feature/linear-model-baselines` (base `ca68edc`; the working tree then
-held exactly the content committed as `99e9000`, `d435837`, `e4939c6`);
-gates ran with `.venv` tools (Python 3.12.2, pytest
-9.1.1, ruff 0.16.2, streamlit 1.64.0, plotly 7.1.0, pyarrow 25.0.1,
-scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
+held exactly the content of this checkpoint commit); gates ran with
+`.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, streamlit 1.64.0,
+plotly 7.1.0, pyarrow 25.0.1, scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
 
-- `pytest -q`: 1229 passed, 12 xfailed (the owner-core contract tests)
-- `python -m pytest -q`: 1229 passed, 12 xfailed
-- `ruff format --check src tests scripts .claude/hooks`: 190 files
+- `pytest -q`: 1269 passed
+- `python -m pytest -q`: 1269 passed
+- `ruff format --check src tests scripts .claude/hooks`: 191 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- Suite runtime about 46-48 s per pass.
-- Mutation checks (T4 phase A): 18 deliberate violations, each in an
-  isolated copy, all caught. Earlier mutants (T3.1: 22, schema 1.1: 21,
-  T3: 20, T2: 47, PR #40: 34) were not re-run.
+- Suite runtime about 52-55 s per pass.
+- Mutation checks (T4): phase A 18 of 18 caught; the phase C test review
+  ran 49 probes on `1338674` (22 survived); after the fixes, 22 targeted
+  probes (those survivors and the new code) were all killed, each in its
+  own scratch copy. Earlier mutants (T3.1: 22, schema 1.1: 21, T3: 20,
+  T2: 47, PR #40: 34) were not re-run.
 
 
 ## Open items
@@ -514,8 +547,8 @@ scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
      - a writer and reader with manifest hashes;
      - an append-only JSONL run ledger.
 
+     Fitted transform parameters are stored since T4 (`coefficients`).
      Still open:
-     - fitted transform parameters (with fitted models, T4);
      - raw-data retrieval times (the downloaders do not record them);
      - a holdout-use record kept in Git. The ledger lives under ignored
        `reports/`, so it can be deleted; T6 needs a Git-tracked record
@@ -536,15 +569,33 @@ scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
        `write_run(extra_record)` key collisions, purge-band dates, the PSI
        floor, degenerate cross-sectional R² for date-constant forecasts, and
        the decile interval estimand.
-   - T4 open items:
-     - the owner core (`linear.py`) and phase C (real run, reviews, PR);
+   - T4 follow-ups (`docs/research/linear_models.md`, "Mandatory before
+     large-universe validation" and "Warnings and limitations"):
+     - **mandatory before large-universe validation:** variable-universe
+       complete cross-sections and delistings (point-in-time membership
+       independent of feature rows, delisting returns, reinvestment rule,
+       per-date reason codes; label/availability semantics, owner-gated);
+       row-weighted fitting versus date-weighted tuning (pre-register one
+       rule; formula change, owner-gated);
+     - owner decisions recorded, not implemented: within-date demeaned or
+       ranked features (the date-common forecast part only adds loss under
+       the excess label); a hit-rate zero tolerance (constant forecasts
+       score 1e-19 noise signs); zero-filled or coverage rank-IC rows;
+       Elastic Net's L2 parameterization (not scale-free; duplicated Lasso
+       here); a one-standard-error rule with stored inner standard errors;
+       at least 199 permutation draws (Lasso's null is centred at -0.03);
+       Romano-Wolf or SPA across candidates; beta-neutral and cap-weighted
+       benchmarks (T5);
      - the size of the Clark-West and MSE-difference tests is not simulated
        (T2's simulation covers rank IC only);
-     - Holm correction across candidate families and a deflated Sharpe
-       from the ledger's variant count (plan page 6) are not built;
+     - Holm correction and a deflated Sharpe from the ledger's variant
+       count are not built;
      - `validate_feature_columns` still accepts `control_*` columns
-       (only `ModelSpec` refuses them for candidates and the diagnostic);
-       rejecting them is a contract change;
+       (contract change);
+     - per-fold IC rows say `undefined` where per-date rows say
+       `constant_prediction` (the T3 per-fold reason gap);
+     - the constant-label guard in `LinearForecast.fit` is rarely reached
+       (lambda_max is ~1e-34, not 0, for a constant label);
      - model names outside the fixed palettes still hash into Okabe-Ito.
    - T3.1 follow-ups (reviews of 2026-10-10): Plotly charts have no text
      alternative; some figure greys and method colours are still literals
@@ -592,11 +643,9 @@ scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
 
 ## Next steps
 
-1. Owner exercise: implement `src/stock_agent/model_diagnostics/linear.py`
-   (`docs/research/linear_models.md`, "Owner exercise") and remove the
-   strict-xfail markers. Then T4 phase C: core review, the real
-   development run with `--with-linear-models`, reviews, PR (merging is
-   owner-only).
+1. Owner: review and merge PR #47 (T4; merging is owner-only). Optional
+   exercise in `docs/research/linear_models.md`. Decide the T4 follow-ups
+   above before the next modelling round.
 2. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
    `docs/research/diagnostics_and_visualization_plan.md`:
@@ -605,14 +654,14 @@ scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
    - T3: Plotly and Streamlit dashboard, run on the null models (merged,
      PR #44); the T2 reporting fix (PR #45) and the T3.1 workspace (PR #46)
      are merged;
-   - T4: Ridge, Lasso, and Elastic Net, with coefficient stability (phase
-     A on this branch; owner core next);
+   - T4: Ridge, Lasso, and Elastic Net, with coefficient stability
+     (complete on this branch, PR #47);
    - T5: portfolio readiness;
    - T6: holdout evaluation, once per pre-registered model.
 
    Owner decisions taken 2026-10-10: the excess label, pinned
-   scikit-learn, the owner codes the estimator core, and the per-symbol
-   mean is a reported control, not a gate.
+   scikit-learn, and the per-symbol mean is a reported control, not a
+   gate. 2026-10-11: the estimator core was delegated.
 3. Owner decision from open item 7: enable branch protection on `main`.
 4. U and C tracks, in parallel with T2-T4 (see "Sequencing against T4" in
    `docs/research/universe_and_market_context.md`). Owner decisions:

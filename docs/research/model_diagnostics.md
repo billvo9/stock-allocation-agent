@@ -295,7 +295,9 @@ Other observations:
   NVDA's history alone.
   - The plan's acceptance rule "nulls show no skill" holds for the nulls.
   - The control's apparent skill is a recorded research warning.
-  - Whether T4 must beat it on paired per-date differences is a T4 decision.
+  - Whether T4 must beat it on paired per-date differences: decided
+    2026-10-10, it is a reported research warning, never a gate
+    (`docs/research/linear_models.md`).
 - **Which placebo is the null.** The reviews disagreed:
   - the statistical review favoured the within-date permutation for rank
     IC;
@@ -334,8 +336,9 @@ Other observations:
   keep fold-block t as the decision method.
 - Nothing yet stops a candidate model's feature list from using
   `control_*` columns through the harness directly (outside `ModelSpec`).
-  Rejecting them in `validate_feature_columns` would change a contract, so
-  it waits for T4.
+  Rejecting them in `validate_feature_columns` would change a contract; it
+  is still open after T4 (`ModelSpec` refuses them for candidates and the
+  diagnostic).
 - The ledger lives under ignored `reports/`, so it can be deleted. Holdout
   once-only enforcement and multiple-testing counts need a Git-tracked
   record (T6, owner decision).

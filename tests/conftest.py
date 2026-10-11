@@ -291,7 +291,7 @@ def varying_universe_root(tmp_path_factory, panel_factory):
     return root, run
 
 
-# --- T4: statistics-free stand-ins for the owner's linear core ---------------
+# --- T4: statistics-free stand-ins for the linear core ----------------------
 
 
 def _double_classes():
@@ -343,7 +343,7 @@ def linear_run_root(tmp_path_factory, panel_factory):
     """
     A T4 development run on the equal-weight excess label: the T2 null,
     control and canary set plus Ridge, Lasso and Elastic Net (nested
-    selection) and the OLS diagnostic, with test doubles for the owner's core.
+    selection) and the OLS diagnostic, with test doubles for the linear core.
     """
 
     from datetime import UTC, datetime

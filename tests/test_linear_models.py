@@ -1,9 +1,10 @@
 """
-T4 plumbing around the owner's linear core: nested purged selection inside
+T4 plumbing around the linear core: nested purged selection inside
 each outer training fold, the single-call outer refit, the coefficient and
 selection tables, Clark-West only for registered nested pairs, the label
-rules for comparators, and the pre-training evaluation as-of check. The
-owner's estimator and selector are replaced by statistics-free doubles.
+rules for comparators, and the pre-training evaluation as-of check. Most
+tests replace the estimator and selector with statistics-free doubles; the
+real core is exercised in test_linear_estimator.py and test_linear_core.py.
 """
 
 from __future__ import annotations

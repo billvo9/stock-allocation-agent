@@ -166,7 +166,10 @@ computed from the same rows as for a 1.1 run.
    paths and stability, fitted transforms, and Clark-West for the nested
    OLS pair; see `docs/research/linear_models.md`. Candidates carry fixed
    colours from `theme.CANDIDATE_COLOURS` and a diamond marker; the OLS
-   diagnostic a triangle.
+   diagnostic a triangle. A rank IC defined on only some scored dates (a
+   model that is constant on the rest) carries its coverage on every card
+   and on the forest, because estimates over different dates are not
+   comparable.
 9. **Research warnings.** Stored facts quoted by level:
    - blocking (only failed or undetermined T2 checks), warning (active
      research warnings), and notices;
@@ -388,8 +391,9 @@ T3's read-only guarantee:
   different quantity. The dashboard labels the interval as such.
 
 The T2 follow-up list in `docs/research/model_diagnostics.md` is unchanged.
-T3 does not decide whether T4 candidates must beat the per-symbol-mean
-selection control; that is still an owner decision.
+T3 did not decide whether T4 candidates must beat the per-symbol-mean
+selection control. The owner decided on 2026-10-10 that it is a reported
+control (a research warning), never a gate.
 
 
 ## Dependencies
