@@ -1,5 +1,7 @@
 """
-Development diagnostics run for the T2 null models, controls and canary.
+Development diagnostics run: the T2 null models, controls and canary, and
+with --with-linear-models the T4 Ridge, Lasso and Elastic Net candidates
+(nested purged selection) and the OLS diagnostic.
 
 Builds the feature panel, restricts it to the config universe, truncates it
 before the 2025-01-01 lockbox and only then computes labels, builds the
@@ -11,6 +13,11 @@ Usage (from the repository root: the feature SQL reads data/raw/prices.parquet
 by a relative path):
     .venv/bin/python scripts/run_null_diagnostics.py [--output-root reports]
         [--permutation-draws 49] [--bootstrap-reps 999] [--seed 0]
+        [--label {equal_weight_excess,raw}] [--with-linear-models]
+
+The default label is the equal-weight excess return (owner decision,
+2026-10-10); the raw return is stored beside it. The comparators follow the
+label (nested.comparison_settings).
 """
 
 from __future__ import annotations
@@ -29,10 +36,12 @@ import pandas as pd
 
 from stock_agent.config import load_asset_symbols
 from stock_agent.features.build import SQL_PATH, build_model_dataset
-from stock_agent.features.training import MODEL_LABEL_SPEC
+from stock_agent.features.training import MODEL_EXCESS_LABEL_SPEC, MODEL_LABEL_SPEC
 from stock_agent.model_diagnostics.artifacts import append_ledger, write_run
+from stock_agent.model_diagnostics.nested import comparison_settings, linear_models
 from stock_agent.model_diagnostics.runner import (
     DiagnosticsConfig,
+    default_models,
     prepare_development_frame,
     run_diagnostics,
 )
@@ -49,7 +58,16 @@ PRICES_PATH = PROJECT_ROOT / "data" / "raw" / "prices.parquet"
 DEVELOPMENT_START = "2019-01-01"
 BLOCK_SESSIONS = 63
 DIAGNOSTIC_FEATURES = ("daily_return", "momentum_20d", "volatility_20d")
-PACKAGES = ("numpy", "pandas", "pyarrow", "duckdb", "yfinance", "edgartools")
+PACKAGES = (
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "duckdb",
+    "yfinance",
+    "edgartools",
+    "scikit-learn",
+    "scipy",
+)
 
 UNIVERSE_NOTE = (
     "Config universe chosen with hindsight (semiconductors, survivorship-biased); "
@@ -104,19 +122,34 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--permutation-draws", type=int, default=49)
     parser.add_argument("--bootstrap-reps", type=int, default=999)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--label", choices=("equal_weight_excess", "raw"), default="equal_weight_excess"
+    )
+    parser.add_argument("--with-linear-models", action="store_true")
     args = parser.parse_args(argv)
+    label_spec = (
+        MODEL_EXCESS_LABEL_SPEC if args.label == "equal_weight_excess" else MODEL_LABEL_SPEC
+    )
     if Path.cwd().resolve() != PROJECT_ROOT:
         parser.error(
             f"run from the repository root ({PROJECT_ROOT}); the feature SQL uses relative paths"
         )
 
     started_at = datetime.now(UTC)
+    candidates = ("ridge", "lasso", "elastic_net") if args.with_linear_models else ()
+    defaults = DiagnosticsConfig()
     config = replace(
-        DiagnosticsConfig(),
+        defaults,
         permutation_draws=args.permutation_draws,
         bootstrap_reps=args.bootstrap_reps,
         seed=args.seed,
+        permutation_models=(*defaults.permutation_models, *candidates),
+        stale_models=(*defaults.stale_models, *candidates),
+        **comparison_settings(label_spec, with_linear=args.with_linear_models),
     )
+    models = default_models()
+    if args.with_linear_models:
+        models += linear_models(label_spec, DIAGNOSTIC_FEATURES)
     ledger_entry: dict[str, object] = {
         "started_at": started_at.isoformat(),
         "argv": sys.argv[1:] if argv is None else argv,
@@ -126,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         symbols = load_asset_symbols(CONFIG_PATH)
         panel = build_model_dataset()
         labeled, truncation = prepare_development_frame(
-            panel, symbols=symbols, label_spec=MODEL_LABEL_SPEC, holdout_start=MODEL_HOLDOUT_START
+            panel, symbols=symbols, label_spec=label_spec, holdout_start=MODEL_HOLDOUT_START
         )
         truncation["holdout_rows_loaded"] = True  # the feature SQL scans the whole price file
         universe = sorted(set(labeled["symbol"]))
@@ -163,10 +196,11 @@ def main(argv: list[str] | None = None) -> int:
             labeled,
             folds,
             universe=universe,
-            label_spec=MODEL_LABEL_SPEC,
+            label_spec=label_spec,
             diagnostic_features=DIAGNOSTIC_FEATURES,
             provenance=provenance,
             started_at=started_at,
+            models=models,
             config=config,
         )
         finished_at = datetime.now(UTC)

@@ -6,6 +6,7 @@ table fingerprints, and the package's dependency direction.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -293,3 +294,12 @@ def test_the_reader_does_not_import_the_statistical_runner():
 def test_a_run_without_a_canary_records_no_reference_predictor(run):
     assert run.record["spec"]["reference_predictors"] == []
     assert "canary_unsafe_reference" not in set(run.tables["predictions"]["model"])
+
+
+def test_a_run_missing_a_current_table_is_never_written(run, tmp_path):
+    partial = dataclasses.replace(
+        run, tables={k: v for k, v in run.tables.items() if k != "selection"}
+    )
+    with pytest.raises(ValueError, match="exactly the tables"):
+        artifacts.write_run(partial, tmp_path)
+    assert not (tmp_path / "runs").exists() or not any((tmp_path / "runs").iterdir())

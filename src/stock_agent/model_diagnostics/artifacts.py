@@ -57,6 +57,10 @@ def write_run(
     if final.exists():
         raise FileExistsError(f"Run directory {final} already exists; runs are never overwritten.")
     staging = runs / f".{run.run_id}.partial"
+    if set(run.tables) != set(contract.tables()):
+        raise ValueError(
+            f"A run holds exactly the tables {sorted(contract.tables())}; got {sorted(run.tables)}."
+        )
     staging.mkdir()
     files = {}
     for name, table in run.tables.items():
@@ -99,8 +103,8 @@ def read_ledger(root: str | Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
-def _allowed_files() -> dict[str, str | None]:
-    files: dict[str, str | None] = {f"{name}.parquet": name for name in contract.TABLES}
+def _allowed_files(version: str = contract.OUTPUT_SCHEMA_VERSION) -> dict[str, str | None]:
+    files: dict[str, str | None] = {f"{name}.parquet": name for name in contract.tables(version)}
     files["record.json"] = None
     return files
 
@@ -122,7 +126,7 @@ def read_run(directory: str | Path) -> tuple[dict, dict[str, pd.DataFrame]]:
     contract.check_version(version)
     if manifest["run_id"] != directory.name:
         raise ValueError(f"Manifest run_id {manifest['run_id']!r} != directory {directory.name!r}.")
-    allowed = _allowed_files()
+    allowed = _allowed_files(version)
     listed = manifest["files"]
     unexpected = sorted(set(listed) - set(allowed))
     absent = sorted(set(allowed) - set(listed))

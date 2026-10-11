@@ -531,7 +531,7 @@ def test_family_counts_always_add_up_to_the_family_total():
 def test_the_record_states_its_decision_method_and_candidate_eligibility(development):
     *_, run = development
     spec = run.record["spec"]
-    assert spec["output_schema_version"] == contract.OUTPUT_SCHEMA_VERSION == "1.1"
+    assert spec["output_schema_version"] == contract.OUTPUT_SCHEMA_VERSION == "1.2"
     assert spec["decision_method"] == runner.DECISION_METHOD == "fold_block_t"
     for model in spec["models"]:
         assert model["eligible_as_candidate"] is (model["role"] == contract.CANDIDATE_ROLE)

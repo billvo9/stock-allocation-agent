@@ -33,12 +33,14 @@ import numpy as np
 import pandas as pd
 
 from stock_agent.features.training import (
+    EXCESS_AVAILABILITY_RULE,
+    RAW_TARGET_RETURN_COLUMN,
     TARGET_END_COLUMN,
     TARGET_RETURN_COLUMN,
     TARGET_START_COLUMN,
     LabelSpec,
 )
-from stock_agent.model_diagnostics import contract, scoring
+from stock_agent.model_diagnostics import contract, linear, nested, scoring
 from stock_agent.model_diagnostics import inference as inf
 from stock_agent.model_diagnostics.canary import UNSAFE_ROLE, unpurged_reference_predictions
 from stock_agent.model_diagnostics.controls import (
@@ -80,7 +82,7 @@ from stock_agent.model_validation.audit import (
 from stock_agent.model_validation.folds import MODEL_HOLDOUT_START, WalkForwardFold, is_labeled
 from stock_agent.model_validation.harness import run_walk_forward
 
-ROLES = ("null", "control", "canary", "candidate")
+ROLES = ("null", "control", "canary", contract.DIAGNOSTIC_ROLE, "candidate")
 # Checks decide on the best-calibrated method in simulation (inference.py).
 DECISION_METHOD = "fold_block_t"
 PREDICTION_KEYS = ["fold_id", "date", "symbol"]
@@ -113,7 +115,7 @@ class ModelSpec:
             raise ValueError(f"output_kind must be one of {scoring.OUTPUT_KINDS}.")
         if not self.feature_columns:
             raise ValueError("feature_columns must not be empty.")
-        if self.role == "candidate" and any(
+        if self.role in ("candidate", contract.DIAGNOSTIC_ROLE) and any(
             column.startswith(CONTROL_PREFIX) for column in self.feature_columns
         ):
             raise ValueError(
@@ -130,7 +132,7 @@ class ModelSpec:
             "feature_columns": list(self.feature_columns),
             "output_kind": self.output_kind,
             "seeded": self.seeded,
-            "preprocessing": None,
+            "preprocessing": self.params.get("preprocessing"),
             "note": self.note,
             "eligible_as_candidate": self.role == contract.CANDIDATE_ROLE,
         }
@@ -198,6 +200,9 @@ class DiagnosticsConfig:
     decile_bins: int = 10
     acf_max_lag: int = 40
     baselines: tuple[str, ...] = ("zero", "pooled_mean", "per_symbol_mean")
+    # (model, baseline) pairs where the model nests the baseline, estimated on
+    # the same rows: the only pairs that get Clark-West rows.
+    nested_comparisons: tuple[tuple[str, str], ...] = ()
     canary_model: str = "memorizer"
     permutation_models: tuple[str, ...] = ("per_symbol_mean", "momentum_20d")
     permutation_draws: int = 49
@@ -224,10 +229,26 @@ class DiagnosticsRun:
 
 
 def label_id(label_spec: LabelSpec) -> str:
-    return (
-        f"forward_simple_return:{label_spec.price_column}:"
-        f"horizon={label_spec.horizon}:entry_lag={label_spec.entry_lag}"
-    )
+    return label_spec.label_id
+
+
+def label_record(label_spec: LabelSpec) -> dict[str, object]:
+    """The label's identity, timing and availability rule, as recorded."""
+
+    record = {
+        "label_id": label_spec.label_id,
+        "label_spec": asdict(label_spec),
+        "target_column": TARGET_RETURN_COLUMN,
+        "signal_timing_convention": DECISION_CONVENTION,
+        "signal_timing_convention_sha256": hashlib.sha256(
+            DECISION_CONVENTION.encode("utf-8")
+        ).hexdigest(),
+    }
+    if label_spec.benchmark is not None:
+        record["benchmark"] = label_spec.benchmark
+        record["raw_target_column"] = RAW_TARGET_RETURN_COLUMN
+        record["availability_rule"] = EXCESS_AVAILABILITY_RULE
+    return record
 
 
 # --- stage 1: lockbox gate ---
@@ -262,7 +283,7 @@ def prepare_development_frame(
     kept = universe_rows.loc[before]
     dropped = universe_rows.loc[~before]
     excluded = {s: "no_pre_lockbox_rows" for s in sorted(set(wanted) - set(kept["symbol"]))}
-    labeled = label_spec.apply(kept.copy())
+    labeled = label_spec.apply(kept.copy(), universe=wanted)
     labeled = labeled.sort_values(["date", "symbol"]).reset_index(drop=True)
     unlabeled = ~is_labeled(labeled)
     facts = {
@@ -338,7 +359,7 @@ def _factory(spec: ModelSpec, seed: int, tag: str):
     counter = itertools.count()
 
     def make():
-        params = dict(spec.params)
+        params = nested.estimator_kwargs(spec.params)
         if spec.seeded:
             params["seed"] = derive_seed(seed, "model", spec.name, tag, "fold_call", next(counter))
         return spec.estimator(**params)
@@ -416,8 +437,15 @@ def run_diagnostics(
     models: Sequence[ModelSpec] | None = None,
     config: DiagnosticsConfig | None = None,
     lockbox_start: object = MODEL_HOLDOUT_START,
+    selector=None,
 ) -> DiagnosticsRun:
+    """
+    `selector` chooses hyperparameters for nested-selected linear models
+    (default: the owner's linear.select_hyperparameters).
+    """
+
     config = config or DiagnosticsConfig()
+    selector = selector or linear.select_hyperparameters
     models = list(models if models is not None else default_models())
     names = [spec.name for spec in models]
     if len(set(names)) != len(names):
@@ -432,24 +460,66 @@ def run_diagnostics(
     evidence = lockbox_evidence(labeled, folds, lockbox_start)
     if any(frame_rows_sha256(labeled) != fold.frame_rows_sha256 for fold in folds):
         raise LeakageError("Folds were built from a different frame or row order.")
+    late = asof_violations(labeled, folds, evidence)
+    if late:
+        raise LeakageError(
+            f"Folds {late} score labels ending after the evaluation as-of "
+            f"{evidence['max_date']}; stop before training."
+        )
     frame = add_control_columns(labeled, universe)
     expected = labeled.iloc[np.concatenate([fold.test_rows for fold in folds])]
+    specs = {spec.name: spec for spec in models}
+    _validate_comparisons(config, specs, label_spec)
 
     # 2. predictions (complete before any scoring)
-    specs = {spec.name: spec for spec in models}
-    predictions: dict[str, pd.DataFrame] = {}
-    audit: dict[str, dict] = {}
-    for spec in models:
-        result = run_walk_forward(
-            frame,
+    inner_cache: dict[tuple, dict[int, tuple]] = {}
+
+    def inner_for(spec: ModelSpec) -> dict[int, tuple]:
+        design = nested.InnerDesign(**spec.params["selection"]["inner"])
+        key = tuple(sorted(asdict(design).items()))
+        if key not in inner_cache:
+            inner_cache[key] = {
+                fold.fold_id: nested.build_inner_folds(frame, fold, design) for fold in folds
+            }
+        return inner_cache[key]
+
+    def fit_predict(spec: ModelSpec, data: pd.DataFrame, tag: str, *, record: bool = False):
+        if nested.is_nested(spec):
+            return nested.run_nested(
+                data,
+                folds,
+                spec,
+                inner_for(spec),
+                selector=selector,
+                lockbox_start=lockbox_start,
+                record=record,
+            )
+        return run_walk_forward(
+            data,
             folds,
             feature_columns=list(spec.feature_columns),
-            make_estimator=_factory(spec, config.seed, "main"),
+            make_estimator=_factory(spec, config.seed, tag),
             lockbox_start=lockbox_start,
         )
+
+    predictions: dict[str, pd.DataFrame] = {}
+    audit: dict[str, dict] = {}
+    coefficient_rows: list[dict] = []
+    selection_rows: list[dict] = []
+    convergence: dict[str, list[bool | None]] = {}
+    for spec in models:
+        result = fit_predict(spec, frame, "main", record=True)
         _check_complete(spec.name, result.predictions, expected)
         predictions[spec.name] = result.predictions
         audit[spec.name] = _estimator_audit(result.estimators)
+        if nested.is_linear(spec):
+            inner = getattr(result, "inner_estimators", ())
+            convergence[spec.name] = [linear.has_converged(e) for e in (*result.estimators, *inner)]
+            if nested.is_nested(spec):
+                coefficient_rows += result.coefficient_rows
+                selection_rows += result.selection_rows
+            else:
+                coefficient_rows += nested.coefficient_rows(spec, folds, result.estimators)
 
     canary_spec = specs.get(config.canary_model)
     unsafe = None
@@ -480,13 +550,7 @@ def run_diagnostics(
                 block_length=config.permutation_block_length,
                 anchor=anchor,
             )
-            result = run_walk_forward(
-                placebo,
-                folds,
-                feature_columns=list(spec.feature_columns),
-                make_estimator=_factory(spec, config.seed, f"permutation_{draw}"),
-                lockbox_start=lockbox_start,
-            )
+            result = fit_predict(spec, placebo, f"permutation_{draw}")
             _check_complete(f"{name} permutation {draw}", result.predictions, expected)
             permuted[name].append(result.predictions)
 
@@ -502,13 +566,7 @@ def run_diagnostics(
             if not np.isfinite(values).all():
                 stale[(name, lag)] = "insufficient_history"
                 continue
-            result = run_walk_forward(
-                placebo,
-                folds,
-                feature_columns=list(spec.feature_columns),
-                make_estimator=_factory(spec, config.seed, f"stale_{lag}"),
-                lockbox_start=lockbox_start,
-            )
+            result = fit_predict(spec, placebo, f"stale_{lag}")
             _check_complete(f"{name} stale {lag}", result.predictions, expected)
             stale[(name, lag)] = result.predictions
 
@@ -545,9 +603,19 @@ def run_diagnostics(
         scored_models.append(
             ("canary_unsafe_reference", UNSAFE_ROLE, canary_spec.output_kind, unsafe)
         )
+    nested_pairs: dict[str, list[str]] = {}
+    for model, baseline in config.nested_comparisons:
+        nested_pairs.setdefault(model, []).append(baseline)
     for name, role, kind, frame_ in scored_models:
         score = scoring.score_model(
-            name, role, kind, frame_, ctx, baselines=baselines, horizon=label_spec.horizon
+            name,
+            role,
+            kind,
+            frame_,
+            ctx,
+            baselines=baselines,
+            horizon=label_spec.horizon,
+            nested_baselines=nested_pairs.get(name, ()),
         )
         scores[name] = score
         metrics += score.metrics
@@ -671,6 +739,9 @@ def run_diagnostics(
 
     # 4. checks, tables, record
     checks = _checks(config, specs, scores, predictions, expected, evidence, calibration)
+    checks += _t4_checks(
+        config, specs, scores, predictions, evidence, folds, label_spec, convergence, selection_rows
+    )
     folds_table = describe_folds(labeled, folds, feature_columns=list(diagnostic_features))
     prediction_frames = [
         predictions[spec.name].assign(model=spec.name, role=spec.role) for spec in models
@@ -682,6 +753,7 @@ def run_diagnostics(
         "symbol",
         *[c for c in diagnostic_features if c not in ("date", "symbol")],
         *LABEL_COLUMNS,
+        *([RAW_TARGET_RETURN_COLUMN] if RAW_TARGET_RETURN_COLUMN in labeled.columns else []),
     ]
     tables = {
         "inputs": contract.conform("inputs", labeled.loc[:, input_columns]),
@@ -697,6 +769,16 @@ def run_diagnostics(
         "feature_stats": contract.conform("feature_stats", feature_stats),
         "feature_pairs": contract.conform("feature_pairs", feature_pairs),
         "checks": contract.conform("checks", pd.DataFrame(checks)),
+        "coefficients": contract.conform(
+            "coefficients",
+            pd.DataFrame(coefficient_rows)
+            if coefficient_rows
+            else nested.empty_table("coefficients"),
+        ),
+        "selection": contract.conform(
+            "selection",
+            pd.DataFrame(selection_rows) if selection_rows else nested.empty_table("selection"),
+        ),
     }
 
     spec_record = {
@@ -711,15 +793,7 @@ def run_diagnostics(
             ),
             "labeled_frame_rows_sha256": frame_rows_sha256(labeled),
         },
-        "label": {
-            "label_id": label_id(label_spec),
-            "label_spec": asdict(label_spec),
-            "target_column": TARGET_RETURN_COLUMN,
-            "signal_timing_convention": DECISION_CONVENTION,
-            "signal_timing_convention_sha256": hashlib.sha256(
-                DECISION_CONVENTION.encode("utf-8")
-            ).hexdigest(),
-        },
+        "label": label_record(label_spec),
         "lockbox": {
             "holdout_start": pd.Timestamp(lockbox_start).isoformat(),
             "mode": "development",
@@ -773,6 +847,153 @@ def run_diagnostics(
         "checks_summary": summarize_checks(tables["checks"]),
     }
     return DiagnosticsRun(identifier, record, tables)
+
+
+def asof_violations(
+    labeled: pd.DataFrame, folds: Sequence[WalkForwardFold], evidence: Mapping[str, object]
+) -> list[int]:
+    """
+    Folds whose test labels end after the evaluation as-of (the last session
+    of the truncated development frame, lockbox_evidence.max_date): their
+    score_available_at would disagree with the dashboard's evaluation_asof.
+    """
+
+    asof = pd.Timestamp(evidence["max_date"])
+    ends = pd.to_datetime(labeled[TARGET_END_COLUMN], utc=True)
+    return [
+        fold.fold_id
+        for fold in folds
+        if len(fold.test_rows) and ends.iloc[fold.test_rows].max() > asof
+    ]
+
+
+def _validate_comparisons(config, specs, label_spec: LabelSpec) -> None:
+    if label_spec.benchmark is not None and "pooled_mean" in config.baselines:
+        raise ValueError(
+            "Under an excess label the pooled training mean is identically zero (each date's "
+            "excess labels sum to zero), so it would duplicate the zero comparator."
+        )
+    for model, baseline in config.nested_comparisons:
+        for name in (model, baseline):
+            if name not in specs or specs[name].output_kind != "forecast":
+                raise ValueError(
+                    f"Nested comparison {model} vs {baseline}: {name} is not a "
+                    "registered forecast model."
+                )
+        if model == baseline or baseline not in config.baselines:
+            raise ValueError(
+                f"Nested comparison {model} vs {baseline} needs a distinct, registered baseline."
+            )
+
+
+def _metric_row(scores, model: str, metric: str, method: str):
+    for row in scores[model].metrics:
+        if row["metric"] == metric and row["inference_method"] == method and row["fold_id"] is None:
+            return row
+    return None
+
+
+def _t4_checks(
+    config, specs, scores, predictions, evidence, folds, label_spec, convergence, selection_rows
+) -> list[dict]:
+    rows = [
+        _check(
+            "evaluation_asof_matches_folds",
+            None,
+            "leakage",
+            "folds_scoring_labels_after_asof",
+            0,
+            0,
+            "==",
+            f"every fold's test labels end by the evaluation as-of {evidence['max_date']} "
+            "(checked before training)",
+        )
+    ]
+    for name, spec in specs.items():
+        if nested.is_nested(spec):
+            verified = len({row["fold_id"] for row in selection_rows if row["model"] == name})
+            rows.append(
+                _check(
+                    "nested_selection_inside_training",
+                    name,
+                    "leakage",
+                    "outer_folds_with_verified_inner_folds",
+                    verified,
+                    len(folds),
+                    "==",
+                    "inner rows are outer training rows; every inner label ends before the "
+                    "outer test start",
+                )
+            )
+        if name in convergence:
+            flags = convergence[name]
+            unknown = sum(flag is None for flag in flags)
+            failed = sum(flag is False for flag in flags)
+            rows.append(
+                _check(
+                    "selection_fits_converged",
+                    name,
+                    "instrument",
+                    "fits_not_converged",
+                    failed if not unknown else math.nan,
+                    0,
+                    "==",
+                    f"{len(flags)} fits (outer and inner)" if not unknown else "no converged_ flag",
+                )
+            )
+    if label_spec.benchmark is not None and "pooled_mean" in predictions:
+        largest = float(np.abs(predictions["pooled_mean"]["prediction"]).max())
+        rows.append(
+            _check(
+                "excess_label_centred",
+                "pooled_mean",
+                "instrument",
+                "max_abs_pooled_mean_prediction",
+                largest,
+                1e-12,
+                "<=",
+                "complete cross-sections sum to zero under the excess label",
+            )
+        )
+    for model, baseline in config.nested_comparisons:
+        row = _metric_row(scores, model, f"clark_west_vs_{baseline}", DECISION_METHOD)
+        ok = row is not None and row["status"] == "ok" and row["se"] > 0
+        t = row["estimate"] / row["se"] if ok else math.nan
+        critical = inf.student_t_ppf(0.95, row["df"]) if ok else math.nan
+        rows.append(
+            _check(
+                "clark_west_one_sided",
+                model,
+                "info",
+                f"clark_west_vs_{baseline}_t_fold_block",
+                t,
+                critical,
+                ">",
+                f"one-sided 5% test that {model} improves on the nested {baseline}; "
+                "size not simulated",
+            )
+        )
+    if "per_symbol_mean" in config.baselines:
+        for name, spec in specs.items():
+            if spec.role != contract.CANDIDATE_ROLE or spec.output_kind != "forecast":
+                continue
+            row = _metric_row(scores, name, "mse_improvement_vs_per_symbol_mean", DECISION_METHOD)
+            known = row is not None and math.isfinite(row["estimate"])
+            rows.append(
+                _check(
+                    "candidate_below_selection_control",
+                    name,
+                    "research_warning",
+                    "mse_improvement_vs_per_symbol_mean_fold_block",
+                    row["estimate"] if known else math.nan,
+                    0.0,
+                    "<=",
+                    "passed=True: the candidate's squared error is not below the per-symbol "
+                    "mean's. On this hindsight-selected universe that control captures "
+                    "selection; a comparison to report, not a gate",
+                )
+            )
+    return rows
 
 
 def _checks(config, specs, scores, predictions, expected, evidence, calibration) -> list[dict]:

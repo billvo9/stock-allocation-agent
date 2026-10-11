@@ -29,7 +29,7 @@ from plotly.subplots import make_subplots
 
 from stock_agent.dashboard import style
 
-ROLE_ORDER = ("null", "control", "canary", "canary_unsafe_reference", "candidate")
+ROLE_ORDER = ("null", "control", "canary", "canary_unsafe_reference", "diagnostic", "candidate")
 METHOD_NAMES = {
     "fold_block_t": "fold-block t",
     "newey_west": "Newey-West",
@@ -1162,6 +1162,116 @@ def goyal_welch_observation_weighted(
             f"{model}: observation-weighted cumulative SSE difference (stored by T2; secondary)",
             x_title="session date",
             y_title="cumulative SSE difference (all name-dates)",
+        )
+    )
+    return figure
+
+
+# --- linear models (training scope: stored coefficients and selection) ---
+
+
+def coefficient_paths(coefficients: pd.DataFrame, model: str):
+    """TRAINING-SCOPE: stored standardized coefficient per feature across outer folds."""
+
+    rows = coefficients[
+        (coefficients["model"] == model) & (coefficients["feature"] != "__intercept__")
+    ]
+    colours = style.category_colours(rows["feature"].unique())
+    figure = go.Figure()
+    for index, (feature, group) in enumerate(rows.groupby("feature", sort=True)):
+        group = group.sort_values("fold_id")
+        figure.add_trace(
+            go.Scatter(
+                x=group["fold_id"].tolist(),
+                y=[_value(v) for v in group["coefficient"]],
+                mode="lines+markers",
+                name=feature,
+                line={"color": colours[feature]},
+                marker={"symbol": FEATURE_SYMBOLS[index % len(FEATURE_SYMBOLS)], "size": 8},
+            )
+        )
+    figure.add_hline(y=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
+    figure.update_layout(
+        **style.base_layout(
+            f"{model}: standardized coefficients by fold",
+            subtitle="training scope; one fit per outer fold with its chosen penalty",
+            x_title="outer fold",
+            y_title="coefficient (per 1 sd of the feature)",
+        )
+    )
+    return figure
+
+
+def chosen_penalty_by_fold(selection: pd.DataFrame, model: str):
+    """TRAINING-SCOPE: the grid point the inner validation chose, per outer fold."""
+
+    rows = selection[(selection["model"] == model) & selection["chosen"].fillna(False)]
+    rows = rows.sort_values("fold_id")
+    mixes = rows["l1_ratio"].dropna().unique()
+    figure = go.Figure()
+    for mix, group in rows.groupby(rows["l1_ratio"].fillna(-1.0), sort=True):
+        figure.add_trace(
+            go.Scatter(
+                x=group["fold_id"].tolist(),
+                y=group["penalty"].tolist(),
+                mode="markers",
+                marker={"size": 11, "color": style.model_colour(model), "symbol": "diamond"},
+                name="chosen penalty" if mix < 0 else f"chosen penalty, l1_ratio {mix:g}",
+            )
+        )
+    figure.update_layout(
+        **style.base_layout(
+            f"{model}: chosen penalty by fold",
+            subtitle=(
+                "dimensionless grid value chosen by nested purged validation"
+                + ("; Elastic Net also chooses l1_ratio" if len(mixes) else "")
+            ),
+            x_title="outer fold",
+            y_title="penalty (grid value)",
+        )
+    )
+    figure.update_yaxes(type="log")
+    return figure
+
+
+def selection_scores(selection: pd.DataFrame, model: str):
+    """TRAINING-SCOPE: every grid point's inner score per outer fold (lower is better)."""
+
+    rows = selection[selection["model"] == model].copy()
+    rows["point"] = [
+        f"{p:g}" if pd.isna(m) else f"{p:g} / {m:g}"
+        for p, m in zip(rows["penalty"], rows["l1_ratio"], strict=True)
+    ]
+    order = rows.drop_duplicates("point").sort_values(["l1_ratio", "penalty"])["point"].tolist()
+    table = rows.pivot(index="point", columns="fold_id", values="inner_score").reindex(order)
+    chosen = rows[rows["chosen"].fillna(False)]
+    figure = go.Figure(
+        go.Heatmap(
+            z=table.to_numpy(),
+            x=[str(c) for c in table.columns],
+            y=table.index.tolist(),
+            colorscale=style.NEUTRAL_SCALE,
+            reversescale=True,
+            colorbar={"title": {"text": "inner MSE"}},
+            hovertemplate="fold %{x}<br>point %{y}<br>inner score %{z:.4g}<extra></extra>",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=[str(f) for f in chosen["fold_id"]],
+            y=chosen["point"].tolist(),
+            mode="markers",
+            marker={"symbol": "x", "size": 10, "color": style.theme.COLOURS["text"]},
+            name="chosen",
+        )
+    )
+    figure.update_layout(
+        **style.base_layout(
+            f"{model}: inner validation score by grid point and fold",
+            subtitle="lower is better; scores compare grid points within a fold, not across folds",
+            x_title="outer fold",
+            y_title="grid point (penalty / l1_ratio)",
+            height=420,
         )
     )
     return figure

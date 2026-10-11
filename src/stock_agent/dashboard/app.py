@@ -27,6 +27,7 @@ SECTIONS = {
         st.Page("page_scripts/nulls.py", title="Nulls & controls"),
         st.Page("page_scripts/validation.py", title="Validation results"),
         st.Page("page_scripts/forecast_error.py", title="Forecast error (Goyal-Welch)"),
+        st.Page("page_scripts/linear_models.py", title="Linear models"),
         st.Page("page_scripts/calibration.py", title="Calibration"),
         st.Page("page_scripts/uncertainty.py", title="Statistical uncertainty"),
     ],

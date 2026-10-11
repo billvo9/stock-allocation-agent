@@ -339,6 +339,37 @@ def oos_r2_vs(
     return r2, mean_inferences(improvement, ctx), np.cumsum(sse_base - sse_model)
 
 
+def clark_west_vs(
+    model: pd.DataFrame, baseline: pd.DataFrame, ctx: ScoringContext
+) -> list[Inference]:
+    """
+    Clark-West (2007) adjusted mean squared prediction error difference, for
+    a model that NESTS the baseline (the baseline is the model with some
+    parameters fixed, estimated on the same rows). Per observation:
+
+        (y - b)^2 - [(y - f)^2 - (b - f)^2]  =  2 (y - b)(f - b)
+
+    The adjustment removes the noise a correctly specified larger model adds
+    by estimating parameters that are zero under the null. The per-date mean
+    (date-normalized) goes through the run's inference methods. The test is
+    one-sided: evidence for the larger model is a positive mean; stored
+    p-values are two-sided like every other row. Only call this for pairs the
+    run registers as nested (DiagnosticsConfig.nested_comparisons).
+    """
+
+    target = ctx.target_column
+    joined = aligned_pair(model, baseline, target)
+    positions = _positions(joined, ctx)
+    label = joined[target].to_numpy(dtype=np.float64)
+    forecast = joined["prediction"].to_numpy(dtype=np.float64)
+    restricted = joined["prediction_baseline"].to_numpy(dtype=np.float64)
+    adjusted = per_session(2.0 * (label - restricted) * (forecast - restricted), positions, ctx)
+    counts = np.bincount(positions, minlength=len(ctx.sessions)).astype(np.float64)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        series = np.where(counts > 0, adjusted / counts, np.nan)
+    return mean_inferences(series, ctx)
+
+
 def cross_sectional_r2(scored: pd.DataFrame, positions: np.ndarray, ctx: ScoringContext):
     """
     R^2 of date-demeaned forecasts for date-demeaned labels (baseline: any
@@ -759,8 +790,12 @@ def score_model(
     *,
     baselines: Mapping[str, pd.DataFrame],
     horizon: int,
+    nested_baselines: Sequence[str] = (),
 ) -> ModelScore:
-    """Every evaluation metric and curve for one model's complete predictions."""
+    """
+    Every evaluation metric and curve for one model's complete predictions.
+    `nested_baselines` names the baselines this model nests (Clark-West rows).
+    """
 
     if output_kind not in OUTPUT_KINDS:
         raise ValueError(f"output_kind must be one of {OUTPUT_KINDS}; got {output_kind!r}.")
@@ -961,6 +996,8 @@ def score_model(
         r2, improvement, cumulative = oos_r2_vs(scored, baseline, ctx)
         add(f"oos_r2_vs_{baseline_name}", [r2])
         add(f"mse_improvement_vs_{baseline_name}", improvement)
+        if baseline_name in nested_baselines:
+            add(f"clark_west_vs_{baseline_name}", clark_west_vs(scored, baseline, ctx))
         for date, value in zip(ctx.dates, cumulative, strict=True):
             curves.append(
                 curve_row(

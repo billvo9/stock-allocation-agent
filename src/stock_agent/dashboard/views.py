@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -122,7 +123,9 @@ def sidebar() -> RunView | None:
         f"lockbox from {view.holdout_start.date()}"
     )
     selectable = _models(view)
-    default = selectable.loc[selectable["role"].isin(["null", "control"]), "name"].tolist()
+    default = selectable.loc[
+        selectable["role"].isin(["null", "control", "diagnostic", "candidate"]), "name"
+    ].tolist()
     st.sidebar.multiselect(
         "Models on comparison charts",
         selectable["name"].tolist(),
@@ -1085,10 +1088,144 @@ def _overlap_note(view: RunView, metrics: pd.DataFrame, model: str, comparator: 
     return text
 
 
-def _default_index(view: RunView, names: list[str]) -> int:
-    """First model whose decision-method mean rank IC is defined (else the first)."""
+LINEAR_MODEL_KEY = "linear_model"
 
-    for index, name in enumerate(names):
+
+def _coefficient_stability(coefficients: pd.DataFrame) -> pd.DataFrame:
+    """Descriptive summaries of stored coefficients across folds (no inference)."""
+
+    rows = coefficients[coefficients["feature"] != "__intercept__"]
+    summary = []
+    for feature, group in rows.groupby("feature", sort=True):
+        values = group["coefficient"]
+        signs = np.sign(values[values.abs() > 1e-12])
+        majority = max((signs > 0).sum(), (signs < 0).sum())
+        summary.append(
+            {
+                "feature": feature,
+                "folds": len(values),
+                "median coefficient": float(values.median()),
+                "share of folds selected (nonzero)": float((values.abs() > 1e-12).mean()),
+                "sign consistency (majority share)": (
+                    float(majority / len(signs)) if len(signs) else float("nan")
+                ),
+            }
+        )
+    return pd.DataFrame(summary)
+
+
+def linear_models(view: RunView) -> None:
+    ui.page_header(
+        "Linear models",
+        eyebrow="Evidence",
+        purpose=(
+            "Ridge, Lasso and Elastic Net with penalties chosen inside each training fold, and "
+            "unpenalized OLS as a diagnostic comparator."
+        ),
+    )
+    _stored_results_notice(view)
+    coefficients, selection = view.tables["coefficients"], view.tables["selection"]
+    if coefficients.empty:
+        ui.notice("notice", "This run has no linear models.")
+        return
+    label = view.record["spec"]["label"]
+    st.caption(
+        f"Label `{label['label_id']}`. Under the equal-weight excess label rank IC equals the raw "
+        "label's, while squared-error metrics, hit-rate base rates and rank-position levels "
+        "refer to excess returns."
+    )
+    ui.notice(
+        "warning",
+        "Four hindsight-selected names: these results check the pipeline and are not "
+        "product evidence.",
+    )
+    roles = dict(zip(view.models["name"], view.models["role"], strict=True))
+    names = [n for n in view.models["name"] if n in set(coefficients["model"])]
+    model = st.selectbox(
+        "Model",
+        names,
+        format_func=lambda n: style.legend_name(n, roles.get(n, "")),
+        key=LINEAR_MODEL_KEY,
+    )
+    metrics = view.tables["metrics"]
+    method = _method(view)
+    columns = st.columns(3)
+    ui.estimate_card(
+        columns[0],
+        "Mean rank IC",
+        figures.pooled_row(metrics, model, "mean_rank_ic", method),
+        method=figures.method_label(method, view.decision_method),
+        help=glossary.define("Rank IC"),
+    )
+    ui.estimate_card(
+        columns[1],
+        "d_t vs zero (mean squared-error advantage)",
+        figures.pooled_row(metrics, model, "mse_improvement_vs_zero", method),
+        method=figures.method_label(method, view.decision_method),
+    )
+    ui.estimate_card(
+        columns[2],
+        "d_t vs per_symbol_mean (selection control)",
+        figures.pooled_row(metrics, model, "mse_improvement_vs_per_symbol_mean", method),
+        method="research control, not a gate",
+    )
+    checks = view.tables["checks"]
+    warning = checks[
+        (checks["check"] == "candidate_below_selection_control") & (checks["model"] == model)
+    ]
+    if len(warning) and warning["passed"].eq(True).fillna(False).any():
+        ui.notice(
+            "warning",
+            f"{model}'s squared error is not below the per-symbol mean's (stored research "
+            "warning). On a hindsight-selected universe that control captures selection; this "
+            "is reported, not a gate.",
+        )
+    own = coefficients[coefficients["model"] == model]
+    chosen = selection[selection["model"] == model]
+    if len(chosen):
+        ui.section(
+            "Penalty chosen inside each training fold",
+            glossary.define("Nested selection"),
+        )
+        _chart(figures.chosen_penalty_by_fold(selection, model), "linear_penalty")
+        _chart(figures.selection_scores(selection, model), "linear_scores")
+    ui.section("Coefficients across folds", glossary.define("Standardized coefficient"))
+    _chart(figures.coefficient_paths(coefficients, model), "linear_coefficients")
+    st.dataframe(_coefficient_stability(own), hide_index=True)
+    st.caption("Descriptive summaries of the stored per-fold coefficients; no inference.")
+    with st.expander("Fitted transform parameters (training rows of each fold)"):
+        st.dataframe(
+            own.loc[
+                own["feature"] != "__intercept__",
+                ["fold_id", "feature", "median", "mean", "scale", "alpha", "converged"],
+            ],
+            hide_index=True,
+        )
+    cw = metrics[metrics["metric"].str.startswith("clark_west_vs_") & (metrics["model"] == model)]
+    if len(cw):
+        ui.section("Nested comparison (Clark-West)", glossary.define("Clark-West"))
+        for metric in sorted(cw["metric"].unique()):
+            baseline = metric.removeprefix("clark_west_vs_")
+            ui.estimate_card(
+                st,
+                f"Clark-West adjusted MSE difference, nested: {model} vs {baseline}",
+                figures.pooled_row(metrics, model, metric, method),
+                method=f"{figures.method_label(method, view.decision_method)}; one-sided test, "
+                "size not simulated",
+            )
+    _download(coefficients, "coefficients", view)
+
+
+def _default_index(view: RunView, names: list[str]) -> int:
+    """
+    The first candidate (then any model, in run order) whose decision-method
+    mean rank IC is defined; else the first name.
+    """
+
+    roles = dict(zip(view.models["name"], view.models["role"], strict=True))
+    order = sorted(range(len(names)), key=lambda i: (roles.get(names[i]) != "candidate", i))
+    for index in order:
+        name = names[index]
         row = figures.pooled_row(view.tables["metrics"], name, "mean_rank_ic", _method(view))
         if row is not None and row["status"] == "ok":
             return index

@@ -84,25 +84,44 @@ def test_each_version_validates_only_its_own_layout(dashboard_root):
 # --- representative 1.0 and 1.1 artifacts ---
 
 
-def test_both_versions_read_through_the_verified_reader(dashboard_root, schema_1_0_root):
-    root_1_1, _ = dashboard_root
-    root_1_0, _ = schema_1_0_root
-    record_1_1, tables_1_1 = artifacts.read_run(loader.list_runs(root_1_1)[0].path)
-    record_1_0, tables_1_0 = artifacts.read_run(loader.list_runs(root_1_0)[0].path)
-    assert record_1_1["spec"]["output_schema_version"] == "1.1"
-    assert record_1_0["spec"]["output_schema_version"] == "1.0"
-    assert list(tables_1_0["curves"].columns) == CURVES_1_0
-    assert "families" not in record_1_0["checks_summary"]
-    assert "decision_method" not in record_1_0["spec"]
-    for name in contract.TABLES:
-        shared = list(tables_1_0[name].columns)
-        pd.testing.assert_frame_equal(tables_1_0[name], tables_1_1[name][shared])
+def test_every_version_reads_through_the_verified_reader(
+    dashboard_root, schema_1_0_root, schema_1_1_root
+):
+    current_root, _ = dashboard_root
+    record, tables = artifacts.read_run(loader.list_runs(current_root)[0].path)
+    assert record["spec"]["output_schema_version"] == contract.OUTPUT_SCHEMA_VERSION
+    assert set(tables) == set(contract.TABLES)
+    for legacy_root, version in ((schema_1_0_root[0], "1.0"), (schema_1_1_root[0], "1.1")):
+        legacy_record, legacy = artifacts.read_run(loader.list_runs(legacy_root)[0].path)
+        assert legacy_record["spec"]["output_schema_version"] == version
+        assert set(legacy) == set(contract.tables(version))
+        assert not {"coefficients", "selection"} & set(legacy)
+        for name in contract.tables(version):
+            shared = list(legacy[name].columns)
+            pd.testing.assert_frame_equal(legacy[name], tables[name][shared])
+    legacy_record, legacy = artifacts.read_run(loader.list_runs(schema_1_0_root[0])[0].path)
+    assert list(legacy["curves"].columns) == CURVES_1_0
+    assert "families" not in legacy_record["checks_summary"]
+    assert "decision_method" not in legacy_record["spec"]
 
 
-def test_a_1_1_run_loads_with_every_field_recorded(dashboard_root):
+def test_a_1_1_run_shows_only_the_tables_1_2_added_as_gaps(schema_1_1_root):
+    root, _ = schema_1_1_root
+    view = _view(root)
+    assert view.schema_version == "1.1" and view.record_issues == ()
+    assert view.legacy_gaps == (
+        "coefficients: not recorded (schema 1.1)",
+        "selection: not recorded (schema 1.1)",
+    )
+    assert view.tables["coefficients"].empty and view.tables["selection"].empty
+    assert list(view.tables["selection"].columns) == list(contract.SCHEMAS["selection"])
+    assert (view.decision_method, view.decision_method_source) == ("fold_block_t", "recorded")
+
+
+def test_a_current_run_loads_with_every_field_recorded(dashboard_root):
     root, _ = dashboard_root
     view = _view(root)
-    assert view.schema_version == "1.1"
+    assert view.schema_version == contract.OUTPUT_SCHEMA_VERSION
     assert view.legacy_gaps == () and view.record_issues == ()
     assert (view.decision_method, view.decision_method_source) == ("fold_block_t", "recorded")
     reference = view.models[view.models["role"] == contract.UNSAFE_REFERENCE_ROLE].iloc[0]
@@ -301,7 +320,7 @@ def test_manifest_and_record_versions_must_agree(dashboard_root, tmp_path):
     manifest = json.loads(path.read_text())
     manifest["output_schema_version"] = "1.0"
     path.write_text(json.dumps(manifest))
-    with pytest.raises(ValueError, match="schema 1.0"):  # 1.1 curves under a 1.0 manifest
+    with pytest.raises(ValueError, match="unexpected files"):  # 1.2 tables under a 1.0 manifest
         artifacts.read_run(directory)
     with pytest.raises(loader.RunRefused) as refused:
         loader.load_run(directory)
@@ -313,7 +332,10 @@ def test_a_record_declaring_another_version_than_its_manifest_is_refused(dashboa
     record = copy.deepcopy(run.record)
     record["spec"]["output_schema_version"] = "1.0"
     directory = artifacts.write_run(_variant(run, record=record), tmp_path)  # manifest says 1.1
-    with pytest.raises(ValueError, match="declares schema 1.0 but the manifest says 1.1"):
+    with pytest.raises(
+        ValueError,
+        match=f"declares schema 1.0 but the manifest says {contract.OUTPUT_SCHEMA_VERSION}",
+    ):
         artifacts.read_run(directory)
 
 

@@ -49,6 +49,7 @@ MATURE = "mature"
 PENDING = "pending"
 NULL_BASELINE = "null baseline"
 SELECTION_CONTROL = "selection control (not a null baseline)"
+DIAGNOSTIC_COMPARATOR = "diagnostic comparator (unpenalized OLS, not a null baseline)"
 # Tolerance for reproducing T2's stored values from stored rows: both sum the
 # same float64 values in a different order, so the absolute error of a
 # running sum grows with the magnitude of the losses summed (scaled below).
@@ -119,7 +120,11 @@ def _classify(record: dict, models: pd.DataFrame) -> list[tuple[str, Comparator 
         if model["output_kind"] != "forecast":
             out.append((name, None, f"output kind {model['output_kind']}: no forecast scale"))
             continue
-        kind = {"null": NULL_BASELINE, "control": SELECTION_CONTROL}.get(model["role"])
+        kind = {
+            "null": NULL_BASELINE,
+            "control": SELECTION_CONTROL,
+            "diagnostic": DIAGNOSTIC_COMPARATOR,
+        }.get(model["role"])
         if kind is None:
             out.append((name, None, f"role {model['role']} is not a comparator role"))
             continue

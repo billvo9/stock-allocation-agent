@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -14,6 +15,10 @@ DEFAULT_TEST_START = pd.Timestamp("2026-01-01")
 TARGET_RETURN_COLUMN = "target_return"
 TARGET_START_COLUMN = "target_start_date"
 TARGET_END_COLUMN = "target_end_date"
+# The raw forward return, kept beside an excess label (never a feature: the
+# target_ prefix is refused by validate_feature_columns).
+RAW_TARGET_RETURN_COLUMN = "target_return_raw"
+BENCHMARKS = ("equal_weight",)
 
 
 def _require_int(value: object, name: str, minimum: int) -> int:
@@ -41,25 +46,54 @@ class LabelSpec:
     entered at the close `entry_lag` observations later and held for
     `horizon` observations of the same symbol:
 
-        target_return = price(t + entry_lag + horizon) / price(t + entry_lag) - 1
+        raw return = price(t + entry_lag + horizon) / price(t + entry_lag) - 1
 
-    The fields have no defaults so every experiment states its timing.
+    With benchmark=None the label is the raw return. With
+    benchmark="equal_weight" it is the raw return minus the equal-weight mean
+    raw return of the universe's names on the same date (see
+    add_equal_weight_excess_target), and the raw return is kept in
+    target_return_raw. The timing fields have no defaults so every
+    experiment states its timing.
     """
 
     horizon: int
     entry_lag: int
     price_column: str = "adjusted_close"
+    benchmark: str | None = None
+    min_cross_section: int = 2
 
     def __post_init__(self) -> None:
         _require_int(self.horizon, "horizon", minimum=1)
         _require_int(self.entry_lag, "entry_lag", minimum=0)
+        _require_int(self.min_cross_section, "min_cross_section", minimum=2)
+        if self.benchmark is not None and self.benchmark not in BENCHMARKS:
+            raise ValueError(
+                f"benchmark must be None or one of {BENCHMARKS}; got {self.benchmark!r}."
+            )
 
-    def apply(self, frame: pd.DataFrame) -> pd.DataFrame:
-        return add_forward_return_target(
+    @property
+    def label_id(self) -> str:
+        timing = f"{self.price_column}:horizon={self.horizon}:entry_lag={self.entry_lag}"
+        if self.benchmark is None:
+            return f"forward_simple_return:{timing}"
+        return (
+            f"{self.benchmark}_excess_forward_simple_return:{timing}"
+            f":min_cross_section={self.min_cross_section}"
+        )
+
+    def apply(self, frame: pd.DataFrame, *, universe: Sequence[str] | None = None) -> pd.DataFrame:
+        labeled = add_forward_return_target(
             frame,
             horizon=self.horizon,
             price_column=self.price_column,
             entry_lag=self.entry_lag,
+        )
+        if self.benchmark is None:
+            return labeled
+        if universe is None:
+            raise ValueError("An excess label needs the universe that defines its benchmark.")
+        return add_equal_weight_excess_target(
+            labeled, universe=universe, min_cross_section=self.min_cross_section
         )
 
 
@@ -68,6 +102,60 @@ class LabelSpec:
 # so trading at the observed close is infeasible, and some macro series are
 # published after the close on their release dates.
 MODEL_LABEL_SPEC = LabelSpec(horizon=20, entry_lag=1)
+# Primary alpha target from T4 (owner decision, 2026-10-10): the point-in-time
+# cross-sectional equal-weight excess return; the raw return stays stored.
+MODEL_EXCESS_LABEL_SPEC = LabelSpec(horizon=20, entry_lag=1, benchmark="equal_weight")
+
+EXCESS_AVAILABILITY_RULE = (
+    "An equal-weight excess label on date t depends on every universe name present on t, so "
+    "each row on t takes target_end_date = the latest member end date and target_start_date = "
+    "the earliest member start date. If any present name lacks a finite raw label, or fewer "
+    "than min_cross_section names are present, every row on t is unlabeled."
+)
+
+
+def add_equal_weight_excess_target(
+    labeled: pd.DataFrame, *, universe: Sequence[str], min_cross_section: int = 2
+) -> pd.DataFrame:
+    """
+    Replace the raw label with its point-in-time equal-weight excess.
+
+    For date t, C_t = the universe names present on t (rows of the frame).
+        target_return     = raw_i - mean over C_t of raw_j
+        target_return_raw = raw_i
+    Availability: the excess is known only once every member's label is
+    known, so each row on t gets the latest member target_end_date and the
+    earliest member target_start_date. Fail closed: if any present name has
+    no finite raw label (for example a missing exit price), or |C_t| <
+    min_cross_section, every row on t is unlabeled, so a missing price can
+    never shrink the benchmark and truncation never changes a matured label.
+    Symbols outside `universe` are refused (an index row must never enter
+    the benchmark).
+    """
+
+    min_cross_section = _require_int(min_cross_section, "min_cross_section", minimum=2)
+    members = set(universe)
+    outside = sorted(set(labeled["symbol"]) - members)
+    if outside:
+        raise ValueError(f"Rows outside the benchmark universe: {outside}.")
+    result = labeled.copy()
+    raw = result[TARGET_RETURN_COLUMN].astype("float64")
+    by_date = result.groupby("date", sort=False)
+    complete = (
+        by_date[TARGET_RETURN_COLUMN]
+        .transform(lambda values: bool(np.isfinite(values.to_numpy(dtype="float64")).all()))
+        .astype(bool)
+    )
+    size = by_date["symbol"].transform("size")
+    valid = complete & (size >= min_cross_section)
+    benchmark = by_date[TARGET_RETURN_COLUMN].transform("mean")
+    end = by_date[TARGET_END_COLUMN].transform("max")
+    start = by_date[TARGET_START_COLUMN].transform("min")
+    result[RAW_TARGET_RETURN_COLUMN] = raw.where(valid)
+    result[TARGET_RETURN_COLUMN] = (raw - benchmark).where(valid)
+    result[TARGET_START_COLUMN] = start.where(valid)
+    result[TARGET_END_COLUMN] = end.where(valid)
+    return result
 
 
 def add_forward_return_target(
