@@ -11,3 +11,4 @@ lxml
 edgartools==5.58.0
 plotly==7.1.0
 streamlit==1.64.0
+scikit-learn==1.9.1
