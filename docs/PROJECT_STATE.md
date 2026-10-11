@@ -8,19 +8,25 @@ Last reviewed: 2026-10-10
 
 ## Last checkpoint
 
-2026-10-10, milestone "T3.1 research workspace (Goyal-Welch views,
-maturity rule, design system)", verified on branch
-`feature/dashboard-research-workspace` at `5234102` (`84413b0` code,
-`5234102` docs; merge pending). The branch is stacked on PR #45
-(`fix/t2-diagnostics-record-contract`, head `9492892`, T2 output schema
-1.1), which was open with its CI `test` check passing as of 2026-10-10
-(merge pending); `origin/main` is `0c0304a`.
+2026-10-11, milestone "T4 phase A: excess label, nested selection plumbing,
+output contract 1.2, owner-core skeleton", verified on branch
+`feature/linear-model-baselines` at `e4939c6` (`99e9000` dependency,
+`d435837` code and tests, `e4939c6` docs), based on `ca68edc` (merge
+pending; phase C still to come). The owner exercise (estimator core) is
+next.
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `0c0304a` as of last fetch,
-verified 2026-10-10):
+Recently merged to `main` (`origin/main` = `ca68edc` as of last fetch,
+verified 2026-10-11):
 
+- PR #46 (`ca68edc`): `84413b0` feat: research workspace with
+  date-normalized Goyal-Welch views and a shared design system; `5234102`
+  docs: T3.1 research workspace; `1b89ccf` docs: checkpoint.
+- PR #45 (`1eda1d1`): `7594a5b` feat: decision method, interval settings
+  and reference roles (schema 1.1); `a2442c6` fix: fail closed on summary
+  disagreements and label schema 1.0 gaps; `505de3b` docs; `9492892` docs:
+  checkpoint.
 - PR #44 (`0c0304a`): `3addc34` chore: pin plotly and streamlit for the
   research dashboard; `14b7c40` fix: restrict the run reader to files
   inside the run directory; `1f56ec3` feat: read-only research dashboard
@@ -68,8 +74,35 @@ ML phase.
   `docs/research/model_validation.md`.
 - The universe (U) and market-context (C) research is merged (PRs #41, #42);
   see `docs/research/universe_and_market_context.md`.
-- This branch implements T3.1, a bounded refinement of the dashboard before
-  T4 (`docs/research/diagnostics_dashboard.md`, "Maturity", "Goyal-Welch
+- This branch implements T4 (`docs/research/linear_models.md`). Phase A is
+  done; the estimator core is the owner's exercise:
+  - primary label: the point-in-time equal-weight excess forward return
+    (each row on a date takes the latest member label end; incomplete
+    dates are unlabeled; raw return stored in `inputs.target_return_raw`);
+  - Ridge, Lasso and Elastic Net with penalties chosen by nested purged
+    temporal validation inside each outer training fold (inner folds from
+    the outer training rows only, pre-registered dimensionless grids,
+    date-normalized inner MSE, one outer refit call); OLS as a
+    `diagnostic` role comparator; Clark-West only for registered nested
+    pairs (excess label: ols vs zero);
+  - output contract 1.2: `coefficients` and `selection` tables with
+    per-table versioning (1.0 and 1.1 runs stay readable);
+  - checks: pre-training evaluation as-of vs folds, inner folds inside
+    training, fit convergence, excess label centred, Clark-West one-sided
+    (info), candidate below the per-symbol-mean selection control
+    (research warning, never a gate);
+  - dashboard "Linear models" page; candidate colours and markers in the
+    design system;
+  - the owner core (`model_diagnostics/linear.py`) is a skeleton; its 12
+    contract tests are strict xfails, validated against a correct and
+    three wrong implementations before hand-off.
+  - Real-data check (2026-10-11, excess label, T2 models only, scratch
+    output): the as-of cross-check passes on the excess frame (as-of
+    2024-12-31 = max `score_available_at`; 24 of 24 folds equal their
+    latest test label end); each date's excess labels sum to zero; rank IC
+    equals the raw label's (per_symbol_mean +0.1263, fold-block t 2.29).
+- T3.1 (merged in PR #46) refined the dashboard before T4
+  (`docs/research/diagnostics_dashboard.md`, "Maturity", "Goyal-Welch
   views", "Design system"). No T2 code changed.
   - Maturity: the evaluation as-of is the last session of the truncated
     development frame (`lockbox_evidence.max_date`). Only predictions whose
@@ -95,7 +128,7 @@ ML phase.
     gaps, no record issues, status WARNING (per-symbol-mean selection
     control), no pending predictions, and all nine forecast
     model-comparator pairs reproduce T2.
-- PR #45 (open) fixes the T2 reporting contract found by T3 (output schema
+- PR #45 (merged) fixed the T2 reporting contract found by T3 (output schema
   1.1, additive; `docs/research/model_diagnostics.md`, "Saved outputs"):
   - the checks summary adds per-family total / passed / failed /
     undetermined counts (the 1.0 summary omitted checks without a stored
@@ -162,6 +195,22 @@ ML phase.
   - **Context series are date-common.** They can affect cross-sectional
     ranking only through pre-registered interactions.
 - No prediction model is selected or implemented yet.
+
+Owner decisions (2026-10-10, T4 brief and answers): primary alpha target =
+point-in-time cross-sectional equal-weight excess return, raw return
+preserved as secondary data (stored; metrics on the excess label);
+scikit-learn pinned; Ridge, Lasso and Elastic Net through the T1/T2 harness
+with hyperparameters chosen only by nested purged temporal validation
+inside each outer training fold; OLS only as an optional diagnostic
+comparator; reuse T2 metrics, inference, nulls and controls and the T3
+dashboard; no lockbox; four names are not product evidence; the
+per-symbol mean is a research warning or control, not a hard gate;
+Clark-West only for truly nested comparisons; candidate colours in the
+design system; cross-check evaluation_asof against fold
+score_available_at before training and stop on disagreement; the owner
+codes the estimator core (learning-core split). The plan approved on
+2026-10-10 covers the excess availability rule, the `diagnostic` role,
+the additive 1.2 tables and the run script's default label.
 
 Owner decisions (2026-10-10, T3.1 brief): run T2 once under schema 1.1
 without evaluating the holdout; Goyal-Welch uses identical observations and
@@ -363,31 +412,22 @@ Coverage limitations found are tracked as open item 2.
 
 ## Last verified quality baseline
 
-Measured 2026-10-10 with `python3 scripts/verify.py` on
-`feature/dashboard-research-workspace` (base `9492892`; the working tree
-then held exactly the content committed as `84413b0` and `5234102`); gates
-ran with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, streamlit
-1.64.0, plotly 7.1.0, pyarrow 25.0.1). Exit 0.
+Measured 2026-10-11 with `python3 scripts/verify.py` on
+`feature/linear-model-baselines` (base `ca68edc`; the working tree then
+held exactly the content committed as `99e9000`, `d435837`, `e4939c6`);
+gates ran with `.venv` tools (Python 3.12.2, pytest
+9.1.1, ruff 0.16.2, streamlit 1.64.0, plotly 7.1.0, pyarrow 25.0.1,
+scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
 
-- `pytest -q`: 1192 passed (1140 before + 52 T3.1 tests)
-- `python -m pytest -q`: 1192 passed
-- `ruff format --check src tests scripts .claude/hooks`: 183 files
+- `pytest -q`: 1229 passed, 12 xfailed (the owner-core contract tests)
+- `python -m pytest -q`: 1229 passed, 12 xfailed
+- `ruff format --check src tests scripts .claude/hooks`: 190 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- Suite runtime about 73-75 s per pass (dashboard tests about 40 s).
-- Mutation checks (T3.1): 22 deliberate violations, each in an isolated
-  copy, all caught (fixed comparator list, observation-weighted mean,
-  same-date regime threshold, inference columns in filtered tables,
-  contrast function, label window / fold / duplicate checks, NaN estimates,
-  pending listing, retrospective label, selection-control default,
-  caption contrast and focus rules, Plotly tweening, stored-results notice,
-  unsafe reference in the pending list, curve tolerance, notice words,
-  live pills, filtered-curve gaps, omitted comparators). Earlier mutants
-  (schema 1.1: 21, T3: 20, T2: 47, PR #40: 34) were not re-run.
-- Real-data check (read-only, not committed): every page renders with no
-  exception on the 2026-10-10 development run (AppTest), each forecast
-  model draws its three Goyal-Welch charts with no blocking notice, and
-  the pages were reviewed in a browser at desktop and phone widths.
+- Suite runtime about 46-48 s per pass.
+- Mutation checks (T4 phase A): 18 deliberate violations, each in an
+  isolated copy, all caught. Earlier mutants (T3.1: 22, schema 1.1: 21,
+  T3: 20, T2: 47, PR #40: 34) were not re-run.
 
 
 ## Open items
@@ -496,18 +536,23 @@ ran with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, streamlit
        `write_run(extra_record)` key collisions, purge-band dates, the PSI
        floor, degenerate cross-sectional R² for date-constant forecasts, and
        the decile interval estimand.
-   - T3.1 follow-ups (reviews of 2026-10-10):
-     - before T4: model colours are hashed into the 7 Okabe-Ito colours, so
-       candidate names can collide with each other and with T2 models
-       (assign explicit colours); a nested candidate needs a Clark-West
-       comparison rather than a plain MSE difference;
-     - Plotly charts have no text alternative; some figure greys and
-       method colours are still literals outside the tokens; Streamlit's own
-       widget animations do not follow the dashboard's reduced-motion rule;
-     - cross-check the evaluation as-of against the folds'
-       `score_available_at`;
-     - `.claude/launch.json` (a local preview launch config, untracked) is
-       in the guardrail area and was not committed.
+   - T4 open items:
+     - the owner core (`linear.py`) and phase C (real run, reviews, PR);
+     - the size of the Clark-West and MSE-difference tests is not simulated
+       (T2's simulation covers rank IC only);
+     - Holm correction across candidate families and a deflated Sharpe
+       from the ledger's variant count (plan page 6) are not built;
+     - `validate_feature_columns` still accepts `control_*` columns
+       (only `ModelSpec` refuses them for candidates and the diagnostic);
+       rejecting them is a contract change;
+     - model names outside the fixed palettes still hash into Okabe-Ito.
+   - T3.1 follow-ups (reviews of 2026-10-10): Plotly charts have no text
+     alternative; some figure greys and method colours are still literals
+     outside the tokens; Streamlit's own widget animations do not follow
+     the dashboard's reduced-motion rule; `.claude/launch.json` (a local
+     preview launch config, untracked) is in the guardrail area and was not
+     committed. Closed by T4: candidate colours, Clark-West for nested
+     pairs, the evaluation as-of vs `score_available_at` cross-check.
    - Dashboard dependencies: Streamlit 1.64 caps pyarrow below 26, tying
      the data layer's pyarrow to Streamlit releases; its web stack
      (starlette, uvicorn) is unpinned. The test suite runs AppTest twice
@@ -547,27 +592,27 @@ ran with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, streamlit
 
 ## Next steps
 
-1. Owner reviews and merges PR #45 (T2 output schema 1.1), then the T3.1
-   pull request stacked on it (merging is owner-only); confirm CI passes.
+1. Owner exercise: implement `src/stock_agent/model_diagnostics/linear.py`
+   (`docs/research/linear_models.md`, "Owner exercise") and remove the
+   strict-xfail markers. Then T4 phase C: core review, the real
+   development run with `--with-linear-models`, reviews, PR (merging is
+   owner-only).
 2. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
    `docs/research/diagnostics_and_visualization_plan.md`:
    - T2: diagnostics layer, run outputs and ledger, null models (merged,
      PR #43);
    - T3: Plotly and Streamlit dashboard, run on the null models (merged,
-     PR #44); its T2 reporting fix is PR #45 and the T3.1 workspace is on
-     this branch (both merge pending); T4 pages should build from
-     `dashboard/components.py` and `theme.py`;
-   - T4: Ridge, Lasso, and Elastic Net, with coefficient stability;
+     PR #44); the T2 reporting fix (PR #45) and the T3.1 workspace (PR #46)
+     are merged;
+   - T4: Ridge, Lasso, and Elastic Net, with coefficient stability (phase
+     A on this branch; owner core next);
    - T5: portfolio readiness;
    - T6: holdout evaluation, once per pre-registered model.
 
-   Owner decisions:
-   - raw vs excess-over-equal-weight label (excess recommended);
-   - whether T4 must beat the per-symbol-mean selection control on paired
-     per-date differences, not only the nulls (T2 finding);
-   - scikit-learn and the learning-core split for the estimator core
-     (before T4).
+   Owner decisions taken 2026-10-10: the excess label, pinned
+   scikit-learn, the owner codes the estimator core, and the per-symbol
+   mean is a reported control, not a gate.
 3. Owner decision from open item 7: enable branch protection on `main`.
 4. U and C tracks, in parallel with T2-T4 (see "Sequencing against T4" in
    `docs/research/universe_and_market_context.md`). Owner decisions:
