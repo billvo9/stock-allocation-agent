@@ -190,10 +190,22 @@ def _metric_table(rows: pd.DataFrame) -> pd.DataFrame:
     return rows.loc[:, METRIC_COLUMNS]
 
 
+# Squared-error differences are ~1e-6 to 1e-3: fixed 3-decimal display would read 0.000.
+SMALL_FMT = "{:.2e}"
+
+
 def _metric_card(
-    column, label: str, row: pd.Series | None, *, fmt: str = "{:.3f}", term: str | None = None
+    column,
+    label: str,
+    row: pd.Series | None,
+    *,
+    fmt: str = "{:.3f}",
+    term: str | None = None,
+    note: str | None = None,
 ):
-    ui.estimate_card(column, label, row, fmt=fmt, help=glossary.define(term) if term else None)
+    ui.estimate_card(
+        column, label, row, fmt=fmt, help=glossary.define(term) if term else None, note=note
+    )
 
 
 def _day(value) -> str:
@@ -641,6 +653,7 @@ def validation(view: RunView) -> None:
         f"Mean rank IC, {method_name}",
         figures.pooled_row(metrics, name, "mean_rank_ic", method),
         term="Rank IC",
+        note=figures.rank_ic_coverage(metrics, name),
     )
     _metric_card(
         cards[1],
@@ -1001,6 +1014,7 @@ def _forecast_error_body(view: RunView) -> None:
                 columns[0],
                 f"d_t vs {comparator.label}",
                 figures.pooled_row(metrics, model, f"mse_improvement_vs_{comparator.name}", method),
+                fmt=SMALL_FMT,
                 method=(
                     f"{figures.method_label(method, view.decision_method)}: "
                     f"{D_ESTIMANDS.get(method, 'stored estimate')}"
@@ -1012,6 +1026,7 @@ def _forecast_error_body(view: RunView) -> None:
                 figures.pooled_row(
                     metrics, model, f"oos_r2_vs_{comparator.name}", "circular_block_bootstrap"
                 ),
+                fmt="{:.2%}",
                 method="percentile interval, uncalibrated (observation-weighted)",
                 help=glossary.define("OOS R²"),
             )
@@ -1130,9 +1145,11 @@ def linear_models(view: RunView) -> None:
         return
     label = view.record["spec"]["label"]
     st.caption(
-        f"Label `{label['label_id']}`. Under the equal-weight excess label rank IC equals the raw "
-        "label's, while squared-error metrics, hit-rate base rates and rank-position levels "
-        "refer to excess returns."
+        f"Label `{label['label_id']}`. Subtracting the same date mean from every name leaves "
+        "each date's ranking unchanged, so a fixed forecast scores the same rank IC on either "
+        "label; a model fitted on the excess label learns different coefficients, so its own "
+        "rank IC can differ from a raw-label fit. Squared-error metrics, hit-rate base rates "
+        "and rank-position levels refer to excess returns."
     )
     ui.notice(
         "warning",
@@ -1150,23 +1167,32 @@ def linear_models(view: RunView) -> None:
     metrics = view.tables["metrics"]
     method = _method(view)
     columns = st.columns(3)
+    coverage = figures.rank_ic_coverage(metrics, model)
     ui.estimate_card(
         columns[0],
         "Mean rank IC",
         figures.pooled_row(metrics, model, "mean_rank_ic", method),
         method=figures.method_label(method, view.decision_method),
         help=glossary.define("Rank IC"),
+        note=(
+            f"{coverage}: the other dates have a constant forecast (no ranking). Compare "
+            "models only on the same dates."
+            if coverage
+            else None
+        ),
     )
     ui.estimate_card(
         columns[1],
         "d_t vs zero (mean squared-error advantage)",
         figures.pooled_row(metrics, model, "mse_improvement_vs_zero", method),
+        fmt=SMALL_FMT,
         method=figures.method_label(method, view.decision_method),
     )
     ui.estimate_card(
         columns[2],
         "d_t vs per_symbol_mean (selection control)",
         figures.pooled_row(metrics, model, "mse_improvement_vs_per_symbol_mean", method),
+        fmt=SMALL_FMT,
         method="research control, not a gate",
     )
     checks = view.tables["checks"]
@@ -1192,7 +1218,12 @@ def linear_models(view: RunView) -> None:
     ui.section("Coefficients across folds", glossary.define("Standardized coefficient"))
     _chart(figures.coefficient_paths(coefficients, model), "linear_coefficients")
     st.dataframe(_coefficient_stability(own), hide_index=True)
-    st.caption("Descriptive summaries of the stored per-fold coefficients; no inference.")
+    st.caption(
+        "Descriptive summaries of the stored per-fold coefficients; no inference. Expanding "
+        "windows share most of their training rows, so agreement across folds is far from "
+        "independent evidence, and the chosen penalty differs by fold, so a sign can follow the "
+        "penalty (heavy ridge shrinkage moves toward each feature's marginal effect)."
+    )
     with st.expander("Fitted transform parameters (training rows of each fold)"):
         st.dataframe(
             own.loc[
@@ -1210,6 +1241,7 @@ def linear_models(view: RunView) -> None:
                 st,
                 f"Clark-West adjusted MSE difference, nested: {model} vs {baseline}",
                 figures.pooled_row(metrics, model, metric, method),
+                fmt=SMALL_FMT,
                 method=f"{figures.method_label(method, view.decision_method)}; one-sided test, "
                 "size not simulated",
             )

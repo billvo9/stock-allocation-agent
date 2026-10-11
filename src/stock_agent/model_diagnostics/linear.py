@@ -37,8 +37,10 @@ from stock_agent.model_validation.preprocessing import MedianImputer, Standardiz
 
 METHODS = ("ridge", "lasso", "elastic_net", "ols")
 PENALIZED = ("ridge", "lasso", "elastic_net")
-# Grid points whose scores differ by less than this (relative) are tied; the
-# tie rule then decides (larger penalty, then larger l1_ratio).
+# Grid points whose scores differ from the best by at most
+# TIE_TOLERANCE * max(1, |best|) are tied: absolute for scores below 1 (inner
+# MSEs here are ~1e-3), relative above. The tie rule then decides (larger
+# penalty, then larger l1_ratio).
 TIE_TOLERANCE = 1e-12
 
 
@@ -106,7 +108,7 @@ class LinearForecast:
             raise ValueError("X must be 2-D with one row per label.")
         if matrix.shape[0] < 2 or not np.isfinite(target).all():
             raise ValueError("A fit needs at least two rows with finite labels.")
-        self._fitted = True  # a failed fit is not retried on the same object
+        self._fitted = True  # past input validation: never refit this object, even on failure
 
         imputer = MedianImputer().fit(matrix)
         filled = imputer.transform(matrix)
@@ -136,6 +138,9 @@ class LinearForecast:
             warnings.simplefilter("always", ConvergenceWarning)
             model.fit(standardized, target)
         stalled = any(issubclass(w.category, ConvergenceWarning) for w in caught)
+        for w in caught:  # recorded as converged_ = False; any other warning still surfaces
+            if not issubclass(w.category, ConvergenceWarning):
+                warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
         iterations = np.atleast_1d(getattr(model, "n_iter_", 0) or 0)
         self.converged_ = bool(not stalled and (iterations < self.max_iter).all())
         self.coef_ = np.asarray(model.coef_, dtype=np.float64).reshape(-1)

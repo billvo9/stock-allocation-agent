@@ -97,11 +97,13 @@ def estimate_card(
     fmt: str = "{:.3f}",
     help: str | None = None,
     method: str | None = None,
+    note: str | None = None,
 ) -> None:
     """
-    One stored metric row in a card: the estimate, then its stored interval,
-    p-value and status, so uncertainty is read with the number. A missing or
-    unavailable row shows a dash and its stored reason.
+    One stored metric row in a card: the estimate, then its stored interval
+    (in the same format), p-value and status, so uncertainty is read with the
+    number. A missing or unavailable row shows a dash and its stored reason.
+    `note` adds a caption under an available estimate (e.g. its coverage).
     """
 
     digest = hashlib.sha1(f"{label}|{method}".encode()).hexdigest()[:12]
@@ -119,15 +121,16 @@ def estimate_card(
         st.metric(label, fmt.format(row["estimate"]), help=help)
         details = []
         if not pd.isna(row["ci_low"]):
-            details.append(
-                f"{row['ci_level']:.0%} interval [{row['ci_low']:.3f}, {row['ci_high']:.3f}]"
-            )
+            low, high = fmt.format(row["ci_low"]), fmt.format(row["ci_high"])
+            details.append(f"{row['ci_level']:.0%} interval [{low}, {high}]")
         if not pd.isna(row["p_value"]):
             details.append(f"p = {row['p_value']:.3f} vs {row['null_value']:g}")
         if row["status"] == "warning":
             details.append(f"warning: {row['reason']}")
         if details:
             st.caption("; ".join(details))
+        if note:
+            st.caption(note)
 
 
 def card(key: str):

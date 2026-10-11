@@ -74,6 +74,34 @@ def pooled_row(metrics: pd.DataFrame, model: str, metric: str, method: str) -> p
     return None if rows.empty else rows.iloc[0]
 
 
+def rank_ic_coverage(metrics: pd.DataFrame, model: str) -> str | None:
+    """
+    Where a model's pooled rank IC is defined, from stored rows only, e.g.
+    'defined on 796 of 1489 scored dates, 13 of 24 folds', when some but not
+    all scored dates are unavailable (a constant forecast has no ranking).
+    None when it is defined on every scored date, or on none (the estimate is
+    then unavailable and carries its own reason). Rank ICs over different
+    dates are not comparable, so the coverage is shown with the estimate.
+    """
+
+    gaps = pooled_row(metrics, model, "n_dates_rank_ic_unavailable", "point")
+    if gaps is None or gaps["status"] != "ok":
+        return None
+    total, missing = int(gaps["n"]), int(gaps["estimate"])
+    if not 0 < missing < total:
+        return None
+    text = f"defined on {total - missing} of {total} scored dates"
+    folds = metrics[
+        (metrics["model"] == model)
+        & (metrics["metric"] == "mean_rank_ic")
+        & metrics["fold_id"].notna()
+    ]
+    if len(folds):
+        defined = folds.loc[folds["status"] == "ok", "fold_id"].nunique()
+        text += f", {defined} of {folds['fold_id'].nunique()} folds"
+    return text
+
+
 def _unavailable_note(row: pd.Series | None) -> str:
     if row is None:
         return "not stored"
@@ -411,6 +439,19 @@ def rank_ic_forest(
             xanchor="left",
             font={"color": style.STATUS_COLOURS["unavailable"]},
         )
+    for label, name in zip(labels, ordered["name"], strict=True):
+        coverage = rank_ic_coverage(metrics, name)
+        if coverage:  # a subset of dates: not comparable with full-coverage rows
+            figure.add_annotation(
+                x=1,
+                xref="paper",
+                y=label,
+                yshift=-18,
+                text=coverage,
+                showarrow=False,
+                xanchor="right",
+                font={"color": style.STATUS_COLOURS["unavailable"], "size": 11},
+            )
     figure.add_vline(x=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
     layout = style.base_layout(title, x_title="mean rank IC", height=160 + 60 * len(labels))
     layout["yaxis"]["categoryorder"] = "array"

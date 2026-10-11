@@ -26,11 +26,13 @@ import hashlib
 import itertools
 import math
 from collections.abc import Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
+from threadpoolctl import threadpool_limits
 
 from stock_agent.features.training import (
     EXCESS_AVAILABILITY_RULE,
@@ -494,13 +496,16 @@ def run_diagnostics(
                 lockbox_start=lockbox_start,
                 record=record,
             )
-        return run_walk_forward(
-            data,
-            folds,
-            feature_columns=list(spec.feature_columns),
-            make_estimator=_factory(spec, config.seed, tag),
-            lockbox_start=lockbox_start,
-        )
+        # The OLS diagnostic gets the nested fits' single-threaded BLAS (reproducible sums).
+        threads = threadpool_limits(limits=1) if nested.is_linear(spec) else nullcontext()
+        with threads:
+            return run_walk_forward(
+                data,
+                folds,
+                feature_columns=list(spec.feature_columns),
+                make_estimator=_factory(spec, config.seed, tag),
+                lockbox_start=lockbox_start,
+            )
 
     predictions: dict[str, pd.DataFrame] = {}
     audit: dict[str, dict] = {}
@@ -911,7 +916,14 @@ def _t4_checks(
     ]
     for name, spec in specs.items():
         if nested.is_nested(spec):
-            verified = len({row["fold_id"] for row in selection_rows if row["model"] == name})
+            # From the stored rows: a fold counts only if every inner label it records
+            # ends before that outer fold's test start.
+            own = [row for row in selection_rows if row["model"] == name]
+            starts = {fold.fold_id: fold.test_start for fold in folds}
+            late = {
+                r["fold_id"] for r in own if not r["max_inner_label_end"] < starts[r["fold_id"]]
+            }
+            verified = len({row["fold_id"] for row in own} - late)
             rows.append(
                 _check(
                     "nested_selection_inside_training",

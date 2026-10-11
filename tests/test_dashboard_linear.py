@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -15,7 +16,7 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from stock_agent.dashboard import evaluation, loader, style, theme
+from stock_agent.dashboard import evaluation, figures, loader, style, theme, views
 from stock_agent.model_diagnostics import artifacts, contract
 
 APP = Path(__file__).resolve().parents[1] / "src" / "stock_agent" / "dashboard" / "app.py"
@@ -90,6 +91,77 @@ def test_the_linear_models_page_shows_selection_coefficients_and_clark_west(
     for name in ("ridge", "lasso", "elastic_net", "ols"):
         app.selectbox(key="linear_model").set_value(name).run()
         assert not app.exception, name
+
+
+def test_squared_error_cards_are_legible_at_their_scale(linear_run_root, monkeypatch):
+    root, *_ = linear_run_root
+    app = _app(root, monkeypatch, PAGE)
+    cards = {m.label: m.value for m in app.metric}
+    small = re.compile(r"-?\d\.\d{2}e[+-]\d{2}")  # ~1e-6 values never round to 0.000
+    for label in (
+        "d_t vs zero (mean squared-error advantage)",
+        "d_t vs per_symbol_mean (selection control)",
+    ):
+        assert small.fullmatch(cards[label]), (label, cards[label])
+    intervals = [c.value for c in app.caption if "interval [" in c.value]
+    assert len(intervals) == 3  # rank IC, then the two squared-error cards
+    bounds = re.compile(r"interval \[-?\d\.\d{2}e[+-]\d{2}, -?\d\.\d{2}e[+-]\d{2}\]")
+    assert all(bounds.search(text) for text in intervals[1:]), intervals
+
+
+def _coverage_metrics(unavailable: float) -> pd.DataFrame:
+    base = {"model": "m", "inference_method": "point", "status": "ok", "reason": None}
+    return pd.DataFrame(
+        [
+            {**base, "metric": "n_dates_rank_ic_unavailable", "fold_id": None,
+             "estimate": unavailable, "n": 10},
+            {**base, "metric": "mean_rank_ic", "fold_id": 0, "estimate": 0.1, "n": 7},
+            {**base, "metric": "mean_rank_ic", "fold_id": 1, "estimate": None, "n": 3,
+             "status": "unavailable", "reason": "undefined"},
+        ]
+    )  # fmt: skip
+
+
+def test_a_partially_defined_rank_ic_carries_its_coverage():
+    assert figures.rank_ic_coverage(_coverage_metrics(3.0), "m") == (
+        "defined on 7 of 10 scored dates, 1 of 2 folds"
+    )
+    assert figures.rank_ic_coverage(_coverage_metrics(0.0), "m") is None
+    assert figures.rank_ic_coverage(_coverage_metrics(10.0), "m") is None  # none: unavailable
+    assert figures.rank_ic_coverage(_coverage_metrics(3.0), "other") is None
+
+
+def test_the_forest_and_cards_show_where_rank_ic_is_defined(linear_run_root, monkeypatch):
+    root, *_ = linear_run_root
+    view = _view(root)
+    metrics = view.tables["metrics"].copy()
+    gaps = (metrics["model"] == "lasso") & (metrics["metric"] == "n_dates_rank_ic_unavailable")
+    assert gaps.sum() == 1
+    metrics.loc[gaps, "estimate"] = 5.0  # as if lasso were constant on five scored dates
+    coverage = figures.rank_ic_coverage(metrics, "lasso")
+    assert coverage.startswith("defined on ")
+    figure = figures.rank_ic_forest(
+        metrics, view.models, methods=["fold_block_t"], decision_method="fold_block_t"
+    )
+    notes = [a.text for a in figure.layout.annotations]
+    assert coverage in notes
+    assert not any(n.startswith("defined on") and n != coverage for n in notes)
+
+
+def test_coefficient_stability_counts_selection_and_the_majority_sign():
+    coefficients = pd.DataFrame(
+        {
+            "feature": ["a"] * 4 + ["b"] * 4 + ["__intercept__"] * 4,
+            "coefficient": [0.2, 0.1, -0.05, 0.0, 0.0, 0.0, 0.0, -0.3, 1.0, 1.0, 1.0, 1.0],
+        }
+    )
+    table = views._coefficient_stability(coefficients).set_index("feature")
+    assert list(table.index) == ["a", "b"]  # the intercept is not a feature
+    assert table.loc["a", "median coefficient"] == pytest.approx(0.05)
+    assert table.loc["a", "share of folds selected (nonzero)"] == 0.75
+    assert table.loc["a", "sign consistency (majority share)"] == pytest.approx(2 / 3)
+    assert table.loc["b", "share of folds selected (nonzero)"] == 0.25
+    assert table.loc["b", "sign consistency (majority share)"] == 1.0
 
 
 def test_candidates_are_the_default_where_models_are_compared(linear_run_root, monkeypatch):

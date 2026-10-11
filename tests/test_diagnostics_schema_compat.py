@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import json
+import shutil
 
 import pandas as pd
 import pytest
@@ -325,6 +326,19 @@ def test_manifest_and_record_versions_must_agree(dashboard_root, tmp_path):
     with pytest.raises(loader.RunRefused) as refused:
         loader.load_run(directory)
     assert refused.value.reason == "integrity_check_failed"
+
+
+def test_tables_carrying_columns_newer_than_the_manifest_are_refused(schema_1_1_root, tmp_path):
+    root, _ = schema_1_1_root
+    (source,) = (root / "runs").iterdir()
+    directory = tmp_path / source.name
+    shutil.copytree(source, directory)  # never edit the shared fixture
+    path = directory / "manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["output_schema_version"] = "1.0"  # same file set as 1.1; 1.1 columns remain
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match=r"\(schema 1\.0\) columns"):
+        artifacts.read_run(directory)
 
 
 def test_a_record_declaring_another_version_than_its_manifest_is_refused(dashboard_root, tmp_path):

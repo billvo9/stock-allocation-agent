@@ -53,6 +53,21 @@ def test_an_inner_fold_reaching_the_outer_test_period_is_refused(linear_run_root
         nested.verify_inner_folds(labeled, folds[0], later)
 
 
+def test_an_inner_label_ending_exactly_at_the_outer_test_start_is_refused(linear_run_root):
+    _, _, labeled, folds, design = linear_run_root
+    outer = folds[-1]
+    inner = nested.build_inner_folds(labeled, outer, design)
+    last = inner[-1].test_rows[-1]
+    sessions = labeled["date"].drop_duplicates().sort_values()
+    before = sessions[sessions < outer.test_start].iloc[-1]
+    edited = labeled.copy()
+    edited.loc[edited.index[last], "target_end_date"] = before
+    nested.verify_inner_folds(edited, outer, inner)  # one session earlier is allowed
+    edited.loc[edited.index[last], "target_end_date"] = outer.test_start
+    with pytest.raises(LeakageError, match="at or after the outer test start"):
+        nested.verify_inner_folds(edited, outer, inner)
+
+
 def test_inner_folds_respect_the_outer_train_start(linear_run_root):
     _, _, labeled, folds, design = linear_run_root
     floor = labeled["date"].drop_duplicates().sort_values().iloc[10]
@@ -109,6 +124,38 @@ def test_each_outer_fold_is_refit_once_with_its_chosen_scalars(linear_run_root, 
     assert chosen.groupby("fold_id").size().eq(1).all()
 
 
+def test_the_outer_refit_is_one_harness_call_over_every_fold(
+    linear_run_root, linear_doubles, monkeypatch
+):
+    _, _, labeled, folds, design = linear_run_root
+    double, selector = linear_doubles
+    spec = next(
+        s
+        for s in nested.linear_models(
+            LabelSpec(5, 1, benchmark="equal_weight"), FEATURES, design, estimator=double
+        )
+        if s.name == "ridge"
+    )
+    calls = []
+    original = nested.run_walk_forward
+
+    def recording(frame, folds_given, **kwargs):
+        calls.append(tuple(folds_given))
+        return original(frame, folds_given, **kwargs)
+
+    monkeypatch.setattr(nested, "run_walk_forward", recording)
+    frame = labeled.assign(control_symbol_code=0, control_session_index=0)
+    inner = {f.fold_id: nested.build_inner_folds(frame, f, design) for f in folds}
+    nested.run_nested(
+        frame, folds, spec, inner, selector=selector, lockbox_start=folds[0].holdout_start
+    )
+    grid = spec.params["selection"]["grid"]
+    assert len(calls) == len(grid) * len(folds) + 1
+    for k, outer in enumerate(folds):  # one call per grid point on that fold's inner folds
+        assert calls[k * len(grid) : (k + 1) * len(grid)] == [inner[outer.fold_id]] * len(grid)
+    assert calls[-1] == tuple(folds)  # every outer fold, in one call
+
+
 def test_a_selector_must_score_every_grid_point(linear_run_root, linear_doubles):
     _, _, labeled, folds, design = linear_run_root
     double, _ = linear_doubles
@@ -156,6 +203,58 @@ def test_candidates_run_nested_selection_inside_every_null_draw(linear_run_root)
     assert (
         (metrics["model"] == "ridge") & metrics["metric"].str.startswith("rank_ic_minus_stale_")
     ).any()
+
+
+def test_selection_is_rerun_on_the_inputs_of_every_null_draw(linear_run_root, linear_doubles):
+    _, _, labeled, folds, design = linear_run_root
+    double, _ = linear_doubles
+    spec = LabelSpec(5, 1, benchmark="equal_weight")
+    ridge = next(
+        m
+        for m in nested.linear_models(spec, FEATURES, design, estimator=double)
+        if m.name == "ridge"
+    )
+    seen = []
+
+    def recording(grid, inner_predictions, *, target_column="target_return"):
+        first = inner_predictions[0]
+        window = (first["date"].min(), first["date"].max())
+        signature = tuple(np.round(first["prediction"].to_numpy(), 15))
+        seen.append((window, signature))
+        return linear.select_hyperparameters(grid, inner_predictions)  # a data-driven choice
+
+    draws, lags = 2, (15,)
+    runner.run_diagnostics(
+        labeled,
+        folds,
+        universe=list("ABCD"),
+        label_spec=spec,
+        diagnostic_features=FEATURES,
+        provenance={"code": {}, "environment": {}},
+        started_at=datetime(2026, 10, 10, tzinfo=UTC),
+        models=[*runner.default_models(score_feature="feature_a"), ridge],
+        config=runner.DiagnosticsConfig(
+            baselines=("zero", "per_symbol_mean"),
+            permutation_draws=draws,
+            permutation_block_length=10,
+            permutation_models=("ridge",),
+            stale_lags=lags,
+            stale_models=("ridge",),
+            calibration_reps=4,
+            calibration_bootstrap_reps=3,
+            bootstrap_reps=9,
+        ),
+        lockbox_start=folds[0].holdout_start,
+        selector=recording,
+    )
+    # Once per outer fold in the main run, in each permutation draw and each stale lag.
+    assert len(seen) == len(folds) * (1 + draws + len(lags))
+    by_fold = {}
+    for window, signature in seen:
+        by_fold.setdefault(window, []).append(signature)
+    assert len(by_fold) == len(folds)
+    for signatures in by_fold.values():  # each draw selected on its own (changed) inputs
+        assert len(set(signatures)) == 1 + draws + len(lags)
 
 
 def test_the_grid_and_selection_design_are_part_of_the_variant(linear_doubles):
@@ -206,6 +305,26 @@ def test_clark_west_is_the_mean_adjusted_loss_difference_per_date():
     np.testing.assert_allclose(per_obs, 2 * (y - b) * (f - b))
     expected = np.mean([per_obs[:2].mean(), per_obs[2:].mean()])
     assert nw.estimate == pytest.approx(expected)
+
+
+def test_clark_west_weighs_each_date_equally_whatever_its_row_count():
+    dates = pd.to_datetime(["2024-01-02"] * 3 + ["2024-01-03"], utc=True)
+    base = pd.DataFrame(
+        {
+            "fold_id": 0,
+            "date": dates,
+            "symbol": ["A", "B", "C", "A"],
+            "target_return": [0.1, -0.1, 0.05, 0.2],
+        }
+    )
+    model = base.assign(prediction=[0.05, -0.02, 0.01, 0.1])
+    baseline = base.assign(prediction=0.0)
+    ctx = scoring.build_context(model, block_length=1, bootstrap_reps=9, seed=0, hac_lag=0)
+    nw = next(r for r in scoring.clark_west_vs(model, baseline, ctx) if r.method == "newey_west")
+    per_obs = 2 * base["target_return"].to_numpy() * model["prediction"].to_numpy()
+    by_date = np.mean([per_obs[:3].mean(), per_obs[3:].mean()])
+    assert nw.estimate == pytest.approx(by_date)
+    assert nw.estimate != pytest.approx(per_obs.mean())  # not the pooled-row mean
 
 
 @pytest.mark.parametrize(
@@ -269,6 +388,104 @@ def test_the_t4_checks_are_recorded(linear_run_root):
         assert _check(run, "selection_fits_converged", model)["passed"]
     assert _check(run, "excess_label_centred", "pooled_mean")["passed"]
     assert run.record["checks_summary"]["leakage_checks_failed"] == 0
+
+
+def _run_with(labeled, folds, model, selector, **config):
+    """A small excess-label run: the T2 set plus one linear model."""
+
+    return runner.run_diagnostics(
+        labeled,
+        folds,
+        universe=list("ABCD"),
+        label_spec=LabelSpec(5, 1, benchmark="equal_weight"),
+        diagnostic_features=FEATURES,
+        provenance={"code": {}, "environment": {}},
+        started_at=datetime(2026, 10, 10, tzinfo=UTC),
+        models=[*runner.default_models(score_feature="feature_a"), model],
+        config=runner.DiagnosticsConfig(
+            **{
+                "baselines": ("zero", "per_symbol_mean"),
+                "permutation_models": (),
+                "stale_models": (),
+                "calibration_reps": 4,
+                "calibration_bootstrap_reps": 3,
+                "bootstrap_reps": 9,
+                **config,
+            }
+        ),
+        lockbox_start=folds[0].holdout_start,
+        selector=selector,
+    )
+
+
+def _lasso(design, estimator):
+    spec = LabelSpec(5, 1, benchmark="equal_weight")
+    return next(
+        m
+        for m in nested.linear_models(spec, FEATURES, design, estimator=estimator)
+        if m.name == "lasso"
+    )
+
+
+def test_a_fit_that_did_not_converge_fails_the_instrument_check(linear_run_root, linear_doubles):
+    _, _, labeled, folds, design = linear_run_root
+    double, selector = linear_doubles
+
+    class StallsOffTheChosenPoint(double):
+        """Converges at the chosen grid point (r = 1) and nowhere else: inner fits only."""
+
+        def fit(self, X, y):
+            super().fit(X, y)
+            self.converged_ = self.penalty == 1.0
+            return self
+
+    run = _run_with(labeled, folds, _lasso(design, StallsOffTheChosenPoint), selector)
+    row = _check(run, "selection_fits_converged", "lasso")
+    grid = len(nested.LASSO_GRID)
+    assert pd.notna(row["passed"]) and not row["passed"]
+    assert row["severity"] == "instrument"
+    assert row["observed"] == len(folds) * (grid - 1) * design.n_windows
+    assert row["detail"] == f"{len(folds) * (1 + grid * design.n_windows)} fits (outer and inner)"
+
+
+def test_a_fit_without_a_convergence_flag_leaves_the_check_undetermined(
+    linear_run_root, linear_doubles
+):
+    _, _, labeled, folds, design = linear_run_root
+    double, selector = linear_doubles
+
+    class NoFlag(double):
+        def fit(self, X, y):
+            super().fit(X, y)
+            del self.converged_
+            return self
+
+    run = _run_with(labeled, folds, _lasso(design, NoFlag), selector)
+    row = _check(run, "selection_fits_converged", "lasso")
+    assert pd.isna(row["passed"]) and pd.isna(row["observed"])
+    assert row["detail"] == "no converged_ flag"
+
+
+def test_a_recorded_inner_label_reaching_the_test_start_fails_the_leakage_check(
+    linear_run_root, linear_doubles, monkeypatch
+):
+    _, _, labeled, folds, design = linear_run_root
+    double, selector = linear_doubles
+    original = nested.inner_bounds
+    late = folds[1]
+
+    def misrecorded(frame, inner):
+        bounds = original(frame, inner)
+        if inner[-1].test_end == late.test_start:  # that fold's inner design ends at its test
+            bounds["max_inner_label_end"] = late.test_start
+        return bounds
+
+    monkeypatch.setattr(nested, "inner_bounds", misrecorded)
+    run = _run_with(labeled, folds, _lasso(design, double), selector)
+    row = _check(run, "nested_selection_inside_training", "lasso")
+    assert pd.notna(row["passed"]) and not row["passed"]
+    assert row["severity"] == "leakage"
+    assert row["observed"] == len(folds) - 1
 
 
 def test_training_never_starts_when_folds_score_after_the_evaluation_asof(
