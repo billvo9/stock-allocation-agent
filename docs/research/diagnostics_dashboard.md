@@ -162,6 +162,11 @@ computed from the same rows as for a 1.1 run.
    - Simulated false-positive rates against the nominal 5% and the stored
      threshold. Newey-West's over-rejection is stated, not hidden.
 8. **Forecast error (Goyal-Welch).** See "Goyal-Welch views" below.
+   **Linear models** (T4): chosen penalties, inner scores, coefficient
+   paths and stability, fitted transforms, and Clark-West for the nested
+   OLS pair; see `docs/research/linear_models.md`. Candidates carry fixed
+   colours from `theme.CANDIDATE_COLOURS` and a diamond marker; the OLS
+   diagnostic a triangle.
 9. **Research warnings.** Stored facts quoted by level:
    - blocking (only failed or undetermined T2 checks), warning (active
      research warnings), and notices;
