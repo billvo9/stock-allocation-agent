@@ -1,15 +1,16 @@
 """
 T4 estimator core: penalized linear forecasts and nested hyperparameter
-selection. OWNER-IMPLEMENTED (learning core; see AGENTS.md "Autonomy" and
-docs/research/linear_models.md "Owner exercise").
+selection (docs/research/linear_models.md). Implemented under the owner's
+explicit delegation of 2026-10-11; the contract tests are
+tests/test_linear_core.py.
 
-The plumbing around this module is complete: nested.py builds the inner
-purged folds, runs each grid point through the validation harness, calls
-`select_hyperparameters`, refits each outer fold once with the chosen point,
-and records `coefficients` and `selection` tables from the attributes listed
-below. The functions marked OWNER raise NotImplementedError until written;
-tests/test_linear_core.py states their contract and turns green once they
-are correct (remove the strict xfail markers then).
+nested.py builds the inner purged folds, runs each grid point through the
+validation harness, calls `select_hyperparameters`, refits each outer fold
+once with the chosen point, and records `coefficients` and `selection`
+tables from the attributes listed below. Every value a fit computes (the
+imputation medians, the standardization, the penalty scale, the
+coefficients) comes from the rows that fit is given, which the harness
+restricts to one fold's eligible (purged) training rows.
 
 Contract of a fitted `LinearForecast` (read by nested.py):
     medians_   (n_features,) training-row medians used to impute NaN
@@ -23,14 +24,34 @@ Contract of a fitted `LinearForecast` (read by nested.py):
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, Ridge
+
+from stock_agent.model_validation.preprocessing import MedianImputer, Standardizer
 
 METHODS = ("ridge", "lasso", "elastic_net", "ols")
 PENALIZED = ("ridge", "lasso", "elastic_net")
+# Grid points whose scores differ by less than this (relative) are tied; the
+# tie rule then decides (larger penalty, then larger l1_ratio).
+TIE_TOLERANCE = 1e-12
+
+
+def lambda_max(Z: np.ndarray, y: np.ndarray, l1_ratio: float = 1.0) -> float:
+    """
+    The smallest L1 penalty (sklearn's Lasso/ElasticNet objective, which
+    divides the squared error by 2n) that sets every coefficient to zero:
+        max_j |z_j' (y - mean y)| / (n * l1_ratio)
+    for centred (standardized) Z.
+    """
+
+    centred = np.asarray(y, dtype=np.float64) - float(np.mean(y))
+    return float(np.max(np.abs(Z.T @ centred)) / (len(centred) * l1_ratio))
 
 
 class LinearForecast:
@@ -74,21 +95,69 @@ class LinearForecast:
         self.l1_ratio = None if l1_ratio is None else float(l1_ratio)
         self.tol = float(tol)
         self.max_iter = int(max_iter)
+        self._fitted = False
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> LinearForecast:
-        raise NotImplementedError(
-            "OWNER: impute (training medians), standardize (training means and "
-            "population std), compute the penalty scale from these rows, fit the "
-            "sklearn model, and set medians_, means_, scales_, coef_, intercept_, "
-            "alpha_ and converged_. Fit exactly once."
-        )
+        if self._fitted:
+            raise RuntimeError("A LinearForecast is fitted once; build a new one per fold.")
+        matrix = np.asarray(X, dtype=np.float64)
+        target = np.asarray(y, dtype=np.float64)
+        if matrix.ndim != 2 or target.shape != (matrix.shape[0],):
+            raise ValueError("X must be 2-D with one row per label.")
+        if matrix.shape[0] < 2 or not np.isfinite(target).all():
+            raise ValueError("A fit needs at least two rows with finite labels.")
+        self._fitted = True  # a failed fit is not retried on the same object
+
+        imputer = MedianImputer().fit(matrix)
+        filled = imputer.transform(matrix)
+        scaler = Standardizer().fit(filled)
+        standardized = scaler.transform(filled)
+        n_fit = len(target)
+        self.medians_ = imputer.medians_
+        self.means_ = scaler.mean_
+        self.scales_ = scaler.scale_
+
+        if self.method == "ols":
+            model, self.alpha_ = LinearRegression(), 0.0
+        elif self.method == "ridge":
+            self.alpha_ = self.penalty * n_fit
+            model = Ridge(alpha=self.alpha_, solver="cholesky")
+        else:
+            mix = 1.0 if self.method == "lasso" else self.l1_ratio
+            self.alpha_ = self.penalty * lambda_max(standardized, target, mix)
+            if not self.alpha_ > 0.0:  # constant labels or features: nothing to fit
+                return self._constant(target, standardized.shape[1])
+            options = {"alpha": self.alpha_, "tol": self.tol, "max_iter": self.max_iter}
+            if self.method == "lasso":
+                model = Lasso(selection="cyclic", **options)
+            else:
+                model = ElasticNet(l1_ratio=mix, selection="cyclic", **options)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ConvergenceWarning)
+            model.fit(standardized, target)
+        stalled = any(issubclass(w.category, ConvergenceWarning) for w in caught)
+        iterations = np.atleast_1d(getattr(model, "n_iter_", 0) or 0)
+        self.converged_ = bool(not stalled and (iterations < self.max_iter).all())
+        self.coef_ = np.asarray(model.coef_, dtype=np.float64).reshape(-1)
+        self.intercept_ = float(model.intercept_)
+        return self
+
+    def _constant(self, target: np.ndarray, width: int) -> LinearForecast:
+        self.coef_ = np.zeros(width)
+        self.intercept_ = float(np.mean(target))
+        self.converged_ = True
+        return self
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        raise NotImplementedError(
-            "OWNER: apply the stored medians, means and scales, then "
-            "intercept_ + X_std @ coef_. Row-wise: a batch of one row gives the same "
-            "value as that row inside a larger batch."
-        )
+        if not self._fitted or not hasattr(self, "coef_"):
+            raise RuntimeError("Fit the LinearForecast before predicting.")
+        matrix = np.asarray(X, dtype=np.float64)
+        filled = np.where(np.isnan(matrix), self.medians_, matrix)
+        standardized = (filled - self.means_) / self.scales_
+        # Exactly row-wise: each row uses only the stored training statistics and
+        # sums its features in the same order whatever the batch size (a matrix
+        # product would let BLAS change the summation order with the shape).
+        return self.intercept_ + np.sum(standardized * self.coef_, axis=1)
 
 
 @dataclass(frozen=True)
@@ -124,11 +193,25 @@ def select_hyperparameters(
     and its number of inner dates so they can be stored.
     """
 
-    raise NotImplementedError(
-        "OWNER: score each grid point with the date-normalized MSE, choose the "
-        "lowest, break ties by larger penalty then larger l1_ratio, and return a "
-        "Selection with every score and date count."
+    if len(grid) != len(inner_predictions) or not grid:
+        raise ValueError("One inner prediction frame per grid point is required.")
+    scores, dates = [], []
+    for frame in inner_predictions:
+        errors = (frame[target_column] - frame["prediction"]) ** 2
+        per_date = errors.groupby(frame["date"]).mean()
+        scores.append(float(per_date.mean()) if len(per_date) else float("nan"))
+        dates.append(int(per_date.size))
+    finite = [k for k, score in enumerate(scores) if np.isfinite(score)]
+    if not finite:
+        raise ValueError("No grid point has an inner score.")
+    best = min(scores[k] for k in finite)
+    tolerance = TIE_TOLERANCE * max(1.0, abs(best))
+    tied = [k for k in finite if scores[k] - best <= tolerance]
+    chosen = max(
+        tied,
+        key=lambda k: (float(grid[k]["penalty"]), float(grid[k].get("l1_ratio", 0.0)), -k),
     )
+    return Selection(chosen=chosen, scores=tuple(scores), n_dates=tuple(dates))
 
 
 def has_converged(estimator: object) -> bool | None:
