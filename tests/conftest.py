@@ -125,15 +125,21 @@ def dashboard_root(tmp_path_factory, panel_factory):
 
 
 SCHEMA_1_0_RUN_ID = "20261009T120000Z-100000000000"
+SCHEMA_1_1_RUN_ID = "20261009T120000Z-110000000000"
 
 
-def write_schema_1_0_run(run, root, run_id: str = SCHEMA_1_0_RUN_ID):
+def write_legacy_run(run, root, version: str, run_id: str):
     """
-    Write `run` as the schema 1.0 writer (PR #43) laid it out: no 1.1 record
-    fields (decision_method, reference_predictors, eligible_as_candidate,
-    checks_summary.families), curves without ci_method / ci_level / hac_lag,
-    and "1.0" in the manifest and record. Statistics are unchanged between
-    1.0 and 1.1, so every other stored value is what 1.0 wrote.
+    Write `run` as the writer of `version` laid it out. Statistics are
+    unchanged across versions, so every value a version did record is what
+    it wrote; what it never recorded is removed:
+        1.0  no decision_method, reference_predictors, eligible_as_candidate
+             or checks_summary.families; curves without ci_method, ci_level,
+             hac_lag
+        1.1  no coefficients or selection tables; the label spec without
+             benchmark / min_cross_section; the config without
+             nested_comparisons; models without a recorded preprocessing
+    and `version` in the manifest and record.
     """
 
     import copy
@@ -149,21 +155,28 @@ def write_schema_1_0_run(run, root, run_id: str = SCHEMA_1_0_RUN_ID):
 
     record = copy.deepcopy(run.record)
     spec = record["spec"]
-    for key in ("decision_method", "reference_predictors"):
-        spec.pop(key)
+    for key in ("benchmark", "min_cross_section"):
+        spec["label"]["label_spec"].pop(key, None)
+    spec["config"].pop("nested_comparisons", None)
     for model in spec["models"]:
-        model.pop("eligible_as_candidate")
-    spec["output_schema_version"] = spec["record_schema_version"] = "1.0"
-    record["checks_summary"].pop("families")
+        model["preprocessing"] = None
+    if version == "1.0":
+        for key in ("decision_method", "reference_predictors"):
+            spec.pop(key)
+        for model in spec["models"]:
+            model.pop("eligible_as_candidate")
+        record["checks_summary"].pop("families")
+    spec["output_schema_version"] = spec["record_schema_version"] = version
     record["spec_sha256"] = sha256_json(spec)
     record["run_id"] = run_id
     directory = root / "runs" / run_id
     directory.mkdir(parents=True)
     files = {}
-    for name, table in run.tables.items():
+    for name in contract.tables(version):
+        table = run.tables[name]
         if name in contract.SCHEMAS:
             table = contract.conform(
-                name, table.drop(columns=list(contract.added_after(name, "1.0"))), "1.0"
+                name, table.drop(columns=list(contract.added_after(name, version))), version
             )
         path = directory / f"{name}.parquet"
         table.to_parquet(path, index=False)
@@ -178,14 +191,28 @@ def write_schema_1_0_run(run, root, run_id: str = SCHEMA_1_0_RUN_ID):
         entry["file_sha256"] = file_sha256(directory / filename)
     dump(
         directory / "manifest.json",
-        {"output_schema_version": "1.0", "run_id": run_id, "files": files},
+        {"output_schema_version": version, "run_id": run_id, "files": files},
     )
     return directory
+
+
+def write_schema_1_0_run(run, root, run_id: str = SCHEMA_1_0_RUN_ID):
+    return write_legacy_run(run, root, "1.0", run_id)
 
 
 @pytest.fixture(scope="session")
 def schema_1_0_writer():
     return write_schema_1_0_run
+
+
+@pytest.fixture(scope="session")
+def schema_1_1_root(tmp_path_factory, dashboard_root):
+    """The dashboard fixture run, written in the schema 1.1 layout under its own root."""
+
+    _, run = dashboard_root
+    root = tmp_path_factory.mktemp("schema_1_1_outputs")
+    write_legacy_run(run, root, "1.1", SCHEMA_1_1_RUN_ID)
+    return root, run
 
 
 @pytest.fixture(scope="session")
@@ -262,3 +289,118 @@ def varying_universe_root(tmp_path_factory, panel_factory):
     root = tmp_path_factory.mktemp("varying_universe_outputs")
     artifacts.write_run(run, root, extra_record={"status": "completed"})
     return root, run
+
+
+# --- T4: statistics-free stand-ins for the linear core ----------------------
+
+
+def _double_classes():
+    from stock_agent.model_diagnostics import linear
+
+    class FixedWeightLinear(linear.LinearForecast):
+        """
+        Test double for LinearForecast. It estimates NOTHING: fixed weights, no
+        imputation or scaling. Its penalty only shifts the intercept so each grid
+        point gives distinguishable predictions. Exists to exercise the plumbing.
+        """
+
+        WEIGHT = 1e-3
+
+        def fit(self, X, y):
+            width = X.shape[1]
+            self.medians_ = np.zeros(width)
+            self.means_ = np.zeros(width)
+            self.scales_ = np.ones(width)
+            self.coef_ = np.full(width, self.WEIGHT)
+            self.intercept_ = 0.0 if self.penalty is None else 1e-4 * self.penalty
+            self.alpha_ = 0.0 if self.penalty is None else float(self.penalty)
+            self.converged_ = True
+            return self
+
+        def predict(self, X):
+            matrix = np.nan_to_num(np.asarray(X, dtype=np.float64))
+            return self.intercept_ + matrix @ self.coef_
+
+    def first_grid_point(grid, inner_predictions, *, target_column="target_return"):
+        """Selector double: always the first grid point; scores are the grid index."""
+
+        return linear.Selection(
+            chosen=0,
+            scores=tuple(float(index) for index in range(len(grid))),
+            n_dates=tuple(int(frame["date"].nunique()) for frame in inner_predictions),
+        )
+
+    return FixedWeightLinear, first_grid_point
+
+
+@pytest.fixture(scope="session")
+def linear_doubles():
+    return _double_classes()
+
+
+@pytest.fixture(scope="session")
+def linear_run_root(tmp_path_factory, panel_factory):
+    """
+    A T4 development run on the equal-weight excess label: the T2 null,
+    control and canary set plus Ridge, Lasso and Elastic Net (nested
+    selection) and the OLS diagnostic, with test doubles for the linear core.
+    """
+
+    from datetime import UTC, datetime
+
+    from stock_agent.model_diagnostics import artifacts, nested, runner
+    from stock_agent.model_validation.folds import make_expanding_folds, make_test_windows
+
+    double, selector = _double_classes()
+    symbols = ["A", "B", "C", "D"]
+    spec = LabelSpec(horizon=5, entry_lag=1, benchmark="equal_weight")
+    raw = panel_factory(symbols=tuple(symbols), sessions=220, horizon=5, seed=8)
+    raw = raw.drop(columns=["target_return", "target_start_date", "target_end_date"])
+    lockbox = raw["date"].drop_duplicates().sort_values().iloc[200]
+    labeled, facts = runner.prepare_development_frame(
+        raw, symbols=symbols, label_spec=spec, holdout_start=lockbox
+    )
+    sessions = labeled["date"].drop_duplicates().sort_values()
+    windows = make_test_windows(sessions, start=sessions.iloc[80], end=lockbox, block_sessions=30)
+    folds = make_expanding_folds(labeled, windows, holdout_start=lockbox, lockbox_start=lockbox)
+    design = nested.InnerDesign(block_sessions=10, n_windows=2, min_train_sessions=20)
+    models = [
+        *runner.default_models(score_feature="feature_a"),
+        *nested.linear_models(spec, ["feature_a", "feature_b"], design, estimator=double),
+    ]
+    config = runner.DiagnosticsConfig(
+        hac_lag=3,
+        block_length=10,
+        bootstrap_reps=19,
+        acf_max_lag=4,
+        permutation_draws=2,
+        permutation_block_length=10,
+        stale_lags=(15,),
+        stale_models=("ridge",),
+        permutation_models=("ridge",),
+        calibration_reps=20,
+        calibration_bootstrap_reps=9,
+        baselines=("zero", "per_symbol_mean", "ols"),
+        nested_comparisons=(("ols", "zero"),),
+    )
+    run = runner.run_diagnostics(
+        labeled,
+        folds,
+        universe=symbols,
+        label_spec=spec,
+        diagnostic_features=["feature_a", "feature_b"],
+        provenance={
+            "code": {"git_sha": "abc123", "git_dirty": False},
+            "environment": {"python": "3.12"},
+            "truncation": {**facts, "holdout_rows_loaded": True},
+            "universe_note": "Synthetic test universe.",
+        },
+        started_at=datetime(2026, 10, 10, 12, 0, tzinfo=UTC),
+        models=models,
+        config=config,
+        lockbox_start=lockbox,
+        selector=selector,
+    )
+    root = tmp_path_factory.mktemp("linear_outputs")
+    artifacts.write_run(run, root, extra_record={"status": "completed"})
+    return root, run, labeled, folds, design

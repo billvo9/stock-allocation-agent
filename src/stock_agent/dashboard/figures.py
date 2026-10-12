@@ -29,7 +29,7 @@ from plotly.subplots import make_subplots
 
 from stock_agent.dashboard import style
 
-ROLE_ORDER = ("null", "control", "canary", "canary_unsafe_reference", "candidate")
+ROLE_ORDER = ("null", "control", "canary", "canary_unsafe_reference", "diagnostic", "candidate")
 METHOD_NAMES = {
     "fold_block_t": "fold-block t",
     "newey_west": "Newey-West",
@@ -72,6 +72,34 @@ def pooled_row(metrics: pd.DataFrame, model: str, metric: str, method: str) -> p
     rows = pooled_rows(metrics, model, metric)
     rows = rows[rows["inference_method"] == method]
     return None if rows.empty else rows.iloc[0]
+
+
+def rank_ic_coverage(metrics: pd.DataFrame, model: str) -> str | None:
+    """
+    Where a model's pooled rank IC is defined, from stored rows only, e.g.
+    'defined on 796 of 1489 scored dates, 13 of 24 folds', when some but not
+    all scored dates are unavailable (a constant forecast has no ranking).
+    None when it is defined on every scored date, or on none (the estimate is
+    then unavailable and carries its own reason). Rank ICs over different
+    dates are not comparable, so the coverage is shown with the estimate.
+    """
+
+    gaps = pooled_row(metrics, model, "n_dates_rank_ic_unavailable", "point")
+    if gaps is None or gaps["status"] != "ok":
+        return None
+    total, missing = int(gaps["n"]), int(gaps["estimate"])
+    if not 0 < missing < total:
+        return None
+    text = f"defined on {total - missing} of {total} scored dates"
+    folds = metrics[
+        (metrics["model"] == model)
+        & (metrics["metric"] == "mean_rank_ic")
+        & metrics["fold_id"].notna()
+    ]
+    if len(folds):
+        defined = folds.loc[folds["status"] == "ok", "fold_id"].nunique()
+        text += f", {defined} of {folds['fold_id'].nunique()} folds"
+    return text
 
 
 def _unavailable_note(row: pd.Series | None) -> str:
@@ -411,6 +439,19 @@ def rank_ic_forest(
             xanchor="left",
             font={"color": style.STATUS_COLOURS["unavailable"]},
         )
+    for label, name in zip(labels, ordered["name"], strict=True):
+        coverage = rank_ic_coverage(metrics, name)
+        if coverage:  # a subset of dates: not comparable with full-coverage rows
+            figure.add_annotation(
+                x=1,
+                xref="paper",
+                y=label,
+                yshift=-18,
+                text=coverage,
+                showarrow=False,
+                xanchor="right",
+                font={"color": style.STATUS_COLOURS["unavailable"], "size": 11},
+            )
     figure.add_vline(x=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
     layout = style.base_layout(title, x_title="mean rank IC", height=160 + 60 * len(labels))
     layout["yaxis"]["categoryorder"] = "array"
@@ -1162,6 +1203,116 @@ def goyal_welch_observation_weighted(
             f"{model}: observation-weighted cumulative SSE difference (stored by T2; secondary)",
             x_title="session date",
             y_title="cumulative SSE difference (all name-dates)",
+        )
+    )
+    return figure
+
+
+# --- linear models (training scope: stored coefficients and selection) ---
+
+
+def coefficient_paths(coefficients: pd.DataFrame, model: str):
+    """TRAINING-SCOPE: stored standardized coefficient per feature across outer folds."""
+
+    rows = coefficients[
+        (coefficients["model"] == model) & (coefficients["feature"] != "__intercept__")
+    ]
+    colours = style.category_colours(rows["feature"].unique())
+    figure = go.Figure()
+    for index, (feature, group) in enumerate(rows.groupby("feature", sort=True)):
+        group = group.sort_values("fold_id")
+        figure.add_trace(
+            go.Scatter(
+                x=group["fold_id"].tolist(),
+                y=[_value(v) for v in group["coefficient"]],
+                mode="lines+markers",
+                name=feature,
+                line={"color": colours[feature]},
+                marker={"symbol": FEATURE_SYMBOLS[index % len(FEATURE_SYMBOLS)], "size": 8},
+            )
+        )
+    figure.add_hline(y=0, line={"color": style.REFERENCE_LINE, "dash": "dot"})
+    figure.update_layout(
+        **style.base_layout(
+            f"{model}: standardized coefficients by fold",
+            subtitle="training scope; one fit per outer fold with its chosen penalty",
+            x_title="outer fold",
+            y_title="coefficient (per 1 sd of the feature)",
+        )
+    )
+    return figure
+
+
+def chosen_penalty_by_fold(selection: pd.DataFrame, model: str):
+    """TRAINING-SCOPE: the grid point the inner validation chose, per outer fold."""
+
+    rows = selection[(selection["model"] == model) & selection["chosen"].fillna(False)]
+    rows = rows.sort_values("fold_id")
+    mixes = rows["l1_ratio"].dropna().unique()
+    figure = go.Figure()
+    for mix, group in rows.groupby(rows["l1_ratio"].fillna(-1.0), sort=True):
+        figure.add_trace(
+            go.Scatter(
+                x=group["fold_id"].tolist(),
+                y=group["penalty"].tolist(),
+                mode="markers",
+                marker={"size": 11, "color": style.model_colour(model), "symbol": "diamond"},
+                name="chosen penalty" if mix < 0 else f"chosen penalty, l1_ratio {mix:g}",
+            )
+        )
+    figure.update_layout(
+        **style.base_layout(
+            f"{model}: chosen penalty by fold",
+            subtitle=(
+                "dimensionless grid value chosen by nested purged validation"
+                + ("; Elastic Net also chooses l1_ratio" if len(mixes) else "")
+            ),
+            x_title="outer fold",
+            y_title="penalty (grid value)",
+        )
+    )
+    figure.update_yaxes(type="log")
+    return figure
+
+
+def selection_scores(selection: pd.DataFrame, model: str):
+    """TRAINING-SCOPE: every grid point's inner score per outer fold (lower is better)."""
+
+    rows = selection[selection["model"] == model].copy()
+    rows["point"] = [
+        f"{p:g}" if pd.isna(m) else f"{p:g} / {m:g}"
+        for p, m in zip(rows["penalty"], rows["l1_ratio"], strict=True)
+    ]
+    order = rows.drop_duplicates("point").sort_values(["l1_ratio", "penalty"])["point"].tolist()
+    table = rows.pivot(index="point", columns="fold_id", values="inner_score").reindex(order)
+    chosen = rows[rows["chosen"].fillna(False)]
+    figure = go.Figure(
+        go.Heatmap(
+            z=table.to_numpy(),
+            x=[str(c) for c in table.columns],
+            y=table.index.tolist(),
+            colorscale=style.NEUTRAL_SCALE,
+            reversescale=True,
+            colorbar={"title": {"text": "inner MSE"}},
+            hovertemplate="fold %{x}<br>point %{y}<br>inner score %{z:.4g}<extra></extra>",
+        )
+    )
+    figure.add_trace(
+        go.Scatter(
+            x=[str(f) for f in chosen["fold_id"]],
+            y=chosen["point"].tolist(),
+            mode="markers",
+            marker={"symbol": "x", "size": 10, "color": style.theme.COLOURS["text"]},
+            name="chosen",
+        )
+    )
+    figure.update_layout(
+        **style.base_layout(
+            f"{model}: inner validation score by grid point and fold",
+            subtitle="lower is better; scores compare grid points within a fold, not across folds",
+            x_title="outer fold",
+            y_title="grid point (penalty / l1_ratio)",
+            height=420,
         )
     )
     return figure

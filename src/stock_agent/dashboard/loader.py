@@ -168,7 +168,9 @@ def _lockbox_guard(record: dict, tables: dict[str, pd.DataFrame], folds: pd.Data
         _timestamp(recorded[1], "lockbox_evidence.holdout_start"),
         MODEL_HOLDOUT_START,
     )
-    for name in ("inputs", "predictions", "curves"):
+    for name in ("inputs", "predictions", "curves", "selection"):
+        if name not in tables:
+            continue  # tables a legacy run never wrote
         table = tables[name]
         for column in table.columns:
             dtype = table[column].dtype
@@ -248,7 +250,43 @@ def _upgrade_tables(tables: dict[str, pd.DataFrame], version: str):
             gaps += [f"{name}.{column}: not recorded (schema {version})" for column in missing]
             table = contract.conform(name, table)
         upgraded[name] = table
+    for name in contract.tables_added_after(version):
+        upgraded[name] = contract.empty(name)  # empty, never filled with assumed rows
+        gaps.append(f"{name}: not recorded (schema {version})")
     return upgraded, gaps
+
+
+def _consistency_issues(
+    view_tables: dict[str, pd.DataFrame], folds: pd.DataFrame, asof
+) -> list[str]:
+    """
+    Stored-row invariants the dashboard re-verifies (each blocks the run):
+    every fold's test labels end by the evaluation as-of, and every inner
+    selection label ends before its outer fold's test start.
+    """
+
+    issues = []
+    if asof is not None and "score_available_at" in folds.columns:
+        late = folds.loc[folds["score_available_at"] > asof, "fold_id"].tolist()
+        if late:
+            issues.append(
+                f"folds {late} score labels after the evaluation as-of {asof.date()} "
+                "(score_available_at disagrees with evaluation_asof)"
+            )
+    selection = view_tables.get("selection")
+    if selection is not None and len(selection):
+        starts = folds.set_index("fold_id")["test_start"]
+        outer = selection["fold_id"].map(starts)
+        bad = selection["max_inner_label_end"].notna() & ~(selection["max_inner_label_end"] < outer)
+        bad |= selection["inner_test_end_exclusive"].notna() & (
+            selection["inner_test_end_exclusive"] > outer
+        )
+        if bad.any():
+            issues.append(
+                f"{int(bad.sum())} selection rows have inner labels or windows reaching their "
+                "outer fold's test period"
+            )
+    return issues
 
 
 def _model_row(model: dict, eligible: bool) -> dict:
@@ -406,6 +444,7 @@ def load_run(path: str | Path) -> RunView:
                 issues.append("record lacks checks_summary.families")
         asof, pending, maturity_issues = _maturity(record, tables["predictions"])
         issues += maturity_issues
+        issues += _consistency_issues(tables, folds, asof)
     except RunRefused:
         raise
     except (KeyError, ValueError, TypeError, AttributeError) as error:

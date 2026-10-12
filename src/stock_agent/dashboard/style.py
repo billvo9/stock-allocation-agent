@@ -41,6 +41,7 @@ CATEGORY_PALETTE = (
     "#AA4499",
 )
 KNOWN_MODEL_COLOURS = {
+    **theme.CANDIDATE_COLOURS,
     "zero": "#7F7F7F",
     "pooled_mean": "#000000",
     "random_noise": "#56B4E9",
@@ -54,13 +55,15 @@ ROLE_MARKERS = {
     "control": ("square", "dash"),
     "canary": ("x", "dashdot"),
     "canary_unsafe_reference": ("diamond-open", "longdash"),
-    "candidate": ("circle", "solid"),
+    "diagnostic": ("triangle-up", "longdashdot"),
+    "candidate": ("diamond", "solid"),
 }
 ROLE_LABELS = {
     "null": "null",
     "control": "control",
     "canary": "canary",
     "canary_unsafe_reference": "UNSAFE reference (leaky by design)",
+    "diagnostic": "diagnostic",
     "candidate": "candidate",
 }
 STATUS_COLOURS = {

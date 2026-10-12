@@ -58,6 +58,17 @@ TYPE = {
     "chart_px": 13,
 }
 
+# Model identity for T4's linear models: a palette disjoint from the T2 model
+# colours (Okabe-Ito) and the category palette, each >= 4.5:1 on white so a
+# line reads on the chart surface. Fixed names first, then a hashed fallback.
+CANDIDATE_COLOURS = {
+    "ridge": "#6A3D9A",
+    "lasso": "#1B7F79",
+    "elastic_net": "#B15928",
+    "ols": "#5E6B2B",
+}
+CANDIDATE_FALLBACK = ("#8C2D04", "#2B5C8A")
+
 SPACE = {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "xxl": 32}
 RADIUS = {"control": "8px", "card": "12px", "pill": "999px"}
 MOTION = {"fast_ms": 120, "appear_ms": 200, "easing": "cubic-bezier(0.2, 0, 0, 1)"}
