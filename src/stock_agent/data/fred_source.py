@@ -296,14 +296,6 @@ class FredDataSource:
 
         The key is added inline rather than held in a local or in the
         caller's params, so a traceback rendered with locals omits it too.
-
-        The key is still part of every request URL, and urllib3
-        (urllib3.connectionpool) logs that URL with its query string: at
-        DEBUG level for every request, and at WARNING level when an adapter
-        configured with retries retries a broken connection. Wherever these
-        requests run, keep that logger above DEBUG and do not mount retrying
-        adapters. FRED documents bearer-header authentication only for
-        Version 2.
         """
 
         failure: str | None = None

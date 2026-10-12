@@ -142,6 +142,28 @@ class _ConnectionErrorAdapter(BaseAdapter):
         pass
 
 
+class _NonJsonAdapter(BaseAdapter):
+    """Transport that answers HTTP 200 with an HTML body, as a captive portal or proxy might."""
+
+    def send(
+        self,
+        request: requests.PreparedRequest,
+        **kwargs: object,
+    ) -> requests.Response:
+        response = requests.Response()
+        response.status_code = 200
+        response.reason = "OK"
+        response.url = request.url or ""
+        response.request = request
+        response.headers["Content-Type"] = "text/html"
+        response.raw = io.BytesIO(b"<html><body>Service unavailable</body></html>")
+
+        return response
+
+    def close(self) -> None:
+        pass
+
+
 def _requests_session(adapter: BaseAdapter) -> requests.Session:
     """A real requests.Session whose transport never reaches the network."""
 
@@ -162,6 +184,10 @@ def _requests_session_with_http_error() -> requests.Session:
 
 def _requests_session_with_connection_error() -> requests.Session:
     return _requests_session(_ConnectionErrorAdapter())
+
+
+def _requests_session_with_non_json_body() -> requests.Session:
+    return _requests_session(_NonJsonAdapter())
 
 
 def _fetch_series_observations(source: FredDataSource) -> object:
@@ -194,6 +220,7 @@ SESSIONS = [
 REQUESTS_SESSIONS = [
     pytest.param(_requests_session_with_http_error, id="requests-http-error"),
     pytest.param(_requests_session_with_connection_error, id="requests-connection-error"),
+    pytest.param(_requests_session_with_non_json_body, id="requests-non-json-body"),
 ]
 
 
@@ -450,3 +477,25 @@ def test_version_2_connection_failure_names_the_error_type() -> None:
 
     assert "ConnectionError" in message
     assert f"release {RELEASE_ID}" in message
+
+
+def test_version_2_non_json_body_is_a_request_failure_that_hides_the_key() -> None:
+    """
+    An HTTP 200 whose body is not JSON (a proxy or captive-portal page) is a
+    request failure, not a malformed payload: requests raises JSONDecodeError,
+    a RequestException, which takes the same no-chain path as a transport error.
+    """
+
+    source = FredDataSource(api_key=FAKE_API_KEY, session=_requests_session_with_non_json_body())
+
+    with pytest.raises(RuntimeError) as excinfo:
+        _fetch_release_observations(source)
+
+    message = str(excinfo.value)
+
+    assert "JSONDecodeError" in message
+    assert f"release {RELEASE_ID}" in message
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+    _assert_exception_hides_key(excinfo.value)
