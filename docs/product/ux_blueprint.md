@@ -27,7 +27,7 @@ Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2
 | A Builder with live what-if sliders | Continuous sliders invite users to overfit backtests by search. The app also must never fit a model or read raw data; it may only run pure allocation functions over published inputs | Discrete options computed by those pure functions, plus a visible count of configurations viewed |
 | A personalized builder from capital and risk preference | Mapping a person to a portfolio is the hallmark of personalized advice | The Builder explores rules the user chooses. It does not prescribe (see "Regulatory boundary") |
 | Showing current data | Any 2025+ information spends the lockbox informally: a trailing return in 2026 is a realized holdout label, and holdings snapshots encode relative returns | By default every page is as of 2024-12-31, and later periods show the "Sealed" state (owner decision OD5) |
-| Horizons of 5, 20, 30 and 60 sessions | Only the 20-session label is registered (`MODEL_LABEL_SPEC`) | Other horizons are new variants with their own validation. The UI offers only registered horizons |
+| Horizons of 5, 20, 30 and 60 sessions | Only the 20-session label is registered (`MODEL_LABEL_SPEC`, and from T4 its excess-return form `MODEL_EXCESS_LABEL_SPEC`, the default) | All four stay possible user-facing horizons (OD10). Descriptors work at every horizon. A model view appears only at a validated horizon, and the others show "not validated for this horizon". Dropping a horizon is an explicit product decision |
 
 ## 3. Information architecture
 
@@ -183,6 +183,7 @@ Hue already means identity or status (`dashboard/style.py`), so the evidence typ
 - A line never continues across a change of evidence type.
 - Evidence-status pills (descriptive, rules illustration, research only, development evidence, holdout-checked, prospectively confirmed) use neutral tokens: a proposed `EVIDENCE` set in `theme.py`. Never green, which invites over-trust.
 - Series badges (Actual, Simulated, Paper, Forecast) and status pills are mapped one-to-one in `architecture.md`, section 4.
+- In Research mode and the Evidence ledger, each rule, model or policy also shows its promotion stage (S0–S4, `vision_and_prd.md`, section 15). A stage is never shown as a quality score.
 - Every card shows its knowledge time and data vintage from the publication. Until `signal_cutoff_at` is approved, the card shows the recorded `knowledge_time` and never infers one.
 
 ## 6. First-class states
@@ -228,7 +229,7 @@ Built on the existing tokens (`dashboard/theme.py`, `components.py`, `style.py`)
 - **Space.** The 4–32 px scale, plus 48 px between Home sections. At most three stat cards per row.
 - **Colour.**
   - One accent: the existing slate teal.
-  - Status colours only for status; Okabe-Ito and `CANDIDATE_COLOURS` for identity.
+  - Status colours only for status; Okabe-Ito and `CANDIDATE_COLOURS` (added by T4) for identity.
   - Gains and losses stay neutral, carried by sign and words.
 - **Motion.**
   - For state changes only (pending to available, a section revealed), 150–200 ms opacity or height.

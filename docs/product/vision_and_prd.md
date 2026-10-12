@@ -1,6 +1,6 @@
 # Product vision and PRD
 
-Status (2026-10-11): **approved direction; details under review.** On 2026-10-11 the owner approved OD1, OD2, OD4, OD5, OD6 and OD7 (section 13). The other decisions remain recommendations until approved at their tickets. Companion documents:
+Status (2026-10-11): **approved direction; details under review.** On 2026-10-11 the owner approved OD1, OD2, OD4, OD5, OD6 and OD7 (section 13). The other decisions (OD3, OD8–OD17) remain recommendations until approved at their tickets. Companion documents:
 - `architecture.md`
 - `roadmap.md`
 - `ux_blueprint.md`
@@ -14,7 +14,7 @@ Stock Allocation Agent becomes a **research-grade portfolio lab**: a place to di
 1. **Rules first.** Ship a rules-only product (the MVP, "Portfolio Lab") that makes no forecast claims. It is useful because it is honest about risk, concentration and history, and it carries an evidence label on every number.
 2. **Earn forecasts in parallel.** The research track earns the right to show forecasts one claim at a time: rank, then expected excess return, then distributions, then absolute returns. Each step needs a point-in-time universe, a pre-registered evaluation, the holdout and prospective tracking.
 
-The product never gets ahead of the evidence.
+The product never gets ahead of the evidence. The rules-only MVP is the first stage of a path toward an **investment-ready** system (section 15), not a permanent limit. Every later capability (forecasts, uncertainty and model-driven allocation) has an explicit evidence gate (section 11).
 
 ## 2. Vision and positioning
 
@@ -40,6 +40,13 @@ The product never gets ahead of the evidence.
 - not a robo-adviser;
 - not personalized investment advice;
 - not a source of validated return forecasts.
+
+**Long-term objective: investment-ready operation.** A system the owner can rely on, first for their own capital and only much later, if they choose, as a public advisory product. Readiness has three parts:
+- its allocations come from validated components;
+- they are explainable;
+- they run inside tested operational and risk controls.
+
+**Model completion is not readiness.** A trained allocation policy is one component. For example, PPO is a candidate allocation-policy engine (`architecture.md`, section 3). Readiness is earned stage by stage through empirical, operational and risk-control requirements (section 15).
 
 ## 3. Where we are (verified 2026-10-11)
 
@@ -109,7 +116,7 @@ The product never gets ahead of the evidence.
 | L1 | Model order ("ranked higher by the model") | Coverage-weighted mean rank IC (constant dates count as zero) > 0, one-sided fold-block t after multiplicity. Paired superiority over the best pre-registered rule, or the rule is shown instead | "No validated model view"; the rule is shown |
 | L2 | Attractiveness bucket ("top fifth") | A monotonicity test across buckets (Patton-Timmermann) and a top-minus-bottom spread net of T5 costs | "No differentiated view" |
 | L3 | Expected excess return (%) | Within-date Mincer-Zarnowitz slope with a lower confidence bound > 0 and a pre-registered maximum interval width. The product shows the **MZ-recalibrated** forecast, never the raw one. Cross-sectional OOS R² > 0; date-normalized squared-error advantage > 0 | Bucket only |
-| L4 | Absolute expected return (%) | A validated market layer (Campbell-Thompson R², Clark-West vs the expanding mean), **and** the *composed* forecast (beta-aware, `architecture.md`, section 5) tested as a whole | "Unavailable: no market forecast". At most a labelled long-run assumption |
+| L4 | Absolute expected return (%) | A validated market layer (Campbell-Thompson R², Clark-West vs the expanding mean), **and** the *composed* forecast tested as a whole. Composition is the exact sum by default; the beta adjustment applies only under its documented approximation, with the market-exposure diagnostic (`architecture.md`, section 5) | "Unavailable: no market forecast". At most a labelled long-run assumption |
 | D1 | Ranges, quantiles, expected shortfall | Coverage at 50/80/90% within tolerance, overall and by volatility, sector and **ex-ante-defined** regime; pinball/CRPS skill vs a volatility-scaled historical baseline; PIT uniformity; exceedance tests (Kupiec, Christoffersen). Expected shortfall additionally needs a joint VaR/ES test (Fissler-Ziegel scoring or Acerbi-Szekely) | "Historical range, uncalibrated" |
 | D2 | P(outperform), then P(gain) | Brier skill vs the base rate with a date-clustered standard error; reliability and resolution. P(gain) also needs L4 and D1 on *absolute* returns | Hidden |
 
@@ -127,15 +134,15 @@ The product never gets ahead of the evidence.
    - With about 100 names the holdout's one-sided MDE is about 0.05 in rank IC (standard error about 0.020).
    - Plausible effects are 0.02–0.05.
    - The holdout cannot confirm a small edge.
-3. **Prospectively confirmed** is the only status that unlocks Explore and Build, at the claim level reached. It requires a pre-registered one-sided test on holdout plus prospective data, with α-spending across the planned looks.
+3. **Prospectively confirmed** is the only status that unlocks Explore and Build, at the claim level reached. It requires the pre-registered confirmatory test of section 15: one-sided, over non-overlapping blocks, with α-spending at fixed look dates. Its sample is the holdout (T6 is look 0, for artifacts registered before it) plus the dates logged after registration.
    - **Power arithmetic, sampling error only, about 100 names, verified by the review:**
-     - Confirming an IC of 0.03 needs about 1,165 dates never used for selection (about 4.6 years).
+     - Confirming an IC of 0.03 (one-sided α = 0.025, power 0.8) needs about 1,170 dates never used for selection (about 4.6 years) for a signal whose overlap factor is about 13.4, and about 1,760 dates (about 7 years) for a persistent signal.
      - Twelve prospective months detect a *collapse* with only about 31% power at a true IC of 0.03, and 61% at 0.05.
    - **Model views are therefore years away. Risk forecasts (rung D1) come first.**
 4. **Designer knowledge.** This repository began on 2026-08-08, so every design so far was made knowing what happened in 2025. The holdout guards against data-driven selection, not against that knowledge. Designs dated after 2025-01-01 carry a `designed_after_holdout_start` flag and a list of the 2025+ facts known. This is one more reason prospective evidence is the only clean confirmation.
 
 **Never sort by a score that has not earned it.**
-- A forecast spread below a pre-registered tolerance shows "no view". This catches near-constant forecasts, which T4 scored as ±1e-19 "signs".
+- A forecast spread below a pre-registered tolerance shows "no view". This catches near-constant forecasts: T4 scored constant forecasts of about ±4e-19 by their "signs".
 - Estimates are reported selection-free (pre-registered), not as the best of many, to avoid the winner's curse.
 
 ## 7. Capability map
@@ -144,14 +151,16 @@ The product never gets ahead of the evidence.
 |---|---|---|---|---|
 | **Universe** | Four research names and current listings (survivorship-biased) | User watchlists, labelled "list you chose"; theme lenses dated "defined on ‹date›" | — | U1 point-in-time large caps, then S&P 500 membership (licensed); objective AI/semiconductor eligibility (SIC 3674 plus rules) |
 | **Opportunity discovery** | Descriptive features in research runs | Characteristic screens (trailing return, volatility, drawdown, beta, liquidity, fundamentals), sorted by name or a chosen characteristic, never by "attractiveness" | L1/L2 relative ranks; then L3 expected excess return; then D2 P(outperform) | L4 absolute expected return; P(gain); expected downside per asset |
-| **Horizons** | 20 sessions (registered label) | Lookback windows of 5, 20 and 60 sessions for descriptors | 20 first, then 60, then 5 after costs; 30 dropped (correlation about 0.81 with 20) | Calendar-time horizons for 24/7 assets |
+| **Horizons** | 20 sessions (registered label) | Lookback windows of 5, 20, 30 and 60 sessions for descriptors | 5, 20, 30 and 60 all remain possible user-facing horizons. Implementation priority: 20, then 60 and 5 (5 after costs), then 30 after a pre-registered check of its incremental value. Each horizon is its own validated cell; an unvalidated horizon shows "not validated for this horizon" | Calendar-time horizons for 24/7 assets |
 | **Portfolio Builder** | EW, inverse volatility, momentum weight functions; backtest engine (same-close) | **MVP:**<br>• fixed weights, EW, inverse volatility over risky assets<br>• per-asset caps<br>• cash as a floor or fixed weight<br>• exposures and concentration<br>• historical risk and stress scenarios<br>• cost estimates<br>**Later:**<br>• sector and theme caps with fund look-through<br>• volatility target<br>• equal risk contribution and capped minimum variance (optimizer dependency) | Risk forecasts (volatility, covariance) after rung D1; alpha as a bounded, cash-neutral tilt after L3 | Calibrated forecast distributions of a whole portfolio; tax awareness |
-| **Model portfolios** | — | Pre-registered reference constructions on broad funds and cash, named by construction; hypothetical backtests over one registered window ending 2024-12-31; paper tracking only once OD5 opens a prospective era | Model-driven variants as separate registered portfolios | Calibrated forecast distributions; realized track records |
+| **Model portfolios** | — | Pre-registered reference constructions on broad funds and cash, named by construction; hypothetical backtests over one registered window ending 2024-12-31; paper tracking once OD16 is approved and the prospective pipeline (G2) is active (stage S2) | Model-driven variants as separate registered portfolios | Calibrated forecast distributions; realized track records |
 | **Research transparency** | Run records, manifests, checks, the dashboard's evidence pages | Evidence ledger page; publication lineage; limitation codes | — | Public methodology notes (after counsel) |
 | **Multi-asset** | DGS3MO from 2024 (evaluation only) | Treasury ETFs and cash via total returns; bond risk descriptors (duration) | Treasury and cash return forecasts (own ladder) | Crypto (24/7 calendar, licensed data, counsel); international |
 | **Monitoring** | Run ledger (ignored by Git) | Freshness and stale states | Calibration and drift monitors with state triggers | Multi-year prospective record |
 
 ## 8. MVP: Portfolio Lab (rules-only)
+
+**The first MVP, not a permanent restriction.** "No forecasts" describes this first release only. Forecast, uncertainty and model-driven allocation features are planned; each appears when its evidence gate in section 11 is met.
 
 **Goal.** A local, single-user product, as of the end of the development period (2024-12-31) under the default lockbox boundary (OD5). It lets the owner do three things, with every number carrying its evidence badge and knowledge time, and with no forecast anywhere:
 - compare pre-registered model portfolios;
@@ -236,7 +245,7 @@ This is a design boundary, not legal advice. It must be checked by qualified cou
   - monetization;
   - publishing model-portfolio performance;
   - alerts or paper tracking for users;
-  - "model-driven allocations";
+  - "model-driven allocations" shown to anyone other than the owner;
   - crypto alongside securities;
   - any brokerage relationship.
 
@@ -265,7 +274,7 @@ Each model portfolio is a **registry entry** committed to Git before any result 
   - Prices start in 2015 today, so any earlier window needs the data extension F1 and the DGS3MO backfill.
 - **The hypothetical backtest and paper tracking stay separate.**
   - The backtest ends 2024-12-31 (OD5).
-  - Paper tracking can start only once OD5 opens a prospective era, and it is never spliced onto the backtest.
+  - Paper tracking can start only once OD16 is approved and the prospective pipeline (G2) is active (stage S2). It is never spliced onto the backtest.
 - **References are not benchmarks of themselves.**
   - 100% equity, 60/40 and cash are reference portfolios.
   - A rebalanced 60/40 is compared with a never-rebalanced 60/40.
@@ -283,25 +292,38 @@ Each model portfolio is a **registry entry** committed to Git before any result 
 - **Fund-level choices are a data decision (OD7)** made in the first portfolio ticket. Candidate long-history funds (inception dates unverified): VTI or VT for equity, AGG for aggregate bonds, SHY for short Treasuries, BIL for T-bills. Older index mutual funds can serve as labelled proxies.
 - Results are always before taxes, with distributions reinvested under a stated rule.
 
-## 11. Later capabilities (gated)
+## 11. Later capabilities and their evidence gates
 
-| Capability | Depends on |
-|---|---|
-| Opportunity screener over a point-in-time universe | U1: survivorship-free data, security master, membership, calendar (data-source decision) |
-| Relative model views (L1, L2): Research, then Explore and Build | U1; the T4 re-run on U1 with the T4 follow-ups resolved; T5; T6 (holdout-checked); then prospective confirmation, years away (section 6) |
-| Expected excess return (L3) and P(outperform) (D2) | L1/L2 plus calibration on nested folds |
-| Risk forecasts (volatility, covariance; rung D1) | Risk layer, plus a pre-registered non-rejection check on coverage and exceedances, shown with its power. Power is low: about 0.34 over ten years at h = 20 against a 90% band whose true coverage is 85% |
-| Alpha-tilted allocations | L3 plus a tracking-error budget; an optimizer dependency |
-| Absolute expected returns, P(gain), expected downside | A validated market layer (L4) plus beta-aware composition plus D-track calibration |
-| Treasury and cash return forecasts | Their own ladder; Treasury total-return data |
-| Crypto | 24/7 calendar contract, a licensed data source, counsel |
-| Multi-user, hosted product | Counsel, data licences, authentication, privacy program, architecture C on top of B's contracts |
+"Not now" is not a permanent restriction, but not a promise either: some gates may never be met, absolute-return forecasting (L4) in particular. Each capability below unlocks when its gate is met. The gate combines a ladder rung (section 6) with a promotion stage (section 15). Until then the product shows the capability's explicit state, such as "not validated for this horizon", never a placeholder number.
+
+| Capability | Evidence gate | Earliest place it appears |
+|---|---|---|
+| **Forecasts** | | |
+| Relative model ranks and buckets (L1, L2) | U1 on survivorship-free data; the T4 re-run on U1 with the T4 follow-ups resolved; T5; T6 (holdout-checked) | Research mode after development evidence. Explore and Build only after **prospective confirmation**, which is years away for plausible effects (section 6) |
+| Expected excess return (L3) | Rung L3 of section 6; the Mincer-Zarnowitz-recalibrated forecast is shown | As above |
+| Absolute expected return (L4) | A validated market layer, plus a validated composition (`architecture.md`, section 5) | As above |
+| **Uncertainty** | | |
+| Risk forecasts: volatility, covariance (D1) | Development check first. Then, to reach Explore and Build, an **equivalence test** (two one-sided tests) showing coverage within a pre-registered margin on prospective data from the G2 pipeline. A non-rejection check is not evidence of calibration: its power is about 0.34 over ten years at h = 20 against a 90% band whose true coverage is 85% | Research after the development check; Explore and Build after the prospective equivalence test. Likely the first forecast to reach the product |
+| Ranges, quantiles, expected shortfall (D1) | Coverage by ex-ante regime; pinball/CRPS skill; a joint VaR/ES test; the same prospective equivalence test | As risk forecasts |
+| P(outperform) (D2) | Brier skill with a date-clustered standard error, on top of L1–L3 | With L3 |
+| P(gain), expected downside per asset | L4, plus D1 and D2 on absolute returns | With L4 |
+| **Allocation** | | |
+| Rule-based allocations (fixed, equal weight, inverse volatility, caps, cash) | Registration and T5's formula review | MVP (Explore, Build) |
+| Risk-based construction from trailing estimates (equal risk contribution, capped minimum variance, volatility target) | A declared rule on trailing historical estimates; T5's formula review; an optimizer dependency for the first two | A RULES capability after the MVP |
+| The same constructions fed by risk *forecasts* | Validated risk forecasts (D1, prospective equivalence) | After P4-1 and its prospective test |
+| Alpha-tilted allocations | L3, plus a tracking-error budget and an optimizer | After L3 is prospectively confirmed |
+| Learned allocation policy (PPO candidate) | Section 15's policy requirements, then paper trading (stage S2) | Research, then paper trading, then (stage S3) the owner's own capital |
+| **Other** | | |
+| Opportunity screener over a point-in-time universe | U1: survivorship-free data, security master, membership, calendar (data-source decision) | After RES-1 |
+| Treasury and cash return forecasts | Their own ladder; Treasury total-return data | Long-term |
+| Crypto | 24/7 calendar contract, a licensed data source, counsel | Long-term |
+| Multi-user, hosted product | Counsel, data licences, authentication, privacy program, architecture C on top of B's contracts (stage S4) | Only if the owner chooses |
 
 ## 12. Research follow-ups this plan depends on
 
 These are already recorded with T4, and are repeated here because the product depends on them:
-1. **Elastic Net's L2 term is not scale-free.** It duplicated Lasso in 24 of 24 folds; count it as one variant until reparameterized.
-2. **The hit rate counts near-zero sign noise.** About ±1e-19 forecasts were scored as hits. A zero band is needed.
+1. **Elastic Net's L2 term is not scale-free.** It chose Lasso's penalty in 24 of 24 folds, and its rank IC equals Lasso's to four decimals. Count it as one variant until reparameterized.
+2. **The hit rate counts near-zero sign noise.** Constant forecasts of about ±4e-19 were scored by their signs. A zero band is needed.
 3. **The date-common forecast component only adds loss under the excess label.** Within-date demeaning or ranking of features, or date-weighted fitting.
 4. **Row-weighted fitting vs date-weighted tuning** once the universe size varies (`architecture.md`, section 7).
 5. **Variable-universe complete cross-sections and delistings** before large-universe validation.
@@ -327,12 +349,14 @@ The gate column cites `AGENTS.md`'s approval gates. The status column records th
 | OD7 | MVP data | Broad fund total returns (raw closes and dated distributions) and the DGS3MO backfill, from the existing personal-use sources, ending 2024-12-31; a user watchlist | Data (universe and source) | **Approved 2026-10-11** (with OD6); the funds are chosen in the first portfolio ticket |
 | OD8 | T5 formulas | Next-close execution; cash convention; total-return, fund-based benchmarks; cost model, including the initial build and a stated turnover convention; distribution reinvestment timing; calendar-time CAGR; intervals on headline metrics; the "gain" definition (for later) | Financial formulas | Pending |
 | OD9 | Decision clock | `signal_cutoff_at` = 18:00 ET on session d as the product's `as_of` (open item 1). Until then, an interim date-level rule for publication v1: a daily close is known at the end of its session date | Availability semantics | Pending |
-| OD10 | Horizons | 20 sessions first, then 60, then 5 after costs. Drop 30: it shares about two-thirds of its variance with 20 (correlation about 0.82) and would add a test family for little new information | Research policy | Pending |
+| OD10 | Horizons | 5, 20, 30 and 60 sessions remain possible user-facing horizons. Implementation priority: 20 first, then 60 and 5 (5 after costs), then 30 after a pre-registered check of its incremental value (its correlation with 20 is about 0.82). Dropping any horizon is an explicit product decision | Research and product policy | Pending |
 | OD11 | Themes | Theme lists are dated current-exposure lenses, never historical strategies; "AI exposure" only as a point-in-time characteristic | Product policy | Pending |
 | OD12 | Pre-registration record | A Git-tracked registry for model portfolios, every real-panel scoring, holdout use, forecast-log starts and review dates | Research integrity | Pending |
 | OD13 | Survivorship-free data | CRSP via WRDS (if Georgia Tech access exists) or Sharadar, for U1; unchanged from the universe document | Data and licence | Pending |
 | OD14 | Dependencies | A trading calendar (or an in-repo holiday file) when needed; an optimizer only when construction needs one | Dependencies | Pending |
 | OD15 | Mission wording | Consider changing `AGENTS.md`'s "explainable portfolio recommendations" to "explainable portfolio analysis" until the product may recommend | Guardrail file | Pending |
+| OD16 | Prospective pipeline (amends OD5's "Later" clause) | A separately governed pipeline for prospective paper trading and later deployment (`architecture.md`, section 9).<br>• Before its first registration, fix the holdout end H_end and record it in G1. The sealed holdout becomes [2025-01-01, H_end]; T6 evaluates it once and cannot extend it.<br>• Registered artifacts only, with a registration-hash check before every decision.<br>• An append-only decision log written before the execution cutoff, its hash committed to Git; no backfill.<br>• Separate storage and entry point.<br>• Review reports only through the pipeline, never the product, on pre-registered dates.<br>• Inputs from the sealed window are withheld from every view until T6.<br>The research and product cutoff is unchanged. **Alternative:** keep the pipeline dormant until T6's pre-registration | Point-in-time and lockbox policy; data; infrastructure (scheduler); secrets | Pending |
+| OD17 | Promotion stages | The stages S0–S4 and their entry and exit requirements (section 15). Each promotion is a separate owner decision | Product, risk and legal | Pending |
 
 ## 14. Recommended first implementation ticket (after approval)
 
@@ -377,7 +401,94 @@ The gate column cites `AGENTS.md`'s approval gates. The status column records th
 - **Presentation:** one Explore page, after moving `theme.py` and `components.py` into a neutral `ui/` module.
 - **No rebalancing decision is involved,** so it does not wait for T5. It needs OD7 and a small slice of F1.
 
-## 15. Questions that need external verification
+## 15. Long-term objective and promotion stages
+
+**From research to investment-ready operation.** Each stage has entry requirements in three families:
+- empirical: statistical evidence;
+- operational: pipelines, replay, change control;
+- risk control: limits, kill switches, reconciliation.
+
+Each promotion is an owner decision (OD17). The G1 registry records promotions as append-only events.
+
+| Stage | What runs | Who is exposed |
+|---|---|---|
+| **S0 Research and development** (today) | Rules, models and policies evaluated on development data (to 2024-12-31) | No one; research only |
+| **S1 Holdout-checked** | One T6 run, over [2025-01-01, H_end], for everything pre-registered by then (derived from the T6 record) | No one |
+| **S2 Prospective paper trading** | Registered artifacts in the separately governed prospective pipeline (OD16); decisions logged before outcomes exist; no capital | No one; paper only |
+| **S3 Controlled personal deployment** | The owner's own capital, capped and ramped, through the same pipeline, with manual approval of each rebalance at first | The owner only |
+| **S4 Public advisory product** (only if chosen) | A regulated service for other people | Other people |
+
+**Entry requirements, by stage:**
+
+| Stage | Empirical | Operational | Risk control |
+|---|---|---|---|
+| S1 | Pre-registered in Git: claim, rung, horizon, universe, MDE, test family and α. Development evidence at that rung. One T6 run, no collapse | Reproducible from code SHA and data hashes; the ledger records every real-panel scoring | — |
+| S2 | **Registration only.** S1 is not a gate. A model or policy also needs development evidence and a registered confirmatory plan (below). Artifacts registered after T6 enter S2 without S1 and are flagged "prospective only" | The prospective pipeline active (`architecture.md`, section 9): replayable decisions, freshness monitors, an incident log, a burn-in period fixed in advance | A constraint check on every decision (caps, cash floor, turnover) |
+| S3 | Per artifact class:<br>• **model claim:** prospectively confirmed by its confirmatory test;<br>• **rules-only allocation:** exact replay of every logged decision; drift between live and later-revised data vintages within tolerance; at least a pre-registered number of rebalances (for example 12) over at least one year; paper turnover and quote-based cost estimates within tolerance of the simulation. There is no return test for rules: a Sharpe ratio's standard error is about 0.75 over two years;<br>• **policy:** see "Learned allocation policy" below | Execution plan (manual or broker; an owner decision), including whether market-on-close orders are feasible with manual approval; position and cash reconciliation against broker statements on every rebalance; change control; backups; an audit trail; an **override log**, because one owner is designer, validator and operator | **Order checks before trading:**<br>• an allow-list of securities<br>• notional and price collars<br>• no margin or shorting<br>• settled cash only<br>• idempotent orders<br>• whole-share rounding<br>**Capital:** a cap set by the owner and a ramp tied to review dates; the account type registered in advance (a taxable account brings wash-sale and short-term-gain issues, worse with frequent rebalancing of the same names).<br>**Losses:** an absolute loss budget beside a drawdown trigger relative to the registered reference portfolio, both calibrated to a stated false-trigger rate, with a re-entry rule; any drawdown overlay is part of the registered backtest.<br>**Consistency:** the same rebalance cadence and no-trade bands in simulation, paper and live; a tested kill switch.<br>**Scale-up:** realized implementation shortfall against the simulated next-close price within tolerance before capital increases |
+| S4 | A multi-year prospective record at every claim level advertised. Independent model validation | A registered firm with a chief compliance officer (likely needed even with one owner); licensed data; hosting with authentication and TLS; a security program; a privacy program; incident response | A compliance program (adviser registration path, the Marketing Rule, record keeping); suitability; conflicts policy; firm-level risk limits. Counsel throughout (section 9) |
+
+**Registration lineage and changes.**
+- A change is anything that alters a logged output. It creates a new registration in the same lineage, which starts again at S2.
+- Refits under the registered refit procedure and schedule, and refactors proven by byte-identical log replay, are not changes.
+- A lineage has one α budget, fixed at its first registration.
+- Abandoned or reverted registrations stay visible and count as failed tests.
+
+**The confirmatory test.** Each registration records:
+- the estimand θ (for a model, coverage-weighted rank IC or a ladder rung's statistic; for a policy, the net certainty-equivalent difference against its reference);
+- H0: θ ≤ 0 against δ = the MDE, with one-sided α (for example 0.025) and power 0.8;
+- a statistic over non-overlapping h-session blocks, since prospective data has no folds;
+- information time measured in effective blocks;
+- Lan-DeMets O'Brien-Fleming α-spending at fixed look dates. T6 is look 0 for artifacts registered before it.
+- a non-binding futility rule (stop when conditional power is below 10%);
+- a maximum length N_max with no extension. N_max is the "minimum prospective period"; a claim not confirmed by then is retired.
+
+**Exit and rollback triggers**, pre-registered per artifact class:
+- **Models:** a CUSUM on non-overlapping block means of per-date IC or calibration. Overlapping labels make per-date IC autocorrelated, so the threshold is calibrated by block-bootstrap simulation to a stated in-control average run length, and its false-alarm rate is recorded.
+- **Allocations:** a drawdown or loss-budget breach; realized implementation shortfall beyond tolerance.
+- **Any class:** stale inputs (the default is to **hold** existing positions, never to trade on stale prices); a constraint violation; an operational incident.
+
+A trigger reverts the artifact to the previous stage, or holds the registered reference portfolio.
+
+**Requirements specific to a learned allocation policy (the PPO candidate):**
+- **Environment fidelity.** The simulator is the corrected backtest engine (T5), through the shared per-step function:
+  - point-in-time state;
+  - next-close execution;
+  - costs and liquidity;
+  - constraints enforced by projecting the action onto the feasible set.
+
+  It assumes prices are exogenous (no market impact beyond the cost model) and that there is only one historical path. Both assumptions are stated.
+- **State and training without leakage.**
+  - Forecasts in the state are out-of-fold and point-in-time as published, never in-sample fitted values.
+  - Observation and reward normalization statistics are fitted per training fold, frozen, stored in the artifact and never updated live.
+  - Checkpoint selection and early stopping use inner folds only.
+  - Episodes end at least h sessions before each test start.
+  - Training uses development data only, with the same purged walk-forward design.
+- **Reward.**
+  - Pre-registered, net of costs and risk-aware: for example net return minus a variance or drawdown penalty. A drawdown penalty needs drawdown in the state.
+  - Checked for reward hacking, for example earning reward through turnover patterns the cost model underprices.
+  - Changing `environment/reward.py` is a formula gate.
+- **Baselines**, on the same investable set, with an intersection-union test (the policy must beat each one):
+  - the registered rule-based allocations;
+  - a myopic constrained mean-variance optimizer with the same inputs and turnover penalty;
+  - a simple rule tuned with the same tuning budget;
+  - the same policy with no forecast inputs.
+
+  The primary estimand is the paired difference in the registered objective (certainty equivalent), tested by date with fold-block inference. The no-forecast comparison shows what the forecasts add; the same-input baselines show what reinforcement learning adds.
+- **Robustness.**
+  - A pre-declared seed ensemble is deployed, and results are reported across seeds as a distribution, never the best seed.
+  - Seed, hyperparameter and checkpoint counts go into the ledger for the deflated Sharpe ratio.
+  - Sensitivity to costs, rebalance dates and stress scenarios.
+  - A complexity budget: development data hold only about 200 independent 20-session decisions.
+  - A fallback, holding the registered reference, when the state falls outside the training distribution. State drift is an exit trigger.
+- **Explainability, testable.** Each decision shows how and why its weights differ from the rule-based reference, and which constraints bind. A simple surrogate's fidelity to the policy must meet a pre-registered threshold.
+- **Realism about power.** These figures were computed by the review under stated assumptions.
+  - Against a rule whose returns correlate 0.9 with the policy's, at Sharpe 0.5, the smallest detectable Sharpe difference is about 0.39 over 10 years and 0.71 over 3 years.
+  - Showing superiority at an active information ratio of 0.5 (one-sided α = 0.05, power 0.8) takes about 25 years; at 1.0, about 6 years.
+  - So S3 for a policy is many years away. A **non-inferiority** test against the reference may justify small, capped personal capital; **superiority** is required before scaling up.
+- **Ownership.** Per `AGENTS.md`, agents deliver the design, environment, tests and a bounded skeleton; the owner implements the reinforcement-learning core unless they delegate it.
+- **Status.** PPO is a candidate, not a commitment. Constrained mean-variance with validated inputs, and risk-based rules, remain both alternatives and baselines.
+
+## 16. Questions that need external verification
 
 - **Regulation:** current SEC and state treatment of interactive tools (the internet-adviser exemption, the Marketing Rule's hypothetical-performance rules), Reg S-P and state privacy laws, and the status of crypto.
 - **Terms of use:** Yahoo, Cboe (VIX), Coin Metrics, and S&P and GICS naming and data.

@@ -3,7 +3,7 @@
 Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2, OD4, OD5, OD6, OD7 in `vision_and_prd.md`, section 13); other decisions pending. It extends the research roadmap in `docs/research/diagnostics_and_visualization_plan.md` (T1–T6) and the U and C tracks in `docs/research/universe_and_market_context.md`.
 
 **Labels.**
-- Owner decisions: OD1–OD15 (`vision_and_prd.md`, section 13).
+- Owner decisions: OD1–OD17 (`vision_and_prd.md`, section 13). Promotion stages: S0–S4 (`vision_and_prd.md`, section 15).
 - Ladder rungs: L0–L4 and D1–D2 (`vision_and_prd.md`, section 6).
 - Product tickets: P*n*; research tickets: RES-*n*; foundations: F*n*, G*n*.
 - Risk IDs carry a category prefix (`risk_register.md`).
@@ -37,8 +37,10 @@ P1-1a, G1, T5 and F1 are independent. **T5 is the long pole for every simulated 
 |---|---|---|---|---|
 | **P1-1a** | Publication contract v1 on synthetic fixtures: envelope, write-once writer, fail-closed reader, evidence status v1, the lockbox rule, the interim knowledge-time rule (`vision_and_prd.md`, section 14) | OD2 and OD5 (approved), OD3 (confirmed with this ticket), OD9's interim rule | The negative tests in the PRD; verify passes; no T2 contract change | M |
 | **G1** | Git-tracked registry: model-portfolio pre-registrations, every real-panel scoring, holdout use, forecast-log starts and review dates | OD12 | A registry entry is immutable after commit (a test); the ledger references it | S |
+| **G2** | Prospective pipeline (`architecture.md`, section 9):<br>• holdout end H_end recorded in G1 first<br>• separate store and entry point<br>• registration-hash check before each decision<br>• append-only decision log with `written_at`, no backfill, latest hash committed to Git<br>• review reports only through its own entry point<br>• sealed-window inputs withheld from every view until T6<br>Design and tests first; activation is a separate decision | OD16, G1, OD9 (real `signal_cutoff_at`), OD14 (calendar), F2, a scheduler (infrastructure gate), keys (secrets gate) | Research and product code cannot read its store (import and path tests); no row is ever edited or backfilled; nothing inside [2025-01-01, H_end] is shown before T6 | M |
 | **T5** | Portfolio readiness:<br>• next-close execution (lag 1)<br>• cash returns: the DGS3MO backfill from 1981 as needed, `available_at` T+1, the convention check, or a T-bill fund<br>• total-return, fund-based benchmarks<br>• a cost model, including the initial build and a stated two-way turnover convention<br>• distribution reinvestment timing (ex-date vs pay date)<br>• calendar-time CAGR<br>• block-bootstrap intervals and a Sharpe interval<br>• rebalance-date sensitivity counted as variants<br>• a "before taxes" label<br>• a participation check | OD8 | Financial-formula review approved. Hand-computed examples. Baseline results re-run with every difference explained. A test ties the label's entry lag to the backtest's execution lag | L |
 | **F1** | Fund and cash data: raw closes plus dated distributions, retrieval times, history before 2015 where available, labelled proxies; a session calendar (in-repo NYSE and SIFMA holiday file, or a dependency). Everything ends 2024-12-31 under OD5's default | OD7, OD14 | Prefix-stability and `available_at` tests; no vendor data committed; no row dated on or after `MODEL_HOLDOUT_START` | M |
+| **F2** | Live-data adapter for the prospective pipeline only: current prices, distributions and rates with `available_at` and retrieval times, written to the pipeline's store | OD16, OD9 | Nothing outside `prospective/` can read its output (path test) | S–M |
 
 ## Phase 2: MVP, Portfolio Lab (rules only)
 
@@ -62,15 +64,15 @@ P1-1a, G1, T5 and F1 are independent. **T5 is the long pole for every simulated 
 | **RES-3** | Context V1 (rates, VIX, credit-risk proxy, regime descriptors) with the pre-registered ablation | RES-1 (for power), OD9 | The ablation design in the universe document |
 | **RES-4** | T4 re-run on U1 at h = 20, then h = 60 | RES-1, RES-2, T5 | The ladder's L1 and L2 gates in development; nulls and controls; the MDE stated before results are read; a test family and α per cell |
 | **RES-5** | T6: one holdout run, for everything pre-registered by then. The holdout window is fixed at its pre-registration | RES-4, G1 | Exactly one recorded run; the decision rule fixed in advance; the status earned is `holdout_checked` (a "no collapse" check) |
-| **RES-6** | Prospective forecast log: append-only, hash-chained, written at the signal cutoff; scored on pre-registered review dates with α-spending | RES-5, G1 | No row is ever edited; review dates honoured; the planned looks and α-spending recorded in advance |
+| **RES-6** | Prospective model forecasts through the G2 pipeline: append-only, hash-chained, written at the signal cutoff; scored with the registered confirmatory test (T6 as look 0) | RES-4, G2 | No row is ever edited; review dates honoured; the planned looks and α-spending recorded in advance |
 
 ## Phase 4: validated risk, screener, and (much later) relative views
 
 | Ticket | Delivers | Depends on | Gate |
 |---|---|---|---|
-| **P4-1** | Risk forecasts: mean-reverting volatility (GARCH or HAR), shrinkage covariance, then a factor model; risk-forecast publications | T5, F1 | Ladder D1: a pre-registered non-rejection check on non-overlapping returns, **shown with its power** (about 0.34 over ten years at h = 20 against a 90% band whose true coverage is 85%) |
+| **P4-1** | Risk forecasts: mean-reverting volatility (GARCH or HAR), shrinkage covariance, then a factor model; risk-forecast publications | T5, F1 | Ladder D1, first in development. Reaching Explore and Build needs a prospective **equivalence** test of coverage within a pre-registered margin, run through G2. A non-rejection check is not enough: its power is about 0.34 over ten years at h = 20 against a 90% band whose true coverage is 85% |
 | **P4-2** | Opportunity screener over U1 (characteristics only) | RES-1 | Point-in-time membership and eligibility reasons on every row |
-| **P4-3** | Relative model views. Research mode only, until prospectively confirmed; then Explore and Build at the claim level reached | RES-5, RES-6 | `prospectively_confirmed` through the pre-registered one-sided test on holdout plus prospective data. **Confirming an IC of 0.03 with about 100 names needs about 1,165 dates never used for selection (about 4.6 years).** Twelve months detect a collapse with only about 31–61% power. Plan for years, not months |
+| **P4-3** | Relative model views. Research mode only, until prospectively confirmed; then Explore and Build at the claim level reached | RES-5, RES-6 | `prospectively_confirmed` through the registered confirmatory test (`vision_and_prd.md`, section 15). **Confirming an IC of 0.03 with about 100 names needs about 1,170 dates never used for selection (about 4.6 years; about 7 years for a persistent signal).** Twelve months detect a collapse with only about 31–61% power. Plan for years, not months |
 
 ## Phase 5: calibrated forecasts
 
@@ -82,7 +84,7 @@ Each step needs its rung on the ladder, nested-fold calibration and drift monito
 ## Phase 6: absolute forecasts and more asset classes
 
 - **Market layer research.** Start from descriptive regimes and volatility targeting; L4 needs Campbell-Thompson and Clark-West against the expanding mean, and the composed forecast tested as a whole.
-- **Beta-aware composition.** A formula gate.
+- **Composition method.** The exact sum by default; the beta adjustment only under its documented approximation, chosen by pre-registration and checked with the market-exposure diagnostic (`architecture.md`, section 5). A formula gate.
 - **P(gain) and expected downside**, only after L4 and D1/D2 on absolute returns.
 - **Treasury and cash forecasts**, on their own ladder.
 - **Crypto**, needing a 24/7 calendar contract, a licensed source and counsel.
@@ -100,6 +102,18 @@ Each step needs its rung on the ladder, nested-fold calibration and drift monito
   - an audit trail of what was shown, without personal data.
 - **Testing with others:** comprehension testing with real users, on synthetic data.
 
+## Promotion stages (`vision_and_prd.md`, section 15)
+
+| Stage | Reached by | Earliest |
+|---|---|---|
+| S0 Research and development | Today | Now |
+| S1 Holdout-checked | RES-5 (T6) | After RES-4 |
+| S2 Prospective paper trading | G2 active (OD16); registration. S1 is not a gate. Models and policies also need development evidence and a registered confirmatory plan | Rules-only portfolios as soon as G2 and P2-1 exist; models and policies once registered |
+| S3 Controlled personal deployment | Per artifact class:<br>• rules-only: exact replay, vintage-drift and rebalance-count checks;<br>• model claims: prospective confirmation;<br>• policies: non-inferiority for capped capital, superiority before scaling.<br>Plus S3's operational and risk controls | About a year for rules-only allocations; years for model claims and policies |
+| S4 Public advisory product | Counsel, registration path, licences, security and privacy programs, a multi-year record | Only if the owner chooses |
+
+**Starting the clock.** Evidence accrues only with time. Paper-tracking the registered rules-only portfolios as soon as G2 exists costs little, and it is the first prospective record the project will have. It needs OD16 first, because the holdout end must be fixed before any prospective registration.
+
 ## Critical path and parallelism
 
 ```text
@@ -107,7 +121,8 @@ Product:   P0 ─► P1-1a ─► P1-1b ─────────────�
            P0 ─► T5 (formula review first) ─┐
            P0 ─► F1 ─────────────────────────┼─► P2-1 ─► P2-2 ─► MVP gate ─► P4-1
            P0 ─► G1 ─────────────────────────┘
-Research:  P0 ─► OD13 data source ─► RES-1 ─► RES-2 (frozen) / RES-3 ─► RES-4 ─► RES-5 (T6) ─► RES-6 (years) ─► P4-3 ─► Phase 5
+           G1 ─► G2 (OD16) ─► paper tracking of registered portfolios (S2) ─► …
+Research:  P0 ─► OD13 data source ─► RES-1 ─► RES-2 (frozen) / RES-3 ─► RES-4 ─► RES-5 (T6, S1) ─► RES-6 via G2 (S2, years) ─► P4-3 ─► Phase 5 ─► S3
 ```
 
 - The product track reaches its MVP gate without any forecast.

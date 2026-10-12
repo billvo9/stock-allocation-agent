@@ -35,7 +35,7 @@ Add Explore and Build pages to the existing Streamlit app and compute screens, a
 | | |
 |---|---|
 | Advantages | Fastest demonstration; no new contracts; one process |
-| Disadvantages | Breaks T3's tested guarantee that the app computes nothing. Validation status becomes a UI convention instead of a contract. Logic drifts into Streamlit callbacks, and every frontend change risks a statistical change. The large view modules (`views.py` 1271 lines, `figures.py` 1330) grow further |
+| Disadvantages | Breaks T3's tested guarantee that the app computes nothing. Validation status becomes a UI convention instead of a contract. Logic drifts into Streamlit callbacks, and every frontend change risks a statistical change. The large view modules grow further (`views.py` and `figures.py` are about 1,440 and 1,480 lines with T4) |
 | Cost and migration risk | Low cost now; high migration risk later |
 
 ### B. Publication pipeline (recommended)
@@ -63,9 +63,10 @@ An API, a database, authentication, a scheduler and a web frontend.
 ```text
 reference data ─┐
 market data ────┼─► features ─► rules ───────────┐
-                │             ─► research models ─┼─► allocation ─► publication writer ─► publications/ ─► reader ─► app (Explore · Build · Research)
-                │             ─► risk ────────────┘                         ▲
-                └─────────────────────────────────────────────── monitoring ┘  (scores matured outcomes, appends evidence)
+(to 2024-12-31) │             ─► research models ─┼─► allocation rules / policy ─► publication writer ─► publications/ ─► reader ─► app (Explore · Build · Research)
+                │             ─► risk ────────────┘
+                │
+live data ──────┴─► prospective/ (separately governed, section 9): frozen registered artifacts ─► append-only decision log ─► review reports (its own entry point, never the product)
 ```
 
 Existing packages keep their roles. A new package is created only by the first ticket that needs it.
@@ -77,11 +78,12 @@ Existing packages keep their roles. A new package is created only by the first t
 | Features | Point-in-time features; regime descriptors; stock characteristics | `features/` (exists) |
 | Research models | Validation, diagnostics, alpha models | `model_validation/`, `model_diagnostics/` (exist). Published only as research-only until validated |
 | Allocation rules | Pure weight functions: fixed weights, equal weight, inverse volatility, caps, cash floor | `agents/` (exists: equal weight, inverse volatility, momentum). Extended there; no third home for inverse volatility. No expected-return optimizer until a return forecast is validated |
+| Allocation policy (candidate) | A learned policy, for example PPO, mapping validated state (risk forecasts; later, validated return forecasts) to weights under the same constraints | Long-term. A candidate engine, not a commitment: it enters through the ladder and the promotion stages (`vision_and_prd.md`, section 15) and must beat the rule-based allocations net of costs.<br>• **Home:** the existing `environment/` (`portfolio_math.py`, `reward.py`); changing the reward is a formula gate. T5 factors one pure per-step function (rebalance cost, drift, drawdown) used by both the backtest and the policy environment, because `evaluation/baseline.py` takes precomputed weights and cannot step a policy. Policy inference uses the same weight-function signature as `agents/`. No new package until the first policy ticket.<br>• **Status:** its `portfolio_allocation` publications get the minimum of their weakest input's status and the policy's own validation status. Never `rules_illustration`.<br>• **Ownership:** per `AGENTS.md`, the owner implements the reinforcement-learning core unless they delegate it |
 | Simulation and metrics | Backtests, costs, performance and risk metrics | `evaluation/`, `environment/portfolio_math.py` (exist); corrected by T5 |
 | Risk | Historical risk descriptors and stress scenarios (MVP); risk forecasts later | Descriptors through `evaluation/` metrics. A `risk/` package only when forecasts start (P4-1) |
 | Publications | Envelope, writer and fail-closed reader with the evidence gate. Wraps the T2 run contract and never changes it | A new `publication/` package (P1-1a) |
 | Presentation | A product entry point separate from the research dashboard | A new `app/`, plus a neutral `ui/` module holding `theme.py` and `components.py`, moved out of `dashboard/` (P1-1b). `dashboard/__init__.py` says nothing outside it imports it |
-| Monitoring | Append-only forecast log written at the signal cutoff; scoring as labels mature; freshness and drift | A `monitoring/` package when the first forecast log starts (RES-6) |
+| Prospective pipeline | Frozen registered artifacts run at each signal cutoff; append-only decision log; scoring on review dates; freshness and drift (section 9) | A `prospective/` package, created by G2. It reuses `publication/` (write-once, SHA-256 manifest), the G1 registry and `evaluation/`, so it is not a second framework |
 
 **Where this departs from the brief's proposed layers.**
 - **Treasury and cash "return models" → data plus a formula.** Short-horizon bill returns follow from yields, and a bond fund's return is a total-return series. Neither needs a forecasting model until we want Treasury *forecasts*.
@@ -112,7 +114,9 @@ Existing packages keep their roles. A new package is created only by the first t
 
 **Rules enforced in code** [R]:
 1. **Only a promotion path may set** `holdout_checked` (citing the T6 record) or `prospectively_confirmed` (citing the pre-registered test and its monitoring record). Only `prospectively_confirmed` unlocks Explore and Build.
-2. **An allocation that uses forecasts is capped at its weakest forecast input.** An allocation from a declared rule alone is `rules_illustration`.
+2. **An allocation that uses forecasts is capped at its weakest forecast input.**
+   - An allocation from a declared rule alone is `rules_illustration`.
+   - An allocation from a learned policy gets the minimum of its weakest input's status and the policy's own status, never `rules_illustration`.
 3. **The reader refuses unknown statuses and newer minor versions.** It never returns a return forecast to a mode that its status and claim level do not allow (`ux_blueprint.md`, section 3).
 4. **UI components take typed records.** A forecast card cannot render a descriptor, and a descriptor card cannot render a forecast.
 5. **An import test proves `app/` imports only the reader, the allocation rules and `ui/`.** Never models, raw data or the writer.
@@ -124,8 +128,18 @@ Existing packages keep their roles. A new package is created only by the first t
      - a holdings snapshot taken in 2025 is 2025 data;
      - a price level adjusted for a 2025 distribution carries 2025 information, so build history from raw closes plus the adjustment factors known by the `as_of`;
      - a trailing return over 2025 is a realized holdout label.
-   - **What would change it.** T6 runs once, for everything pre-registered by then, and the owner fixes the holdout window at its pre-registration. After T6 that window becomes development data.
-   - **From then on, each entity's evidence class is its own.** A portfolio, rule or model counts as development data before its registration date and as prospective after it. Prospective results are viewed only on pre-registered review dates.
+   - **What decision OD16 would add** (proposed; it amends OD5's "Later" clause and needs the owner's approval):
+     - Before the prospective pipeline's first registration, the owner fixes the holdout end H_end and records it in G1. It is earlier than every prospective start.
+     - The sealed holdout is then [2025-01-01, H_end]. T6 evaluates it once, for everything pre-registered by then, and cannot extend it. After T6 that window becomes development data.
+   - **The research and product cutoff does not move.**
+     - Until T6, research, development and the product read nothing dated on or after `MODEL_HOLDOUT_START`.
+     - After T6, only [2025-01-01, H_end] becomes development data (OD5).
+     - Data after H_end is touched only by the separately governed pipeline (section 9).
+   - **Each entity's confirmatory sample:**
+     - the holdout, if the entity was registered before T6;
+     - plus the dates logged at or after its registration.
+
+     Dates between H_end and its registration enter no confirmatory test.
    - **Designer knowledge.** The repository began on 2026-08-08, so every design was made knowing what happened in 2025. Designs carry a `designed_after_holdout_start` flag and a list of the 2025+ facts known. The holdout cannot remove that knowledge; prospective evidence can.
 
 **Version 1 minimum** (P1-1a). Only `evidence_status` ∈ {`descriptive`, `rules_illustration`}, `claim_type` derived from `kind`, and the lockbox rule.
@@ -134,35 +148,84 @@ Existing packages keep their roles. A new package is created only by the first t
 
 ## 5. Composing absolute forecasts, and when they stay unavailable
 
-The equity model predicts the **excess return over the equal-weight eligible universe** (the label):
+The equity model's label is the **excess return over the equal-weight eligible universe** C_t:
 
-    x_i,h(t) = r_i,h(t) − r_EW,h(t),   r_EW,h(t) = (1/|C_t|) Σ_{j∈C_t} r_j,h(t)
+    X_i,h(t) = R_i,h(t) − R_EW,h(t),   R_EW,h(t) = (1/|C_t|) Σ_{j∈C_t} R_j,h(t)
 
-The identity r_i = r_EW + x_i is exact, so an absolute forecast needs a compatible forecast of the benchmark:
+**The identity is exact.** R_i = R_EW + X_i holds for every name and date. So for the information set F_t at the signal cutoff:
 
-    E[r_i,h | F_t]   = E[r_EW,h | F_t] + E[x_i,h | F_t]
-    Var[r_i,h | F_t] = Var[r_EW,h | F_t] + Var[x_i,h | F_t] + 2 Cov[r_EW,h, x_i,h | F_t]
+    E[R_i,h | F_t]   = E[R_EW,h | F_t] + E[R_i,h − R_EW,h | F_t]
+    Var[R_i,h | F_t] = Var[R_EW,h | F_t] + Var[X_i,h | F_t] + 2 Cov[R_EW,h, X_i,h | F_t]
 
-`F_t` is the information at the signal cutoff. The covariance term is not zero in general: writing r_i = β_i·r_EW + ε_i (ε_i a residual) gives Cov(r_EW, x_i) = σ_EW²(β_i − 1).
+When both terms are conditional expectations on the **same** F_t, plain addition is the correct composition, with no correction. Any dependence of X_i on the market state, including a name's beta to the benchmark, is already inside E[X_i | F_t].
 
-**The excess label is not beta-neutral, so adding a market forecast to it is wrong.**
-- Date-common inputs get zero coefficients under the excess label. So the excess model learns only the *unconditional* beta term (β_i − 1)·μ̄, where μ̄ is the unconditional mean of r_EW, and ignores any market view.
-- **Illustrative example, not measured.** Take β_i = 1.8, μ̄ = +0.8% per 20 sessions, a market forecast m = −3%, and no residual skill (E[ε_i] = 0).
-  - Correct: E[r_i] = β_i·m = 1.8 × (−3%) = −5.4%.
-  - Naive sum: m + x̂_i = −3% + 0.8 × 0.8% = −2.36%, which is 3.04 percentage points too high.
-  - Feeding the *excess* forecast into a beta form double-counts: β_i·m + x̂_i = −5.4% + 0.64% = −4.76%.
-- **A beta-aware composition corrects the excess forecast for the market view** (a financial-formula decision, owner gate):
+**Formulations, one per registered model.** Each composed forecast uses exactly one, chosen by pre-registration and recorded in the publication (`composition_method`). Choosing after seeing which scores better is not allowed.
 
-      E[r_i | F_t] = m + x̂_i + (β̂_i − 1)(m − μ̄)
+**A. Sum (the default).**
 
-  With the example's numbers: −3% + 0.64% + 0.8 × (−3.8%) = −5.4%. The alternative is to retarget the model to the residual r_i − β̂_i·r_EW and compose β̂_i·m + ε̂_i.
-  - β̂_i is a trailing point-in-time estimate.
-  - Per-date demeaning needs both the excess forecasts to average zero and β̂ to average one over C_t. Then the cross-sectional mean of the composed forecasts equals m.
+    Ê[R_i | F_t] = m_t + X̂_i,t
+
+- m_t is a validated, Mincer-Zarnowitz-calibrated market-layer forecast of R_EW, and X̂_i,t a validated forecast of E[X_i | F_t].
+- It is correct when the excess forecast conditions on the same information as the market forecast, including the market-state information that moves X_i (for example through pre-registered beta × market-state interactions).
+- When the excess model has a market-state input, that input must be the validated m_t itself. Otherwise the composition mixes two different market views.
+
+**B. Beta-adjusted. A documented approximation, not a general correction.** It applies only when the excess forecast is known to be learned around an **unconditional** market mean, so that it carries no market-state information.
+- **Stock-level features are not enough to establish that.** Date-common features get no main-effect coefficient only when features or predictions are demeaned within each date. Trailing stock returns also carry β_i × past market moves; T4 measured 57–65% of feature variance as common to all names on a date.
+- **Eligibility check (uses no outcome data):**
+  1. On each date, compute the cross-sectional slope of X̂ on (β̂_i − 1).
+  2. Regress those slopes on (m_t − μ̄).
+  3. A coefficient near 0 means the forecast ignores the market view, so B is eligible. Near 1 means A applies.
+- **The approximation:** R_i = β_i·R_EW + ε_i. Then:
+
+      E[X_i | F_t] = (β_i − 1)·E[R_EW | F_t] + E[ε_i | F_t]     (the target)
+      X̂_i         ≈ (β_i − 1)·μ̄ + E[ε_i | G_t]                (learned around the unconditional mean μ̄)
+
+  so
+
+      Ê[R_i | F_t] = m_t + X̂_i + (β̂_i − 1)(m_t − μ̄)
+
+- **It holds only under these assumptions, each stated in the registration:**
+  - β_i is stable, or estimated well enough;
+  - E[R_EW | G_t] = μ̄;
+  - E[ε_i | F_t] = E[ε_i | G_t]: market state adds nothing to the residual;
+  - X̂ is unbiased for E[X_i | G_t], so the input is the Mincer-Zarnowitz-recalibrated L3 forecast.
+- **Point-in-time inputs.** μ̄ is the date-weighted mean of R_EW,h over **that fit's training dates**, stored with the publication; a full-sample μ̄ leaks. β̂_i is a trailing point-in-time estimate against the same equal-weight benchmark.
+- **It is a conversion between information sets under that approximation,** not a property of the identity. It is wrong for an excess model that already conditions on the market state.
+
+**C. Residual target (an alternative to B).** Retarget the model to the residual R_i − β̂_i·R_EW, and compose β̂_i·m_t + ε̂_i. This is a different label, so it is a new registered variant.
+
+**Illustrative example, under formulation B's assumptions (not measured).** β_i = 1.8, μ̄ = +0.8% per 20 sessions, m = −3%, E[ε_i] = 0. Under the approximation, E[R_i | F_t] = 1.8 × (−3%) = −5.4%.
+
+| Excess forecast | Composition | Result | Verdict |
+|---|---|---|---|
+| Learned around μ̄: X̂_i = 0.8 × 0.8% = +0.64% | A (sum): −3% + 0.64% | −2.36% | 3.04 percentage points too high: the excess forecast ignores the market view |
+| Learned around μ̄: X̂_i = +0.64% | B: −3% + 0.64% + 0.8 × (−3.8%) | −5.4% | Correct under the approximation |
+| Conditions on the market view: X̂_i = 0.8 × (−3%) = −2.4% | A (sum): −3% − 2.4% | −5.4% | Correct |
+| Conditions on the market view: X̂_i = −2.4% | B: −5.4% + 0.8 × (−3.8%) | −8.44% | Wrong: market exposure counted twice |
+| Learned around μ̄: X̂_i = +0.64% | β̂_i·m + X̂_i: −5.4% + 0.64% | −4.76% | Wrong: β applied to the market forecast, plus the full excess forecast |
+
+**Avoiding double-counting.**
+- Formulation B never combines with an excess model that has market-state inputs or beta × market interactions.
+- No formulation multiplies the market forecast by β̂ and also adds the full excess forecast.
+- **Cross-sectional invariant.** Excess forecasts are demeaned and β̂ is recentred (β̂ − mean + 1) over the point-in-time C_t on every date; both are registered transformations. Then the mean composed forecast equals m_t on every date, a deterministic invariant checked on every publication.
+  - It guarantees only that the market *level* enters once on average.
+  - **It cannot detect missing or doubled beta exposure,** which is cross-sectional and averages to zero. Illustration, not measured: with two names at β = 1.8 and 0.2, all three wrong compositions in the table average exactly −3%.
+  - Only the exposure diagnostic below detects it.
+
+**Validating either formulation** (pre-registered decision regions; development data, then holdout and prospective data like any other claim):
+1. **Market-exposure diagnostic.** Regress the excess-component forecast errors on (β̂_i − 1)(m_t − μ̄), a quantity known at t. Add the ex-post control (β̂_i − 1)(R_EW,t − m_t), and use fold-block inference. The errors are X_i − X̂_i under A, and X_i − X̂_i − (β̂_i − 1)(m_t − μ̄) under B.
+   - **Ideal readings:** a slope near 0 means the formulation captures market exposure; near +1, exposure is missing; near −1, it is counted twice.
+   - **Noise in β̂ attenuates the readings.** With reliability λ they become λ, λ − 1 and −1. A miscalibrated m_t shifts all three. Illustration (simulated by the review, assumed parameters): λ ≈ 0.86 gave +0.92, −0.08 and −0.93. That is why m_t must be Mincer-Zarnowitz-calibrated.
+   - **Weakly identified:** with sd(m_t − μ̄) = 0.5% per 20 sessions over about 200 non-overlapping dates, the slope's standard error was 0.66, or 0.42 with the control.
+   - **Report "inconclusive"** when the interval spans both 0 and 1. The diagnostic runs only once a validated m_t exists.
+2. **The cross-sectional invariant** above.
+3. **The composed absolute forecast is tested as a whole** (ladder rung L4): Mincer-Zarnowitz slope and intercept on absolute returns, out-of-sample R² against the expanding historical mean, and Clark-West where the comparison is nested.
+4. **Dispersion.** The variance composition, including Cov(R_EW, X_i | F_t), is validated through rung D1 on absolute returns, not assumed.
 
 **Compatibility conditions.** All must hold, or the absolute forecast is **unavailable**:
 1. **Same horizon h and calendar:** sessions on the same named calendar, with the same entry lag.
 2. **Same benchmark definition:** the alpha's equal-weight universe C_t is the universe whose return the market layer forecasts. A forecast of the S&P 500 (cap-weighted) does not compose with an equal-weight alpha without a mapping that is itself validated.
-3. **Same knowledge time:** both components were computed from information available at the same `signal_cutoff_at`.
+3. **Same knowledge time:** both components were computed from information available at the same `signal_cutoff_at`. Under formulation A, any market-state input of the excess model is the same validated m_t.
 4. **Each component has passed its own validation ladder** at the needed claim level: expected value for E[·], a calibrated distribution for anything probabilistic.
 5. **The asset is in the alpha universe.** ETFs, Treasuries, cash and crypto have no alpha forecast from the equity model.
 
@@ -174,7 +237,7 @@ The identity r_i = r_EW + x_i is exact, so an absolute forecast needs a compatib
 | Asset outside the alpha universe | Unavailable (`not_in_model_universe`) |
 
 **Probability of gain needs a calibrated predictive distribution**, never a point forecast. P(r_i,h > g | F_t) = 1 − F̂_i(g), where F̂_i is a validated predictive distribution of the absolute return.
-- **What counts as a "gain" is a formula decision:** above zero or above cash, before or after costs, with a zero band so that sign noise (T4 scored ±1e-19 forecasts as hits) is not counted.
+- **What counts as a "gain" is a formula decision:** above zero or above cash, before or after costs, with a zero band so that sign noise (T4 scored constant forecasts of about ±4e-19 as hits) is not counted.
 - **It is mostly a market forecast.** With no timing skill it is roughly Φ(μ̄/σ_i), which ranks names by low volatility.
   - Illustrative, not measured: μ̄ = 1% per 20 sessions gives Φ(0.2) = 0.58 for σ = 5% and Φ(0.067) = 0.53 for σ = 15%.
   - For a stock with 52% annual volatility, σ_20 ≈ 0.52·√(20/252) ≈ 14.6%. Then μ = 1.5% gives 0.54, and an error of ±1 percentage point in μ moves it only between 0.51 and 0.57. The number is mostly base rate; any decimals beyond that are false precision.
@@ -246,11 +309,15 @@ The identity r_i = r_EW + x_i is exact, so an absolute forecast needs a compatib
   - Execution is at the close of d+1, matching the label's entry lag.
   - This is an availability-semantics decision (open item 1).
 - **Multi-horizon targets.**
-  - Each horizon is its own label (`target_end_date` per horizon, so the purge follows automatically) and its own validated cell.
-  - Overlap inflates the variance of the **mean rank IC** of a signal whose features overlap the same way by F(h) = 1 + 2Σ_{j=1}^{h−1}(j/h)²: about 3.4, 13.4, 20 and 40 at h = 5, 20, 30 and 60 (measured 13.9 at h = 20). For a mean of overlapping returns the factor is about h.
+  - Each horizon is its own label (`target_end_date` per horizon, so the purge follows automatically) and its own validated cell, with its own test family and α.
+  - Overlap inflates the variance of the **mean rank IC** of a signal whose features overlap the same way by F(h) = 1 + 2Σ_{j=1}^{h−1}(j/h)²: about 3.4, 13.4, 20 and 40 at h = 5, 20, 30 and 60 (measured 13.9 at h = 20). For a persistent signal, or a mean of overlapping returns, the factor is about h.
   - Folds need at least about 3h sessions per test block; h = 60 needs history from about 2010.
-  - Order: 20 first, then 60 (dispersion first), then 5 after T5 costs. 30 is dropped: overlapping 20- and 30-session returns correlate at about 0.82 (√(20/30) ≈ 0.816 in theory; 0.81 measured on 2019–2024 index data), adding tests without information.
-  - Horizons are gatekept in a fixed sequence to control multiple testing.
+  - **5, 20, 30 and 60 sessions all stay possible user-facing horizons** (decision OD10). The implementation priority is a separate choice:
+    - 20 first (registered today);
+    - then 60 and 5 (5 after T5 costs, since it roughly quadruples turnover);
+    - then 30. Overlapping 20- and 30-session returns correlate at about 0.82 (√(20/30) ≈ 0.816 in theory; 0.81 measured on 2019–2024 index data), so about a third of the 30-session variance is not shared with 20. Its incremental value is checked by a pre-registered paired test: the 30-session model against the 20-session forecast, both scored on the 30-session label.
+  - A horizon with no validated model shows "not validated for this horizon". Dropping any horizon is an explicit product decision.
+  - **Multiple testing across horizons** uses a fallback procedure with α weights assigned to each horizon in advance, not serial gatekeeping. Under gatekeeping, a failure at 20 would forbid any claim at 5, 30 or 60, contradicting "all four remain possible". Each horizon keeps its own test family.
 - **Row-weighted vs date-weighted training.**
   - With a variable universe, row-weighted fits let dates with more names dominate, while tuning, Goyal-Welch and rank IC weigh dates equally.
   - Recommended [R]: fit date-weighted (weights 1/N_t, with weighted standardization and λ_max), or rank or demean features within each date. Either removes the date-common forecast component that T4 found adds pure loss under the excess label (57–65% of feature variance).
@@ -307,10 +374,11 @@ The identity r_i = r_EW + x_i is exact, so an absolute forecast needs a compatib
   - Every cost model is a financial formula (owner gate, T5).
 - **Drift and staleness.** Freshness against each source's release calendar; smoothed PSI and missingness per feature; rolling calibration coverage; per-date IC with CUSUM. Each trigger maps to a product state (`stale`, `insufficient_confidence`, revert to rules).
 - **Lockbox and prospective evidence.**
-  - Fix the holdout end date at pre-registration; data after it is prospective.
+  - The holdout end H_end is fixed and recorded in G1 before any prospective registration (OD16, amending OD5's "Later" clause). Data after H_end is touched only by the separately governed pipeline.
   - Pre-registration and the holdout-use record live in Git (the ledger is ignored today).
-  - The lockbox held about 1.75 years at h = 20 when this was written, and it grows until T6. Its one-sided MDE (about 0.05 for 100 names; about 0.066 by fold blocks) cannot confirm a small edge, so T6 is pre-registered as a "no collapse" check.
-  - A prospective, hash-chained forecast log is the evidence after it, scored on pre-registered review dates with α-spending. Confirming an IC of 0.03 needs about 1,165 dates never used for selection.
+  - The lockbox held about 1.75 years at h = 20 when this was written, and it grows until H_end is fixed. Its one-sided MDE (about 0.05 for 100 names; about 0.066 by fold blocks) cannot confirm a small edge, so T6 is pre-registered as a "no collapse" check and as look 0 of the confirmatory test.
+  - **The prospective log is the evidence after it,** scored with α-spending at fixed look dates (`vision_and_prd.md`, section 15).
+  - **How long that takes** (one-sided α = 0.025, power 0.8, about 100 names): confirming a rank IC of 0.03 needs about 1,170 dates never used for selection (about 4.6 years) for a signal whose overlap factor is about 13.4, and about 1,760 dates (about 7 years) for a persistent signal.
 
 ## 8. Output contracts
 
@@ -390,3 +458,34 @@ Deferred until a publication needs them: `claim_level`, `evidence_refs`, `univer
 | `sealed_from`, `pending_periods` | The lockbox and immature periods, shown as states |
 
 **Versioning.** A minor version may add fields. Readers refuse newer minor versions and unknown status values, as the T2 reader does today.
+
+## 9. Prospective and live-data pipeline (separately governed)
+
+**What stays fixed.** The sealed historical holdout stays sealed. Research, development and the product keep today's cutoff: nothing dated on or after `MODEL_HOLDOUT_START` (decision OD5). There is no exception path in the product's reader or its tests.
+
+**What this adds.** Prospective paper trading and any later investment-ready operation need current data, so they get **their own pipeline under separate governance** (decision OD16, proposed).
+- OD16 amends only OD5's "Later" clause, by fixing the holdout end before the first prospective registration (section 4, rule 7).
+- The pipeline is designed now so its evidence clock can start early. It is not part of the MVP.
+- **Alternative:** keep the pipeline dormant until T6's pre-registration. That needs no early holdout end, but the evidence clock starts later.
+
+| Rule | What it means | How it is enforced |
+|---|---|---|
+| **Holdout end first** | H_end is recorded in G1 before the first registration, earlier than every prospective start | The pipeline refuses to start without it |
+| **Only registered artifacts run** | Every rule, model or policy is registered (G1) before its first prospective decision. The registration covers the code, configuration, parameters, refit procedure and schedule, training-window rule and frozen normalization statistics | A registration hash over that declared file set, parameters and lock file is checked before every decision. It is not the repository commit, which would make every unrelated commit count as a change |
+| **What counts as a change** | Anything that alters a logged output. Refits under the registered refit procedure are not changes, and neither are refactors proven by byte-identical replay of the log. A change is a new registration in the same lineage | Lineages share one α budget fixed at the first registration. Abandoned or reverted registrations stay visible and count as failed tests; a revert never resets a record |
+| **Decisions are logged before outcomes exist** | At each `signal_cutoff_at` the pipeline writes forecasts, weights and input hashes, with `written_at`. A row is valid only if written before the execution cutoff. A missed session is logged as `missed` and never backfilled | Append-only log in which each row hashes the previous one. The latest hash is committed to Git at each decision, giving an outside timestamp (the hash chain alone guards nothing against the owner) |
+| **Separate storage and code path** | A separate store (one path constant) and its own entry point | Import and path tests: nothing outside `prospective/` uses the store, and neither research code nor the product's publication writer or reader can read it |
+| **Review reports stay in the pipeline** | Results render only through the pipeline's own review entry point on pre-registered review dates, never through the product | The scorer refuses to report before a registered review date. Showing prospective results inside the product would need a separate amendment to OD5 |
+| **The historical holdout is untouched** | Any decision whose input window intersects [2025-01-01, H_end] runs machine-only. Its weights, inputs and per-asset fields are withheld from every view (dry-run diagnostics and stage S3 approval screens included) until T6 has run | Dry runs show operational fields only: row counts, freshness, hashes, constraint pass or fail |
+
+**Dependencies:**
+- OD9's real `signal_cutoff_at`, not the interim date-level rule;
+- a session calendar (OD14);
+- a live-data adapter (F1 ends 2024-12-31);
+- a scheduler (an infrastructure gate);
+- the FRED key and any broker keys (the secrets gate).
+
+**How it serves the promotion stages** (`vision_and_prd.md`, section 15):
+- **Paper trading (stage S2):** the pipeline runs registered portfolios, models and policies with no capital.
+- **Controlled personal deployment (S3):** the same pipeline produces the orders, with that stage's risk controls.
+- **Rules-only portfolios** need no forecast validation, so they can be paper-tracked once OD16 is approved and their registrations exist. That starts the clock that every later claim needs.
