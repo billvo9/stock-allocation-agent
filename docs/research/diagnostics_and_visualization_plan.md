@@ -359,13 +359,14 @@ This replaces "Next ticket: Ridge vs Lasso vs Elastic Net" in
 
 | Ticket | Delivers | Dashboard | Gates |
 |---|---|---|---|
-| T1 (pending merge) | Validation foundation | — | — |
+| T1 (merged, PR #40) | Validation foundation | — | — |
 | T2 (implemented) | `model_diagnostics` (sections 1, 2, 4, 5 and inference), run outputs and ledger, null models and canary through the harness. Accepted when the nulls show no skill and planted signal is recovered. See `docs/research/model_diagnostics.md`. | — | None. numpy and pandas only. Newey-West was implemented in T2 (the T2 request made it a completion criterion); owner exercise: fixed-b critical values. |
 | T3 (implemented) | Plotly figure builders and the Streamlit app, run on null models. See `docs/research/diagnostics_dashboard.md` | Pages 0, 1, 2, 3, 5 plus calibration, uncertainty and research warnings | Dependency approval (granted 2026-10-09) |
-| T4 | Ridge, Lasso, Elastic Net with nested purged selection; coefficient outputs; section 3 | Pages 4, 6 | scikit-learn decision; label choice; learning-core split (owner implements the estimator core) |
-| T5 | Portfolio readiness: backtest execution lag 1, forecast-to-weight rule, cost-aware evaluation | Page 7 | Financial-formula review |
+| T4 (merged, PR #47) | Ridge, Lasso, Elastic Net with nested purged selection; coefficient outputs; section 3. No detectable skill on the four-name development universe. See `docs/research/linear_models.md` | Pages 4, 6, and a Linear models page | scikit-learn pinned and the excess label chosen (owner, 2026-10-10). The owner delegated the estimator core on 2026-10-11, superseding the learning-core split for T4 |
+| T5 | Portfolio readiness: backtest execution lag 1, forecast-to-weight rule, cost-aware evaluation. Proposed additional scope in `docs/product/roadmap.md` (T5): total-return benchmarks, cash returns, costs including the initial build, distribution timing, intervals on headline metrics | Page 7 | Financial-formula review (decision OD8 in `docs/product/vision_and_prd.md`) |
 | T6 | Holdout evaluation, once per pre-registered model | Page 8 | Pre-registration recorded |
 | Parallel: U and C tracks | Point-in-time universe (planning target about 100 large caps from 2010) and market-context layer V1, per `docs/research/universe_and_market_context.md` | All pages gain cross-sectional power; context ablation views | Data source and licence, `signal_cutoff_at`, data-contract decisions. Both shape when T4 results can be treated as product evidence |
+| Product track (direction approved 2026-10-11) | A rules-only, local Portfolio Lab built on versioned publications, as of 2024-12-31 under the strict lockbox boundary. Model views reach the product only after prospective confirmation, and deployment only through promotion stages S0–S4. See `docs/product/` (vision and PRD, architecture, roadmap, UX blueprint, risk register) | Product pages separate from these research pages | The owner decisions OD1–OD17 in `docs/product/vision_and_prd.md` |
 
 **Why diagnostics come before models (T2 and T3 before T4).**
 - Every diagnostic and chart is validated on models whose correct answer is
