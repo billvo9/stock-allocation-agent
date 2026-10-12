@@ -1,6 +1,6 @@
 # Product vision and PRD
 
-Status (2026-10-11): **approved direction; details under review.** On 2026-10-11 the owner approved OD1, OD2, OD4, OD5, OD6 and OD7, and the general direction of OD16 (section 13). OD16's activation and holdout end, and the other decisions (OD3, OD8–OD15, OD17), remain recommendations until approved at their tickets. Companion documents:
+Status (2026-10-11): **approved direction; details under review.** On 2026-10-11 the owner approved OD1, OD2, OD4, OD5, OD6 and OD7, and the general direction of OD16; on 2026-10-12, the version 1 parts of OD3 and OD9 for P1-1a (section 13). OD16's activation and holdout end, the rest of OD3 and OD9, and the other decisions (OD8, OD10–OD15, OD17), remain recommendations until approved at their tickets. Companion documents:
 - `architecture.md`
 - `roadmap.md`
 - `ux_blueprint.md`
@@ -50,11 +50,11 @@ The product never gets ahead of the evidence. The rules-only MVP is the first st
 
 ## 3. Where we are (verified 2026-10-11)
 
-- **Built** (T4 is in PR #47, merge pending): a leakage-safe research framework.
+- **Built:** a leakage-safe research framework.
   - Purged walk-forward validation (T1).
   - Dependence-aware diagnostics and inference (T2).
   - A read-only Streamlit research dashboard (T3, T3.1).
-  - Ridge, Lasso and Elastic Net with nested purged selection on the equal-weight excess label (T4, PR #47).
+  - Ridge, Lasso and Elastic Net with nested purged selection on the equal-weight excess label (T4, merged in PR #47 on 2026-10-12).
 - **Result:** on four hindsight-selected names, **no detectable out-of-sample skill**. The minimum detectable rank IC was 0.16–0.25, against plausible effects near 0.02–0.05.
 - **Lasso's partial-coverage rank IC** (0.070 on 13 of 24 folds) is not evidence that it outperforms Ridge. On the same folds Ridge scores 0.068.
 - **Missing:**
@@ -347,13 +347,13 @@ The gate column cites `AGENTS.md`'s approval gates. The status column records th
 |---|---|---|---|---|
 | OD1 | Positioning | A personal research and education tool, local and single-user. Counsel before any other user, hosting or monetization | Product and legal | **Approved 2026-10-11**: "Rules-only lab, personal" |
 | OD2 | Architecture | B, the publication pipeline, with a separate product entry point; Streamlit for the MVP | Major architecture | **Approved 2026-10-11**: "Pipeline; P1-1a, T5, F1 in parallel". This approves the architecture and starting those tickets' work in parallel. It does not approve any T5 formula; those are OD8 |
-| OD3 | Evidence model | Evidence status and claim level; the L/D ladder of section 6. Only `prospectively_confirmed` unlocks Explore and Build. `holdout_checked` has no promotion power. Development model output stays in Research | Product and research policy | Pending |
+| OD3 | Evidence model | Evidence status and claim level; the L/D ladder of section 6. Only `prospectively_confirmed` unlocks Explore and Build. `holdout_checked` has no promotion power. Development model output stays in Research | Product and research policy | **Partly approved 2026-10-12:** the version 1 statuses `descriptive` and `rules_illustration` for the initial publication contract (P1-1a), in the owner's words: "For P1-1a, record that I am comfortable with the proposed minimal v1 statuses `descriptive` and `rules_illustration`, and the interim end-of-session daily-close knowledge rule for synthetic-date fixtures only. Do not silently generalize this to production availability timestamps." The rest of the evidence model (the other statuses, claim levels, the promotion path, mode gating) is pending |
 | OD4 | MVP scope | Rules-only Portfolio Lab (section 8); no forecasts | Product policy | **Approved 2026-10-11** (with OD1) |
 | OD5 | Lockbox boundary for the product | **Default:** no product publication reads data dated from 2025-01-01, for any asset; every `as_of` is at most 2024-12-31. "Dated" means information content, including holdings snapshots and price adjustments. **Later:** T6 runs once for everything pre-registered by then. At its pre-registration the owner fixes the holdout window; after T6 that window becomes development data. Each entity's evidence class is development before its registration date and prospective after it, viewed only on pre-registered review dates | Point-in-time and lockbox policy | **Approved 2026-10-11**: "Strict: nothing after 2024" |
 | OD6 | Model portfolios | The three reference constructions in section 10; the semiconductor sleeve deferred; the trend rule later; names by construction; one comparison window by asset-class rule | Product, data | **Approved 2026-10-11**: "Three references; semis deferred" |
 | OD7 | MVP data | Broad fund total returns (raw closes and dated distributions) and the DGS3MO backfill, from the existing personal-use sources, ending 2024-12-31; a user watchlist | Data (universe and source) | **Approved 2026-10-11** (with OD6); the funds are chosen in the first portfolio ticket |
 | OD8 | T5 formulas | Next-close execution; cash convention; total-return, fund-based benchmarks; cost model, including the initial build and a stated turnover convention; distribution reinvestment timing; calendar-time CAGR; intervals on headline metrics; the "gain" definition (for later) | Financial formulas | Pending. Each formula needs the owner's explicit approval, one by one, in the T5 review; none is implied by OD2 |
-| OD9 | Decision clock | `signal_cutoff_at` = 18:00 ET on session d as the product's `as_of` (open item 1). Until then, an interim date-level rule for publication v1: a daily close is known at the end of its session date | Availability semantics | Pending |
+| OD9 | Decision clock | `signal_cutoff_at` = 18:00 ET on session d as the product's `as_of` (open item 1), and the production availability rule for real data | Availability semantics | **Partly approved 2026-10-12:** the interim end-of-session daily-close knowledge rule, **for synthetic-date fixtures in P1-1a only** (same quotation as OD3). It does not apply to production availability timestamps or to any real data. `signal_cutoff_at` and the production rule are pending |
 | OD10 | Horizons | 5, 20, 30 and 60 sessions remain possible user-facing horizons. Implementation priority: 20 first, then 60 and 5 (5 after costs), then 30 after a pre-registered check of its incremental value (its correlation with 20 is about 0.82). Dropping any horizon is an explicit product decision | Research and product policy | Pending |
 | OD11 | Themes | Theme lists are dated current-exposure lenses, never historical strategies; "AI exposure" only as a point-in-time characteristic | Product policy | Pending |
 | OD12 | Pre-registration record | A Git-tracked registry for model portfolios, every real-panel scoring, holdout use, forecast-log starts and review dates | Research integrity | Pending |
@@ -379,11 +379,11 @@ The gate column cites `AGENTS.md`'s approval gates. The status column records th
   - row status and reason codes;
   - a write-once writer (staged, atomic, SHA-256 manifest written last), reusing the run-artifact pattern;
   - a fail-closed reader.
-- **Evidence status v1:** `descriptive` and `rules_illustration` only. `claim_type` is derived from `kind`. The other statuses, claim levels and the promotion path arrive with the first publication that needs them.
+- **Evidence status v1:** `descriptive` and `rules_illustration` only (approved for the initial contract on 2026-10-12, OD3). `claim_type` is derived from `kind`. The other statuses, claim levels and the promotion path arrive with the first publication that needs them, each with its own approval.
 - **Lockbox rule (OD5 default):**
   - the writer refuses any input dated on or after `MODEL_HOLDOUT_START`, imported from `model_validation/folds.py`, never a new literal;
   - the reader refuses any row or `as_of` dated on or after it.
-- **Knowledge time:** the interim date-level rule (OD9), stated in the contract.
+- **Knowledge time:** the interim end-of-session daily-close rule, approved on 2026-10-12 **for synthetic-date fixtures only** (OD9). The contract states that scope. It must refuse to apply the interim rule to real data, so no production availability timestamp is set by it.
 - **Tests on synthetic fixtures only.** No real data, no page.
 
 **Negative tests:**
@@ -404,7 +404,7 @@ The gate column cites `AGENTS.md`'s approval gates. The status column records th
   - Growth of ‹$10,000›, worst decline in dollars, and losing calendar years.
   - Status `descriptive`, badge "Actual".
 - **Presentation:** one Explore page, after moving `theme.py` and `components.py` into a neutral `ui/` module.
-- **No rebalancing decision is involved,** so it does not wait for T5. It needs OD7 and a small slice of F1.
+- **No rebalancing decision is involved,** so it does not wait for T5. It needs OD7, a small slice of F1, and an approved production availability rule for real prices (OD9). The synthetic-fixture approval does not cover real data.
 
 ## 15. Long-term objective and promotion stages
 

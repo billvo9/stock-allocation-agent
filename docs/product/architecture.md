@@ -412,7 +412,7 @@ Every row carries `status` ∈ {`ok`, `unavailable`, `insufficient_confidence`, 
 
 Deferred until a publication needs them: `claim_level`, `evidence_refs`, `universe_rule_version`, `calendar_id`, `supersedes` and `parents`.
 
-**Interim knowledge time.** Prices carry no `available_at` today. Until `signal_cutoff_at` is approved (OD9), version 1 uses an interim date-level rule: a daily close is known at the end of its session date. That needs the owner's approval as part of P1-1a.
+**Interim knowledge time.** Prices carry no `available_at` today. For P1-1a's synthetic-date fixtures only, version 1 uses an interim date-level rule: a daily close is known at the end of its session date. The owner approved that scope on 2026-10-12 (OD9, partly). It is not a production availability rule. Real data needs OD9's production decision (`signal_cutoff_at` and the availability rule), and the contract refuses real-data publications until then.
 
 ### Opportunity ranking (one row per eligible asset, horizon and score)
 

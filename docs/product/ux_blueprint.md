@@ -1,7 +1,7 @@
 # UX blueprint
 
 Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2, OD4, OD5, OD6, OD7, and the general direction of OD16 in `vision_and_prd.md`, section 13). OD16's activation and holdout end, and the other decisions, are pending.
-- "Exists" cites code on `main` or the T4 branch; everything else is proposed.
+- "Exists" cites code on `main` (T4 included since PR #47); everything else is proposed.
 - Placeholders are written ‹like this›.
 - Tiers (NOW, RULES, VALIDATED, LONG-TERM) are defined in `README.md`. Evidence status and claim type are defined in `vision_and_prd.md`.
 

@@ -3,22 +3,31 @@
 Changing project state only. Permanent policy lives in `AGENTS.md`.
 Git is authoritative: verify everything here before relying on it.
 
-Last reviewed: 2026-10-11
+Last reviewed: 2026-10-12
 
 
 ## Last checkpoint
 
-2026-10-11, milestone "T4 complete: estimator core, real development run,
-independent reviews", verified on branch `feature/linear-model-baselines`
-at `99a8405` plus this checkpoint's docs commit (`99e9000` dependency,
-`d435837` phase A code, `e4939c6` and `37fcaba` phase A docs, `1338674`
-estimator core, `99a8405` review fixes), based on `ca68edc` (merge
-pending, PR #47).
+2026-10-12, milestone "Product direction: vision and PRD, architecture,
+roadmap, UX blueprint and risk register", verified on branch
+`docs/product-vision-multi-asset` at `71d4d38` plus this checkpoint's docs
+commit (`6067ca3`, `14c0514`, `cf9dc26`, `5bf3171` product documents;
+`71d4d38` merge of `main`), based on `978c027` (merge pending, PR #49).
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `ca68edc` as of last fetch,
-verified 2026-10-11):
+Recently merged to `main` (`origin/main` = `978c027` as of last fetch,
+verified 2026-10-12 with `git fetch` and the GitHub API):
+
+- PR #50 (`978c027`, 2026-10-12): `7cbb1c0` fix: keep the FRED bearer token
+  out of release-request tracebacks; `aefeb8c` test: cover non-JSON release
+  responses; keep this change Version 2 only.
+- PR #48 (`7490686`, 2026-10-12): `7faeb8b` fix: keep the FRED API key out
+  of request-failure errors.
+- PR #47 (`62a7113`, 2026-10-12): `99e9000` chore: pin scikit-learn 1.9.1;
+  `d435837` feat: T4 phase A; `e4939c6` and `37fcaba` docs; `1338674` feat:
+  the T4 linear core; `99a8405` fix: T4 review findings; `3ae5c8f` docs: T4
+  results and checkpoint.
 
 - PR #46 (`ca68edc`): `84413b0` feat: research workspace with
   date-normalized Goyal-Welch views and a shared design system; `5234102`
@@ -68,14 +77,45 @@ are owner-owned and untouched.
 
 ## Current objective
 
-ML phase.
+Product direction set (PR #49, merge pending). The first implementation
+tickets come next, each scoped and approved by the owner before it starts.
+
+- **Product direction** (this branch, `docs/product/`; documentation only):
+  - a rules-only, local Portfolio Lab as the first MVP, not a permanent
+    limit;
+  - architecture B, a publication pipeline with an evidence gate;
+  - the validation ladder (location L0-L4, dispersion D1-D2), with explicit
+    evidence gates for later forecast, uncertainty and allocation
+    capabilities;
+  - promotion stages S0-S4 toward investment-ready operation, with
+    empirical, operational and risk-control requirements. PPO is a
+    candidate allocation-policy engine, not a prerequisite or a shortcut;
+  - the exact composition of absolute forecasts (the beta adjustment only
+    under its documented approximation);
+  - a separately governed prospective pipeline (OD16), designed, not
+    activated;
+  - T6 is holdout-checked and non-confirmatory; confirmatory inference uses
+    only post-registration data after a burn-in. Every statistical
+    procedure and power figure is provisional until simulated.
+
+  Decisions are in `docs/product/vision_and_prd.md`, section 13, and below.
+- **FRED key fixes** (PRs #48 and #50, merged 2026-10-12):
+  - FRED Version 1 and Version 2 request failures raise `RuntimeError`
+    naming only the series or release id and the HTTP status or exception
+    type, with no chained cause, so neither the query-string key nor the
+    bearer header reaches a message or traceback;
+  - Version 2 transport and non-JSON failures changed from `TypeError` to
+    `RuntimeError` (documented in PR #50);
+  - `.gitignore` now ignores `*.log`.
+
+  urllib3's logging of Version 1 URLs is recorded as a requirement before
+  any shared or hosted deployment (`docs/product/risk_register.md`, SEC-2).
 
 - The leakage-safe validation foundation is merged (PR #40); see
   `docs/research/model_validation.md`.
 - The universe (U) and market-context (C) research is merged (PRs #41, #42);
   see `docs/research/universe_and_market_context.md`.
-- This branch implements T4 (`docs/research/linear_models.md`), phases A-C
-  done (merge pending, PR #47):
+- T4 is merged (PR #47, 2026-10-12; `docs/research/linear_models.md`):
   - primary label: the point-in-time equal-weight excess forward return
     (each row on a date takes the latest member label end; incomplete
     dates are unlabeled; raw return stored in `inputs.target_return_raw`);
@@ -212,6 +252,34 @@ ML phase.
     ranking only through pre-registered interactions.
 - T4's linear baselines are implemented; no prediction model is selected
   (none shows detectable skill on the sandbox universe).
+
+Owner decisions (2026-10-11 and 2026-10-12, product direction, PR #49), from
+the owner's answers and messages in session:
+- 2026-10-11: OD1 and OD4 "Rules-only lab, personal"; OD5 "Strict: nothing
+  after 2024"; OD2 "Pipeline; P1-1a, T5, F1 in parallel" (the architecture
+  and starting those tickets, approving no T5 formula; OD8 is pending,
+  formula by formula); OD6 and OD7 "Three references; semis deferred".
+- 2026-10-11 revisions: make the investment-ready objective explicit, with
+  PPO a candidate only; use the exact excess-return identity, with the beta
+  adjustment only under a documented approximation; retain the 5-, 20- and
+  30-session horizons; keep the sealed holdout while designing a separate
+  prospective pipeline; keep the rules-only MVP as the first stage only;
+  treat T6 as non-confirmatory and statistical promotion rules as
+  provisional.
+- OD16, direction only: "I approve the general direction of OD16: an
+  independently governed prospective paper-trading pipeline, with a fixed
+  historical holdout window and immutable registration/decision records."
+  Activating the pipeline, choosing H_end, and the point-in-time transition
+  rules each need a separate explicit approval and a documented
+  pre-registration procedure.
+- 2026-10-12, P1-1a, limited: "For P1-1a, record that I am comfortable with
+  the proposed minimal v1 statuses `descriptive` and `rules_illustration`,
+  and the interim end-of-session daily-close knowledge rule for
+  synthetic-date fixtures only. Do not silently generalize this to
+  production availability timestamps."
+- Pending: the rest of OD3; OD8; OD9's `signal_cutoff_at` and production
+  availability rule; OD10-OD15; OD16's activation, H_end and transition
+  rules; OD17.
 
 Owner decision (2026-10-11, T4 phase B/C): "I explicitly authorize you to
 implement the remaining `linear.py` estimator core, including
@@ -444,18 +512,19 @@ Coverage limitations found are tracked as open item 2.
 
 ## Last verified quality baseline
 
-Measured 2026-10-11 with `python3 scripts/verify.py` on
-`feature/linear-model-baselines` (base `ca68edc`; the working tree then
-held exactly the content of this checkpoint commit); gates ran with
-`.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, streamlit 1.64.0,
-plotly 7.1.0, pyarrow 25.0.1, scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
+Measured 2026-10-12 with `python3 scripts/verify.py` on
+`docs/product-vision-multi-asset` (base `978c027`, which includes T4 and
+both FRED fixes; the working tree then held exactly the content of this
+checkpoint commit); gates ran with `.venv` tools (Python 3.12.2, pytest
+9.1.1, ruff 0.16.2, streamlit 1.64.0, plotly 7.1.0, pyarrow 25.0.1,
+scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
 
-- `pytest -q`: 1269 passed
-- `python -m pytest -q`: 1269 passed
-- `ruff format --check src tests scripts .claude/hooks`: 191 files
+- `pytest -q`: 1299 passed
+- `python -m pytest -q`: 1299 passed
+- `ruff format --check src tests scripts .claude/hooks`: 192 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- Suite runtime about 52-55 s per pass.
+- Suite runtime about 56-62 s per pass.
 - Mutation checks (T4): phase A 18 of 18 caught; the phase C test review
   ran 49 probes on `1338674` (22 survived); after the fixes, 22 targeted
   probes (those survivors and the new code) were all killed, each in its
@@ -624,16 +693,19 @@ plotly 7.1.0, pyarrow 25.0.1, scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
      combined with macro. Macro values are vintage-correct: ALFRED's full
      real-time range, with each revision kept as its own row.
 7. Workflow follow-ups:
-   - GitHub branch protection on `main` is not verified (`gh` is not
-     installed locally). It is the authoritative control against direct
-     pushes and merges; the local guard is defense in depth.
+   - GitHub branch protection on `main` is **not enabled**: verified
+     2026-10-12 with the GitHub API ("Branch not protected", HTTP 404). The
+     local command guard is the only mechanical control against direct
+     pushes and merges.
    - Confirm in a fresh session that the `Edit(...)` ask rules prompt for
      `.claude/**`, `AGENTS.md`, and dependency manifests. They did not
      prompt in the session that added them.
    - `numpy` and `pandas` are unpinned; tests use the legacy `RandomState`
      stream and canonical fingerprints so results do not depend on them.
-   - `.gitignore` line 44 reads `*.logreports/`: a missing newline, so
-     `*.log` files are not ignored (`reports/` is ignored by the next line).
+   - `.gitignore`'s `.venv/` pattern matches only a directory, so a
+     symlinked `.venv` in a session worktree shows as untracked and could be
+     committed by `git add -A`. A `.venv` pattern would cover both. (The
+     `*.log` line was fixed in PR #48.)
 8. Smaller items: lineage lacks current-side tie lists; as-of change log
    trusts `period_end`; mixed availability rules at one trigger instant;
    FY consistency checks (Q1+Q2+Q3+Q4 = FY); duplicate flow logic in
@@ -643,9 +715,20 @@ plotly 7.1.0, pyarrow 25.0.1, scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
 
 ## Next steps
 
-1. Owner: review and merge PR #47 (T4; merging is owner-only). Optional
-   exercise in `docs/research/linear_models.md`. Decide the T4 follow-ups
-   above before the next modelling round.
+1. Owner: review and merge PR #49 (product direction; merging is
+   owner-only). Then, as separate proposals whose scope the owner approves
+   before work starts:
+   - P1-1a: publication contract v1 on synthetic-date fixtures, using the
+     approved `descriptive` and `rules_illustration` statuses and the
+     interim end-of-session rule for those fixtures only;
+   - the T5 formula-review plan: one document, each formula approved by the
+     owner under OD8.
+
+   Then G1 (the registry; needs OD12) and F1 (fund and cash data to
+   2024-12-31; needs the fund list, OD14 and OD9's production availability
+   rule). No G2 activation, H_end choice or formula change without
+   explicit approval. Decide the T4 follow-ups before the next modelling
+   round.
 2. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
    `docs/research/diagnostics_and_visualization_plan.md`:
@@ -655,14 +738,15 @@ plotly 7.1.0, pyarrow 25.0.1, scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
      PR #44); the T2 reporting fix (PR #45) and the T3.1 workspace (PR #46)
      are merged;
    - T4: Ridge, Lasso, and Elastic Net, with coefficient stability
-     (complete on this branch, PR #47);
+     (merged, PR #47);
    - T5: portfolio readiness;
    - T6: holdout evaluation, once per pre-registered model.
 
    Owner decisions taken 2026-10-10: the excess label, pinned
    scikit-learn, and the per-symbol mean is a reported control, not a
    gate. 2026-10-11: the estimator core was delegated.
-3. Owner decision from open item 7: enable branch protection on `main`.
+3. Owner decision from open item 7: enable branch protection on `main`
+   (verified absent on 2026-10-12).
 4. U and C tracks, in parallel with T2-T4 (see "Sequencing against T4" in
    `docs/research/universe_and_market_context.md`). Owner decisions:
    - product scope (broad large caps vs semiconductors only);

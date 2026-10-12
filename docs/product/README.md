@@ -29,7 +29,7 @@ Labels used across the documents: owner decisions OD1–OD17; ladder rungs L0–
   - Purged walk-forward validation (T1).
   - Diagnostics and dependence-aware inference (T2).
   - A read-only research dashboard (T3, T3.1).
-  - Linear baselines with nested purged selection (T4, PR #47, merge pending).
-- **T4 result:** on a four-name, hindsight-selected universe (INTC, MRVL, MU, NVDA), Ridge, Lasso and Elastic Net showed **no detectable out-of-sample skill**. See `docs/research/linear_models.md` (added by PR #47).
+  - Linear baselines with nested purged selection (T4, merged in PR #47 on 2026-10-12).
+- **T4 result:** on a four-name, hindsight-selected universe (INTC, MRVL, MU, NVDA), Ridge, Lasso and Elastic Net showed **no detectable out-of-sample skill**. See `docs/research/linear_models.md`.
 - **What this means:** it is an engineering and research foundation, **not** an investment-ready forecasting product. No current model output may be presented as a validated expected return, probability of gain, recommendation or portfolio forecast.
 - **Where it is going:** an investment-ready system, earned through promotion stages S0–S4 with empirical, operational and risk-control requirements (`vision_and_prd.md`, section 15). The rules-only MVP is the first stage, not a permanent limit.
