@@ -1,6 +1,6 @@
 # Product direction: multi-asset opportunity screener and portfolio advisor
 
-Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2, OD4, OD5, OD6, OD7 in `vision_and_prd.md`, section 13); other decisions pending. Nothing in these documents is implemented. They change no research contract, universe, label, lockbox or point-in-time rule. Every such change below is listed as an owner decision.
+Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2, OD4, OD5, OD6, OD7, and the general direction of OD16 in `vision_and_prd.md`, section 13). OD16's activation and holdout end, and the other decisions, are pending. Nothing in these documents is implemented. They change no research contract, universe, label, lockbox or point-in-time rule. Every such change below is listed as an owner decision.
 
 | Document | What it answers |
 |---|---|

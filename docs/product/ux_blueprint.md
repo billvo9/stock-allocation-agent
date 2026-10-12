@@ -1,6 +1,6 @@
 # UX blueprint
 
-Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2, OD4, OD5, OD6, OD7 in `vision_and_prd.md`, section 13); other decisions pending.
+Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2, OD4, OD5, OD6, OD7, and the general direction of OD16 in `vision_and_prd.md`, section 13). OD16's activation and holdout end, and the other decisions, are pending.
 - "Exists" cites code on `main` or the T4 branch; everything else is proposed.
 - Placeholders are written ‹like this›.
 - Tiers (NOW, RULES, VALIDATED, LONG-TERM) are defined in `README.md`. Evidence status and claim type are defined in `vision_and_prd.md`.
@@ -44,7 +44,7 @@ Three modes share one navigation shell (`st.navigation` sections). A keyboard-re
 | Content | Explore | Build | Research |
 |---|---|---|---|
 | Facts about the past (`descriptive`) | Yes | Yes | Yes |
-| Rules illustrations and hypothetical backtests (`rules_illustration`, after T5's formula review) | Yes, badged | Yes, badged | Yes |
+| Rules illustrations and hypothetical backtests (`rules_illustration`, after T5's formulas are approved under OD8) | Yes, badged | Yes, badged | Yes |
 | Model output in development (`research_only`, `development_evidence`) | No | No | Yes, labelled |
 | Model output after T6 found no collapse (`holdout_checked`) | No | No | Yes, labelled |
 | Prospectively confirmed model output (`prospectively_confirmed`) | At the claim level reached | At the claim level reached | Yes |
@@ -260,7 +260,7 @@ Built on the existing tokens (`dashboard/theme.py`, `components.py`, `style.py`)
 ## 10. UX scope of the MVP
 
 1. **Research mode gains the evidence-status pills** and the Evidence ledger. This needs no new data.
-2. **Explore:** first the actual history of two or three broad funds (P1-1b). Then the model portfolio comparison and Home, from rules-based publications (tier RULES, after T5's formula review).
+2. **Explore:** first the actual history of two or three broad funds (P1-1b). Then the model portfolio comparison and Home, from rules-based publications (tier RULES, after T5's formulas are approved under OD8).
 3. **Build:** the MVP Builder (section 4) with discrete options, and the exposure and risk review.
 4. **Asset explorer** with descriptive characteristics only. It is labelled "current-listing universe" until a point-in-time universe exists.
 

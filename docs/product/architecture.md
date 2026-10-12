@@ -1,6 +1,6 @@
 # Product architecture
 
-Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2, OD4, OD5, OD6, OD7 in `vision_and_prd.md`, section 13); other decisions pending. Nothing here is implemented. Tags:
+Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2, OD4, OD5, OD6, OD7, and the general direction of OD16 in `vision_and_prd.md`, section 13). OD16's activation and holdout end, and the other decisions, are pending. Nothing here is implemented. Tags:
 - **[V]**: verified in the repository on 2026-10-11 (file paths cited);
 - **[R]**: recommendation;
 - **[I]**: inference or assumption.
@@ -78,7 +78,7 @@ Existing packages keep their roles. A new package is created only by the first t
 | Features | Point-in-time features; regime descriptors; stock characteristics | `features/` (exists) |
 | Research models | Validation, diagnostics, alpha models | `model_validation/`, `model_diagnostics/` (exist). Published only as research-only until validated |
 | Allocation rules | Pure weight functions: fixed weights, equal weight, inverse volatility, caps, cash floor | `agents/` (exists: equal weight, inverse volatility, momentum). Extended there; no third home for inverse volatility. No expected-return optimizer until a return forecast is validated |
-| Allocation policy (candidate) | A learned policy, for example PPO, mapping validated state (risk forecasts; later, validated return forecasts) to weights under the same constraints | Long-term. A candidate engine, not a commitment: it enters through the ladder and the promotion stages (`vision_and_prd.md`, section 15) and must beat the rule-based allocations net of costs.<br>• **Home:** the existing `environment/` (`portfolio_math.py`, `reward.py`); changing the reward is a formula gate. T5 factors one pure per-step function (rebalance cost, drift, drawdown) used by both the backtest and the policy environment, because `evaluation/baseline.py` takes precomputed weights and cannot step a policy. Policy inference uses the same weight-function signature as `agents/`. No new package until the first policy ticket.<br>• **Status:** its `portfolio_allocation` publications get the minimum of their weakest input's status and the policy's own validation status. Never `rules_illustration`.<br>• **Ownership:** per `AGENTS.md`, the owner implements the reinforcement-learning core unless they delegate it |
+| Allocation policy (candidate) | A learned policy, for example PPO, mapping validated state (risk forecasts; later, validated return forecasts) to weights under the same constraints | Long-term. A candidate engine, not a commitment: it enters through the ladder and the promotion stages (`vision_and_prd.md`, section 15) and is held to `vision_and_prd.md` section 15's rules: non-inferiority to its reference permits at most a capped trial and claims no value; superiority over every registered baseline plus positive net value against cash is needed for any value claim or scaling.<br>• **Home:** the existing `environment/` (`portfolio_math.py`, `reward.py`); changing the reward is a formula gate. T5 factors one pure per-step function (rebalance cost, drift, drawdown) used by both the backtest and the policy environment, because `evaluation/baseline.py` takes precomputed weights and cannot step a policy. Policy inference uses the same weight-function signature as `agents/`. No new package until the first policy ticket.<br>• **Status:** its `portfolio_allocation` publications get the minimum of their weakest input's status and the policy's own validation status. Never `rules_illustration`.<br>• **Ownership:** per `AGENTS.md`, the owner implements the reinforcement-learning core unless they delegate it |
 | Simulation and metrics | Backtests, costs, performance and risk metrics | `evaluation/`, `environment/portfolio_math.py` (exist); corrected by T5 |
 | Risk | Historical risk descriptors and stress scenarios (MVP); risk forecasts later | Descriptors through `evaluation/` metrics. A `risk/` package only when forecasts start (P4-1) |
 | Publications | Envelope, writer and fail-closed reader with the evidence gate. Wraps the T2 run contract and never changes it | A new `publication/` package (P1-1a) |
@@ -98,7 +98,7 @@ Existing packages keep their roles. A new package is created only by the first t
 - **`claim_type`**, derived from the publication's `kind`: descriptor, rule output, risk forecast, return forecast, allocation, performance;
 - **`claim_level`** for return forecasts: `rank | bucket | expected_excess | expected_absolute | distribution`.
 
-`descriptive` and `rules_illustration` make no forecast claim. The four forecast statuses are ordered: `research_only < development_evidence < holdout_checked < prospectively_confirmed`. `holdout_checked` means T6 found no collapse. It is not a confirmation: the holdout's MDE (about 0.05 in rank IC for 100 names) is above plausible effects.
+`descriptive` and `rules_illustration` make no forecast claim. The four forecast statuses are ordered: `research_only < development_evidence < holdout_checked < prospectively_confirmed`. `holdout_checked` is not a prerequisite for `prospectively_confirmed`: artifacts registered after T6 skip it. `holdout_checked` means T6 found no collapse. It is not a confirmation: the holdout's MDE (provisionally about 0.05 in rank IC for 100 names) is above plausible effects, and its outcomes were known to the designer.
 
 **One taxonomy, two levels.**
 - The publication's `evidence_status` says what the publication may claim.
@@ -110,7 +110,7 @@ Existing packages keep their roles. A new package is created only by the first t
 | `descriptive` | Facts about the past: a fund's actual total return, realized volatility, holdings | Actual |
 | `rules_illustration` | Weights from a declared rule; a hypothetical backtest of that rule | Simulated (backtest); Paper (after registration) |
 | `research_only`, `development_evidence`, `holdout_checked` | Model output in development, or after T6 found no collapse | Forecast (Research mode only) |
-| `prospectively_confirmed` | Model output that passed the pre-registered one-sided test on holdout plus prospective data | Forecast (Explore and Build, at its claim level) |
+| `prospectively_confirmed` | Model output that passed the pre-registered confirmatory test on post-registration prospective data only (T6 is a non-confirmatory baseline) | Forecast (Explore and Build, at its claim level) |
 
 **Rules enforced in code** [R]:
 1. **Only a promotion path may set** `holdout_checked` (citing the T6 record) or `prospectively_confirmed` (citing the pre-registered test and its monitoring record). Only `prospectively_confirmed` unlocks Explore and Build.
@@ -128,18 +128,19 @@ Existing packages keep their roles. A new package is created only by the first t
      - a holdings snapshot taken in 2025 is 2025 data;
      - a price level adjusted for a 2025 distribution carries 2025 information, so build history from raw closes plus the adjustment factors known by the `as_of`;
      - a trailing return over 2025 is a realized holdout label.
-   - **What decision OD16 would add** (proposed; it amends OD5's "Later" clause and needs the owner's approval):
+   - **What decision OD16 adds.** Its general direction was approved on 2026-10-11. It amends OD5's "Later" clause. Activating the pipeline and choosing H_end each still need a separate explicit owner approval, under the pre-registration procedure in section 9:
      - Before the prospective pipeline's first registration, the owner fixes the holdout end H_end and records it in G1. It is earlier than every prospective start.
      - The sealed holdout is then [2025-01-01, H_end]. T6 evaluates it once, for everything pre-registered by then, and cannot extend it. After T6 that window becomes development data.
    - **The research and product cutoff does not move.**
      - Until T6, research, development and the product read nothing dated on or after `MODEL_HOLDOUT_START`.
      - After T6, only [2025-01-01, H_end] becomes development data (OD5).
      - Data after H_end is touched only by the separately governed pipeline (section 9).
-   - **Each entity's confirmatory sample:**
-     - the holdout, if the entity was registered before T6;
-     - plus the dates logged at or after its registration.
-
-     Dates between H_end and its registration enter no confirmatory test.
+   - **Each entity's confirmatory sample is only the dates logged after the pre-registered burn-in that follows its registration.**
+     - The holdout result (T6) is a non-confirmatory, descriptive baseline. Every design was made knowing 2025+ outcomes, so holdout outcomes are not independent evidence.
+     - Dates between H_end and a registration enter no confirmatory test.
+     - **Proposed point-in-time rules, needing owner approval as part of OD16:**
+       - T6 scores only dates whose labels mature by H_end, so the holdout never reads later data;
+       - the first confirmatory decision date is at least h sessions after H_end, so no return is shared between T6's labels and the confirmatory sample.
    - **Designer knowledge.** The repository began on 2026-08-08, so every design was made knowing what happened in 2025. Designs carry a `designed_after_holdout_start` flag and a list of the 2025+ facts known. The holdout cannot remove that knowledge; prospective evidence can.
 
 **Version 1 minimum** (P1-1a). Only `evidence_status` ∈ {`descriptive`, `rules_illustration`}, `claim_type` derived from `kind`, and the lockbox rule.
@@ -336,7 +337,7 @@ When both terms are conditional expectations on the **same** F_t, plain addition
     - A factor model Σ = BFBᵀ + D (market, sector, duration, credit, USD) for mixed universes on one synchronized calendar.
     - A daily EWMA with λ = 0.94 (about an 11-day half-life) has a flat term structure: it scales variance by h, while volatility mean-reverts. Use a model with mean reversion, such as GARCH or HAR, decaying toward the long-run level.
   - **Validation** like any risk forecast, on non-overlapping h-session returns: coverage and exceedance tests (Kupiec, Christoffersen).
-  - **Validation power is low.** Ten years hold about 126 non-overlapping 20-session windows. A Kupiec test detects a 90% band whose true coverage is 85% with power of only about 0.34 (about 0.17 at h = 60). A risk forecast can pass a pre-registered non-rejection check, and the product shows that power beside it.
+  - **Validation power is low.** Ten years hold about 126 non-overlapping 20-session windows. A Kupiec test detects a 90% band whose true coverage is 85% with power of only provisionally about 0.34–0.43 (the two reviews' setups differ: 126 non-overlapping windows, α = 0.05, a 90% band whose true coverage is 85%; about 0.17 at h = 60). A risk forecast can pass a pre-registered non-rejection check, and the product shows that power beside it.
   - **Tails.** Volatility can be forecast; crash timing and drawdowns cannot. Correlations tend to rise in stress, so stress scenarios sit beside any correlation estimate. The four semiconductor names' full-sample mean pairwise correlation, 0.58 over 2019–2024, shows how concentrated that basket is; it is not itself evidence about stress.
 - **Portfolio construction.**
   - **Without a validated alpha,** risk-based methods only:
@@ -376,9 +377,9 @@ When both terms are conditional expectations on the **same** F_t, plain addition
 - **Lockbox and prospective evidence.**
   - The holdout end H_end is fixed and recorded in G1 before any prospective registration (OD16, amending OD5's "Later" clause). Data after H_end is touched only by the separately governed pipeline.
   - Pre-registration and the holdout-use record live in Git (the ledger is ignored today).
-  - The lockbox held about 1.75 years at h = 20 when this was written, and it grows until H_end is fixed. Its one-sided MDE (about 0.05 for 100 names; about 0.066 by fold blocks) cannot confirm a small edge, so T6 is pre-registered as a "no collapse" check and as look 0 of the confirmatory test.
+  - The lockbox held about 1.75 years at h = 20 when this was written, and it grows until H_end is fixed. Its one-sided MDE (provisionally about 0.05 for 100 names; about 0.066 by fold blocks) cannot confirm a small edge, so T6 is pre-registered as a "no collapse" check. It is a non-confirmatory baseline, not a look of the confirmatory test.
   - **The prospective log is the evidence after it,** scored with α-spending at fixed look dates (`vision_and_prd.md`, section 15).
-  - **How long that takes** (one-sided α = 0.025, power 0.8, about 100 names): confirming a rank IC of 0.03 needs about 1,170 dates never used for selection (about 4.6 years) for a signal whose overlap factor is about 13.4, and about 1,760 dates (about 7 years) for a persistent signal.
+  - **How long that takes.** Provisional figures: normal approximations, finite-sample behaviour not yet checked; one-sided α = 0.025, power 0.8, about 100 names: confirming a rank IC of 0.03 needs about 1,170 post-registration dates (about 4.6 years) for a signal whose overlap factor is about 13.4, and about 1,760 dates (about 7 years) for a persistent signal.
 
 ## 8. Output contracts
 
@@ -463,7 +464,9 @@ Deferred until a publication needs them: `claim_level`, `evidence_refs`, `univer
 
 **What stays fixed.** The sealed historical holdout stays sealed. Research, development and the product keep today's cutoff: nothing dated on or after `MODEL_HOLDOUT_START` (decision OD5). There is no exception path in the product's reader or its tests.
 
-**What this adds.** Prospective paper trading and any later investment-ready operation need current data, so they get **their own pipeline under separate governance** (decision OD16, proposed).
+**What this adds.** Prospective paper trading and any later investment-ready operation need current data, so they get **their own pipeline under separate governance** (decision OD16).
+- Its general direction was approved on 2026-10-11: an independently governed prospective paper-trading pipeline, with a fixed historical holdout window and immutable registration and decision records.
+- Activation and the choice of H_end are **not** approved.
 - OD16 amends only OD5's "Later" clause, by fixing the holdout end before the first prospective registration (section 4, rule 7).
 - The pipeline is designed now so its evidence clock can start early. It is not part of the MVP.
 - **Alternative:** keep the pipeline dormant until T6's pre-registration. That needs no early holdout end, but the evidence clock starts later.
@@ -478,6 +481,25 @@ Deferred until a publication needs them: `claim_level`, `evidence_refs`, `univer
 | **Review reports stay in the pipeline** | Results render only through the pipeline's own review entry point on pre-registered review dates, never through the product | The scorer refuses to report before a registered review date. Showing prospective results inside the product would need a separate amendment to OD5 |
 | **The historical holdout is untouched** | Any decision whose input window intersects [2025-01-01, H_end] runs machine-only. Its weights, inputs and per-asset fields are withheld from every view (dry-run diagnostics and stage S3 approval screens included) until T6 has run | Dry runs show operational fields only: row counts, freshness, hashes, constraint pass or fail |
 
+**Pre-registration procedure, required before activation.** Each step is recorded in G1 and is immutable once recorded:
+1. **The procedure itself** is written down and approved by the owner. It covers:
+   - what a registration must contain;
+   - its file formats and hashes;
+   - who approves what, and in what order.
+
+   Changing the procedure later also needs the owner's approval.
+2. **H_end** is proposed with its rationale and explicitly approved by the owner, then recorded. It must be earlier than every prospective start. The approval covers the two proposed point-in-time rules in section 4, rule 7: T6 scores only labels that mature by H_end, and confirmatory dates start at least h sessions after H_end.
+3. **Each artifact's registration** is recorded:
+   - registration hash;
+   - claim and estimand;
+   - confirmatory plan: α, look dates, burn-in, minimum observation period, N_max with its calendar deadline, futility rule, and the simulation that checked them;
+   - exit triggers;
+   - review dates.
+4. **Activation** is explicitly approved by the owner and recorded with its date. The first decision is logged only after that.
+5. **Any amendment** to a registration is a new registration in the same lineage.
+
+Until steps 1, 2 and 4 are approved, the pipeline is design and tests only, and the historical holdout cutoff applies everywhere.
+
 **Dependencies:**
 - OD9's real `signal_cutoff_at`, not the interim date-level rule;
 - a session calendar (OD14);
@@ -488,4 +510,4 @@ Deferred until a publication needs them: `claim_level`, `evidence_refs`, `univer
 **How it serves the promotion stages** (`vision_and_prd.md`, section 15):
 - **Paper trading (stage S2):** the pipeline runs registered portfolios, models and policies with no capital.
 - **Controlled personal deployment (S3):** the same pipeline produces the orders, with that stage's risk controls.
-- **Rules-only portfolios** need no forecast validation, so they can be paper-tracked once OD16 is approved and their registrations exist. That starts the clock that every later claim needs.
+- **Rules-only portfolios** need no forecast validation, so they can be paper-tracked once OD16's activation and H_end are separately approved and their registrations exist. That starts the clock that every later claim needs.
