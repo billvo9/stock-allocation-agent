@@ -83,6 +83,45 @@ class FredDataSource:
     # Existing Version 2 release-level API
     # ------------------------------------------------------------------
 
+    def _get_version_2_json(
+        self,
+        params: dict[str, object],
+        release_id: int,
+    ) -> Any:
+        """
+        GET the Version 2 release endpoint, which authenticates by bearer header.
+
+        The key never enters the URL, but requests holds the Authorization
+        header in the local variables of its own frames, and a chained
+        exception carries those frames in its traceback. A failure is
+        therefore reported only by release id and HTTP status (or exception
+        type), and raised after the except block so that neither __cause__
+        nor __context__ references the original exception.
+
+        The header is built inline rather than held in a local, so a
+        traceback rendered with locals omits it too.
+        """
+
+        failure: str | None = None
+
+        try:
+            response = self._session.get(
+                self.BASE_URL,
+                params=params,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                timeout=self.REQUEST_TIMEOUT_SECONDS,
+            )
+
+            response.raise_for_status()
+            return response.json()
+
+        except requests.RequestException as exc:
+            failure = _describe_request_failure(exc)
+
+        raise RuntimeError(
+            f"FRED release observations request failed for release {release_id}: {failure}."
+        )
+
     def _request_page(
         self,
         release_id: int,
@@ -97,19 +136,10 @@ class FredDataSource:
         if next_cursor is not None:
             params["next_cursor"] = next_cursor
 
-        try:
-            response = self._session.get(
-                self.BASE_URL,
-                params=params,
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                timeout=self.REQUEST_TIMEOUT_SECONDS,
-            )
-
-            response.raise_for_status()
-            payload = response.json()
-
-        except requests.RequestException as exc:
-            raise TypeError("FRED API request failed.") from exc
+        payload = self._get_version_2_json(
+            params,
+            release_id=release_id,
+        )
 
         if not isinstance(payload, dict):
             raise TypeError("Unexpected FRED API response.")
