@@ -90,6 +90,93 @@ def test_runs_are_never_overwritten(run, tmp_path):
         artifacts.write_run(run, tmp_path)
 
 
+def _fail_second_table_contract(monkeypatch):
+    validate, calls = contract.validate, []
+
+    def failing(name, table, *args):
+        calls.append(name)
+        if len(calls) == 2:
+            raise ValueError("violates the contract (injected)")
+        return validate(name, table, *args)
+
+    monkeypatch.setattr(contract, "validate", failing)
+
+
+def _fail_second_parquet_write_midway(monkeypatch):
+    to_parquet, calls = pd.DataFrame.to_parquet, []
+
+    def failing(self, path, *args, **kwargs):
+        calls.append(path)
+        if len(calls) == 2:
+            Path(path).write_bytes(b"PAR1 truncated")
+            raise OSError("disk full (injected)")
+        return to_parquet(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", failing)
+
+
+def _fail_manifest_write(monkeypatch):
+    write_text = Path.write_text
+
+    def failing(self, *args, **kwargs):
+        if self.name == "manifest.json":
+            raise OSError("disk full (injected)")
+        return write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", failing)
+
+
+def _fail_rename(monkeypatch):
+    def failing(source, destination):
+        raise OSError("rename failed (injected)")
+
+    monkeypatch.setattr(artifacts.os, "replace", failing)
+
+
+@pytest.mark.parametrize(
+    ("inject", "error", "match"),
+    [
+        (_fail_second_table_contract, ValueError, "violates the contract"),
+        (_fail_second_parquet_write_midway, OSError, "disk full"),
+        (_fail_manifest_write, OSError, "disk full"),
+        (_fail_rename, OSError, "rename failed"),
+    ],
+    ids=["table_contract", "parquet_write", "manifest_write", "rename"],
+)
+def test_a_failed_write_leaves_nothing_behind_and_can_be_retried(
+    run, tmp_path, monkeypatch, inject, error, match
+):
+    inject(monkeypatch)
+    with pytest.raises(error, match=match):
+        artifacts.write_run(run, tmp_path)
+    runs = tmp_path / "runs"
+    assert not (runs / run.run_id).exists()
+    assert list(runs.iterdir()) == []  # no final run and no .partial staging directory
+    monkeypatch.undo()
+    directory = artifacts.write_run(run, tmp_path)
+    record, _ = artifacts.read_run(directory)
+    assert record["run_id"] == run.run_id
+
+
+def test_a_failed_write_removes_only_the_files_it_wrote(run, tmp_path, monkeypatch):
+    staging = tmp_path / "runs" / f".{run.run_id}.partial"
+    foreign = staging / "not-written-by-write_run.txt"
+    to_parquet = pd.DataFrame.to_parquet
+
+    def failing(self, path, *args, **kwargs):
+        to_parquet(self, path, *args, **kwargs)
+        foreign.write_text("someone else's file")
+        raise OSError("disk full (injected)")
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", failing)
+    with pytest.raises(OSError, match="disk full") as raised:
+        artifacts.write_run(run, tmp_path)
+    # The original error propagates; the cleanup that could not finish is noted, not raised.
+    assert any("left in place" in note for note in raised.value.__notes__)
+    assert [path.name for path in staging.iterdir()] == [foreign.name]
+    assert not (tmp_path / "runs" / run.run_id).exists()
+
+
 def test_reading_refuses_tampered_incomplete_or_newer_runs(run, tmp_path):
     directory = artifacts.write_run(run, tmp_path)
     metrics = directory / "metrics.parquet"
