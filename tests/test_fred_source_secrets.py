@@ -7,10 +7,18 @@ messages of HTTPError and ConnectionError. These tests build those errors the
 way requests does, so the key really is present in the raw provider error, and
 prove it does not survive into the exception FredDataSource raises: not in its
 message, its __cause__ / __context__ chain, or its formatted traceback.
+
+The Version 2 release endpoint sends the key as an Authorization bearer
+header, so it never enters a URL or message. requests still holds that header
+in the local variables of its own frames, which a traceback rendered with
+locals prints. Real requests.Session objects with an offline transport adapter
+reproduce those frames without touching the network.
 """
 
 from __future__ import annotations
 
+import io
+import os
 import traceback
 from collections.abc import Callable
 from typing import Any
@@ -18,12 +26,15 @@ from urllib.parse import quote_plus
 
 import pytest
 import requests
+from requests.adapters import BaseAdapter
 
 from stock_agent.data.fred_source import FredDataSource
 
 FAKE_API_KEY = "fake-fred-key-for-leak-tests-0123"
 
 SERIES_ID = "GDPC1"
+
+RELEASE_ID = 18
 
 
 def _prepare(
@@ -92,6 +103,67 @@ class _ConnectionErrorSession:
         )
 
 
+class _HttpErrorAdapter(BaseAdapter):
+    """Transport that answers every request with an empty HTTP 500 response."""
+
+    def send(
+        self,
+        request: requests.PreparedRequest,
+        **kwargs: object,
+    ) -> requests.Response:
+        response = requests.Response()
+        response.status_code = 500
+        response.reason = "Internal Server Error"
+        response.url = request.url or ""
+        response.request = request
+        response.raw = io.BytesIO(b"")
+
+        return response
+
+    def close(self) -> None:
+        pass
+
+
+class _ConnectionErrorAdapter(BaseAdapter):
+    """Transport that fails the way urllib3 does when the host is unreachable."""
+
+    def send(
+        self,
+        request: requests.PreparedRequest,
+        **kwargs: object,
+    ) -> requests.Response:
+        raise requests.ConnectionError(
+            "HTTPSConnectionPool(host='api.stlouisfed.org', port=443): "
+            f"Max retries exceeded with url: {request.path_url}",
+            request=request,
+        )
+
+    def close(self) -> None:
+        pass
+
+
+def _requests_session(adapter: BaseAdapter) -> requests.Session:
+    """A real requests.Session whose transport never reaches the network."""
+
+    session = requests.Session()
+
+    # No proxy environment variables or ~/.netrc lookups.
+    session.trust_env = False
+
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
+    return session
+
+
+def _requests_session_with_http_error() -> requests.Session:
+    return _requests_session(_HttpErrorAdapter())
+
+
+def _requests_session_with_connection_error() -> requests.Session:
+    return _requests_session(_ConnectionErrorAdapter())
+
+
 def _fetch_series_observations(source: FredDataSource) -> object:
     return source.get_series_observations(series_id=SERIES_ID)
 
@@ -102,7 +174,7 @@ def _fetch_vintage_dates(source: FredDataSource) -> object:
 
 def _fetch_release_observations(source: FredDataSource) -> object:
     return source.get_observations(
-        release_id=18,
+        release_id=RELEASE_ID,
         series_id=SERIES_ID,
         start="2026-01-01",
         end="2026-02-01",
@@ -117,6 +189,11 @@ VERSION_1_ENDPOINTS = [
 SESSIONS = [
     pytest.param(_HttpErrorSession, id="http-error"),
     pytest.param(_ConnectionErrorSession, id="connection-error"),
+]
+
+REQUESTS_SESSIONS = [
+    pytest.param(_requests_session_with_http_error, id="requests-http-error"),
+    pytest.param(_requests_session_with_connection_error, id="requests-connection-error"),
 ]
 
 
@@ -151,6 +228,45 @@ def _assert_exception_hides_key(exc: BaseException) -> None:
         _assert_no_key(repr(linked))
 
     _assert_no_key("".join(traceback.format_exception(exc)))
+
+
+def test_requests_frames_hold_the_bearer_header_in_their_locals() -> None:
+    """
+    Guard the guard: chaining a requests error would leak the bearer header.
+
+    The header is absent from the error message but present in the locals of
+    requests' own frames, which are part of the raw error's traceback.
+    """
+
+    session = _requests_session_with_connection_error()
+
+    try:
+        session.get(
+            FredDataSource.BASE_URL,
+            headers={"Authorization": f"Bearer {FAKE_API_KEY}"},
+            timeout=FredDataSource.REQUEST_TIMEOUT_SECONDS,
+        )
+    except requests.ConnectionError as exc:
+        raw_error = exc
+    else:
+        pytest.fail("The offline transport should have failed.")
+
+    assert FAKE_API_KEY not in str(raw_error)
+
+    rendered = traceback.TracebackException.from_exception(
+        raw_error,
+        capture_locals=True,
+    )
+
+    requests_frames = [
+        frame for frame in rendered.stack if f"{os.sep}requests{os.sep}" in frame.filename
+    ]
+
+    assert any(
+        FAKE_API_KEY in value
+        for frame in requests_frames
+        for value in (frame.locals or {}).values()
+    )
 
 
 @pytest.mark.parametrize("session_factory", SESSIONS)
@@ -259,9 +375,78 @@ def test_version_2_request_failure_never_exposes_api_key(
     session = session_factory()
     source = FredDataSource(api_key=FAKE_API_KEY, session=session)
 
-    with pytest.raises(TypeError) as excinfo:
+    with pytest.raises(RuntimeError) as excinfo:
         _fetch_release_observations(source)
 
+    # The key was sent: the request authenticated as before.
+    assert session.calls[0]["headers"]["Authorization"] == f"Bearer {FAKE_API_KEY}"
     assert "api_key" not in session.calls[0]["params"]
 
     _assert_exception_hides_key(excinfo.value)
+
+
+@pytest.mark.parametrize("session_factory", SESSIONS + REQUESTS_SESSIONS)
+def test_version_2_traceback_with_locals_never_exposes_api_key(
+    session_factory: Callable[[], Any],
+) -> None:
+    """
+    Tools such as pytest --showlocals render every frame's local variables.
+
+    A chained requests error would bring requests' own frames, and the
+    Authorization header in their locals, into the rendered traceback.
+    """
+
+    source = FredDataSource(api_key=FAKE_API_KEY, session=session_factory())
+
+    with pytest.raises(RuntimeError) as excinfo:
+        _fetch_release_observations(source)
+
+    rendered = traceback.TracebackException.from_exception(
+        excinfo.value,
+        capture_locals=True,
+    )
+
+    _assert_no_key("".join(rendered.format()))
+
+
+@pytest.mark.parametrize("session_factory", SESSIONS + REQUESTS_SESSIONS)
+def test_version_2_failure_is_raised_without_an_exception_chain(
+    session_factory: Callable[[], Any],
+) -> None:
+    source = FredDataSource(api_key=FAKE_API_KEY, session=session_factory())
+
+    with pytest.raises(RuntimeError) as excinfo:
+        _fetch_release_observations(source)
+
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+
+def test_version_2_http_failure_keeps_status_and_release_for_diagnosis() -> None:
+    source = FredDataSource(
+        api_key=FAKE_API_KEY,
+        session=_HttpErrorSession(status_code=503),
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        _fetch_release_observations(source)
+
+    message = str(excinfo.value)
+
+    assert "HTTP 503" in message
+    assert f"release {RELEASE_ID}" in message
+
+
+def test_version_2_connection_failure_names_the_error_type() -> None:
+    source = FredDataSource(
+        api_key=FAKE_API_KEY,
+        session=_ConnectionErrorSession(),
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        _fetch_release_observations(source)
+
+    message = str(excinfo.value)
+
+    assert "ConnectionError" in message
+    assert f"release {RELEASE_ID}" in message
