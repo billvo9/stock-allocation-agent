@@ -24,6 +24,14 @@ Versions:
          unpurged canary reference, never eligible as a candidate),
          eligible_as_candidate on every model, and per-family check
          counts. All additions are additive; 1.0 runs remain readable.
+    1.2  T4: two training-scope tables for nested-selected linear models
+         (`coefficients`: standardized coefficients and fitted transform
+         parameters per model, fold and feature; `selection`: every inner
+         grid point's score and the chosen one, per model and outer fold),
+         and the non-candidate role "diagnostic" (an unpenalized OLS
+         comparator). Tables are versioned too: a run lists exactly the
+         tables of the version it was written with, so 1.0 and 1.1 runs
+         stay readable.
 
 Scopes: "evaluation" = out-of-sample test rows (metrics, curves, drift);
 "training" = one fold's training rows (feature diagnostics). Every row of
@@ -35,12 +43,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-OUTPUT_SCHEMA_VERSION = "1.1"
+OUTPUT_SCHEMA_VERSION = "1.2"
 
 # Roles. Only "candidate" models may ever be read as strategies.
 CANDIDATE_ROLE = "candidate"
+DIAGNOSTIC_ROLE = "diagnostic"  # a comparator built to answer one question (OLS), never a strategy
 UNSAFE_REFERENCE_ROLE = "canary_unsafe_reference"
-NON_CANDIDATE_ROLES = ("null", "control", "canary", UNSAFE_REFERENCE_ROLE)
+NON_CANDIDATE_ROLES = ("null", "control", "canary", DIAGNOSTIC_ROLE, UNSAFE_REFERENCE_ROLE)
 
 STRING = "string"
 NULLABLE_STRING = "nullable_string"
@@ -147,6 +156,36 @@ SCHEMAS: dict[str, dict[str, str]] = {
         "status": STRING,
         "reason": NULLABLE_STRING,
     },
+    "coefficients": {
+        "model": STRING,
+        "role": STRING,
+        "scope": STRING,
+        "fold_id": INT,
+        "feature": STRING,
+        "coefficient": FLOAT,
+        "median": FLOAT,
+        "mean": FLOAT,
+        "scale": FLOAT,
+        "alpha": FLOAT,
+        "converged": NULLABLE_BOOL,
+    },
+    "selection": {
+        "model": STRING,
+        "role": STRING,
+        "scope": STRING,
+        "fold_id": INT,
+        "penalty": FLOAT,
+        "l1_ratio": FLOAT,
+        "inner_score": FLOAT,
+        "n_inner_folds": INT,
+        "n_inner_dates": INT,
+        "inner_test_start": NULLABLE_DATETIME,
+        "inner_test_end_exclusive": NULLABLE_DATETIME,
+        "max_inner_label_end": NULLABLE_DATETIME,
+        "chosen": NULLABLE_BOOL,
+        "status": STRING,
+        "reason": NULLABLE_STRING,
+    },
     "checks": {
         "check": STRING,
         "model": NULLABLE_STRING,
@@ -170,6 +209,8 @@ TABLES = (*SCHEMAS, *REQUIRED_COLUMNS)
 
 # Columns added after 1.0: table -> column -> version that added it.
 ADDED_IN = {"curves": {"ci_method": "1.1", "ci_level": "1.1", "hac_lag": "1.1"}}
+# Tables added after 1.0: table -> version that added it.
+TABLE_ADDED_IN = {"coefficients": "1.2", "selection": "1.2"}
 
 
 def _minor(version: str) -> tuple[int, int]:
@@ -186,6 +227,26 @@ def schema(name: str, version: str = OUTPUT_SCHEMA_VERSION) -> dict[str, str]:
         for column, kind in SCHEMAS[name].items()
         if _minor(added.get(column, "1.0")) <= _minor(version)
     }
+
+
+def tables(version: str = OUTPUT_SCHEMA_VERSION) -> tuple[str, ...]:
+    """The tables a run written under `version` contains."""
+
+    return tuple(
+        name for name in TABLES if _minor(TABLE_ADDED_IN.get(name, "1.0")) <= _minor(version)
+    )
+
+
+def tables_added_after(version: str) -> tuple[str, ...]:
+    """Tables a run written under `version` cannot contain (legacy gaps)."""
+
+    return tuple(name for name in TABLES if name not in tables(version))
+
+
+def empty(name: str) -> pd.DataFrame:
+    """A zero-row table of `name` with the current contract's columns and dtypes."""
+
+    return conform(name, pd.DataFrame({column: [] for column in SCHEMAS[name]}))
 
 
 def predates(version: str, other: str) -> bool:

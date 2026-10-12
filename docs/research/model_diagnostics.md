@@ -159,7 +159,8 @@ beside it. Both are ignored by Git.
     1.1, `families` gives per severity `total`, `passed`, `failed`,
     `undetermined` (no stored result) and what `passed` means, with
     `passed + failed + undetermined = total`.
-- Tables (Parquet, schema version 1.1):
+- Tables (Parquet, schema version 1.2; T4 added `coefficients` and
+  `selection`, see `docs/research/linear_models.md`):
   - `inputs`: the truncated labeled frame used;
   - `folds`;
   - `predictions`;
@@ -187,7 +188,12 @@ beside it. Both are ignored by Git.
   above; no statistic, threshold, label or lockbox rule changed. Each table
   is validated against the schema of the version it was written with, so
   1.0 runs stay readable. A reader never fills a missing 1.1 field with an
-  assumed value (see `docs/research/diagnostics_dashboard.md`).
+  assumed value (see `docs/research/diagnostics_dashboard.md`). 1.2 (T4)
+  adds two training-scope tables and the `diagnostic` role; tables are
+  versioned too, so a run lists exactly the tables of its version.
+- Labels. From T4 the run script's default label is the equal-weight
+  excess return (`spec.label` records `benchmark` and its availability
+  rule); the raw return is stored in `inputs.target_return_raw`.
 
 T3 can build every planned page from these tables without re-running a
 model or reading raw data.
@@ -289,7 +295,9 @@ Other observations:
   NVDA's history alone.
   - The plan's acceptance rule "nulls show no skill" holds for the nulls.
   - The control's apparent skill is a recorded research warning.
-  - Whether T4 must beat it on paired per-date differences is a T4 decision.
+  - Whether T4 must beat it on paired per-date differences: decided
+    2026-10-10, it is a reported research warning, never a gate
+    (`docs/research/linear_models.md`).
 - **Which placebo is the null.** The reviews disagreed:
   - the statistical review favoured the within-date permutation for rank
     IC;
@@ -328,8 +336,9 @@ Other observations:
   keep fold-block t as the decision method.
 - Nothing yet stops a candidate model's feature list from using
   `control_*` columns through the harness directly (outside `ModelSpec`).
-  Rejecting them in `validate_feature_columns` would change a contract, so
-  it waits for T4.
+  Rejecting them in `validate_feature_columns` would change a contract; it
+  is still open after T4 (`ModelSpec` refuses them for candidates and the
+  diagnostic).
 - The ledger lives under ignored `reports/`, so it can be deleted. Holdout
   once-only enforcement and multiple-testing counts need a Git-tracked
   record (T6, owner decision).

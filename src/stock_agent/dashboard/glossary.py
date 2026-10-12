@@ -173,6 +173,28 @@ TERMS: dict[str, str] = {
         "An episode whose boundaries were known only after it ended (ex post), such as a "
         "peak-to-trough drawdown. For descriptive slicing only; never a signal."
     ),
+    "Equal-weight excess label": (
+        "A name's forward return minus the equal-weight mean forward return of the universe "
+        "names on the same date. Known only when every name's label is known, so each row "
+        "takes the latest member end date. Rank IC is unchanged by it; squared errors refer "
+        "to excess returns."
+    ),
+    "Nested selection": (
+        "The penalty is chosen inside each outer training fold: inner purged forward folds "
+        "built only from that fold's training rows score each pre-registered grid point, the "
+        "lowest date-normalized MSE wins, and the outer fold is refit once with it. No test "
+        "row or later label ever informs the choice."
+    ),
+    "Standardized coefficient": (
+        "The fitted slope on a feature scaled to unit variance on that fold's training rows: "
+        "the change in the forecast for a one-standard-deviation change in the feature."
+    ),
+    "Clark-West": (
+        "Adjusted MSE difference for a model that nests its comparator (the comparator is the "
+        "model with some parameters fixed, fitted on the same rows). It corrects for the noise "
+        "the larger model adds by estimating parameters that are zero under the null. Used "
+        "only for genuinely nested pairs (OLS vs zero), never for penalized or selected models."
+    ),
     "Descriptive filter": (
         "A reader-chosen subset of dates. Counts and plain averages are shown for it; "
         "dependence-aware inference exists only for T2's full sample and is not recomputed."

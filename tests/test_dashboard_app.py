@@ -32,6 +32,7 @@ PAGES = [
     "page_scripts/nulls.py",
     "page_scripts/validation.py",
     "page_scripts/forecast_error.py",
+    "page_scripts/linear_models.py",
     "page_scripts/calibration.py",
     "page_scripts/uncertainty.py",
     "page_scripts/research_warnings.py",
@@ -51,6 +52,9 @@ FORBIDDEN = (
     "stock_agent.data",
     "duckdb",
     "yfinance",
+    "sklearn",
+    "stock_agent.model_diagnostics.linear",
+    "stock_agent.model_diagnostics.nested",
 )
 
 
@@ -314,7 +318,8 @@ def test_the_overview_shows_the_recorded_contract_fields(dashboard_root, monkeyp
     root, _ = dashboard_root
     app = _app(root, monkeypatch)
     markdown = " ".join(m.value for m in app.markdown)
-    assert "output schema **1.1**" in markdown and "fold_block_t** (recorded)" in markdown
+    current = f"output schema **{contract.OUTPUT_SCHEMA_VERSION}**"
+    assert current in markdown and "fold_block_t** (recorded)" in markdown
     assert not any("not recorded (schema" in i.value for i in app.info)
     models = next(f.value for f in app.dataframe if "eligible_as_candidate" in f.value.columns)
     assert models.loc[models["role"] != "candidate", "eligible_as_candidate"].eq(False).all()

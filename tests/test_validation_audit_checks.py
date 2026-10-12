@@ -405,6 +405,8 @@ def test_run_manifest_records_label_timing_inputs_and_versions(tmp_path):
         "horizon": 20,
         "entry_lag": 1,
         "price_column": "adjusted_close",
+        "benchmark": None,
+        "min_cross_section": 2,
     }
     assert manifest["holdout_start"] == "2025-01-01T00:00:00+00:00"
     assert manifest["universe"] == ["MU", "NVDA"]

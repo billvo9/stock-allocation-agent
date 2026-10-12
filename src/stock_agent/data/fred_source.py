@@ -24,6 +24,23 @@ FRED_SERIES_OBSERVATION_COLUMNS = [
 ]
 
 
+def _describe_request_failure(
+    exc: requests.RequestException,
+) -> str:
+    """
+    Summarize a failed request without any part of its message or URL.
+
+    A Response is falsy for error statuses, so it is tested against None.
+    """
+
+    response = exc.response
+
+    if response is not None:
+        return f"HTTP {response.status_code}"
+
+    return type(exc).__name__
+
+
 class FredDataSource:
     """
     Generic transport layer for FRED.
@@ -66,6 +83,45 @@ class FredDataSource:
     # Existing Version 2 release-level API
     # ------------------------------------------------------------------
 
+    def _get_version_2_json(
+        self,
+        params: dict[str, object],
+        release_id: int,
+    ) -> Any:
+        """
+        GET the Version 2 release endpoint, which authenticates by bearer header.
+
+        The key never enters the URL, but requests holds the Authorization
+        header in the local variables of its own frames, and a chained
+        exception carries those frames in its traceback. A failure is
+        therefore reported only by release id and HTTP status (or exception
+        type), and raised after the except block so that neither __cause__
+        nor __context__ references the original exception.
+
+        The header is built inline rather than held in a local, so a
+        traceback rendered with locals omits it too.
+        """
+
+        failure: str | None = None
+
+        try:
+            response = self._session.get(
+                self.BASE_URL,
+                params=params,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                timeout=self.REQUEST_TIMEOUT_SECONDS,
+            )
+
+            response.raise_for_status()
+            return response.json()
+
+        except requests.RequestException as exc:
+            failure = _describe_request_failure(exc)
+
+        raise RuntimeError(
+            f"FRED release observations request failed for release {release_id}: {failure}."
+        )
+
     def _request_page(
         self,
         release_id: int,
@@ -80,19 +136,10 @@ class FredDataSource:
         if next_cursor is not None:
             params["next_cursor"] = next_cursor
 
-        try:
-            response = self._session.get(
-                self.BASE_URL,
-                params=params,
-                headers={"Authorization": f"Bearer {self._api_key}"},
-                timeout=self.REQUEST_TIMEOUT_SECONDS,
-            )
-
-            response.raise_for_status()
-            payload = response.json()
-
-        except requests.RequestException as exc:
-            raise TypeError("FRED API request failed.") from exc
+        payload = self._get_version_2_json(
+            params,
+            release_id=release_id,
+        )
 
         if not isinstance(payload, dict):
             raise TypeError("Unexpected FRED API response.")
@@ -231,6 +278,43 @@ class FredDataSource:
     # Version 1 series-level API
     # ------------------------------------------------------------------
 
+    def _get_version_1_json(
+        self,
+        url: str,
+        params: dict[str, object],
+        description: str,
+        series_id: str,
+    ) -> Any:
+        """
+        GET a Version 1 endpoint, which authenticates by query parameter.
+
+        requests puts the full request URL, api_key included, into the
+        messages of HTTPError and ConnectionError. A failure is therefore
+        reported only by series id and HTTP status (or exception type),
+        and raised after the except block so that neither __cause__ nor
+        __context__ references the original exception.
+
+        The key is added inline rather than held in a local or in the
+        caller's params, so a traceback rendered with locals omits it too.
+        """
+
+        failure: str | None = None
+
+        try:
+            response = self._session.get(
+                url,
+                params={**params, "api_key": self._api_key},
+                timeout=self.REQUEST_TIMEOUT_SECONDS,
+            )
+
+            response.raise_for_status()
+            return response.json()
+
+        except requests.RequestException as exc:
+            failure = _describe_request_failure(exc)
+
+        raise RuntimeError(f"{description} request failed for series {series_id}: {failure}.")
+
     def _request_series_observations_page(
         self,
         series_id: str,
@@ -255,7 +339,6 @@ class FredDataSource:
 
         params: dict[str, object] = {
             "series_id": series_id,
-            "api_key": self._api_key,
             "file_type": "json",
             "output_type": 1,
             "limit": self.MAX_SERIES_OBSERVATIONS_PER_REQUEST,
@@ -278,18 +361,12 @@ class FredDataSource:
         if vintage_dates:
             params["vintage_dates"] = ",".join(vintage_dates)
 
-        try:
-            response = self._session.get(
-                self.SERIES_OBSERVATIONS_URL,
-                params=params,
-                timeout=self.REQUEST_TIMEOUT_SECONDS,
-            )
-
-            response.raise_for_status()
-            payload = response.json()
-
-        except requests.RequestException as exc:
-            raise RuntimeError("FRED series observations request failed.") from exc
+        payload = self._get_version_1_json(
+            self.SERIES_OBSERVATIONS_URL,
+            params,
+            description="FRED series observations",
+            series_id=series_id,
+        )
 
         if not isinstance(payload, dict):
             raise TypeError("Unexpected FRED series observations response.")
@@ -412,25 +489,18 @@ class FredDataSource:
     ) -> dict[str, Any]:
         params: dict[str, object] = {
             "series_id": series_id,
-            "api_key": self._api_key,
             "file_type": "json",
             "limit": self.MAX_VINTAGE_DATES_PER_REQUEST,
             "offset": offset,
             "sort_order": "asc",
         }
 
-        try:
-            response = self._session.get(
-                self.SERIES_VINTAGE_DATES_URL,
-                params=params,
-                timeout=self.REQUEST_TIMEOUT_SECONDS,
-            )
-
-            response.raise_for_status()
-            payload = response.json()
-
-        except requests.RequestException as exc:
-            raise RuntimeError("FRED vintage-date request failed.") from exc
+        payload = self._get_version_1_json(
+            self.SERIES_VINTAGE_DATES_URL,
+            params,
+            description="FRED vintage-date",
+            series_id=series_id,
+        )
 
         if not isinstance(payload, dict):
             raise TypeError("Unexpected FRED vintage-date response.")

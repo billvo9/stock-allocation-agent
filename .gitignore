@@ -41,7 +41,7 @@ models/
 *.pth
 
 # Logs
-*.logreports/
+*.log
 reports/
 
 # Streamlit local secrets (never committed)
