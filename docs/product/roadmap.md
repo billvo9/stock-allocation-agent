@@ -95,7 +95,8 @@ Each step needs its rung on the ladder, nested-fold calibration and drift monito
 - **Privacy:** a privacy program and retention rules.
 - **Security:**
   - hash-locked dependencies with vulnerability scanning;
-  - redaction of secrets from errors (the FRED key travelled in request URLs that error messages printed; fixed in PR #48, pending merge);
+  - redaction of secrets from errors (the FRED key travelled in request URLs that error messages printed; fixed in PRs #48 and #50, pending merge);
+  - **FRED Version 1 URL logging:** urllib3 logs Version 1 request URLs, `api_key` included. Keep `urllib3.connectionpool` above DEBUG, mount no retrying adapters for Version 1 calls, and move to header authentication if FRED accepts it or redact `api_key=` in a logging filter;
   - an audit trail of what was shown, without personal data.
 - **Testing with others:** comprehension testing with real users, on synthetic data.
 
