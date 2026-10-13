@@ -12,7 +12,7 @@ Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2
 - **Two tracks run in parallel:**
   - the **product track** ships a rules-only Portfolio Lab, as of 2024-12-31 under the default lockbox boundary (OD5);
   - the **research track** earns forecasts one claim at a time.
-- **The critical path to any model view in the product is data and evidence, not code:**
+- **The critical path to any individual-stock model view in the product is data and evidence, not code:**
   1. a survivorship-free source;
   2. a point-in-time universe;
   3. a pre-registered re-run;
@@ -20,6 +20,10 @@ Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2
   5. years of prospective data.
 
   Risk forecasts can reach the product much sooner than return forecasts.
+- **RES-1 does not block the ETF Portfolio Lab** (owner direction, 2026-10-13):
+  - F1, P1-1b, the Portfolio Builder (P2-2) and fund or ETF allocation research use broad funds and do not need survivorship-free stock data;
+  - RES-1 remains a research dependency for credible individual-stock forecasting (RES-2 to RES-6, P4-2, P4-3);
+  - RES-1 is cost-conscious: a zero-purchase feasibility step (RES-1a) comes first, and any purchase is a separate owner decision (OD13).
 
 No calendar dates are promised. Sizes are relative (S, M, L, in tickets the size of T3.1–T4).
 
@@ -31,7 +35,7 @@ No calendar dates are promised. Sizes are relative (S, M, L, in tickets the size
 
 ## Phase 1: foundations (start in parallel)
 
-P1-1a, G1, T5 and F1 are independent. **T5 is the long pole for every simulated number, so its formula review work starts now.** Each formula still needs the owner's explicit approval under OD8; OD2's approval to start T5 approves none of them.
+P1-1a, G1, T5 and F1 are independent, and none of them waits for RES-1. **T5 is the long pole for every simulated number, so its formula review work starts now.** Each formula still needs the owner's explicit approval under OD8; OD2's approval to start T5 approves none of them.
 
 | Ticket | Delivers | Depends on | Acceptance gate | Size |
 |---|---|---|---|---|
@@ -59,7 +63,8 @@ P1-1a, G1, T5 and F1 are independent. **T5 is the long pole for every simulated 
 
 | Ticket | Delivers | Depends on | Acceptance gate |
 |---|---|---|---|
-| **RES-1** | Survivorship-free data source and licence; security master on synthetic panels, then real data; U1 membership by rules R1–R8; delisting returns and a reinvestment rule; `signal_cutoff_at` | OD13, OD9, a label-semantics decision (delistings) | The universe document's data contract; a survivorship sensitivity bound; the MDE re-estimated on the real panel and pre-registered |
+| **RES-1a** | Zero-purchase vendor feasibility: compare personally licensable sources (licence, cost, macOS and Python use, delisted coverage, identifiers, adjustment, corporate actions, delisting proceeds, point-in-time fields), then a proof of concept on synthetic fixtures and genuinely free sample data. No purchase, no vendor adapter in the research or product path, no real-stock scoring | Nothing | A recommendation of buy or defer, with the acceptance checks a purchase must pass; 2025+ data never loaded |
+| **RES-1** | Survivorship-free data source and licence; security master on synthetic panels, then real data; U1 membership by rules R1–R8; delisting returns and a reinvestment rule; `signal_cutoff_at` | RES-1a, OD13 (the purchase is an owner decision), OD9, a label-semantics decision (delistings) | The universe document's data contract; a survivorship sensitivity bound; the MDE re-estimated on the real panel and pre-registered |
 | **RES-2** | T4 follow-ups as pre-registered variants: zero-band hit rate, coverage-weighted IC, at least 199 permutation draws, date-weighted fitting or within-date features, the Elastic Net parameterization | Owner decisions per item (formula and metric gates) | Each variant recorded (G1) before it runs. **The set is frozen before any U1 result is read** |
 | **RES-3** | Context V1 (rates, VIX, credit-risk proxy, regime descriptors) with the pre-registered ablation | RES-1 (for power), OD9 | The ablation design in the universe document |
 | **RES-4** | T4 re-run on U1 at h = 20, then h = 60 | RES-1, RES-2, T5 | The ladder's L1 and L2 gates in development; nulls and controls; the MDE stated before results are read; a test family and α per cell |
@@ -122,11 +127,13 @@ Product:   P0 ─► P1-1a ─► P1-1b ─────────────�
            P0 ─► F1 ─────────────────────────┼─► P2-1 ─► P2-2 ─► MVP gate ─► P4-1
            P0 ─► G1 ─────────────────────────┘
            G1 ─► G2 (OD16) ─► paper tracking of registered portfolios (S2) ─► …
-Research:  P0 ─► OD13 data source ─► RES-1 ─► RES-2 (frozen) / RES-3 ─► RES-4 ─► RES-5 (T6, S1) ─► RES-6 via G2 (S2, years) ─► P4-3 ─► Phase 5 ─► S3
+Research:  P0 ─► RES-1a (no purchase) ─► OD13 data source ─► RES-1 ─► RES-2 (frozen) / RES-3 ─► RES-4 ─► RES-5 (T6, S1) ─► RES-6 via G2 (S2, years) ─► P4-3 ─► Phase 5 ─► S3
 ```
 
 - The product track reaches its MVP gate without any forecast.
-- The research track is gated by the data-source decision (OD13). **Start it now:** it has the longest lead time, and the MVP does not depend on it.
+- **Gating.** The individual-stock research track is gated by the data-source decision (OD13), and its first step (RES-1a) costs nothing.
+- **What does not depend on it:** the MVP, the ETF Portfolio Lab and fund-level allocation research.
+- **Until OD13:** individual-stock results remain engineering exercises on the hindsight-selected universe, labelled survivorship-biased.
 
 ## Acceptance gates for every ticket
 

@@ -121,7 +121,7 @@ The product never gets ahead of the evidence. The rules-only MVP is the first st
 | D2 | P(outperform), then P(gain) | Brier skill vs the base rate with a date-clustered standard error; reliability and resolution. P(gain) also needs L4 and D1 on *absolute* returns | Hidden |
 
 **Evidence required for every rung above L0:**
-- a point-in-time universe (U1) on survivorship-free prices;
+- for individual-stock claims, a point-in-time universe (U1) on survivorship-free prices. Fund-level claims, such as ETF allocation research, do not need U1. Their own pre-registered evidence rules are set with the first fund-level forecast ticket;
 - the MDE pre-registered from the real panel;
 - fold-block t as the decision method, its size re-simulated per horizon;
 - nulls (at least 199 permutation draws) and the selection control;
@@ -357,7 +357,7 @@ The gate column cites `AGENTS.md`'s approval gates. The status column records th
 | OD10 | Horizons | 5, 20, 30 and 60 sessions remain possible user-facing horizons. Implementation priority: 20 first, then 60 and 5 (5 after costs), then 30 after a pre-registered check of its incremental value (its correlation with 20 is about 0.82). Dropping any horizon is an explicit product decision | Research and product policy | Pending |
 | OD11 | Themes | Theme lists are dated current-exposure lenses, never historical strategies; "AI exposure" only as a point-in-time characteristic | Product policy | Pending |
 | OD12 | Pre-registration record | A Git-tracked registry for model portfolios, every real-panel scoring, holdout use, forecast-log starts and review dates | Research integrity | Pending |
-| OD13 | Survivorship-free data | CRSP via WRDS (if Georgia Tech access exists) or Sharadar, for U1; unchanged from the universe document | Data and licence | Pending |
+| OD13 | Survivorship-free data | For U1 only, a personally licensable source (the 2026-10-13 review found Sharadar Direct the only credible one; Norgate Platinum and EODHD fall short), chosen after a zero-purchase feasibility step and proof of concept (RES-1a). Institutional data, such as CRSP, only through an independent access arrangement. It gates individual-stock forecasting, never the ETF Portfolio Lab (owner direction, 2026-10-13) | Data and licence | Pending |
 | OD14 | Dependencies | A trading calendar (or an in-repo holiday file) when needed; an optimizer only when construction needs one | Dependencies | Pending |
 | OD15 | Mission wording | Consider changing `AGENTS.md`'s "explainable portfolio recommendations" to "explainable portfolio analysis" until the product may recommend | Guardrail file | Pending |
 | OD16 | Prospective pipeline (amends OD5's "Later" clause) | A separately governed pipeline for prospective paper trading and later deployment (`architecture.md`, section 9).<br>• Before its first registration, fix the holdout end H_end and record it in G1. The sealed holdout becomes [2025-01-01, H_end]; T6 evaluates it once and cannot extend it.<br>• Registered artifacts only, with a registration-hash check before every decision.<br>• An append-only decision log written before the execution cutoff, its hash committed to Git; no backfill.<br>• Separate storage and entry point.<br>• Review reports only through the pipeline, never the product, on pre-registered dates.<br>• Inputs from the sealed window are withheld from every view until T6.<br>The research and product cutoff is unchanged. **Alternative:** keep the pipeline dormant until T6's pre-registration | Point-in-time and lockbox policy; data; infrastructure (scheduler); secrets | **Direction approved 2026-10-11:** "I approve the general direction of OD16: an independently governed prospective paper-trading pipeline, with a fixed historical holdout window and immutable registration/decision records." **Not approved:** activating the pipeline and choosing H_end. Each needs a separate explicit owner approval and a documented pre-registration procedure (`architecture.md`, section 9) |
@@ -532,4 +532,4 @@ A trigger reverts the artifact to the previous stage, or holds the registered re
 
 - **Regulation:** current SEC and state treatment of interactive tools (the internet-adviser exemption, the Marketing Rule's hypothetical-performance rules), Reg S-P and state privacy laws, and the status of crypto.
 - **Terms of use:** Yahoo, Cboe (VIX), Coin Metrics, and S&P and GICS naming and data.
-- **Data access:** Georgia Tech WRDS/CRSP student access.
+- **Data access:** before any purchase, vendor answers on licence terms (code in a public repository, published derived results), delisted coverage, delisting proceeds and point-in-time fields.
