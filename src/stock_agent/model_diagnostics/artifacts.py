@@ -10,11 +10,12 @@ Layout under an output root (default reports/, ignored by Git):
     ledger.jsonl                     one line per run attempt, append-only
 
 A run is written to a temporary sibling directory and renamed into place, so
-a reader never sees a half-written run. An existing run directory is never
-overwritten. Readers check the manifest's schema version, every file's
-SHA-256, and every table's contract (the schema of the version the run was
-written with, so 1.0 runs stay readable), and read only the files a run is
-allowed to contain: record.json and one <table>.parquet per contract table,
+a reader never sees a half-written run; a failed write removes the files it
+wrote and the temporary directory, so the run can be retried. An existing run
+directory is never overwritten. Readers check the manifest's schema version,
+every file's SHA-256, and every table's contract (the schema of the version the
+run was written with, so 1.0 runs stay readable), and read only the files a run
+is allowed to contain: record.json and one <table>.parquet per contract table,
 all inside the run directory (no symlinks, no other paths).
 """
 
@@ -62,29 +63,53 @@ def write_run(
             f"A run holds exactly the tables {sorted(contract.tables())}; got {sorted(run.tables)}."
         )
     staging.mkdir()
-    files = {}
-    for name, table in run.tables.items():
-        contract.validate(name, table)
-        path = staging / f"{name}.parquet"
-        table.to_parquet(path, index=False)
-        files[path.name] = {
-            "table": name,
-            "rows": len(table),
-            "content_sha256": table_sha256(table),
+    written: list[Path] = []  # recorded before each write, so a half-written file is included
+    try:
+        files = {}
+        for name, table in run.tables.items():
+            contract.validate(name, table)
+            path = staging / f"{name}.parquet"
+            written.append(path)
+            table.to_parquet(path, index=False)
+            files[path.name] = {
+                "table": name,
+                "rows": len(table),
+                "content_sha256": table_sha256(table),
+            }
+        record = {**run.record, **dict(extra_record or {})}
+        written.append(staging / "record.json")
+        _write_json(staging / "record.json", record)
+        files["record.json"] = {}
+        for filename, entry in files.items():
+            entry["file_sha256"] = file_sha256(staging / filename)
+        manifest = {
+            "output_schema_version": contract.OUTPUT_SCHEMA_VERSION,
+            "run_id": run.run_id,
+            "files": files,
         }
-    record = {**run.record, **dict(extra_record or {})}
-    _write_json(staging / "record.json", record)
-    files["record.json"] = {}
-    for filename, entry in files.items():
-        entry["file_sha256"] = file_sha256(staging / filename)
-    manifest = {
-        "output_schema_version": contract.OUTPUT_SCHEMA_VERSION,
-        "run_id": run.run_id,
-        "files": files,
-    }
-    _write_json(staging / "manifest.json", manifest)
-    os.replace(staging, final)
+        written.append(staging / "manifest.json")
+        _write_json(staging / "manifest.json", manifest)
+        os.replace(staging, final)
+    except BaseException as error:
+        _discard_staging(staging, written, error)
+        raise
     return final
+
+
+def _discard_staging(staging: Path, written: list[Path], error: BaseException) -> None:
+    """
+    Remove the files write_run wrote into staging, then staging itself, so a
+    retry with the same run id can start clean. Nothing else is deleted: if
+    staging holds anything more, it stays, and the failure keeps propagating
+    with a note saying so rather than being replaced by the cleanup error.
+    """
+
+    try:
+        for path in written:
+            path.unlink(missing_ok=True)
+        staging.rmdir()
+    except OSError as cleanup_error:
+        error.add_note(f"Staging directory {staging} was left in place: {cleanup_error}")
 
 
 def append_ledger(root: str | Path, entry: Mapping[str, object]) -> None:
