@@ -3,22 +3,25 @@
 Changing project state only. Permanent policy lives in `AGENTS.md`.
 Git is authoritative: verify everything here before relying on it.
 
-Last reviewed: 2026-10-12
+Last reviewed: 2026-10-13
 
 
 ## Last checkpoint
 
-2026-10-12, milestone "Product direction: vision and PRD, architecture,
-roadmap, UX blueprint and risk register", verified on branch
-`docs/product-vision-multi-asset` at `71d4d38` plus this checkpoint's docs
-commit (`6067ca3`, `14c0514`, `cf9dc26`, `5bf3171` product documents;
-`71d4d38` merge of `main`), based on `978c027` (merge pending, PR #49).
+2026-10-13, milestone "P1-1a: publication contract v1" (the first
+product data contract), verified on branch
+`feature/p1-1a-publication-contract` at `f238374` plus this checkpoint's
+docs commit, based on `b1f849d` (merge pending).
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `978c027` as of last fetch,
-verified 2026-10-12 with `git fetch` and the GitHub API):
+Recently merged to `main` (`origin/main` = `b1f849d` as of last fetch,
+verified 2026-10-13 with `git fetch` and the GitHub API):
 
+- PR #51 (`b1f849d`, 2026-10-13): `2886db5` fix: remove the diagnostics
+  staging directory when a run write fails.
+- PR #49 (`ad99749`, 2026-10-12): the product direction documents
+  (`docs/product/`) and the 2026-10-12 checkpoint (`eb25a5a`).
 - PR #50 (`978c027`, 2026-10-12): `7cbb1c0` fix: keep the FRED bearer token
   out of release-request tracebacks; `aefeb8c` test: cover non-JSON release
   responses; keep this change Version 2 only.
@@ -77,10 +80,31 @@ are owner-owned and untouched.
 
 ## Current objective
 
-Product direction set (PR #49, merge pending). The first implementation
-tickets come next, each scoped and approved by the owner before it starts.
+Phase 1 of the product track: the rules-only Portfolio Lab, starting with
+the publication contract (P1-1a, this milestone), the T5 formula
+specification, and preparatory research work. Each ticket is scoped and
+approved by the owner before it starts.
 
-- **Product direction** (this branch, `docs/product/`; documentation only):
+- **P1-1a, publication contract v1** (this branch, `src/stock_agent/publication/`):
+  - a data-agnostic envelope, write-once writer and fail-closed reader
+    sharing one `policy.validate`; every refusal carries a
+    `RefusalReason`;
+  - a closed per-kind policy table that admits only two synthetic kinds
+    (`synthetic_descriptor` -> `descriptive`, `synthetic_rule_output` ->
+    `rules_illustration`); real data is refused;
+  - a restricted synthetic adapter (closed registry, integer-arithmetic
+    generators) whose provenance check regenerates rows; this is an
+    adapter-level protection, not a model for real-data provenance;
+  - the lockbox through `MODEL_HOLDOUT_START` only; the synthetic-only
+    knowledge rule d 23:59:59.999999Z;
+  - hash integrity is documented as distinct from provenance; `code_sha`,
+    `code_dirty` and `created_at` are unauthenticated producer claims.
+- **T5 formula specification** (PR #52, open, documentation only):
+  `docs/research/t5_portfolio_formulas.md`. Every formula is pending OD8;
+  group A (descriptive, for P1-1b) is separated from the simulator groups
+  B-D; an approval sheet for group A was delivered on 2026-10-13.
+- **Product direction** (merged in PR #49, 2026-10-12; `docs/product/`;
+  documentation only):
   - a rules-only, local Portfolio Lab as the first MVP, not a permanent
     limit;
   - architecture B, a publication pipeline with an evidence gate;
@@ -277,9 +301,31 @@ the owner's answers and messages in session:
   and the interim end-of-session daily-close knowledge rule for
   synthetic-date fixtures only. Do not silently generalize this to
   production availability timestamps."
-- Pending: the rest of OD3; OD8; OD9's `signal_cutoff_at` and production
-  availability rule; OD10-OD15; OD16's activation, H_end and transition
-  rules; OD17.
+- 2026-10-13, P1-1a: "I approve Design B: a reusable, data-agnostic
+  publication core with one shared validation contract, plus a strictly
+  restricted synthetic-only adapter." "For synthetic fixtures only, I
+  approve the explicit end-of-UTC-date convention: a synthetic date d
+  becomes known at d 23:59:59.999999Z. This is not a production
+  market-data timestamp rule." Also: "Do not make future real-data
+  publication depend on regenerating data from synthetic specifications"
+  and "Distinguish hash integrity from trusted publication provenance".
+- 2026-10-13, T5: "PR #52 may be merged as a proposed formula
+  specification after final CI and diff review. This does not approve any
+  OD8 formula." For a future group D approval, F7.3 participation measures
+  traded notional at each rebalance, with the initial construction a
+  separate full purchase; bootstrap coverage settings stay provisional
+  pending a registered simulation.
+- 2026-10-13, feature engineering: "Approve FE-0 and FE-1 as contracts,
+  synthetic tests and outcome-blind feature-build designs. Do not score
+  E1-E3 on the current hindsight-selected four-stock universe or on U1
+  before registration." Membership and labels stay independent of feature
+  missingness. The E1-E3 pre-registration design stays pending until the
+  RES-1 data source and label contracts are settled.
+- 2026-10-13, RES-1: start data-source feasibility; "Do not purchase data
+  or unlock the 2025+ holdout."
+- Pending: the rest of OD3; OD8 (group A first); OD9's `signal_cutoff_at`
+  and production availability rule; OD10-OD15 (OD13's sub-decisions are
+  proposed); OD16's activation, H_end and transition rules; OD17.
 
 Owner decision (2026-10-11, T4 phase B/C): "I explicitly authorize you to
 implement the remaining `linear.py` estimator core, including
@@ -512,20 +558,29 @@ Coverage limitations found are tracked as open item 2.
 
 ## Last verified quality baseline
 
-Measured 2026-10-12 with `python3 scripts/verify.py` on
-`docs/product-vision-multi-asset` (base `978c027`, which includes T4 and
-both FRED fixes; the working tree then held exactly the content of this
-checkpoint commit); gates ran with `.venv` tools (Python 3.12.2, pytest
-9.1.1, ruff 0.16.2, streamlit 1.64.0, plotly 7.1.0, pyarrow 25.0.1,
-scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
+Measured 2026-10-13 with `python3 scripts/verify.py` on
+`feature/p1-1a-publication-contract` (base `b1f849d`, which includes PR
+#51; the working tree then held exactly the content of `f238374`); gates
+ran with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, pandas
+3.0.5, numpy 2.5.1, pyarrow 25.0.1, streamlit 1.64.0, plotly 7.1.0,
+scikit-learn 1.9.1). Exit 0.
 
-- `pytest -q`: 1299 passed
-- `python -m pytest -q`: 1299 passed
-- `ruff format --check src tests scripts .claude/hooks`: 192 files
+- `pytest -q`: 1531 passed (227 of them in `tests/test_publication_*.py`)
+- `python -m pytest -q`: 1531 passed
+- `ruff format --check src tests scripts .claude/hooks`: 204 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- Suite runtime about 56-62 s per pass.
-- Mutation checks (T4): phase A 18 of 18 caught; the phase C test review
+- Suite runtime about 59-60 s per pass.
+- Mutation checks (P1-1a): 18 of 18 probes killed, each run on the
+  sources and restored. Probes: lockbox comparison and calls; `validate`
+  removed from the writer or the reader; knowledge time at 00:00Z or
+  21:00Z; the provenance check and its kind/status/limitations check;
+  the existence check; failure cleanup; lax timestamp parsing; the attrs
+  and index checks; weight bounds and per-date sums; the code-SHA recheck;
+  `match` instead of `fullmatch`. An independent test review found one
+  blocker (unhashed parquet `attrs` and a custom index passed the reader)
+  and should-fix items; all were fixed before commit.
+- Mutation checks (T4, not re-run): phase A 18 of 18 caught; the phase C test review
   ran 49 probes on `1338674` (22 survived); after the fixes, 22 targeted
   probes (those survivors and the new code) were all killed, each in its
   own scratch copy. Earlier mutants (T3.1: 22, schema 1.1: 21, T3: 20,
@@ -694,7 +749,7 @@ scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
      real-time range, with each revision kept as its own row.
 7. Workflow follow-ups:
    - GitHub branch protection on `main` is **not enabled**: verified
-     2026-10-12 with the GitHub API ("Branch not protected", HTTP 404). The
+     2026-10-13 with the GitHub API ("Branch not protected", HTTP 404). The
      local command guard is the only mechanical control against direct
      pushes and merges.
    - Confirm in a fresh session that the `Edit(...)` ask rules prompt for
@@ -706,7 +761,18 @@ scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
      symlinked `.venv` in a session worktree shows as untracked and could be
      committed by `git add -A`. A `.venv` pattern would cover both. (The
      `*.log` line was fixed in PR #48.)
-8. Smaller items: lineage lacks current-side tie lists; as-of change log
+8. P1-1a follow-ups (for P1-1b, the first real-data kind):
+   - its own provenance check (input hashes against stored raw inputs)
+     and the input-hash entry format; it must not use synthetic
+     regeneration;
+   - a per-kind minimum contract version (a 1.0 manifest must never carry
+     a later kind);
+   - the production availability rule (OD9) and the OD8 group A formulas;
+   - extract a shared staging helper if a third writer appears (P1-1a
+     copies about 20 lines of the T2 pattern);
+   - published directories have mode 0o700 and files are not fsynced; a
+     torn write fails the reader's hash checks.
+9. Smaller items: lineage lacks current-side tie lists; as-of change log
    trusts `period_end`; mixed availability rules at one trigger instant;
    FY consistency checks (Q1+Q2+Q3+Q4 = FY); duplicate flow logic in
    `build_edgar_quarter`; unused `edgar_history._infer_fiscal_quarter`;
@@ -715,21 +781,31 @@ scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
 
 ## Next steps
 
-1. Owner: review and merge PR #49 (product direction; merging is
-   owner-only). Then, as separate proposals whose scope the owner approves
-   before work starts:
-   - P1-1a: publication contract v1 on synthetic-date fixtures, using the
-     approved `descriptive` and `rules_illustration` statuses and the
-     interim end-of-session rule for those fixtures only;
-   - the T5 formula-review plan: one document, each formula approved by the
-     owner under OD8.
+1. Owner (merging is owner-only): review and merge the P1-1a pull request
+   and PR #52 (the T5 specification; documentation only, approving no
+   formula).
+2. Toward P1-1b, the first real Explore page (owner decisions first):
+   - OD8 group A (approval sheet delivered 2026-10-13), OD9's production
+     availability rule, OD7's fund list, OD14's calendar and the F1 data
+     source;
+   - then an F1 slice (three funds to 2024-12-31), then P1-1b (contract
+     1.1 with the first real-data kind, the `ui/` extraction, one Explore
+     page).
 
-   Then G1 (the registry; needs OD12) and F1 (fund and cash data to
-   2024-12-31; needs the fund list, OD14 and OD9's production availability
-   rule). No G2 activation, H_end choice or formula change without
-   explicit approval. Decide the T4 follow-ups before the next modelling
-   round.
-2. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
+   Then OD8 groups B-D, T5a-T5c, G1 (the registry; needs OD12) and P2-1.
+   No G2 activation, H_end choice, formula change, real-market feature
+   experiment or RL/PPO training without explicit approval. Decide the T4
+   follow-ups before the next modelling round.
+3. FE-0 and FE-1 (approved 2026-10-13 as preparatory work only): feature
+   and label contracts, synthetic tests and outcome-blind feature-build
+   designs; no scoring of E1-E3 on the four-stock universe or on U1 before
+   registration.
+4. RES-1 (OD13): the data-source feasibility proposal was delivered on
+   2026-10-13 (CRSP via WRDS if Georgia Tech grants access; a personal
+   Sharadar licence as the fallback). Owner: email the Georgia Tech library
+   about WRDS eligibility, then decide OD13's sub-decisions. No purchase
+   without the owner.
+5. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
    `docs/research/diagnostics_and_visualization_plan.md`:
    - T2: diagnostics layer, run outputs and ledger, null models (merged,
@@ -745,9 +821,9 @@ scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
    Owner decisions taken 2026-10-10: the excess label, pinned
    scikit-learn, and the per-symbol mean is a reported control, not a
    gate. 2026-10-11: the estimator core was delegated.
-3. Owner decision from open item 7: enable branch protection on `main`
-   (verified absent on 2026-10-12).
-4. U and C tracks, in parallel with T2-T4 (see "Sequencing against T4" in
+6. Owner decision from open item 7: enable branch protection on `main`
+   (verified absent on 2026-10-13).
+7. U and C tracks, in parallel with T2-T4 (see "Sequencing against T4" in
    `docs/research/universe_and_market_context.md`). Owner decisions:
    - product scope (broad large caps vs semiconductors only);
    - the survivorship-free data source (check Georgia Tech WRDS access);
@@ -760,7 +836,7 @@ scikit-learn 1.9.1, scipy 1.18.1). Exit 0.
    about 100 point-in-time large caps from 2010, with the MDE re-estimated
    on that panel), with the V1 context layer, the T2 inference checks, and
    the T5 costs.
-5. Documented follow-ups (not implemented), in
+8. Documented follow-ups (not implemented), in
    `docs/research/universe_and_market_context.md`:
    - evaluate a two-layer architecture: a cross-sectional alpha model plus
      a market/regime model for risk and cash exposure;
