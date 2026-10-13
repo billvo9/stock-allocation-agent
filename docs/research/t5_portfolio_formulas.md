@@ -23,7 +23,7 @@
 | F4.1 | Fund total-return benchmarks; fees already in the price | **Required: the "fees are already in the price" rule only** | T5b |
 | F4.2–F4.3 | `return_basis`; reference portfolios | Not used | T5b |
 | F5.1–F5.3 | Total return from raw closes, distributions and splits; ex-date reinvestment; stored inputs | **Required** | T5b (as backtest inputs) |
-| F5.4 | Descriptive growth index (growth of $10,000) | **Required** | Not used |
+| F5.4 | Hypothetical growth of $10,000, computed from actual prices and distributions | **Required** | Not used |
 | F6.1–F6.2 | Calendar CAGR; √252 volatility and Sharpe | Optional: only if the page shows an annual rate | T5c |
 | F6.3–F6.4 | Sharpe standard error; block-bootstrap intervals | Not used | T5c |
 | F6.5 | Drawdown, its duration and its dollar size | **Required** ("worst decline") | T5c |
@@ -227,16 +227,36 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 **(b) Proposed.**
 - **F5.1** r_t = (f_t·P_t + D_t)/P_{t−1} − 1 on raw closes, where:
   - f_t = shares after / shares before a split effective at t (otherwise 1);
-  - D_t = the cash distribution per share held at t−1, with ex-date t (dividends, capital gains, return of capital).
+  - D_t = the cash distribution per share held at t−1, with ex-date t (dividends, capital gains, return of capital);
+  - D_t is on the pre-split basis. A distribution quoted per post-split share is converted, D_old = f_t·D_new. Every stored distribution records its share basis, and an unknown basis on a split date gives `unavailable`, never a guess.
 
   *Status: PENDING OD8 OWNER APPROVAL.*
 - **F5.2** Reinvestment at the ex-date close, in the same asset (implicit in compounding F5.1). *Status: PENDING OD8 OWNER APPROVAL.*
 - **F5.3** Store raw closes, distributions (ex-date, pay date, amount, type), split factors and retrieval times. Vendor-adjusted closes are only a cross-check (a flag, never a correction). The vendor's back-multiplier differs from F5.1 by design, by about (D/P)·r on the ex-date (0.505% vs 0.500% above), so the flag tolerance must exceed that or every ex-date is flagged. *Status: PENDING OD8 OWNER APPROVAL.*
-- **F5.4** Descriptive growth index (P1-1b): G_t = 10,000 × Π_{s=t₀+1..t}(1 + r_s), with r from F5.1, starting at the close of the first session t₀ shown. A fund's actual history is not a trade: no transaction or build cost is charged, and the expense ratio is already in the price (F4.1). Labelled "before transaction costs and taxes". *Status: PENDING OD8 OWNER APPROVAL.*
+- **F5.4** Hypothetical growth index (P1-1b): G_t = 10,000 × Π_{s=t₀+1..t}(1 + r_s), with r from F5.1.
+  - **Start t₀ is fixed by rule before any chart is viewed:** the first session on or after the registered window start at which the fund has a close. Funds on one chart share t₀, the latest of their individual starts. No start date is chosen by looking.
+  - No transaction or build cost is charged, and the expense ratio is never subtracted again: it is already reflected in the fund's NAV and hence its price (F4.1).
+
+  *Status: PENDING OD8 OWNER APPROVAL.*
+
+**Actual records versus hypothetical growth.**
+- **Actual historical records:** a fund's closing prices, its declared distributions (amount, ex-date, pay date, type) and its split factors.
+- **A hypothetical computation from those records: the growth index G.** It assumes:
+  - every distribution is reinvested in the same fund at the ex-date close;
+  - fractional shares;
+  - no transaction cost and no tax;
+  - no cash waiting between the ex-date and the pay date.
+- **No investor's account necessarily experienced G.** Taxes on distributions, pay-date reinvestment, whole shares and trading costs all lower it.
+- **P1-1b labels the two separately:**
+  - prices and distributions as historical records;
+  - the growth line as "Hypothetical growth of $10,000, distributions reinvested on the ex-date, before transaction costs and taxes".
+- **Evidence status.** It stays `descriptive`, because it is a conventional total-return calculation over actual records, but its label must say hypothetical.
+- **ETF closes are market prices, not NAV.** So G is a market-price total return. It can differ from the issuer's published NAV total return by changes in the premium or discount.
 
 **(c) Examples.**
 - **Ex-date:** P = 100 → 99.5 (ex-date, D = 1.00) → 100.495 gives r = **+0.500%**, then **+1.000%**. Price-only gives −0.500%; the vendor-adjusted series gives +0.505%.
 - **Split 4:1:** 400 → 101 gives 4 × 101/400 − 1 = **+1.00%** (naive: −74.75%).
+- **Split and distribution on the same date:** P_{t−1} = 400, a 4:1 split, P_t = 99.5 and a distribution of 1.00 per old share (0.25 per new share) give (4 × 99.5 + 1.00)/400 − 1 = **−0.250%**. Treating the per-new-share 0.25 as per old share gives −0.4375%, an 18.75 bp error.
 - **Growth of $10,000:** the ex-date example's returns (+0.500%, then +1.000%) give 10,000 × 1.005 × 1.01 = **$10,150.50**. Price-only returns (−0.500%, +1.000%) give $10,049.50.
 - **Pay date three sessions later:** the ex-date example above (P = 100 → 99.5, D = 1.00), then +1% a session for three sessions. Ex-date reinvestment gives 1.005 × 1.01³ = 1.035453; pay-date reinvestment (the dividend held as a non-earning receivable) gives 0.995 × 1.01³ + 0.01 = 1.035149, a difference of **3.0 bp**.
 
@@ -252,7 +272,7 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 - Special dividends: same formula.
 - A split and a dividend on the same date: D is per old share.
 - Reverse splits: f < 1.
-- A missing distribution record understates return; the vendor cross-check flags it.
+- A missing distribution record understates return. A fund-period whose distribution coverage is incomplete is flagged `distribution_coverage_incomplete`, never silently treated as price-only; the vendor cross-check helps find gaps.
 
 **(g) Leakage.**
 - Adjusted levels used as features (already forbidden).
@@ -264,6 +284,8 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 - T5.3: appending a later distribution leaves earlier returns bit-identical.
 - T5.4: the pay-date return equals the price return.
 - T5.5: the growth example gives 10,150.50 within 1e-9 relative (price-only 10,049.50 fails); no cost is subtracted.
+- T5.6: the same-date split and distribution give −0.0025 on either quoted basis; the mixed basis (−0.004375) fails; an unknown basis on a split date gives `unavailable`.
+- T5.7: two funds whose first closes differ share t₀ = the later first close; t₀ is computed from the registered window start, never passed in by the caller.
 
 ---
 
@@ -288,7 +310,8 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
   - **CAGR:** the interval is built on mean log growth ḡ = mean(log(1+R)) with `bootstrap_mean`, then mapped to CAGR endpoints through exp(·)−1 with the calendar span held fixed;
   - **paired comparison against the benchmark:** the difference in annualized log growth (not CAGR_p − CAGR_b), and the Sharpe difference, both on the same block draws;
   - **at least 8 blocks (504 sessions)**; otherwise `unavailable` with reason `too_few_blocks`;
-  - intervals are labelled **nominal** 95%. No coverage is claimed for real returns.
+  - intervals are labelled **nominal** 95%. No coverage is claimed for real returns;
+  - **provisional settings:** the block length (63), replicate count (999), the 8-block minimum and the t·SE method stay provisional until the registered coverage simulation has run. Approving OD8.9 approves the method family; the settings are fixed only from that simulation's registered results.
 
   *Status: PENDING OD8 OWNER APPROVAL.*
 
@@ -304,8 +327,8 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
   > - At 2 blocks the t interval over-covers only because t with 1 degree of freedom is 12.7; it is uninformative there, hence the 8-block minimum.
   > - **This does not validate 95% coverage on real data.** Real returns have heavier tails, regime changes and dependence longer than a block (the 2008 drawdown ran about 350 sessions). Before any interval is described as more than nominal, T5c must run a registered coverage simulation that includes heavy-tailed, regime-switching and long-memory scenarios.
 
-- **F6.5** DD_t = 1 − W_t/max_{s≤t}W_s. Duration runs from the peak to the first close at or above it, in sessions and calendar days, or "not recovered". A point estimate only: maximum drawdown is not a smooth statistic, depends on the horizon, and is driven by episodes longer than a block (2008 ran about 350 sessions), so a block-bootstrap interval would mislead. Stress windows sit beside it. For a growth index (F5.4), the worst decline is the episode with the largest percentage drawdown, and its dollar size is that episode's peak value minus its trough value. (The largest dollar decline can be a different, later episode, because later peaks are higher; the page states which one it shows.) *Status: PENDING OD8 OWNER APPROVAL.*
-- **F6.6** Calendar-year return = W(last close of year)/W(last close of prior year) − 1; a partial first or last year is labelled partial and never annualized. Rule: CAGR is never divided by volatility (Sharpe keeps its own 252 scale; Calmar = CAGR/MDD is fine). *Status: PENDING OD8 OWNER APPROVAL.*
+- **F6.5** DD_t = 1 − W_t/max_{s≤t}W_s. Duration runs from the peak to the first close at or above it, in sessions and calendar days, or "not recovered". A point estimate only: maximum drawdown is not a smooth statistic, depends on the horizon, and is driven by episodes longer than a block (2008 ran about 350 sessions), so a block-bootstrap interval would mislead. Stress windows sit beside it. It is computed on daily closes, so intraday declines may have been deeper, and the label says so. For a growth index (F5.4), the worst decline is the episode with the largest percentage drawdown, and its dollar size is that episode's peak value minus its trough value. (The largest dollar decline can be a different, later episode, because later peaks are higher; the page states which one it shows.) *Status: PENDING OD8 OWNER APPROVAL.*
+- **F6.6** Calendar-year return = W(last close of year)/W(last close of prior year) − 1; a partial first or last year is labelled partial and never annualized. A losing year has an unrounded return below 0; display rounding never changes the classification (−0.04% displays as −0.0% and counts as losing). Rule: CAGR is never divided by volatility (Sharpe keeps its own 252 scale; Calmar = CAGR/MDD is fine). *Status: PENDING OD8 OWNER APPROVAL.*
 
 **(c) Examples.**
 - **CAGR:** G = 1.10 over 365 days and 248 sessions gives **10.007%** (session-based: 10.169%).
@@ -330,6 +353,7 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 - T6.6: hand-built `BlockDraws` with starts 0, 63, 126, … reproduce the point estimate exactly, which catches the estimate and the replicates being annualized differently.
 - T6.7: the calendar-year example gives +0.0800 and −0.0500 (using the first close of a year instead of the prior year's last close fails); a partial year is labelled and not annualized.
 - T6.8: the drawdown example's worst decline is $1,100 on a $10,000 start.
+- T6.9: a year at −0.0004 is classified as losing although it displays as −0.0%; a year at exactly 0 is not.
 
 ---
 
@@ -345,8 +369,9 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 **(b) Proposed.**
 - **F7.1** Every portfolio and benchmark builds at one common first execution close. Later rebalances follow the decision sessions with (d − d_first) mod k = o, for one registered offset o shared by every compared portfolio. Otherwise a nonzero offset builds later, and n, the calendar span, the bootstrap draws and the benchmark start all vary by offset. *Status: PENDING OD8 OWNER APPROVAL.*
 - **F7.2** Run all k offsets; report the registered offset's result and the max − min spread across offsets, with no per-offset intervals. The k offsets are recorded as **one variant with a k-member sensitivity family**, not k independent trials: they are nearly identical return paths, and counting k would inflate the trial count in a later deflated Sharpe (risk register STAT-5 asks for an effective-trial-count rule). They never choose the headline. Approving this changes the roadmap's T5 wording "counted as variants". *Status: PENDING OD8 OWNER APPROVAL.*
-- **F7.3** Participation is a flag only:
-  - q_i = w*_i·W/MDV_i, where MDV_i is the median of close × volume over the 20 sessions ending at d;
+- **F7.3** Participation is a flag only, measured on **actual traded notional** at each execution:
+  - q_i = |Δ_i|·W⁻/MDV_i, where Δ_i is the F2.1 trade (drifted pre-trade weight to target), W⁻ is pre-trade wealth, and MDV_i is the median of close × volume over the 20 sessions ending at the decision session d;
+  - **the initial construction is a separate full purchase** (Δ_i = w*_i from 100% cash), reported separately from later rebalances;
   - flag when q_i > p, with p = 1% [A];
   - no capacity figure: one would read like a statement of investable capacity, and with large caps and broad funds the flag will rarely fire.
 
@@ -354,9 +379,9 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 
 **(c) Examples.**
 - **Offsets:** A alternates ±10%, B is flat, and a 50/50 portfolio rebalances every 2 sessions for 6 sessions. Rebalancing after A's up days ends at **0.98755**; after its down days, at **0.98507** (buy and hold: 0.98515).
-- **Participation:** W = $1m, w_A = 30% and MDV = $20m give q = **1.5%**, which is flagged. At $500k, q = 0.75%.
+- **Participation:** W = $1m and MDV_A = $20m. A rebalance of A from a drifted 45% to a 30% target trades $150,000: q = **0.75%**, not flagged. (Measuring holdings instead, 30% × $1m, would give 1.5% and flag it wrongly.) The initial build of A at 30% buys $300,000: q = **1.5%**, flagged, and reported as build participation.
 
-**(d) Alternatives.** A month-end rule. Tranching (averaging across offsets; the usual remedy, as a later variant). Trade-based participation. A participation cap (it changes the path; defer). No-trade bands (defer).
+**(d) Alternatives.** A month-end rule. Tranching (averaging across offsets; the usual remedy, as a later variant). Holdings-based participation (the earlier draft; it overstates rebalance participation). A participation cap (it changes the path; defer). No-trade bands (defer).
 
 **(e) Recommendation.** F7.1–F7.3.
 
@@ -368,7 +393,8 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 - T7.1: a shared schedule gives identical execution dates across strategies (today: 6, 11 against 5, 10), and every offset shares the build date.
 - T7.2: k = 5 records one variant with a 5-member sensitivity family.
 - T7.3: the offset values above.
-- T7.4: q = 0.015 is flagged; 0.0075 is not.
+- T7.4: the rebalance example gives q = 0.0075, not flagged (a holdings-based 0.015 fails); a rebalance with no trade in A gives q_A = 0.
+- T7.4b: the build example gives q = 0.015, flagged and reported under build, not under rebalances.
 - T7.5: changing volume at d+1 leaves MDV at d unchanged.
 
 ---
@@ -438,13 +464,13 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 | OD8.6 | Benchmarks | price index; total-return index; **fund total return** | Fund total return; `return_basis` required (F4) |
 | OD8.7 | Distributions | vendor-adjusted; **ex-date**; pay date | Ex-date on raw closes with split factors (F5) |
 | OD8.8 | CAGR basis and calendar-year returns | sessions/252; **calendar/365.25** | Calendar CAGR; 252 for volatility and Sharpe; never CAGR/σ; calendar-year returns with partial years labelled (F6.1–F6.2, F6.6) |
-| OD8.9 | Intervals | none; i.i.d.; percentile block; **block bootstrap SE + t** | Circular block bootstrap (63, 999, seeded); estimate ± t_{k−1}·SE; at least 8 blocks; CAGR via mean log growth; paired against the benchmark on the same draws; Lo SE as a sanity check only; drawdown with duration and no interval (F6.3–F6.5) |
+| OD8.9 | Intervals | none; i.i.d.; percentile block; **block bootstrap SE + t** | Circular block bootstrap; estimate ± t_{k−1}·SE; settings (63, 999, at least 8 blocks) **provisional until the registered coverage simulation**; CAGR via mean log growth; paired against the benchmark on the same draws; Lo SE as a sanity check only; drawdown with duration and no interval (F6.3–F6.5) |
 | OD8.10 | Rebalance offsets | one; all offsets as k variants; **one variant + sensitivity family** | Common build date; shared registered offset; report its result and the max − min spread; offsets count as one variant with a k-member family (changes the roadmap's wording) (F7.1–F7.2) |
-| OD8.11 | Participation | none; **flag**; cap | Flag at p = 1% of 20-session median dollar volume [A]; no capacity figure (F7.3) |
+| OD8.11 | Participation | none; **flag on traded notional**; flag on holdings; cap | Flag when traded notional exceeds p = 1% of the 20-session median dollar volume [A]; the build reported separately; no capacity figure (F7.3) |
 | OD8.12 | Per-step contract | loop; **pure function** | F8.1 and its invariants |
 | OD8.13 | Tax label | — | "Before taxes" on every return output; no tax model |
 | OD8.14 | Changed test expectations | — | Approving OD8.1–8.3 approves rewriting the tests encoding lag 0, the cash-leg cost and the free build (`test_baseline.py:432, 474, 971`, and others found) |
-| OD8.15 | Descriptive histories | — | Growth index from F5.1 total returns; no transaction or build cost; "before transaction costs and taxes" (F5.4) |
+| OD8.15 | Descriptive histories | — | Hypothetical growth index from actual prices and distributions (F5.1), labelled as hypothetical; start fixed by rule; no transaction or build cost; "before transaction costs and taxes" (F5.4) |
 
 ### Decision groups (how to approve)
 
@@ -517,3 +543,13 @@ Each group can be approved, amended or rejected on its own. An approval is recor
   - every offset now shares one build date, and the offsets count as one variant family;
   - corrected: the cross-class cost example, the pay-date example's inputs, and the tolerances of T3.4, T6.2 and T6.4.
 - **2026-10-13, scope map.** P1-1b's descriptive formulas are separated from the simulator's (scope map; groups A–D); F5.4 (growth index) and OD8.15 added; dollar drawdown and calendar-year examples added; the common-environment note for learned policies added to section 8.
+- **2026-10-13, owner review.**
+  - **Actual versus hypothetical:** actual records (prices, distributions, splits) are now separated from the hypothetical growth index.
+  - **F7.3:** participation is measured on traded notional, with the initial build reported separately.
+  - **Bootstrap settings:** provisional until the registered coverage simulation.
+  - **Group A corrections before approval:**
+    - the share basis of a distribution on a split date (F5.1, T5.6);
+    - a start-date rule (F5.4, T5.7);
+    - incomplete distribution coverage is flagged;
+    - drawdown is close-to-close;
+    - losing years are classified on unrounded returns (T6.9).
