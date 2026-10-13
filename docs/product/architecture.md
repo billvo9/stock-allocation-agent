@@ -412,7 +412,14 @@ Every row carries `status` ∈ {`ok`, `unavailable`, `insufficient_confidence`, 
 
 Deferred until a publication needs them: `claim_level`, `evidence_refs`, `universe_rule_version`, `calendar_id`, `supersedes` and `parents`.
 
+**As implemented in P1-1a** (`src/stock_agent/publication/`):
+- **Rule recorded.** The envelope adds `knowledge_time_rule`, which records the availability rule used.
+- **Kinds.** The only kinds are `synthetic_descriptor` (status `descriptive`) and `synthetic_rule_output` (status `rules_illustration`). A closed per-kind policy table fixes each kind's status, knowledge rule, required limitations and provenance check.
+- **No external inputs.** Synthetic publications have `universe_id` = `synthetic` and empty `input_hashes`. The entry format for real inputs arrives with the first real-data kind.
+- **Integrity versus provenance.** The manifest's hashes prove integrity: the files are the ones the manifest describes. They are not trusted provenance, because anyone who can write the directory can recompute them. Provenance is a separate per-kind check. For synthetic kinds it is the adapter's regeneration of every row from the recorded specification. Real-data kinds need their own check and must not depend on synthetic regeneration.
+
 **Interim knowledge time.** Prices carry no `available_at` today. For P1-1a's synthetic-date fixtures only, version 1 uses an interim date-level rule: a daily close is known at the end of its session date. The owner approved that scope on 2026-10-12 (OD9, partly). It is not a production availability rule. Real data needs OD9's production decision (`signal_cutoff_at` and the availability rule), and the contract refuses real-data publications until then.
+- **Encoding (owner approval, 2026-10-13):** a synthetic date d becomes known at d 23:59:59.999999Z, the end of its UTC date. This is not a production market-data timestamp rule.
 
 ### Opportunity ranking (one row per eligible asset, horizon and score)
 
