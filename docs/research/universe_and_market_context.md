@@ -189,17 +189,20 @@ is an NYSE closure but only a bond early close [V].
 
 | Source | Delisted securities | Index membership | Cost and terms [V] | Notes |
 |---|---|---|---|---|
-| CRSP via WRDS | Yes, with delisting returns | S&P 500 constituent file | Institutional subscription | Gold standard. **Check whether Georgia Tech provides student access** (unverified) |
-| Sharadar (Nasdaq Data Link or QuantRocket) | Yes; prices from 1998 | S&P 500 from 1957 | Separate non-professional and professional licences | Cheapest point-in-time option; no CRSP-grade delisting returns |
-| Norgate Platinum | Yes, from 1990 | Constituent flags | $630/year | Its update tool is Windows-based [I]; a poor fit on macOS |
-| EODHD | Yes; depth varies | S&P 500 in the Fundamentals plan | About $60/month | History depth inconsistent |
+| CRSP via WRDS | Yes, with delisting returns | S&P 500 constituent file | Institutional subscription | Gold standard. Not available to the owner (2026-10-13); considered only if an independent access arrangement exists |
+| Sharadar (direct, Nasdaq Data Link or QuantRocket) | Yes; prices from December 1997; `permaticker` per share class, CUSIP, FIGI, CIK | S&P 500 changes from 1998 (QuantRocket's page says 1957) | Direct: Personal Use only; Prices Full History $39/month or $299/year (2026-10-13). Professionals buy through Nasdaq | Cheapest credible option. Merger cash and stock consideration, but no delisting-return field; bankruptcies give a last price and reason. Adjusted fields are adjusted backwards from today. Licence §8 bars publishing evaluations of the data without approval |
+| Norgate Platinum | Yes, from late 1992 | Daily index membership | $630 for 12 months, fixed term (2026-10-13) | Software and Python package are Windows-only (a Mac needs a VM); no delisting proceeds, CUSIP or CIK |
+| EODHD | Yes, but delisted before 2018 have prices only (no dividends or splits) | Separate add-on | Personal EOD $199/year (2026-10-13); the Fundamentals plan has no prices | No permanent id; renames only from 2022; market cap from 2021. Cannot support U1 |
+| QuantRocket free tier | All US stocks and ETFs 2007-2011, delisted included; an 8-ticker Sharadar sample | None | Free; Docker, about 16 GB of RAM; data usable only inside QuantRocket (2026-10-13) | A proof-of-concept sandbox, not a production source |
 | Massive (formerly Polygon) | `delisted_utc` flag | None | $29-$199/month | No membership history |
 | fja05680/sp500 (GitHub, MIT licence) | No prices | S&P 500 from 1996, derived from Wikipedia | Free | Incomplete early years; dates confuse effective open vs close (AMD 2013) |
 
 **Recommendation.** Build U1 from objective rules (no index licence needed)
-on licensed survivorship-free prices with delisting returns. Prefer CRSP if
-Georgia Tech access exists, otherwise Sharadar. Until then, label every
-result "current-listing universe, survivorship-biased".
+on licensed survivorship-free prices with delisting returns. Choose a
+personally licensable source only after a zero-purchase feasibility step
+and proof of concept (RES-1a in `docs/product/roadmap.md`). Until then,
+label every result "current-listing universe, survivorship-biased". The
+ETF Portfolio Lab does not depend on this source.
 
 **How large the bias is** (simulated true null, 300 candidates, 15 years
 [S]):
@@ -502,8 +505,10 @@ runs.
      target is re-estimated on the real panel.
    - A semiconductor-only product can detect only IC ≥ 0.05 under the same
      assumptions.
-2. **Survivorship-free data:** CRSP via WRDS (check Georgia Tech access),
-   Sharadar, or another source, plus its licence and cost.
+2. **Survivorship-free data:** a personally licensable source (the
+   2026-10-13 review found Sharadar Direct the only credible one), chosen
+   after a zero-purchase proof of concept, plus its licence and cost.
+   Institutional data only through an independent access arrangement.
 3. **`signal_cutoff_at` = 18:00 ET on session d.** This is kept separate
    from the pre-execution review window and from `execution_at` (the close
    of d+1). Also decide whether to migrate the existing macro and
