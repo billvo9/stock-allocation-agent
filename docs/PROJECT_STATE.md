@@ -8,15 +8,22 @@ Last reviewed: 2026-10-13
 
 ## Last checkpoint
 
-2026-10-13, milestone "P1-1a: publication contract v1" (the first
-product data contract), verified on branch
-`feature/p1-1a-publication-contract` at `f238374` plus this checkpoint's
-docs commit, based on `b1f849d` (merge pending).
+2026-10-13, milestone "RES-1 strategy: ETF-first and cost-conscious"
+(roadmap and next steps changed by owner direction), verified on branch
+`docs/res1-etf-first` at `47c3d88` (documentation only) plus this
+checkpoint's docs commit, based on `1df3783` (merge pending).
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `b1f849d` as of last fetch,
-verified 2026-10-13 with `git fetch` and the GitHub API):
+Recently merged to `main` (`origin/main` = `1df3783` as of last fetch,
+verified 2026-10-13 with `git fetch` and the GitHub API; CI on `1df3783`
+succeeded):
+
+- PR #53 (`1df3783`, 2026-10-13): `f238374` feat: publication contract
+  v1 with a fail-closed reader (P1-1a); `e589f39` docs: checkpoint.
+- PR #52 (`2c53ebd`, 2026-10-13): `903a48e` and `cddf97f` docs: the T5
+  financial-formula specification (`docs/research/t5_portfolio_formulas.md`;
+  every formula pending OD8).
 
 - PR #51 (`b1f849d`, 2026-10-13): `2886db5` fix: remove the diagnostics
   staging directory when a run write fails.
@@ -85,7 +92,7 @@ the publication contract (P1-1a, this milestone), the T5 formula
 specification, and preparatory research work. Each ticket is scoped and
 approved by the owner before it starts.
 
-- **P1-1a, publication contract v1** (this branch, `src/stock_agent/publication/`):
+- **P1-1a, publication contract v1** (merged in PR #53, `src/stock_agent/publication/`):
   - a data-agnostic envelope, write-once writer and fail-closed reader
     sharing one `policy.validate`; every refusal carries a
     `RefusalReason`;
@@ -99,7 +106,15 @@ approved by the owner before it starts.
     knowledge rule d 23:59:59.999999Z;
   - hash integrity is documented as distinct from provenance; `code_sha`,
     `code_dirty` and `created_at` are unauthenticated producer claims.
-- **T5 formula specification** (PR #52, open, documentation only):
+- **RES-1 strategy** (this branch; owner direction 2026-10-13): ETF-first
+  and cost-conscious. RES-1 does not block F1, P1-1b, the Portfolio
+  Builder or fund-level allocation research; it remains the research
+  dependency for individual-stock forecasting. A zero-purchase feasibility
+  step (RES-1a) comes first. The 2026-10-13 vendor review found Sharadar
+  Direct (Personal Use, Prices Full History $299/year) the only credible
+  paid source for U1; none of the four sources compared gives CRSP-style
+  delisting returns. No institutional (academic) access is available.
+- **T5 formula specification** (merged in PR #52, documentation only):
   `docs/research/t5_portfolio_formulas.md`. Every formula is pending OD8;
   group A (descriptive, for P1-1b) is separated from the simulator groups
   B-D; an approval sheet for group A was delivered on 2026-10-13.
@@ -323,6 +338,15 @@ the owner's answers and messages in session:
   RES-1 data source and label contracts are settled.
 - 2026-10-13, RES-1: start data-source feasibility; "Do not purchase data
   or unlock the 2025+ holdout."
+- 2026-10-13, RES-1 correction: "I am no longer a Georgia Tech student.
+  Remove Georgia Tech student-library access and the WRDS-via-Georgia-Tech
+  route from active RES-1 recommendations, owner action items and future
+  prompts." "Institutional data may be considered only if a new
+  independently available access arrangement is established." RES-1 is
+  cost-conscious and "should not block F1, P1-1b, the Portfolio Builder or
+  initial ETF allocation research". "Do not purchase data, implement a
+  vendor adapter, run new real-stock scoring experiments or change the
+  historical universe yet."
 - Pending: the rest of OD3; OD8 (group A first); OD9's `signal_cutoff_at`
   and production availability rule; OD10-OD15 (OD13's sub-decisions are
   proposed); OD16's activation, H_end and transition rules; OD17.
@@ -559,8 +583,10 @@ Coverage limitations found are tracked as open item 2.
 ## Last verified quality baseline
 
 Measured 2026-10-13 with `python3 scripts/verify.py` on
-`feature/p1-1a-publication-contract` (base `b1f849d`, which includes PR
-#51; the working tree then held exactly the content of `f238374`); gates
+`docs/res1-etf-first` (base `1df3783`, which includes P1-1a and the T5
+specification; the working tree then held exactly the content of this
+checkpoint commit). The same counts were measured on
+`feature/p1-1a-publication-contract` at `f238374`. Gates
 ran with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, pandas
 3.0.5, numpy 2.5.1, pyarrow 25.0.1, streamlit 1.64.0, plotly 7.1.0,
 scikit-learn 1.9.1). Exit 0.
@@ -781,13 +807,15 @@ scikit-learn 1.9.1). Exit 0.
 
 ## Next steps
 
-1. Owner (merging is owner-only): review and merge the P1-1a pull request
-   and PR #52 (the T5 specification; documentation only, approving no
-   formula).
-2. Toward P1-1b, the first real Explore page (owner decisions first):
-   - OD8 group A (approval sheet delivered 2026-10-13), OD9's production
-     availability rule, OD7's fund list, OD14's calendar and the F1 data
-     source;
+1. Owner (merging is owner-only): review and merge the RES-1 strategy
+   documentation pull request.
+2. Toward P1-1b, the first real Explore page (owner decisions first; a
+   decision sheet was delivered on 2026-10-13):
+   - OD8 group A, OD9's production availability rule, OD7's fund list,
+     OD14's calendar and the F1 data source;
+   - the smallest next implementation ticket needs only group A: T5-A, the
+     descriptive formulas as pure functions tested on the specification's
+     hand examples;
    - then an F1 slice (three funds to 2024-12-31), then P1-1b (contract
      1.1 with the first real-data kind, the `ui/` extraction, one Explore
      page).
@@ -800,11 +828,14 @@ scikit-learn 1.9.1). Exit 0.
    and label contracts, synthetic tests and outcome-blind feature-build
    designs; no scoring of E1-E3 on the four-stock universe or on U1 before
    registration.
-4. RES-1 (OD13): the data-source feasibility proposal was delivered on
-   2026-10-13 (CRSP via WRDS if Georgia Tech grants access; a personal
-   Sharadar licence as the fallback). Owner: email the Georgia Tech library
-   about WRDS eligibility, then decide OD13's sub-decisions. No purchase
-   without the owner.
+4. RES-1 (OD13), cost-conscious and non-blocking: the 2026-10-13 vendor
+   feasibility report (Sharadar Direct, Norgate Platinum, EODHD,
+   QuantRocket's free sample) recommends a zero-purchase proof of concept
+   first (RES-1a: synthetic fixtures for schema mapping, identifier
+   stability, adjustment lookahead, delisting handling and the 2024-12-31
+   cap), then, only by owner decision, Sharadar Prices Full History. No
+   purchase, vendor adapter, real-stock scoring or universe change without
+   explicit approval.
 5. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
    `docs/research/diagnostics_and_visualization_plan.md`:
@@ -826,7 +857,8 @@ scikit-learn 1.9.1). Exit 0.
 7. U and C tracks, in parallel with T2-T4 (see "Sequencing against T4" in
    `docs/research/universe_and_market_context.md`). Owner decisions:
    - product scope (broad large caps vs semiconductors only);
-   - the survivorship-free data source (check Georgia Tech WRDS access);
+   - the survivorship-free data source (RES-1a first; no institutional
+     access);
    - `signal_cutoff_at`;
    - calendar and vendor dependencies;
    - compliance exclusions (NS-CMIC).
