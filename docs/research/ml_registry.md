@@ -137,6 +137,54 @@ reader.entries(scope); reader.entry("m@v2"); reader.refs()
 - Every call re-verifies what it reads. A stage is computed per call, so it can only drop when an artifact goes missing or is altered.
 - `compare` is descriptive. A credible difference needs paired predictions on identical rows, which the experiment runner reports with uncertainty.
 
+## Health export
+
+The Model Health Center reads a snapshot of the registry in the agreed input format v1.0 (artifact `model_registry`). The registry stays the source of truth: the export is derived through the read API, so every stage in it is computed from re-verified evidence at export time.
+
+**Writing it.**
+- `scripts/run_experiment.py` refreshes the export after every run. Pass `--no-health-export` to skip it.
+- `scripts/export_registry_health.py` writes one on demand, for example after an activation or a rollback.
+- Code: `registry/export.py`. Tests: `tests/test_registry_export.py`, plus integration tests in the runner and ETF test files.
+
+**File.**
+- Location: `reports/health_inputs/model_registry/<run_id>.json` (ignored by Git).
+- Encoding: strict JSON (no NaN or Infinity), written once.
+- `run_id`: the UTC time plus a hash of the content.
+
+| Field | Contents |
+|---|---|
+| envelope | `artifact`, `schema_version` "1.0", `generated_at` (UTC, microseconds, `Z`), `code_sha` (40-hex or null), `synthetic` (true only if every entry is synthetic), `run_id` |
+| `models` | The latest version of each model id **in each research scope**, plus each scope's active version: `model_id`, `version`, `stage` (computed), `stage_basis`, `registered_at`. Extra: `research_scope`, `data_class`, `next_stage`, `blockers` (reason codes) |
+| `selection_events` | Every activation and rollback: `event_id`, `decided_at`, `candidates` (versions registered in the scope by then), `selected`. Extra: `event`, `research_scope`, `previous`, `reason` |
+| `experiments` | `variants_tried` (registered versions: every registration is a trial), `runs` (distinct experiment runs). Extra: `distinct_variants` |
+| `forecast_evaluation` | One row per forecast artifact of an exported model, and one per measured interval level for interval artifacts: `model_id`, `version`, `horizon`, `forecast_kind`, `interval_level`, `observed_coverage`, `n`, `calibration_status`, `calibration_detail` |
+
+**Evidence ids in `stage_basis`.** Each id is a record the computed stage rests on:
+- `entry:<ref>:<entry_sha256[:16]>`, the hash-verified entry;
+- `artifact:<kind>:<sha256[:16]>` for every artifact that still verifies;
+- `run:<run_id>` when the evidence re-derives from that run's verified record.
+
+A tampered or missing artifact therefore shortens the basis and lowers the stage in the next export.
+
+**Forecast rows.**
+- **Point forecasts** carry null interval fields, `n` (rows in the artifact), `not_run` and "not applicable: point forecast".
+- **Interval artifacts** report every level the run measured. For the ETF track that is 50%, 80% and 90%, pooled over assets:
+  - `observed_coverage` is the mean per-date share inside the interval;
+  - the status uses the run's fold-block test of "coverage = nominal".
+
+**Calibration status.** This is a producer-owned monitoring status: not an evidence rule, and no stage uses it. With gap = |observed − nominal| and p the fold-block two-sided p-value:
+
+| Status | Rule |
+|---|---|
+| `fail` | p < 0.01 **and** gap > 0.05 |
+| `warn` | p < 0.05 **or** gap > 0.05 |
+| `pass` | otherwise |
+| `not_run` | A point forecast, or no verified coverage measurement |
+
+**Example (measured, synthetic, the ETF runs in `ml_etf_track.md`).**
+- The planted GARCH panel's return intervals warn at all three levels: 80% intervals cover 74.8% (t −2.70, p 0.013) and 90% intervals 85.3% (p 0.005).
+- The null panel's intervals pass (80% intervals cover 77.7%, p 0.30).
+
 ## Limitations
 
 - **Integrity is not provenance.** Anyone with write access to `reports/` can forge a run and its hashes. The registry detects edits and inconsistencies, not a deliberate forgery. The same caveat is recorded for publication P1-1a.
