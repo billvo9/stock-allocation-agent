@@ -389,7 +389,44 @@ the owner's answers and messages in session:
   R5a approved (labelled multi-session returns); R5b not approved (no
   reinvestment through gaps); R5c thresholds not approved (conservative
   incompleteness). The record is in `docs/research/t5_portfolio_formulas.md`,
-  section 9. T5a-T5c and PPO stay unauthorized.
+  section 9. The T5a-T5c simulator formulas stay unapproved (open
+  decisions D1-D8, `docs/research/t5a_open_decisions.md`). PPO engineering
+  is authorized by the 2026-10-14 brief below.
+- 2026-10-14, accelerated ML/RL/PPO brief (owner, verbatim):
+  - "I explicitly delegate implementation of the entire ML, RL and PPO
+    codebase to you, including any previously owner-reserved RL algorithm
+    core."
+  - "Begin the RL environment interfaces and synthetic tests immediately,
+    in parallel with T5a. After the T5a transition has been validated,
+    connect it as the environment's single source of portfolio
+    economics."
+  - "A PPO implementation using a maintained library where appropriate,
+    with pinned dependencies and deterministic test fixtures."
+  - "Build the complete PPO engineering system now, but distinguish a
+    successful training run from validated economic superiority."
+  - First-wave deliverable: "PPO training that completes successfully on
+    an authorized synthetic dataset."
+  - Authorized: "Make routine implementation and package choices, with
+    dependencies pinned and reviewed." and "Commit, push, open PRs and
+    prepare CI workflows." Also: "Create a scheduled GitHub Actions
+    health workflow for safe checks that can run in CI using synthetic
+    fixtures and repository metadata."
+  - Still owner-gated: "Merging into main." "Financial-formula or
+    reward-policy changes." "Historical holdout access, H_end or
+    prospective-pipeline activation." "Data purchases, licensing
+    commitments, or unauthorized live network collection." "Real-money
+    transactions or brokerage connections." "Relaxing point-in-time
+    validation or research evidence standards." "Publishing private
+    data, credentials or personal information."
+  - "Do not claim that PPO is investment-ready until the necessary
+    out-of-sample and prospective evidence genuinely exists."
+- 2026-10-14, lead decision pending owner confirmation (not an owner
+  decision): until D1-D8 are approved, PPO smoke training runs on a
+  transition implementing the proposed D1-D8 rules; every artifact is
+  labelled `engineering_only_unapproved_transition` and no strategy
+  comparison table is published. The owner's earlier rule, "Do not train
+  or evaluate PPO on an economically uncorrected simulator", is why the
+  label exists. The owner may overrule this at merge.
 - Pending: the rest of OD3; OD8 groups B-D (the T5a packet B1-B9 is
   prepared); OD9's `signal_cutoff_at` for decisions and the production
   availability rule beyond descriptive display; OD10-OD15 (OD13's
@@ -876,9 +913,12 @@ Exit 0.
      review);
    - then the first real-data publication kind (contract 1.1, the OD9
      descriptive convention) and the page reading it.
-3. T5a: the owner decides B1-B9 (packet prepared 2026-10-14); then the
-   corrected simulator on its own branch. No PPO training before it is
-   validated.
+3. T5a: the owner decides D1-D8 (open-decision packet,
+   `docs/research/t5a_open_decisions.md`, 2026-10-14); then the corrected
+   simulator replaces the proposed-rules stand-in. Until then PPO runs are
+   engineering-only smoke runs (lead decision pending owner confirmation,
+   recorded under the 2026-10-14 decisions above). D9 (the Builder's
+   buy-and-hold mix history) is also pending.
 4. FE-0 and FE-1 (approved 2026-10-13 as preparatory work only), and
    RES-1a (the zero-purchase proof of concept) when the owner approves it;
    RES-1 stays cost-conscious and never blocks the ETF Portfolio Lab.
