@@ -285,7 +285,7 @@ def train_linear_softmax(
     overlapping train and dev seeds. The test fold is never built.
     """
 
-    require_fitted_on(builder.normalizer, plan.train)
+    require_fitted_on(builder.normalizer, plan.train, builder.spec)
     plan.check_lookback(builder.spec.lookback)
     config = config or CEMConfig()
     env_config = env_config or EnvConfig()

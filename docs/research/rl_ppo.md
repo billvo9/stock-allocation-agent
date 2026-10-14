@@ -21,7 +21,7 @@ policy is a good investment, and no strategy comparison is published.
 | Module | Role |
 |---|---|
 | `transition.py` | The `PortfolioStep` protocol, `StepResult`, `TransitionInfo` (approval label) and `check_step_result` (F8.1 invariants on any injected transition) |
-| `reference_transition.py` | Engineering stand-in for the proposed D2 / F8.1 rules; delete when Track A's approved function merges |
+| `reference_transition.py` | Engineering stand-in for the proposed D2 / F8.1 rules. Track A's `portfolio.transition.Transition` protocol (merged, interface only) has the same signature; inject `portfolio_step` and delete this module once it is approved and implemented |
 | `reward.py` | `log(1 + R_net)`, labelled `proposed_d8a_pending_owner_approval` |
 | `scenarios.py` | Versioned, seeded synthetic scenario library |
 | `splits.py` | Train / dev / test folds by time and by seed; `LeakageError` |
@@ -34,9 +34,22 @@ policy is a good investment, and no strategy comparison is published.
 | `learned.py` | Linear-softmax policy trained by the cross-entropy method |
 | `safety.py` | Health gate and the deterministic fallback |
 
-There is no new dependency. The environment follows the gymnasium
-`reset` / `step` signatures without importing gymnasium; the PPO pull request
-adds the thin `gymnasium.Env` wrapper together with the dependency review.
+PR 1 adds no dependency: the environment follows the gymnasium
+`reset` / `step` signatures without importing gymnasium.
+
+PR 2 (PPO) adds, with the learning libraries confined to two modules (a
+test enforces it):
+
+| Module | Role |
+|---|---|
+| `config.py` | Validated, versioned YAML run configuration (`configs/rl/`); unknown keys are errors; `sha256()` identifies it |
+| `gym_env.py` | `gymnasium.Env` wrapper: fund logits in, the same `AllocationEnv` underneath; seeded episode sampling inside the train fold |
+| `ppo.py` | stable-baselines3 PPO training per seed, dev-fold checkpoint selection, checkpoints with frozen normalization and hashes |
+| `health.py` | The `rl_training_health` JSON report (no learning library needed) |
+| `harness.py` | The comparison harness, fairness checks, and the publication rule |
+| `forecasts.py` | The forecast-input interface (interface only until Track B's artifacts exist) |
+
+Scripts: `scripts/train_ppo.py` and `scripts/evaluate_rl.py` (section 9.3).
 
 ## 2. The environment
 
@@ -131,6 +144,12 @@ episode-boundary signal, never an observation.
 - Every policy runs through `replay.rollout`, the only entry point, and every
   recorded target sequence replays exactly through `ScriptedPolicy`. No
   policy can gain an execution or cost advantage from a different API.
+- **Independent oracle (PR 2).** `tests/test_rl_oracle_replay.py` drives the
+  environment through Track A's replay harness (`tests/reference/replay.py`)
+  and matches the wealth path of Track A's oracle, a loop-based
+  shares-and-cash ledger of the recommended D1-D8 rules that imports nothing
+  from `stock_agent`, within 1e-12 on random paths with missing closes and
+  holds. A planted cost defect is detected.
 
 ## 3. Synthetic scenarios
 
@@ -220,31 +239,45 @@ not divided by zero. Weights and drawdown are bounded and not normalized.
 
 ## 6. Actions and the likelihood
 
-A learned policy outputs unconstrained logits z over all n assets, cash
-included, and the environment holds w = softmax(z): long-only and summing to
-1 with no projection or repair.
+A learned policy outputs one logit per fund; the cash account is the
+reference asset with its logit pinned at 0. With z the n logits (cash's
+inserted as 0), the environment holds w = softmax(z): long-only and summing
+to 1 with no projection or repair.
 
-PPO samples z from a diagonal Gaussian and scores the ratio
-pi_new(z | s) / pi_old(z | s) **on the sampled z**. The softmax is
-deterministic and part of the environment, so the score-function gradient
-E[grad log pi(z | s) A] is unbiased for the objective defined through
-softmax(z). Scoring a projected action g(z) under pi would evaluate the
-density of a point that was never sampled; projecting onto the simplex's
-boundary even creates point masses the Gaussian does not have. So the rule
-is: never project a sampled action and then score the projected action.
+PPO samples a from a diagonal Gaussian and scores the ratio
+pi_new(a | s) / pi_old(a | s) **on the sampled a** (stable-baselines3 stores
+the raw sample in its rollout buffer and scores that; a test checks our
+closed-form Gaussian density against its value). The map
+f(a) = softmax(pad_cash(clip(a))) is deterministic and part of the
+environment, so the score-function gradient E[grad log pi(a | s) A] is
+unbiased for the objective defined through f(a). Scoring a projected action
+g(a) under pi would evaluate the density of a point that was never sampled;
+projecting onto the simplex's boundary even creates point masses the
+Gaussian does not have. So the rule is: never project a sampled action and
+then score the projected action.
 
-- `softmax` is shift-invariant: adding a constant to every logit never
-  changes the reward. That direction gets no gradient signal, which does not
-  affect the ratio. The action space is unbounded, so no clipping breaks the
-  invariance.
-- After approval, Track A's `feasible_target` (caps, turnover limits)
+- **Why cash is pinned.** softmax is shift-invariant: with n free logits,
+  adding a constant to every logit never changes the weights, so that
+  direction gets no gradient signal and can drift. stable-baselines3 requires
+  a finite action box and clips to it, and clipping is not shift-invariant, so
+  a drifting common mode would eventually distort the weights. Pinning cash
+  removes the direction: n - 1 logits identify the weights exactly.
+- **The bound.** Fund logits are clipped to [-10, 10]. The clip binds only at
+  saturation (a fund-to-cash weight ratio beyond e^10, about 22,000). There
+  the weights barely move and the action has no gradient signal, exactly like
+  a binding cap.
+- **After approval**, Track A's `feasible_target` (caps, turnover limits)
   composes with the map: w = feasible(softmax(z)). The ratio stays valid, but
   where a cap binds, moving z inside the capped region changes nothing the
-  environment sees: those directions add variance and no signal.
-  Evaluation should report how often caps bind.
+  environment sees: those directions add variance and no signal. Evaluation
+  should report how often caps bind.
 
 `test_the_likelihood_is_a_density_over_logits_not_over_weights` shows two
-logit vectors with identical weights and different densities.
+logit vectors with identical weights and different densities, and
+`test_clipped_samples_keep_their_raw_logits_and_likelihoods` checks the
+library: under a wide policy many sampled logits exceed the bound, SB3 stores
+the raw samples, the environment receives the clipped ones, and re-scoring
+the stored raw actions reproduces the stored log probabilities.
 
 ## 7. Policies
 
@@ -303,7 +336,206 @@ The fallback is the fixed balanced reference, except on stale inputs, where
 it holds the current positions: the product rule is never to trade on stale
 prices (`vision_and_prd.md`, section 15).
 
-## 9. Limitations
+## 9. PPO training (PR 2)
+
+### 9.1 Library and dependency review
+
+PPO comes from stable-baselines3 (SB3) on gymnasium and CPU torch, pinned
+exactly, each released at least two weeks before 2026-10-14:
+
+| Package | Pin | Released | License |
+|---|---|---|---|
+| stable-baselines3 | 2.9.0 | 2026-06-15 | MIT |
+| gymnasium | 1.3.0 | 2026-04-22 (1.4.0 is 9 days old, excluded) | MIT |
+| torch | 2.14.0 | 2026-09-02 (2.14.1 is exactly 14 days old, excluded as borderline) | Apache-2.0 |
+
+How torch is installed (`requirements.txt`, one manifest for local and CI
+gates, so every PPO test runs in CI):
+- **macOS:** `torch==2.14.0 ; sys_platform == "darwin"` from PyPI (the arm64
+  wheel, 127 MB, PyPI sha256 `c1f844f1...`).
+- **Linux x86_64 (CI):** a direct URL to PyTorch's CPU-only wheel
+  `torch-2.14.0+cpu-cp312-cp312-manylinux_2_28_x86_64.whl` (196 MB) with its
+  published sha256 (`a09987c9...`) as the URL fragment, which pip verifies. Its
+  metadata (hash checked against the index) declares no CUDA, cuDNN, NCCL or
+  triton dependency. SB3 2.9.0's `torch>=2.8,<3.0` accepts `2.14.0+cpu`.
+- **Why not the alternatives.** PyPI's Linux torch pulls the CUDA 13 stack
+  (several GB per CI run). A global `--extra-index-url` would let a second
+  index serve any unpinned package: the dependency-confusion pattern of the
+  2022 torchtriton incident. A separate optional manifest would let CI skip
+  the PPO tests, breaking identical local and CI gates.
+- **Deployment note.** No torch line matches Linux on other architectures
+  (for example aarch64) or Intel macOS (PyTorch publishes no Intel macOS
+  wheels for 2.14). There, installing SB3 would pull PyPI's default torch
+  build; such a deployment needs its own pinned line first.
+
+- **Value.** A maintained, widely used PPO whose loss, advantage estimation
+  and logging are tested by others. A hand-written PPO is a classic source of
+  silent bugs (advantage sign, normalization, value clipping, bootstrap at
+  time limits). SB3 stores the raw sampled action and scores it (checked by a
+  test), which is what the likelihood argument in section 6 requires.
+- **Alternatives.**
+  - A NumPy PPO in this repository: no dependency, but more code to verify;
+    a good owner exercise later, against SB3 as a reference.
+  - CleanRL: single-file scripts, not a library; we would copy and own the
+    code.
+  - RLlib (Ray): far heavier, distributed-first.
+  - TorchRL: a more complex API.
+  - JAX-based PPO: needs JAX.
+- **Maintenance.** Exact pins. Any upgrade is an owner decision. SB3 releases a
+  few times a year; torch quarterly.
+- **Compute.** CPU only, one thread (for reproducibility). The smoke run
+  trains three seeds and the CEM baseline in about 85 seconds, and evaluates
+  in about 10 seconds, on an Apple-silicon laptop. Install size: the macOS
+  arm64 torch wheel is 127 MB (590 MB installed); the Linux CPU wheel is
+  196 MB with no GPU libraries.
+- **Security.** SB3 model files contain pickled objects, and loading one
+  can execute code. Only files this pipeline wrote are loaded, through
+  `load_ppo_checkpoint`, which verifies the SHA-256 recorded at training time.
+  That proves integrity, not trusted provenance. There are no network calls
+  at run time. The Linux wheel comes from one exact URL with a verified
+  hash, not from a second package index, so no other package can be served
+  from PyTorch's host.
+- **Deployment.** The libraries are confined to `rl/gym_env.py` and
+  `rl/ppo.py` (a test enforces it), and importing the rest of `rl` loads none
+  of them, so the product app never pays for them.
+
+### 9.2 Training procedure
+
+`ppo.train_ppo_seed` trains one seed:
+
+1. **Seeding.** Python, NumPy and torch are seeded and torch uses one CPU
+   thread. Each vectorized environment copy is seeded `seed + index`, and
+   episodes (scenario, seed and window inside the train fold) are drawn from
+   the environment's own generator.
+2. **Policy.** An MLP (tanh) diagonal Gaussian over the fund logits, with
+   separate policy and value networks.
+3. **Selection.** The deterministic policy (the Gaussian mean) is evaluated
+   on every dev-fold episode before training, every `eval_every` timesteps and
+   at the end. The best mean dev log growth is the checkpoint (an untrained
+   policy can win, and is then reported as such). The test fold is never built
+   during training (a test spies on it).
+4. **Reward.** The environment's `log(1 + R_net)` summed per decision, with
+   no scaling or extra terms. PPO normalizes advantages per batch.
+5. **Discount.** gamma = 0.99 per decision (five sessions in the registered
+   configs) is a variance-reduction choice; the undiscounted sum is the log
+   wealth objective.
+6. **Truncation.** The window end is truncation, not termination, so SB3
+   bootstraps the value there.
+
+### 9.3 Reproducibility
+
+```bash
+.venv/bin/python scripts/train_ppo.py --config configs/rl/ppo_smoke.yaml --output-root models/rl
+```
+
+```bash
+.venv/bin/python scripts/evaluate_rl.py --run-dir models/rl/<run_id> --fold test
+```
+
+Each run directory (ignored by Git) holds:
+- `run.json`: configuration and its SHA-256, Git SHA and dirty flag, library
+  versions, transition and reward identity, normalizer provenance;
+- per seed, `checkpoint.json`: frozen normalizer, feature spec, scenario
+  generator version, selection record, model hash;
+- `training_health.json` (the detailed report) and `cem_baseline.json` (the
+  CEM baseline with its normalizer, folds, identity labels and scenario
+  fingerprints).
+
+The Model Health Center's input, in the format agreed with the lead (v1.0),
+goes to `reports/health_inputs/rl_training_health/<run_id>.json` (ignored by
+Git; `--health-inputs-root` changes the root). A run that raises still writes
+it, with status `failed` and every check `not_run`.
+
+Evaluation provenance and accounting:
+- `load_ppo_checkpoint` refuses a checkpoint from another scenario generator
+  version or (when given) another config hash, and warns loudly when the
+  current code SHA differs from the training SHA; the evaluation report
+  records it.
+- Every evaluation is write-once: `evaluation_<fold>_<n>.json`, numbered per
+  fold, plus one line appended to `evaluations.jsonl`, so every look at the
+  test fold is counted in the run directory.
+- Training and evaluation refuse a normalizer not fitted on the plan's train
+  fold, with this feature spec and this generator version.
+- The gym wrapper accepts a requested evaluation episode only from its own
+  fold and window (`LeakageError` otherwise).
+
+The same configuration, code SHA and library versions give identical
+parameters (`test_the_same_seed_replays_to_identical_parameters...`).
+Seeds are always reported as a distribution (`seed_spread`), never the best
+seed alone.
+
+### 9.4 Training-health JSON (`rl_training_health` 1.0.0)
+
+For the Model Health Center and the deployment gate. Per seed:
+- reward statistics before any value bootstrap (n, mean, std, min, max,
+  non-finite count);
+- approximate KL, clip fraction, entropy, value loss, explained variance and
+  action standard deviation (first, last, mean, max over updates);
+- the largest absolute parameter and the count of non-finite parameters;
+- the imputed-input share;
+- the dev selection record.
+
+Status:
+- **unhealthy:** no updates, a non-finite reward, loss, parameter or dev
+  score, or a parameter above `max_param_abs`;
+- **warning:** an approximate-KL spike, a high clip fraction, or collapsed
+  action noise;
+- **healthy** otherwise.
+
+The run is as bad as its worst seed. `model_is_healthy(report, seed)` feeds
+`GuardedPolicy(model_healthy=...)`, so an unhealthy model never acts.
+
+`health_input_record` condenses the report into the agreed v1.0 input:
+the common envelope (`artifact`, `schema_version`, `generated_at` with
+microseconds, `code_sha`, `git_dirty`, `synthetic`, `run_id`, `algorithm`,
+`status`, `transition_status`, `seeds`, `scenario_version`) and eight checks,
+each with Track C's own status, value, unit, threshold and detail:
+
+| Check | Value | Status |
+|---|---|---|
+| `nan_or_inf` | non-finite rewards, parameters and dev scores, plus seeds with a non-finite loss | fail above 0 |
+| `exploding_values` | largest absolute parameter | fail above `max_param_abs` |
+| `approx_kl` | largest per-seed maximum | warn above `kl_warning` |
+| `clip_fraction` | largest per-seed mean | warn above `clip_fraction_warning` |
+| `entropy_collapse` | smallest final action standard deviation | warn below `min_action_std` |
+| `value_loss` | largest last-to-first value-loss ratio | warn above 10, fail if non-finite |
+| `reward_trend` | median over seeds of final minus initial dev score | warn below 0 (a training diagnostic, not a comparison) |
+| `seed_spread` | standard deviation of the selected dev scores | warn with fewer than 3 seeds |
+
+CEM and PPO dev scores are training diagnostics. They stay in the run
+directory's detailed reports and never enter a published view; the health
+input carries only the spread and the median trend, never the scores
+themselves.
+
+### 9.5 Comparison harness and the publication rule
+
+`harness.run_comparison` runs every method on every (scenario, seed) of one
+fold, with the same window, schedule, costs, transition and frozen
+normalizer, and `check_fairness` verifies that the records agree on
+everything but the policy. The methods are:
+- buy-and-hold, equal weight, fixed balanced, inverse volatility,
+  mean-variance and the CEM linear-softmax baseline;
+- PPO per seed without forecasts, raw and guarded (as groups);
+- PPO with forecasts, reported unavailable until Track B's versioned
+  out-of-fold forecast artifacts exist (`forecasts.require_certified` refuses
+  any provider that is not out-of-fold and point-in-time).
+
+Until the transition is owner-approved, `engineering_report()` contains no
+performance figure of any method, and `comparison_table()` raises
+`UnapprovedTransitionError`. Once approved, the table reports each method's
+mean episode log growth (the sum of the D8 rewards) with trade and fallback
+counts; risk and performance metrics join only from the approved modules,
+and episode diagnostics never do.
+
+### 9.6 Stress tests
+
+The dev and test folds contain every stress scenario: crash, high
+correlation, stale observations, extreme volatility, high costs, missing
+closes. Tests run a trained policy through each (finite, positive wealth;
+valid weights; the guard engages on stale inputs). A completed run is an
+engineering result, never evidence that PPO is investment-ready.
+
+## 10. Limitations
 
 - Synthetic data only. Regime parameters are illustrative and the shocks are
   Gaussian or Student-t with fixed correlation; real returns have volatility
@@ -317,7 +549,7 @@ prices (`vision_and_prd.md`, section 15).
 - Distributions in gaps (D6, R5b) are not simulated: synthetic total returns
   carry no separate distribution events.
 
-## 10. Learning notes
+## 11. Learning notes
 
 1. **Problem.** Build a simulator in which every allocation policy, from a
    fixed 60/30/10 rule to PPO, is evaluated under identical timing, costs and
@@ -327,10 +559,10 @@ prices (`vision_and_prd.md`, section 15).
    self-financing wealth recursion; the score-function (likelihood-ratio)
    gradient; derivative-free optimization (CEM).
 3. **Assumptions.** Trades fill at the close after the decision; prices are
-   exogenous; costs are proportional to traded notional; the data-feed lag is
-   known at decision time (its age is part of the observation).
+   exogenous; costs are proportional to traded notional; the data feed's lag
+   is known at decision time (the health gate reads it).
 4. **Formulation.** State s_j = (features at c_j, w_post(c_j), drawdown).
-   Action z in R^n, w = softmax(z). Reward
+   Action a in [-10, 10]^(n-1) (fund logits), w = softmax(pad_cash(a)). Reward
    r_j = sum over m in (j, j'] of log(1 + R_net,m), so that
    sum_j r_j = log(W_T / W_1): maximizing the undiscounted sum maximizes log
    terminal wealth, the Kelly growth objective.
@@ -355,3 +587,80 @@ prices (`vision_and_prd.md`, section 15).
 short-Treasury fund and run it with `replay.rollout` on the `calm` scenario's
 dev window. Before running, predict its terminal wealth from the regime's
 2% annual drift and 0.6% volatility over the window's sessions, then compare.
+
+### PPO learning notes (PR 2)
+
+1. **The clipped surrogate.** With r_t(theta) = pi_theta(a_t | s_t) /
+   pi_old(a_t | s_t) and advantage A_t, PPO maximizes
+
+       L(theta) = E[ min( r_t A_t, clip(r_t, 1 - eps, 1 + eps) A_t ) ]
+
+   For A_t > 0 the gain stops once r_t > 1 + eps; for A_t < 0 it stops once
+   r_t < 1 - eps. A step can never profit from moving the policy far from
+   the one that collected the data, a cheap stand-in for a trust region.
+   - Small example: A = 2 and eps = 0.2. At r = 1.5 the unclipped term is 3.0,
+     the clipped one 1.2 x 2 = 2.4, so the objective counts 2.4 and the
+     gradient through r is zero.
+   - The clip fraction (the share of samples with |r - 1| > eps) and the
+     approximate KL in the health report say how hard the clip is working.
+     Both near zero mean small updates; a KL spike means the update left the
+     region where the surrogate is trustworthy.
+2. **Generalized advantage estimation (GAE).** With
+   delta_t = r_t + gamma V(s_{t+1}) - V(s_t),
+
+       A_t = sum_k (gamma lambda)^k delta_{t+k}
+
+   lambda = 0 uses only the one-step TD error (low variance, biased by V);
+   lambda = 1 is the Monte-Carlo return minus V (unbiased, high variance).
+   lambda = 0.95 is the usual compromise. Financial rewards are mostly noise,
+   so the value function explains little (watch explained variance), and
+   advantages stay noisy whatever lambda is.
+3. **Why the likelihood lives on logits.** See section 6: the ratio is a
+   ratio of Gaussian densities at the sampled fund logits. The softmax, the
+   cash pin and the clip belong to the environment.
+4. **Seed variance.**
+   - Two PPO runs that differ only in the seed can end with different
+     policies and dev scores. That spread is part of the result.
+   - Report every seed, as a distribution (`seed_spread`: values, mean,
+     standard deviation, median, range). Picking the best seed is selection on
+     noise: with k seeds, the expected best of k equally good runs exceeds
+     their mean by roughly sigma_seed x E[max of k standard normals] (about
+     0.85 sigma for k = 3).
+   - Every seed, hyperparameter set and checkpoint evaluated is a variant in
+     the multiple-testing ledger.
+5. **What the smoke run is for.** At the smoke budget PPO barely moves from
+   its initialization, and two of three seeds selected the untrained
+   checkpoint on dev. That checks the plumbing (seeding, selection, health,
+   checkpoints, harness) and says nothing about what a longer run would learn.
+6. **Validation practice.** Identical-seed replay; dev-only selection;
+   a toy environment where the right answer is known (equity always earns
+   0.4% per session: the trained policy must overweight it); stress
+   scenarios; a no-forecast PPO and same-input optimizers as baselines; seed
+   distributions; and, only after approval, a held-out test fold read once.
+7. **Learn next.** Natural policy gradients and TRPO, the theory PPO
+   approximates; why advantage normalization makes PPO insensitive to reward
+   scale; the deflated Sharpe ratio for counting seeds and checkpoints as
+   trials.
+
+**Bounded exercise (optional).** In a copy of `configs/rl/ppo_smoke.yaml`, set
+`total_timesteps` to 200000 for one seed and train it. Before reading the
+health report, predict how entropy, approximate KL and explained variance
+will move; then compare.
+
+### Integration notes (PR 2)
+
+- **Track A (merged, interface only).** `stock_agent.portfolio.transition`
+  defines the same `Transition` signature, and
+  `stock_agent.environment.reward.log_growth_reward(step)` is the D8 reward;
+  both raise `NotImplementedError` until D1-D8 are approved. Then the
+  environment injects `portfolio_step` and that reward in place of the
+  stand-ins `rl/reference_transition.py` and `rl/reward.py`, and the boundary
+  test admits exactly that reward import from `stock_agent.environment`.
+- **Track B (merged contract).** Forecast artifacts are dated:
+  `read_forecast_artifact(path)` and `forecasts_asof(frame, decision_time)`,
+  selecting on `available_at <= decision_time`. RL scenarios count sessions,
+  so PPO with forecasts needs a session-to-synthetic-date map (the approved
+  synthetic end-of-UTC-date rule) and a certified provider
+  (`forecasts.require_certified`); until synthetic ETF artifacts exist the
+  harness reports the method as unavailable.
+
