@@ -241,3 +241,34 @@ def test_null_series_show_nothing_and_intervals_are_calibrated(null):
     for level in (50, 80, 90):
         assert abs(returns[f"interval_coverage_{level}"] - level / 100) < 0.05
     assert null.record["checks_summary"]["leakage_checks_failed"] == 0
+
+
+def test_the_health_export_reports_interval_coverage_and_point_forecasts(planted):
+    from stock_agent.registry.export import build_export
+
+    root, result = planted
+    document = build_export(
+        open_registry(root / "registry"),
+        generated_at=datetime(2026, 10, 14, tzinfo=UTC),
+        code_sha=None,
+    )
+    rows = document["forecast_evaluation"]
+    intervals = [r for r in rows if r["model_id"] == "test_etf.ret.ridge"]
+    assert sorted(r["interval_level"] for r in intervals) == [0.5, 0.8, 0.9]
+    metrics = result.tables["metrics"]
+    for row in intervals:
+        metric = f"interval_coverage_{round(row['interval_level'] * 100)}"
+        stored = metrics[
+            (metrics["model"] == "ridge")
+            & (metrics["target"] == "forward_return")
+            & (metrics["asset"] == "__pooled__")
+            & (metrics["metric"] == metric)
+            & (metrics["inference_method"] == "fold_block_t")
+        ]["estimate"].iloc[0]
+        assert row["observed_coverage"] == pytest.approx(stored, abs=1e-6)  # one estimand
+        assert "worst asset" in row["calibration_detail"]
+        assert row["calibration_status"] in {"pass", "warn", "fail"}
+        assert row["forecast_kind"] == "interval" and row["horizon"] == 10
+    points = [r for r in rows if r["model_id"] == "test_etf.vol.ridge"]
+    assert [r["calibration_status"] for r in points] == ["not_run"]
+    assert points[0]["interval_level"] is None and points[0]["n"] > 0

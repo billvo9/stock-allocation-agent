@@ -192,3 +192,22 @@ def test_the_pipeline_finds_nothing_in_null_data(null):
         assert summary["oos_r2_vs_zero"] < 0.01
     assert _summary(null)["holm_adjusted_p"] > 0.05
     assert null.record["checks_summary"]["leakage_checks_failed"] == 0
+
+
+def test_the_health_export_lists_point_forecasts_as_not_run(planted):
+    from datetime import UTC, datetime
+
+    from stock_agent.registry.export import build_export
+
+    root, _, _, second = planted
+    document = build_export(
+        open_registry(root / "registry"),
+        generated_at=datetime(2026, 10, 14, tzinfo=UTC),
+        code_sha=None,
+    )
+    assert [(m["model_id"], m["version"]) for m in document["models"]] == [("test_xs.ridge", 2)]
+    assert document["experiments"]["variants_tried"] == 2
+    (row,) = document["forecast_evaluation"]
+    assert row["forecast_kind"] == "point" and row["calibration_status"] == "not_run"
+    assert row["calibration_detail"] == "not applicable: point forecast"
+    assert row["n"] == len(second.diagnostics.tables["predictions"].query("model == 'ridge'"))

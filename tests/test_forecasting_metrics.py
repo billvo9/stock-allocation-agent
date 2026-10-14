@@ -127,3 +127,17 @@ def test_the_table_keeps_t2_columns_plus_the_reference(context):
     table = em.table(em.coverage_metrics("m", "candidate", frame, ctx))
     assert list(table.columns) == list(em.COLUMNS)
     assert table["reference"].isna().all()
+
+
+def test_every_earlier_registration_counts_as_a_prior_trial(tmp_path):
+    from test_registry import Clock, register, synthetic_record
+
+    from stock_agent.registry import Registry
+
+    registry = Registry(tmp_path / "registry", tmp_path, clock=Clock())
+    scope = "equity_xs:synthetic:h20"
+    assert em.prior_trials(registry, [scope]) == 0
+    for run in ("r1", "r2", "r3"):  # the same variant, three looks
+        register(registry, synthetic_record(run))
+    assert em.prior_trials(registry, [scope]) == 3
+    assert em.prior_trials(registry, [scope, "other:scope"]) == 3

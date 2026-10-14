@@ -5,11 +5,14 @@ Every output is versioned and written once under the output root (default
 reports/ml, ignored by Git): the T2 contract run, the experiment record and
 tables, one out-of-fold forecast artifact per candidate, one new registry
 version per candidate, and a ledger line per attempt. Only synthetic data
-sources exist; the 2025+ lockbox is never touched.
+sources exist; the 2025+ lockbox is never touched. Afterwards the registry's
+health export is refreshed under --health-inputs (default
+reports/health_inputs; --no-health-export skips it).
 
 Usage (from the repository root):
     .venv/bin/python scripts/run_experiment.py configs/ml/equity_xs_planted_linear.yaml
-        [--output-root reports/ml]
+        [--output-root reports/ml] [--health-inputs reports/health_inputs]
+        [--no-health-export]
 """
 
 from __future__ import annotations
@@ -24,6 +27,7 @@ from stock_agent.forecasting.config import load_config
 from stock_agent.forecasting.experiment import REGISTRY_DIRECTORY, run_experiment
 from stock_agent.forecasting.provenance import code_provenance, environment
 from stock_agent.registry import open_registry
+from stock_agent.registry.export import build_export, write_export
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SUMMARY_COLUMNS = (
@@ -42,6 +46,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("config", type=Path)
     parser.add_argument("--output-root", type=Path, default=PROJECT_ROOT / "reports" / "ml")
+    parser.add_argument(
+        "--health-inputs", type=Path, default=PROJECT_ROOT / "reports" / "health_inputs"
+    )
+    parser.add_argument("--no-health-export", action="store_true")
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
@@ -70,6 +78,11 @@ def main(argv: list[str] | None = None) -> int:
         )
     pd.set_option("display.width", 220)
     print(pd.DataFrame(rows).to_string(index=False))
+    if not args.no_health_export:
+        document = build_export(
+            registry, generated_at=datetime.now(UTC), code_sha=provenance["code"]["git_sha"]
+        )
+        print(f"registry health export -> {write_export(document, args.health_inputs)}")
     return 0
 
 

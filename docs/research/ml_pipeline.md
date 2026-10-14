@@ -58,7 +58,7 @@ A config (`configs/ml/*.yaml`, schema 1.0) defines the whole experiment:
 | Lockbox evidence | `record.lockbox_evidence` (from T2) |
 | Checks | `record.checks_summary` (from T2) |
 | Nulls compared | `record.nulls` |
-| Multiple testing | `record.multiple_testing`: candidates and grid points in the run, earlier variants in the same research scope |
+| Multiple testing | `record.multiple_testing`: candidates and grid points in the run; `prior_variants_in_scope`, the number of earlier registrations in the same research scope. Every earlier registration counts, even of the same variant: a rerun on new data or a new seed is another look |
 
 ### Outputs
 
