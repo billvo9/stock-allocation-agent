@@ -1,0 +1,47 @@
+# ETF return and risk track (separate from the equity track): synthetic
+# ETF-like series with planted trend in three assets and GARCH volatility clustering in all six.
+# Expected: volatility forecasts beat the historical mean and persistence; return forecasts gain only where a trend was planted.
+# Per-asset models, per-asset nested selection, nulls: historical mean, zero
+# (returns), persistence (volatility). Synthetic data is never evidence about funds.
+schema_version: "1.0"
+experiment: etf_return_risk_planted
+track: etf_return_risk
+description: >-
+  Per-asset ridge and the gradient-boosting challenger for the forward 20-session return
+  and log realized volatility of six synthetic ETF-like series (trend, garch).
+data:
+  source: synthetic_etf_panel
+  params:
+    n_sessions: 2000
+    start: "2010-01-04"
+    return_signal: trend
+    signal_strength: 0.1
+    volatility: garch
+    seed: 20261014
+universe:
+  id: synthetic_etf_6_planted
+  min_history_sessions: 61
+features:
+  families: [relative_technical, risk_liquidity]
+label:
+  horizon: 20
+  entry_lag: 1
+  benchmark: null
+folds:
+  start: "2012-03-01"
+  block_sessions: 63
+  inner_block_sessions: 63
+  inner_windows: 4
+  inner_min_train_sessions: 252
+models:
+  candidates: [ridge]
+  include_ols: true
+  challengers: [hist_gradient_boosting]
+  increment_reference: ridge
+evaluation:
+  seed: 0
+  permutation_draws: 0
+  bootstrap_reps: 199
+  interval_levels: [0.5, 0.8, 0.9]
+registry:
+  model_prefix: etf
