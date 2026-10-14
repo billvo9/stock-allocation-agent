@@ -145,7 +145,11 @@ NOT_REQUESTED = (
 # Externally verified share-count splits: (ticker, session) -> new shares per old.
 # Code-reviewed; add an entry only with a primary source.
 VERIFIED_SPLITS = {
-    # SEC EDGAR 0000036405/000093247108001251: split-adjusted trading from 2008-06-18.
+    # SEC EDGAR, Vanguard Index Funds (CIK 36405), accession 0000932471-08-001251:
+    # Form 497 filed 2008-06-09, U.S. Stock ETF supplement. 2-for-1 split, record date
+    # 2008-06-13, new shares distributed 2008-06-17, split-adjusted trading expected to
+    # begin 2008-06-18. The FY2008 annual report confirms the record and distribution
+    # dates; no issuer document confirms the first trading date after the event.
     ("VTI", "2008-06-18"): 2.0,
 }
 

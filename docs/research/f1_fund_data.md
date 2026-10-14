@@ -205,7 +205,7 @@ Tiingo's `splitFactor` is not assumed to be a pure share-count change. A split i
 
 | Ticker | Session | New shares per old | Source |
 |---|---|---|---|
-| VTI | 2008-06-18 | 2.0 | SEC EDGAR 0000036405/000093247108001251, "split-adjusted trading from 2008-06-18" [owner-provided; not fetched here] |
+| VTI | 2008-06-18 | 2.0 | SEC EDGAR, Vanguard Index Funds (CIK 36405), accession 0000932471-08-001251: Form 497 filed 2008-06-09 (U.S. Stock ETF supplement), read 2026-10-14. It announces a 2-for-1 split with record date 2008-06-13, new shares distributed 2008-06-17, and split-adjusted trading "expected to begin" 2008-06-18. The FY2008 annual report confirms the record and distribution dates and restates prior per-share dividends "adjusted to reflect a 2-for-1 share split". The first trading date is consistent with every issuer source but is not confirmed after the event; the audit's split-session factor and raw-close checks test it against the vendor. |
 
 Every check expected near 1 uses one fixed band, `BAND = log 1.25`.
 - **`unverified_split_factor`:** `splitFactor != 1` on any session that is not in the allowlist.
@@ -242,6 +242,9 @@ The detail holds counts and ratios only.
 - For every fund, add at least two sourced per-share amounts in each window you want stored. Each comes from the fund sponsor's distribution history or an SEC filing, with its citation in a comment.
 - For VTI across 2008-06-18, include at least one amount on each side of the split.
 - A window with no distributions cannot be verified, so it is not stored.
+- **Issuer terms constrain where the amounts live.** Vanguard's and BlackRock's (iShares) website terms, read 2026-10-14, limit their content to personal, non-commercial use. They forbid redistribution and automated access. This repository is public, so issuer amounts must not be committed here, including in `VERIFIED_DISTRIBUTIONS`.
+  - **Follow-up:** load the anchors from a private, ignored file that the owner fills by hand from the issuer pages. Each row carries its source, retrieval date and reported precision.
+  - **Status:** until then, `VERIFIED_DISTRIBUTIONS` stays empty and nothing is stored.
 
 **What neither route detects.** Neither route detects a later split applied uniformly to the whole closing-price history. Route (b) anchors amounts only. Closes are checked against an external fact only at verified split sessions. A uniform rescaling of closes alone would distort D/P, and it is undetectable without a primary-source close anchor. **Follow-up:** add primary-source close anchors (for example sponsor-published closing prices or NAVs on a few dates) as an owner-reviewed allowlist.
 

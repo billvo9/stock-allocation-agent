@@ -997,17 +997,37 @@ def test_the_audit_refuses_to_run_without_authorization(tmp_path, repo, capsys):
     assert "--authorized" in capsys.readouterr().err
 
 
-def test_the_default_audit_is_a_read_only_report(tmp_path, repo, capsys, verified):
-    before = _tree(tmp_path)
+def _snapshot(path: Path) -> dict[Path, int]:
+    return {item: item.stat().st_mtime_ns for item in [path, *path.rglob("*")]}
+
+
+@pytest.mark.parametrize("listed", [True, False])
+def test_the_default_audit_is_a_read_only_report(
+    tmp_path, repo, capsys, monkeypatch, verified, listed
+):
+    if not listed:  # the real, empty allowlist: the basis gate fails, still nothing is written
+        monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", {})
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))  # a stray `~` would land here
+    monkeypatch.chdir(tmp_path)  # and a stray relative path here
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("a read-only audit must not prepare a root, build or store a batch")
+
+    for name in ("prepare_root", "verified_batch", "ingest_batch", "read_batch"):
+        monkeypatch.setattr(audit, name, forbidden)
+    before = _snapshot(tmp_path)
     transport = FakeTransport()
     code = run_audit(
         None, repo, transport, funds=("VTI",), start=START, end=END_EXCLUSIVE, store=False
     )
     out = capsys.readouterr().out
     assert code == 0 and len(transport.calls) == 1
-    assert f"  distribution basis: {audit.SPOT_CHECKED}; split check no_split (" in out
+    verdict = audit.SPOT_CHECKED if listed else "NOT verified"
+    assert f"  distribution basis: {verdict}; split check no_split (" in out
     assert out.rstrip().endswith(audit.READ_ONLY) and "stored batch" not in out
-    assert _tree(tmp_path) == before  # nothing written anywhere
+    assert _snapshot(tmp_path) == before  # nothing created, removed or modified
 
 
 @pytest.mark.parametrize("flags", [["--store"], ["--root"]])
