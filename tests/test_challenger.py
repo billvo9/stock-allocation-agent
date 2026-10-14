@@ -81,6 +81,26 @@ def test_missing_values_are_imputed_with_training_medians_only():
     np.testing.assert_array_equal(model.predict(test), model.predict(filled))
 
 
+def test_predictions_are_row_wise_and_independent_of_the_batch():
+    # The harness predicts one date at a time; an estimator whose output for a
+    # row depends on the other rows of its batch (for example imputation refitted
+    # on test rows) would read later dates' features. Only the fit rows may matter.
+    X, y = matrix(rows=600)
+    X[::5, 2] = np.nan
+    model = nonlinear.GradientBoostingForecast(**nonlinear.GRID[1]).fit(X, y)
+    test = matrix(seed=1, rows=120)[0]
+    test[::3, 0] = np.nan
+    test[1::4, 2] = np.nan
+    test[60:] += 10.0  # the second half alone has very different medians
+    whole = model.predict(test)
+    one_by_one = np.concatenate([model.predict(test[i : i + 1]) for i in range(len(test))])
+    halves = np.concatenate([model.predict(test[:60]), model.predict(test[60:])])
+    shuffled = np.random.RandomState(2).permutation(len(test))
+    np.testing.assert_array_equal(whole, one_by_one)
+    np.testing.assert_array_equal(whole, halves)
+    np.testing.assert_array_equal(whole[shuffled], model.predict(test[shuffled]))
+
+
 def test_the_grid_is_a_pre_registered_complexity_path():
     penalties = [point["penalty"] for point in nonlinear.GRID]
     assert penalties == sorted(penalties, reverse=True) and len(set(penalties)) == 4
