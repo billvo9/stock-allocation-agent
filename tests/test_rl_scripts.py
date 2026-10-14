@@ -91,6 +91,7 @@ def test_training_writes_the_agreed_health_input(run_dir):
     assert record["artifact"] == "rl_training_health" and record["schema_version"] == "1.0"
     assert record["generated_at"] == "2026-10-14T12:00:00.123456Z"
     assert record["code_sha"] == SHA and record["synthetic"] is True
+    assert record["git_dirty"] is False
     assert record["status"] == "completed" and record["seeds"] == 2
     assert record["transition_status"] == "engineering_only_unapproved_transition"
     assert record["scenario_version"] == "1.1.0"
@@ -126,13 +127,28 @@ def test_the_run_record_carries_reproduction_facts(run_dir):
     assert set(run["libraries"]) >= {"torch", "stable_baselines3", "gymnasium"}
 
 
-def test_evaluation_writes_an_engineering_report_and_withholds_tables(run_dir):
+def _evaluate(run_dir, *extra, sha=SHA):
     evaluate = _load("evaluate_rl")
-    assert evaluate.main(["--run-dir", str(run_dir)]) == 0
-    report = json.loads((run_dir / "evaluation_test.json").read_text())
+    return evaluate.main(
+        ["--run-dir", str(run_dir), *extra],
+        clock=lambda: datetime(2026, 10, 14, 13, 0, tzinfo=UTC),
+        code_version=lambda: {"git_sha": sha, "git_dirty": False},
+    )
+
+
+@pytest.fixture(scope="module")
+def evaluated(run_dir):
+    assert _evaluate(run_dir) == 0
+    return run_dir
+
+
+def test_evaluation_writes_an_engineering_report_and_withholds_tables(evaluated):
+    report = json.loads((evaluated / "evaluation_test_1.json").read_text())
     assert report["fold_role"] == "test" and report["fairness"] == "passed"
+    assert report["fold_evaluation_number"] == 1
     assert report["comparison_tables"].startswith("withheld")
-    assert not (run_dir / "comparison_test.json").exists()
+    assert not list(evaluated.glob("comparison_*.json"))
+    assert report["provenance"]["code_sha_matches"] is True
     methods = report["methods"]
     for name in (
         "buy_and_hold",
@@ -145,6 +161,26 @@ def test_evaluation_writes_an_engineering_report_and_withholds_tables(run_dir):
         assert methods[name]["all_finite"] and methods[name]["episodes"] == 2
     assert "ppo_with_forecasts" in report["unavailable"]
     assert methods["guarded:ppo_seed_0"]["fallback_reasons"].get("stale_inputs", 0) > 0
+
+
+def test_every_test_fold_evaluation_is_counted_and_never_overwritten(evaluated):
+    first = (evaluated / "evaluation_test_1.json").read_bytes()
+    assert _evaluate(evaluated) == 0
+    assert (evaluated / "evaluation_test_1.json").read_bytes() == first
+    second = json.loads((evaluated / "evaluation_test_2.json").read_text())
+    assert second["fold_evaluation_number"] == 2
+    ledger = [
+        json.loads(line) for line in (evaluated / "evaluations.jsonl").read_text().splitlines()
+    ]
+    assert [(e["fold"], e["number"]) for e in ledger] == [("test", 1), ("test", 2)]
+    assert ledger[0]["file"] == "evaluation_test_1.json"
+
+
+def test_evaluating_with_other_code_is_recorded(evaluated):
+    with pytest.warns(RuntimeWarning, match="code"):
+        assert _evaluate(evaluated, "--fold", "dev", sha="e" * 40) == 0
+    report = json.loads((evaluated / "evaluation_dev_1.json").read_text())
+    assert report["provenance"]["code_sha_matches"] is False
 
 
 def test_a_second_run_never_overwrites_the_first(run_dir, tmp_path):

@@ -274,7 +274,10 @@ then score the projected action.
 
 `test_the_likelihood_is_a_density_over_logits_not_over_weights` shows two
 logit vectors with identical weights and different densities, and
-`test_sb3_scores_the_raw_sampled_logits_it_stores` checks the library.
+`test_clipped_samples_keep_their_raw_logits_and_likelihoods` checks the
+library: under a wide policy many sampled logits exceed the bound, SB3 stores
+the raw samples, the environment receives the clipped ones, and re-scoring
+the stored raw actions reproduces the stored log probabilities.
 
 ## 7. Policies
 
@@ -443,6 +446,19 @@ goes to `reports/health_inputs/rl_training_health/<run_id>.json` (ignored by
 Git; `--health-inputs-root` changes the root). A run that raises still writes
 it, with status `failed` and every check `not_run`.
 
+Evaluation provenance and accounting:
+- `load_ppo_checkpoint` refuses a checkpoint from another scenario generator
+  version or (when given) another config hash, and warns loudly when the
+  current code SHA differs from the training SHA; the evaluation report
+  records it.
+- Every evaluation is write-once: `evaluation_<fold>_<n>.json`, numbered per
+  fold, plus one line appended to `evaluations.jsonl`, so every look at the
+  test fold is counted in the run directory.
+- Training and evaluation refuse a normalizer not fitted on the plan's train
+  fold, with this feature spec and this generator version.
+- The gym wrapper accepts a requested evaluation episode only from its own
+  fold and window (`LeakageError` otherwise).
+
 The same configuration, code SHA and library versions give identical
 parameters (`test_the_same_seed_replays_to_identical_parameters...`).
 Seeds are always reported as a distribution (`seed_spread`), never the best
@@ -460,8 +476,8 @@ For the Model Health Center and the deployment gate. Per seed:
 - the dev selection record.
 
 Status:
-- **unhealthy:** no updates, a non-finite reward, loss or parameter, or a
-  parameter above `max_param_abs`;
+- **unhealthy:** no updates, a non-finite reward, loss, parameter or dev
+  score, or a parameter above `max_param_abs`;
 - **warning:** an approximate-KL spike, a high clip fraction, or collapsed
   action noise;
 - **healthy** otherwise.
@@ -471,13 +487,13 @@ The run is as bad as its worst seed. `model_is_healthy(report, seed)` feeds
 
 `health_input_record` condenses the report into the agreed v1.0 input:
 the common envelope (`artifact`, `schema_version`, `generated_at` with
-microseconds, `code_sha`, `synthetic`, `run_id`, `algorithm`, `status`,
-`transition_status`, `seeds`, `scenario_version`) and eight checks, each
-with Track C's own status, value, unit, threshold and detail:
+microseconds, `code_sha`, `git_dirty`, `synthetic`, `run_id`, `algorithm`,
+`status`, `transition_status`, `seeds`, `scenario_version`) and eight checks,
+each with Track C's own status, value, unit, threshold and detail:
 
 | Check | Value | Status |
 |---|---|---|
-| `nan_or_inf` | non-finite rewards and parameters, plus seeds with a non-finite loss | fail above 0 |
+| `nan_or_inf` | non-finite rewards, parameters and dev scores, plus seeds with a non-finite loss | fail above 0 |
 | `exploding_values` | largest absolute parameter | fail above `max_param_abs` |
 | `approx_kl` | largest per-seed maximum | warn above `kl_warning` |
 | `clip_fraction` | largest per-seed mean | warn above `clip_fraction_warning` |
@@ -485,6 +501,11 @@ with Track C's own status, value, unit, threshold and detail:
 | `value_loss` | largest last-to-first value-loss ratio | warn above 10, fail if non-finite |
 | `reward_trend` | median over seeds of final minus initial dev score | warn below 0 (a training diagnostic, not a comparison) |
 | `seed_spread` | standard deviation of the selected dev scores | warn with fewer than 3 seeds |
+
+CEM and PPO dev scores are training diagnostics. They stay in the run
+directory's detailed reports and never enter a published view; the health
+input carries only the spread and the median trend, never the scores
+themselves.
 
 ### 9.5 Comparison harness and the publication rule
 

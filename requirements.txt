@@ -12,6 +12,10 @@ edgartools==5.58.0
 plotly==7.1.0
 streamlit==1.64.0
 scikit-learn==1.9.1
+# PPO stack. Supported platforms: macOS (PyPI torch wheel) and Linux x86_64
+# (PyTorch's CPU-only wheel, pinned by URL and sha256). No torch line matches
+# other platforms (for example Linux aarch64 or Intel macOS); there
+# stable-baselines3 would pull an unpinned torch, so add a pinned line first.
 stable-baselines3==2.9.0
 gymnasium==1.3.0
 torch==2.14.0 ; sys_platform == "darwin"
