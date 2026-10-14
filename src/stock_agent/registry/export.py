@@ -23,7 +23,11 @@ entry is synthetic), run_id (the file name).
                          previous, reason)
     experiments          variants_tried (registered versions: every
                          registration is a trial), runs (distinct experiment
-                         runs) (extra: distinct_variants)
+                         runs that registered something) (extra:
+                         distinct_variants; ledger_attempts and failed_runs
+                         from the output root's ledger, null without one).
+                         Every count covers one output root (registry and
+                         ledger), not the whole machine
     forecast_evaluation  one row per forecast artifact of an exported model,
                          and per measured interval level for interval
                          artifacts: model_id, version, horizon, forecast_kind,
@@ -37,11 +41,14 @@ stage_basis lists the evidence records the computed stage rests on:
 
 Calibration status (producer-owned monitoring status, not an evidence rule
 and not used by any stage): for an interval level measured in the run, with
-gap = |observed - nominal| and p the fold-block two-sided p-value of
-"coverage = nominal",
-    fail  p < 0.01 and gap > 0.05
-    warn  p < 0.05 or gap > 0.05
-    pass  otherwise
+observed the fold-block coverage estimate (the mean of the folds' coverage
+shares), gap = |observed - nominal| (compared with a 1e-9 tolerance) and p
+the fold-block two-sided p-value of "coverage = nominal" (same estimand),
+    fail     p < 0.01 and gap > 0.05
+    warn     p < 0.05 or gap > 0.05
+    pass     otherwise
+    not_run  no test (p unavailable, e.g. fewer than 3 folds) and gap <= 0.05
+The detail names the worst asset when a run reports per-asset coverage.
 Point forecasts carry null interval fields and "not_run" ("not applicable:
 point forecast"); an interval whose run metrics cannot be read verified is
 "not_run" with the reason.
@@ -73,7 +80,9 @@ FORECAST_KINDS = ("point", "interval", "probabilistic")
 CALIBRATION_STATUSES = ("pass", "warn", "fail", "not_run")
 FORECAST_ARTIFACT_KIND = "forecast_artifact"
 POOLED = "__pooled__"
+LEDGER_FILE = "ledger.jsonl"  # model_diagnostics.artifacts.LEDGER_FILE
 GAP_WARN = 0.05
+GAP_TOLERANCE = 1e-9  # 0.75 vs 0.80 is a gap of exactly 0.05, not more
 P_WARN, P_FAIL = 0.05, 0.01
 POINT_DETAIL = "not applicable: point forecast"
 _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
@@ -140,13 +149,59 @@ def _run_metrics(reader: RegistryReader, entry: RegistryEntry) -> pd.DataFrame |
     return pd.read_parquet(path) if path.is_file() else None
 
 
+def _ledger_attempts(reader: RegistryReader) -> list[dict] | None:
+    """
+    Every recorded run attempt (completed or failed) in the artifacts root's
+    ledger, or None when there is no ledger. Counts are per output root.
+    """
+
+    path = reader.artifacts_root / LEDGER_FILE
+    if not path.is_file() or path.is_symlink():
+        return None
+    lines = path.read_text(encoding="utf-8").splitlines()
+    return [json.loads(line) for line in lines if line.strip()]
+
+
 def calibration_status(observed: float, nominal: float, p_value: float) -> str:
+    """
+    The producer's calibration status for one interval level. `observed` and
+    `p_value` come from the same estimand (the run's fold-block row). Without
+    a test (p is NaN, e.g. fewer than 3 folds) a gap beyond the band can
+    still warn, but nothing can pass.
+    """
+
     gap = abs(observed - nominal)
-    if math.isfinite(p_value) and p_value < P_FAIL and gap > GAP_WARN:
+    wide = gap > GAP_WARN + GAP_TOLERANCE
+    if not math.isfinite(p_value):
+        return "warn" if wide else "not_run"
+    if p_value < P_FAIL and wide:
         return "fail"
-    if (math.isfinite(p_value) and p_value < P_WARN) or gap > GAP_WARN:
+    if p_value < P_WARN or wide:
         return "warn"
     return "pass"
+
+
+def _fold_block(rows: pd.DataFrame, metric: str):
+    own = rows[(rows["metric"] == metric) & (rows["inference_method"] == "fold_block_t")]
+    return None if own.empty else own.iloc[0]
+
+
+def _worst_asset(metrics: pd.DataFrame, name: str, target: str, metric: str, nominal: float):
+    """The asset whose fold-block coverage is furthest from nominal (per-asset tracks)."""
+
+    if "asset" not in metrics.columns:
+        return None
+    rows = metrics[
+        (metrics["model"] == name)
+        & (metrics["target"] == target)
+        & (metrics["asset"] != POOLED)
+        & (metrics["metric"] == metric)
+        & (metrics["inference_method"] == "fold_block_t")
+    ]
+    rows = rows[rows["estimate"].notna()]
+    if rows.empty:
+        return None
+    return rows.loc[(rows["estimate"] - nominal).abs().idxmax()]
 
 
 def _interval_rows(entry, metadata, n, metrics) -> list[dict]:
@@ -175,11 +230,12 @@ def _interval_rows(entry, metadata, n, metrics) -> list[dict]:
     result = []
     for metric in sorted(set(rows["metric"])):
         nominal = int(_LEVEL_METRIC.fullmatch(metric).group(1)) / 100.0
-        own = rows[rows["metric"] == metric].set_index("inference_method")
-        if "newey_west" not in own.index or "fold_block_t" not in own.index:
+        test = _fold_block(rows, metric)
+        if test is None:
             continue
-        observed = float(own.loc["newey_west", "estimate"])  # mean per-date coverage
-        test = own.loc["fold_block_t"]
+        # One estimand for the coverage and its test: the fold-block mean of the
+        # folds' coverage shares, and the fold-block t of that mean.
+        observed = float(test["estimate"])
         p_value = float(test["p_value"])
         if not math.isfinite(observed):
             result.append(
@@ -193,19 +249,32 @@ def _interval_rows(entry, metadata, n, metrics) -> list[dict]:
             )
             continue
         status = calibration_status(observed, nominal, p_value)
-        t = (test["estimate"] - nominal) / test["se"] if test["se"] > 0 else math.nan
+        if math.isfinite(p_value) and test["se"] > 0:
+            tested = (
+                f"fold-block t {(observed - nominal) / test['se']:.2f}, p {p_value:.3f}, "
+                f"df {test['df']:.0f}"
+            )
+        else:
+            tested = f"no fold-block test ({test['reason']})"
+        detail = (
+            f"fold-block coverage {observed:.3f} vs nominal {nominal:.2f} "
+            f"({int(test['n'])} dates, pooled over assets); {tested}"
+        )
+        worst = _worst_asset(metrics, name, target, metric, nominal)
+        if worst is not None:
+            worst_p = f", p {worst['p_value']:.3f}" if math.isfinite(worst["p_value"]) else ""
+            detail += f"; worst asset {worst['asset']} {worst['estimate']:.3f}{worst_p}"
+        detail += (
+            f"; rule: fail if p < {P_FAIL} and gap > {GAP_WARN}, warn if p < {P_WARN} or "
+            f"gap > {GAP_WARN}, not_run without a test unless the gap exceeds {GAP_WARN}"
+        )
         result.append(
             {
                 **base,
                 "interval_level": nominal,
                 "observed_coverage": round(observed, 6),
                 "calibration_status": status,
-                "calibration_detail": (
-                    f"observed {observed:.3f} vs nominal {nominal:.2f} over "
-                    f"{int(own.loc['newey_west', 'n'])} dates, pooled over assets; fold-block "
-                    f"t {t:.2f}, p {p_value:.3f}, df {test['df']:.0f}; rule: fail if p < "
-                    f"{P_FAIL} and gap > {GAP_WARN}, warn if p < {P_WARN} or gap > {GAP_WARN}"
-                ),
+                "calibration_detail": detail,
             }
         )
     return result or [
@@ -302,6 +371,7 @@ def build_export(
         )
     runs = {entry.evidence.get("run_id") for entry in entries} - {None}
     variants = {entry.evidence.get("variant_id") for entry in entries} - {None}
+    attempts = _ledger_attempts(reader)
     content = {
         "models": models,
         "selection_events": selection_events,
@@ -309,6 +379,10 @@ def build_export(
             "variants_tried": len(entries),
             "runs": len(runs),
             "distinct_variants": len(variants),
+            "ledger_attempts": None if attempts is None else len(attempts),
+            "failed_runs": None
+            if attempts is None
+            else sum(line.get("status") == "failed" for line in attempts),
         },
         "forecast_evaluation": forecast_evaluation,
     }

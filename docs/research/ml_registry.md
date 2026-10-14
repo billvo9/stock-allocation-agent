@@ -65,6 +65,8 @@ Registration refuses an entry whose artifacts do not verify, or whose evidence d
 
 These criteria come from the product direction (`docs/product/vision_and_prd.md`, section 6, "Evidence required for every rung above L0") and the T2/T4 protocol. They add no new evidence standard, but they are provisional like the PRD rules they come from. Owner review is requested.
 
+`prior_variants_in_scope`, in the evidence's multiple-testing block, counts every earlier **registration** in the run's research scopes, not distinct variant ids: a rerun of one variant on new data or with a new seed is another trial. Counts cover one output root and exclude failed runs; the health export reports failed runs from the ledger.
+
 | Criterion | Reason code when unmet |
 |---|---|
 | Artifacts verify | `artifacts_unverified` |
@@ -156,7 +158,7 @@ The Model Health Center reads a snapshot of the registry in the agreed input for
 | envelope | `artifact`, `schema_version` "1.0", `generated_at` (UTC, microseconds, `Z`), `code_sha` (40-hex or null), `synthetic` (true only if every entry is synthetic), `run_id` |
 | `models` | The latest version of each model id **in each research scope**, plus each scope's active version: `model_id`, `version`, `stage` (computed), `stage_basis`, `registered_at`. Extra: `research_scope`, `data_class`, `next_stage`, `blockers` (reason codes) |
 | `selection_events` | Every activation and rollback: `event_id`, `decided_at`, `candidates` (versions registered in the scope by then), `selected`. Extra: `event`, `research_scope`, `previous`, `reason` |
-| `experiments` | `variants_tried` (registered versions: every registration is a trial), `runs` (distinct experiment runs). Extra: `distinct_variants` |
+| `experiments` | `variants_tried` (registered versions: every registration is a trial), `runs` (distinct experiment runs that registered something). Extra: `distinct_variants`; `ledger_attempts` and `failed_runs` from the output root's ledger (null without one). Every count covers one output root |
 | `forecast_evaluation` | One row per forecast artifact of an exported model, and one per measured interval level for interval artifacts: `model_id`, `version`, `horizon`, `forecast_kind`, `interval_level`, `observed_coverage`, `n`, `calibration_status`, `calibration_detail` |
 
 **Evidence ids in `stage_basis`.** Each id is a record the computed stage rests on:
@@ -169,8 +171,8 @@ A tampered or missing artifact therefore shortens the basis and lowers the stage
 **Forecast rows.**
 - **Point forecasts** carry null interval fields, `n` (rows in the artifact), `not_run` and "not applicable: point forecast".
 - **Interval artifacts** report every level the run measured. For the ETF track that is 50%, 80% and 90%, pooled over assets:
-  - `observed_coverage` is the mean per-date share inside the interval;
-  - the status uses the run's fold-block test of "coverage = nominal".
+  - `observed_coverage` and the status use **one estimand**: the fold-block estimate (the mean of the outer folds' coverage shares) and its fold-block t test of "coverage = nominal";
+  - the detail names the worst asset when the run reports per-asset coverage, because a pooled status can hide one asset's gap.
 
 **Calibration status.** This is a producer-owned monitoring status: not an evidence rule, and no stage uses it. With gap = |observed − nominal| and p the fold-block two-sided p-value:
 
@@ -179,11 +181,16 @@ A tampered or missing artifact therefore shortens the basis and lowers the stage
 | `fail` | p < 0.01 **and** gap > 0.05 |
 | `warn` | p < 0.05 **or** gap > 0.05 |
 | `pass` | otherwise |
-| `not_run` | A point forecast, or no verified coverage measurement |
+| `not_run` | A point forecast; no verified coverage measurement; or no test is possible (p unavailable, for example fewer than 3 folds) and gap ≤ 0.05. Without a test nothing passes, though a gap beyond 0.05 still warns |
+
+Gaps are compared with a 1e-9 tolerance: 0.75 against 0.80 is a gap of exactly 0.05, which does not exceed the band.
 
 **Example (measured, synthetic, the ETF runs in `ml_etf_track.md`).**
-- The planted GARCH panel's return intervals warn at all three levels: 80% intervals cover 74.8% (t −2.70, p 0.013) and 90% intervals 85.3% (p 0.005).
-- The null panel's intervals pass (80% intervals cover 77.7%, p 0.30).
+- The planted GARCH panel's return intervals (fold-block estimates) warn at all three levels: 50% → 45.7%, 80% → 75.3% (p 0.013), 90% → 85.8% (p 0.005).
+  - The detail names the worst asset: at 80% that is EQ_US, at 71.6% (p 0.057). A pooled status alone would hide it.
+  - The same export lists `ledger_attempts` 4 and `failed_runs` 2: the two first ETF attempts failed on a fold-start configuration error before registering anything.
+  - The under-coverage is expected from a plug-in interval that ignores forecast error (`ml_etf_track.md`, Results).
+- The null panel's intervals pass (80% → 78.3%, p 0.30).
 
 ## Limitations
 

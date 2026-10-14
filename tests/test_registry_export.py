@@ -79,7 +79,13 @@ def test_the_agreed_example_passes_the_validator():
 def test_an_empty_registry_exports_a_valid_empty_document(registry):
     document = build(registry)
     assert document["models"] == [] and document["forecast_evaluation"] == []
-    assert document["experiments"] == {"variants_tried": 0, "runs": 0, "distinct_variants": 0}
+    assert document["experiments"] == {
+        "variants_tried": 0,
+        "runs": 0,
+        "distinct_variants": 0,
+        "ledger_attempts": None,
+        "failed_runs": None,
+    }
     assert document["synthetic"] is True
     assert document["generated_at"] == "2026-10-14T20:00:00.123456Z"
 
@@ -134,11 +140,16 @@ def test_activations_and_rollbacks_are_selection_events(registry):
     assert len({e["event_id"] for e in events}) == 3
 
 
-def test_experiment_counts_every_registration_as_a_trial(registry):
+def test_experiment_counts_every_registration_and_every_failed_attempt(registry, tmp_path):
     for run in ("r1", "r2", "r3"):
         register(registry, synthetic_record(run))
     experiments = build(registry)["experiments"]
-    assert experiments == {"variants_tried": 3, "runs": 3, "distinct_variants": 1}
+    assert experiments["variants_tried"] == 3 and experiments["runs"] == 3
+    assert experiments["distinct_variants"] == 1 and experiments["failed_runs"] is None
+    ledger = [{"status": "completed"}] * 3 + [{"status": "failed", "error": "ValueError"}]
+    (tmp_path / "ledger.jsonl").write_text("".join(json.dumps(line) + "\n" for line in ledger))
+    experiments = build(registry)["experiments"]
+    assert experiments["ledger_attempts"] == 4 and experiments["failed_runs"] == 1
 
 
 @pytest.mark.parametrize(
@@ -149,7 +160,9 @@ def test_experiment_counts_every_registration_as_a_trial(registry):
         (0.72, 0.80, 0.20, "warn"),  # large but not significant
         (0.72, 0.80, 0.004, "fail"),
         (0.78, 0.80, 0.004, "warn"),  # highly significant, but within the 0.05 band
-        (0.82, 0.80, float("nan"), "pass"),
+        (0.75, 0.80, 0.005, "warn"),  # a gap of exactly 0.05 does not exceed the band
+        (0.82, 0.80, float("nan"), "not_run"),  # no test: nothing passes
+        (0.70, 0.80, float("nan"), "warn"),  # no test, but a gap beyond the band
     ],
 )
 def test_the_calibration_status_rule(observed, nominal, p_value, status):

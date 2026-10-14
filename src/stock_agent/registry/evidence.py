@@ -21,6 +21,13 @@ Run-record keys read here (the experiment runner's contract):
     nulls.{models, permutation_draws}
     multiple_testing.{candidates_in_run, grid_points_in_run,
                       prior_variants_in_scope}
+
+prior_variants_in_scope counts every earlier *registration* in the run's
+research scopes (forecasting.metrics.prior_trials), not distinct variant ids:
+a rerun of one variant on new data or with a new seed is another trial. The
+key keeps its name because readers (the Model Health Center) already read it
+with this meaning; counts cover one output root and exclude failed runs,
+which the registry export reports from the ledger.
     universe.{point_in_time, survivorship_free}
     models.<name>.{role, variant_id}
 """

@@ -263,9 +263,10 @@ def test_the_health_export_reports_interval_coverage_and_point_forecasts(planted
             & (metrics["target"] == "forward_return")
             & (metrics["asset"] == "__pooled__")
             & (metrics["metric"] == metric)
-            & (metrics["inference_method"] == "newey_west")
+            & (metrics["inference_method"] == "fold_block_t")
         ]["estimate"].iloc[0]
-        assert row["observed_coverage"] == pytest.approx(stored, abs=1e-6)
+        assert row["observed_coverage"] == pytest.approx(stored, abs=1e-6)  # one estimand
+        assert "worst asset" in row["calibration_detail"]
         assert row["calibration_status"] in {"pass", "warn", "fail"}
         assert row["forecast_kind"] == "interval" and row["horizon"] == 10
     points = [r for r in rows if r["model_id"] == "test_etf.vol.ridge"]
