@@ -10,8 +10,12 @@ Two phases (nothing reaches the store unverified)
     `TiingoAdapter.retrieve` requests, checks and parses in memory and returns
     a `Retrieval`. `verified_batch` turns a retrieval into an F1 `RawBatch` only
     when every fund passes `verify_distribution_basis`; otherwise it refuses
-    with `unverified_distribution_basis`. `fetch` (the F1 seam) does both, so a
-    caller that passes its result to `ingest_batch` stores only verified data.
+    with `unverified_distribution_basis`. It never trusts the retrieval's
+    in-memory tables: it rebuilds them from the raw payload, refuses
+    (`payload_mismatch`) if they differ or the payload's tickers and dates do
+    not match the request, and stores the rebuilt tables. `fetch` (the F1 seam)
+    does both, so a caller that passes its result to `ingest_batch` stores only
+    verified data.
 
 Request (prices only; the metadata endpoint is never called)
     The F1 request check refuses, before the key is read or any request is
@@ -42,21 +46,29 @@ Mapping
                     `unknown`, sequence 0, declaration, record and pay dates NULL
     splitFactor  -> `splits` only for a share-count split in the reviewed
                     `VERIFIED_SPLITS` allowlist, on the same session, with the
-                    same factor, and with a raw close consistent with an
-                    unadjusted price (`split_close_consistent`). Any other
-                    factor != 1 refuses the batch.
+                    same factor, a `discriminable` factor, and a raw close
+                    consistent with an unadjusted price
+                    (`split_close_consistent`). Any other factor != 1 refuses
+                    the batch.
 
 Distribution-basis verification (per fund; every fund must pass)
-    (a) A verified split in the window, with at least `MIN_SIDE` distributions
-        on each side: median(before) / (factor x median(after)) must lie
-        within the log band `log_band(factor)` around 1. Per-share-as-paid
-        amounts fall by the factor at the split; anything else is refused.
-    (b) At least `MIN_VERIFIED_AMOUNTS` entries of the reviewed
-        `VERIFIED_DISTRIBUTIONS` allowlist (primary-source amounts) in the
-        window, each matching the vendor's divCash within `AMOUNT_TOLERANCE`.
-    A fund passes by (a) or (b), and fails whenever a listed amount does not
-    match. Route (a) is relative: it cannot detect a later split that the
-    vendor applied uniformly to the whole history; only (b) is absolute.
+    Storage requires primary-source amounts for every fund (route (b)); the
+    split ratio (route (a)) is a consistency check that can only fail a fund:
+    (i)   at least `MIN_VERIFIED_AMOUNTS` entries of the reviewed
+          `VERIFIED_DISTRIBUTIONS` allowlist in the window, each matching the
+          vendor's divCash within `AMOUNT_TOLERANCE`; a listed date with no
+          served divCash is a mismatch, and any mismatch fails the fund;
+    (ii)  for every verified split in the window, at least one listed match
+          strictly before and one strictly after the split session (a vendor
+          rescales every amount between two splits by one factor, so matches
+          on one side prove nothing about the other);
+    (iii) where at least `MIN_SIDE` distributions lie on each side of a
+          verified split, median(before) / (factor x median(after)) must lie
+          within `BAND` (log scale) of 1;
+    (iv)  no distribution may have a verified split session as its ex-date
+          (its share basis is unverifiable).
+    Neither route detects a later split applied uniformly to the whole
+    closing-price history; route (b) anchors amounts only.
 
 Raw payload
     The canonical JSON of the allowlisted fields actually used, keyed by
@@ -148,9 +160,10 @@ TERMS_NOTE = (
 VINTAGE_NOTE = (
     "close, divCash and splitFactor as served on the retrieval date; not a point-in-time "
     "vintage; the ticker-to-security mapping and the set of sessions served are Tiingo's "
-    "view at retrieval; a later split applied by Tiingo to close or divCash cannot be "
-    "detected for a fund with no verified split in the window, so its basis rests on "
-    "VERIFIED_DISTRIBUTIONS only; "
+    "view at retrieval; distribution amounts are stored only when anchored to primary-source "
+    "amounts (VERIFIED_DISTRIBUTIONS); neither that anchor nor the split checks detect a "
+    "later split applied uniformly to the whole closing-price history, because closes are "
+    "checked against an external fact only at verified split sessions; "
     f"requested columns {', '.join(ALLOWED_FIELDS)} only; not requested: {NOT_REQUESTED}; "
     "splits stored only from the verified share-count allowlist"
 )
@@ -177,20 +190,25 @@ Transport = Callable[[str, Mapping[str, str]], tuple[int, bytes]]
 Clock = Callable[[], pd.Timestamp]
 
 
-def log_band(factor: float) -> float:
+# The tolerance on |log ratio| for every check expected near 1 (the raw close
+# across a split, and the split's distribution ratio): a 25% move either way.
+BAND = math.log(1.25)
+
+
+def discriminable(factor: float) -> bool:
     """
-    The tolerance on |log ratio| for a check near 1 at a split of `factor`:
-    log 1.25, narrowed to half of |log factor| so that "ratio near 1" and
-    "ratio near the factor" can never overlap.
+    Whether a split factor can be told from no split by a check with `BAND`:
+    |log factor| >= 3 x BAND (about factor >= 1.953 or <= 0.512). A ratio
+    within BAND of the factor is then at least 2 x BAND away from 1.
     """
 
-    return min(math.log(1.25), abs(math.log(factor)) / 2)
+    return factor > 0 and abs(math.log(factor)) >= 3 * BAND
 
 
-def split_close_consistent(ratio: float, factor: float) -> bool:
+def split_close_consistent(ratio: float) -> bool:
     """(raw close x factor) / previous raw close near 1, as an unadjusted price gives."""
 
-    return ratio > 0 and abs(math.log(ratio)) < log_band(factor)
+    return ratio > 0 and abs(math.log(ratio)) < BAND
 
 
 class TiingoRefusal(StrEnum):
@@ -198,7 +216,9 @@ class TiingoRefusal(StrEnum):
     UNVERIFIED_SPLIT_FACTOR = "unverified_split_factor"
     SPLIT_FACTOR_MISMATCH = "split_factor_mismatch"
     SPLIT_PRICE_MISMATCH = "split_price_mismatch"
+    SPLIT_FACTOR_NOT_DISCRIMINABLE = "split_factor_not_discriminable"
     UNVERIFIED_DISTRIBUTION_BASIS = "unverified_distribution_basis"
+    PAYLOAD_MISMATCH = "payload_mismatch"
 
 
 class TiingoDataRefused(FundDataRefused):
@@ -449,6 +469,12 @@ def _check_verified_splits(
         split = parse_date("verified split", date)
         if symbol != ticker or not first <= split <= last:
             continue
+        if not discriminable(factor):
+            raise TiingoDataRefused(
+                TiingoRefusal.SPLIT_FACTOR_NOT_DISCRIMINABLE,
+                f"{ticker} verified split {date} x{factor:g}: |log factor| < 3 x log 1.25, so "
+                "a raw-close check cannot tell it from no split",
+            )
         row = checked.get(split)
         if row is None or row.split_factor != factor:
             raise TiingoDataRefused(
@@ -458,12 +484,12 @@ def _check_verified_splits(
             )
         previous = nyse.sessions(nyse.COVERAGE.first, split - _ONE_DAY)[-1]
         before = checked.get(previous)
-        if before is None or not split_close_consistent(row.close * factor / before.close, factor):
+        if before is None or not split_close_consistent(row.close * factor / before.close):
             raise TiingoDataRefused(
                 TiingoRefusal.SPLIT_PRICE_MISMATCH,
                 f"{ticker} verified split {date}: the raw close is not consistent with an "
                 f"unadjusted price across the split (previous session {previous.date()}, "
-                f"tolerance |log ratio| < {log_band(factor):.3f})",
+                f"tolerance |log ratio| < {BAND:.3f})",
             )
 
 
@@ -476,6 +502,7 @@ class ParsedPayload:
 
     start: pd.Timestamp
     end_date: pd.Timestamp  # inclusive, as requested from Tiingo
+    fund_ids: tuple[str, ...]
     prices: pd.DataFrame
     distributions: pd.DataFrame
     splits: pd.DataFrame
@@ -556,6 +583,8 @@ def parse_payload(payload: bytes) -> ParsedPayload:
     last = parse_date("payload end_date", envelope["end_date"])
     if last >= MODEL_HOLDOUT_START:
         raise refuse(RefusalReason.REQUEST_AFTER_CAP, "the payload end_date passes the cap")
+    if first > last:
+        raise refuse(RefusalReason.INVALID_REQUEST, "the payload start_date is after its end_date")
     prices = envelope["prices"]
     if not isinstance(prices, dict) or not prices:
         raise refuse(RefusalReason.SCHEMA_MISMATCH, "payload prices must be a non-empty object")
@@ -564,7 +593,7 @@ def parse_payload(payload: bytes) -> ParsedPayload:
         if not _TICKER.fullmatch(ticker):
             raise refuse(RefusalReason.INVALID_FIELD, "a payload key is not a Tiingo ticker")
         checked[ticker] = check_elements(ticker, elements, first, last)
-    return ParsedPayload(first, last, *_frames(checked))
+    return ParsedPayload(first, last, tuple(checked), *_frames(checked))
 
 
 # --- distribution-basis verification ---------------------------------------------
@@ -588,105 +617,158 @@ class Retrieval:
     splits: pd.DataFrame = field(repr=False)
 
 
+class SplitCheck(StrEnum):
+    """What the split-ratio consistency check (route (a)) found for one fund."""
+
+    NO_SPLIT = "no_split"  # no verified split in the window
+    NOT_COMPUTABLE = "not_computable"  # fewer than MIN_SIDE distributions on a side
+    AGREED = "agreed"  # every computable ratio within BAND of 1
+    FAILED = "failed"  # a ratio outside BAND: the fund fails, whatever route (b) says
+
+
 @dataclass(frozen=True)
 class BasisCheck:
-    """One fund's distribution-basis verification; `detail` holds counts and ratios only."""
+    """
+    One fund's distribution-basis verification. `route` is
+    "verified_distributions" when the fund passed, else None; `split_check`
+    is a `SplitCheck` value; `detail` holds counts and ratios only.
+    """
 
     fund_id: str
     passed: bool
-    route: str | None  # "verified_split" or "verified_distributions" when passed
+    route: str | None
+    split_check: str
     detail: str
 
 
-def _split_route(fund: str, retrieval: Retrieval) -> tuple[bool, str]:
-    splits = retrieval.splits[retrieval.splits["fund_id"] == fund]
-    if splits.empty:
-        return False, "no verified split in the window"
-    own = retrieval.distributions[retrieval.distributions["fund_id"] == fund]
-    own = own.sort_values("ex_date")
-    passed, notes = True, []
-    for split in splits.itertuples():
-        factor = split.ratio_new_per_old
-        before = own.loc[own["ex_date"] < split.effective_date, "amount"].iloc[-MIN_SIDE:]
-        after = own.loc[own["ex_date"] >= split.effective_date, "amount"].iloc[:MIN_SIDE]
-        label = f"split {split.effective_date:%Y-%m-%d} x{factor:g}"
-        if len(before) < MIN_SIDE or len(after) < MIN_SIDE:
-            passed = False
-            notes.append(
-                f"{label}: {len(before)} before, {len(after)} after (needs {MIN_SIDE} each)"
-            )
-            continue
-        ratio = float(before.median() / (factor * after.median()))
-        inside = abs(math.log(ratio)) < log_band(factor)
-        passed = passed and inside
-        notes.append(
-            f"{label}: median before / (factor x median after) = {ratio:.2f}, "
-            f"{'within' if inside else 'outside'} |log| < {log_band(factor):.3f}"
-        )
-    return passed, "; ".join(notes)
-
-
-def _distribution_route(fund: str, retrieval: Retrieval) -> tuple[bool, bool, str]:
-    """(passed, any mismatch, detail): listed amounts in the window against divCash."""
-
-    last = retrieval.end_exclusive - _ONE_DAY
-    listed = {
-        parse_date("verified distribution", date): amount
-        for (symbol, date), amount in VERIFIED_DISTRIBUTIONS.items()
-        if symbol == fund and retrieval.start <= parse_date("verified distribution", date) <= last
-    }
-    own = retrieval.distributions[retrieval.distributions["fund_id"] == fund]
+def _check_fund(
+    fund: str,
+    first: pd.Timestamp,
+    last: pd.Timestamp,
+    distributions: pd.DataFrame,
+    splits: pd.DataFrame,
+) -> BasisCheck:
+    own = distributions[distributions["fund_id"] == fund].sort_values("ex_date")
     served = dict(zip(own["ex_date"], own["amount"], strict=True))
-    matched = sum(
-        1
+    listed = {}
+    for (symbol, text), amount in VERIFIED_DISTRIBUTIONS.items():
+        date = parse_date("verified distribution", text)
+        if symbol == fund and first <= date <= last:
+            listed[date] = amount
+    matches = sorted(
+        date
         for date, amount in listed.items()
         if date in served and abs(served[date] - amount) <= AMOUNT_TOLERANCE
     )
-    mismatched = len(listed) - matched
-    passed = len(listed) >= MIN_VERIFIED_AMOUNTS and mismatched == 0
-    detail = (
-        f"verified distributions in the window: {len(listed)} (needs {MIN_VERIFIED_AMOUNTS}), "
-        f"{matched} match, {mismatched} do not"
+    mismatched = len(listed) - len(matches)
+    anchored = len(listed) >= MIN_VERIFIED_AMOUNTS and mismatched == 0  # (i)
+    counts = f"{len(listed)} (needs {MIN_VERIFIED_AMOUNTS}), {len(matches)} match"
+    notes = [f"verified distributions in the window: {counts}, {mismatched} do not"]
+    outcomes = []
+    for split in splits[splits["fund_id"] == fund].itertuples():
+        date, factor = split.effective_date, split.ratio_new_per_old
+        label = f"split {date:%Y-%m-%d} x{factor:g}"
+        listed_before = sum(1 for match in matches if match < date)
+        listed_after = sum(1 for match in matches if match > date)
+        on_split = int((own["ex_date"] == date).sum())
+        anchored = anchored and listed_before >= 1 and listed_after >= 1  # (ii)
+        anchored = anchored and on_split == 0  # (iv)
+        notes.append(
+            f"{label}: listed matches {listed_before} before, {listed_after} after (needs 1 "
+            f"each); distributions on the split session {on_split}"
+        )
+        before = own.loc[own["ex_date"] < date, "amount"].iloc[-MIN_SIDE:]
+        after = own.loc[own["ex_date"] > date, "amount"].iloc[:MIN_SIDE]
+        if len(before) < MIN_SIDE or len(after) < MIN_SIDE:
+            outcomes.append(SplitCheck.NOT_COMPUTABLE)
+            notes.append(
+                f"{label} ratio check: {len(before)} before, {len(after)} after (needs "
+                f"{MIN_SIDE} each), not computable"
+            )
+            continue
+        ratio = float(before.median() / (factor * after.median()))
+        inside = abs(math.log(ratio)) < BAND  # (iii)
+        outcomes.append(SplitCheck.AGREED if inside else SplitCheck.FAILED)
+        notes.append(
+            f"{label} ratio check: median before / (factor x median after) = {ratio:.2f}, "
+            f"{'within' if inside else 'outside'} |log| < {BAND:.3f}"
+        )
+    split_check = (
+        SplitCheck.NO_SPLIT
+        if not outcomes
+        else SplitCheck.FAILED
+        if SplitCheck.FAILED in outcomes
+        else SplitCheck.NOT_COMPUTABLE
+        if SplitCheck.NOT_COMPUTABLE in outcomes
+        else SplitCheck.AGREED
     )
-    return passed, mismatched > 0, detail
+    passed = anchored and split_check is not SplitCheck.FAILED
+    route = "verified_distributions" if passed else None
+    return BasisCheck(fund, passed, route, split_check.value, "; ".join(notes))
+
+
+def _rebuilt(retrieval: Retrieval) -> ParsedPayload:
+    """
+    The tables rebuilt from the raw payload, which is what F1 stores and
+    hashes. Refuses when the payload's tickers or dates differ from the
+    retrieval's request, or when the in-memory tables differ from it.
+    """
+
+    parsed = parse_payload(retrieval.raw_payload)
+    if (
+        sorted(parsed.fund_ids) != sorted(retrieval.fund_ids)
+        or parsed.start != retrieval.start
+        or parsed.end_date != retrieval.end_exclusive - _ONE_DAY
+    ):
+        raise TiingoDataRefused(
+            TiingoRefusal.PAYLOAD_MISMATCH,
+            "the raw payload's tickers or dates differ from the retrieval's request",
+        )
+    for name in ("prices", "distributions", "splits"):
+        if not getattr(parsed, name).equals(getattr(retrieval, name)):
+            raise TiingoDataRefused(
+                TiingoRefusal.PAYLOAD_MISMATCH,
+                f"the in-memory {name} table differs from the raw payload",
+            )
+    return parsed
+
+
+def _checks(retrieval: Retrieval, parsed: ParsedPayload) -> tuple[BasisCheck, ...]:
+    return tuple(
+        _check_fund(fund, parsed.start, parsed.end_date, parsed.distributions, parsed.splits)
+        for fund in retrieval.fund_ids
+    )
 
 
 def verify_distribution_basis(retrieval: Retrieval) -> tuple[BasisCheck, ...]:
     """
-    Per fund: route (a), a verified split, or route (b), verified amounts. A
-    fund passes by either, and fails whenever a verified amount does not match.
+    Per fund, on the tables rebuilt from the raw payload: (i) to (iv) in the
+    module docstring. Only primary-source amounts can pass a fund; the split
+    ratio can only fail one.
     """
 
-    checks = []
-    for fund in retrieval.fund_ids:
-        split_passed, split_detail = _split_route(fund, retrieval)
-        amounts_passed, mismatch, amounts_detail = _distribution_route(fund, retrieval)
-        route = (
-            None
-            if mismatch
-            else "verified_split"
-            if split_passed
-            else "verified_distributions"
-            if amounts_passed
-            else None
-        )
-        detail = f"{split_detail}; {amounts_detail}"
-        checks.append(BasisCheck(fund, route is not None, route, detail))
-    return tuple(checks)
+    return _checks(retrieval, _rebuilt(retrieval))
 
 
 def verified_batch(retrieval: Retrieval) -> RawBatch:
-    """The F1 batch, only when every fund's distribution basis is verified."""
+    """
+    The F1 batch, built from the tables rebuilt from the raw payload, only
+    when every fund's distribution basis is verified.
+    """
 
-    checks = verify_distribution_basis(retrieval)
+    parsed = _rebuilt(retrieval)
+    checks = _checks(retrieval, parsed)
     failing = [check for check in checks if not check.passed]
     if failing:
         raise TiingoDataRefused(
             TiingoRefusal.UNVERIFIED_DISTRIBUTION_BASIS,
-            "; ".join(f"{check.fund_id}: {check.detail}" for check in failing)
+            "; ".join(
+                f"{check.fund_id}: split check {check.split_check}; {check.detail}"
+                for check in failing
+            )
             + "; nothing may be stored under an unverified basis",
         )
-    routes = ", ".join(f"{check.fund_id} by {check.route}" for check in checks)
+    funds = ", ".join(retrieval.fund_ids)
     return RawBatch(
         adapter_id=TiingoAdapter.adapter_id,
         adapter_version=TiingoAdapter.adapter_version,
@@ -697,10 +779,12 @@ def verified_batch(retrieval: Retrieval) -> RawBatch:
         retrieved_at=retrieval.retrieved_at,
         raw_payload=retrieval.raw_payload,
         terms_note=TERMS_NOTE,
-        vintage_note=f"{VINTAGE_NOTE}; distribution basis verified: {routes}",
-        prices=retrieval.prices,
-        distributions=retrieval.distributions,
-        splits=retrieval.splits,
+        vintage_note=(
+            f"{VINTAGE_NOTE}; distribution basis verified against primary-source amounts: {funds}"
+        ),
+        prices=parsed.prices,
+        distributions=parsed.distributions,
+        splits=parsed.splits,
     )
 
 
@@ -820,17 +904,20 @@ class TiingoAdapter:
 
 __all__ = [
     "ALLOWED_FIELDS",
+    "BAND",
     "VERIFIED_DISTRIBUTIONS",
     "VERIFIED_SPLITS",
     "BasisCheck",
     "ParsedPayload",
     "Retrieval",
+    "SplitCheck",
     "TiingoAdapter",
     "TiingoDataRefused",
     "TiingoFailure",
     "TiingoRefusal",
     "TiingoRequestFailed",
     "check_elements",
+    "discriminable",
     "env_token",
     "parse_payload",
     "prices_url",

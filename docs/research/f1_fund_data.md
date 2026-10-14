@@ -37,12 +37,12 @@ Keys and columns:
 
 The batch record (`batch.json`) holds `batch_id`, `adapter_id`, `adapter_version`, the request (fund ids, `start`, `end_exclusive`), the instrument mapping, `retrieved_at`, `raw_payload_sha256`, `terms_note`, `vintage_note`, `assumed_availability_rule` (always `None` in version 1), `calendar_id` and the schema version.
 - The **instrument mapping** lists `{fund_id, source_symbol, source_security_id}` for every requested fund; the security id is nullable, and there is no CUSIP field. It records which source identifier each fund was retrieved under. Every requested fund must be mapped exactly once, and every row's `fund_id` must be mapped.
-- The raw provider bytes are stored beside the record as `raw_payload.bin`, so a batch can be re-parsed later without a new request.
+- The adapter's raw payload is stored beside the record as `raw_payload.bin`, so a batch can be re-parsed later without a new request. By default it is the provider's bytes exactly as retrieved. An adapter may instead define it, in its own documentation, as a canonical envelope of the allowlisted fields it uses. The Tiingo adapter does this (below), following the owner's 2026-10-14 requirement not to persist future-informed payloads or their hashes. This wording was amended additively; the schema and code are unchanged.
 - `read_store` returns all batches plus a `batches` table with one row per batch.
 
 **Revisions are new observations.** A later retrieval of the same fund and session is a new batch with its own `batch_id` and `retrieved_at`. Nothing is overwritten, so keys are unique per batch, not across the store. Choosing among vintages at a decision time is a later, owner-approved rule (it depends on OD9).
 
-**The store never computes.** It does not adjust a close, fill a gap, splice a proxy or compute a return. Returns and the growth index are OD8 group A (T5-A), pending approval.
+**The store never computes.** It does not adjust a close, fill a gap, splice a proxy or compute a return. Returns and the growth index belong to the OD8 group A descriptive calculations (T5-A), not the store.
 
 ## Four timestamps
 
@@ -66,7 +66,7 @@ Until the owner decides, the store keeps (a).
 
 ## Replaceable adapters
 
-- An adapter implements `fetch(fund_ids, start, end_exclusive) -> RawBatch`: retrieval and parsing only. It returns the raw bytes, its instrument mapping and the parsed rows without storage ids.
+- An adapter implements `fetch(fund_ids, start, end_exclusive) -> RawBatch`: retrieval and parsing only. It returns its raw payload (see above), its instrument mapping and the parsed rows without storage ids.
 - It calls `validation.validate_request` before retrieving, so a lockbox request never reaches a provider.
 - It never writes files, assigns batch ids, adjusts, fills or computes. Swapping a provider changes one adapter and nothing downstream.
 - `SyntheticFundAdapter` is the only implementation: invented funds `SYN_EQ`, `SYN_BOND` and `SYN_CASH`, with integer-cent closes from each session's position in the calendar (so values do not depend on the request window). It covers the awkward cases a real source has:
@@ -154,13 +154,17 @@ The adjusted fields, the metadata and volume are never requested, parsed or stor
 
 1. **`TiingoAdapter.retrieve`** requests, checks and parses in memory and returns a `Retrieval`. Its repr never shows the tables. It covers the field allowlist, the values, the dates and the verified splits, but not the distribution basis.
 2. **`verify_distribution_basis(retrieval)`** checks every fund (below).
-3. **`verified_batch(retrieval)`** is the only way to an F1 `RawBatch`. It re-runs the verification and refuses the whole batch with `unverified_distribution_basis` unless every fund passes. The batch's `vintage_note` ends with the route each fund passed by.
+3. **`verified_batch(retrieval)`** is the only way to an F1 `RawBatch`. It never trusts the retrieval's in-memory tables.
+   - It rebuilds the tables from `retrieval.raw_payload` (the bytes F1 stores and hashes).
+   - It refuses with `payload_mismatch` when the payload's tickers, start or end differ from the retrieval's request, or when an in-memory table differs from the rebuilt one.
+   - It verifies the rebuilt tables, refuses the whole batch with `unverified_distribution_basis` unless every fund passes, and builds the batch from the rebuilt tables.
+   - The batch's `vintage_note` ends with "distribution basis verified against primary-source amounts: <funds>".
 4. **`TiingoAdapter.fetch`** (the F1 seam) is `verified_batch(retrieve(...))`. So a caller that passes `fetch`'s result to `ingest_batch` can only store verified data.
 
 ### Request
 
 - **One call per fund**, prices only; the metadata endpoint is never called. The request is `GET https://api.tiingo.com/tiingo/daily/{ticker}/prices?startDate=…&endDate=…&format=json&resampleFreq=daily&columns=date,close,divCash,splitFactor` [endpoint and parameter names recalled from Tiingo's documentation; unverified].
-- **Date bounds.** Tiingo's `endDate` is inclusive, so the request asks for `endDate = end_exclusive − 1 day`. `end_exclusive` may be at most 2025-01-01, so `endDate` is at most 2024-12-31.
+- **Date bounds.** Tiingo's `endDate` is inclusive, so the request asks for `endDate = end_exclusive − 1 day`. `end_exclusive` may be at most 2025-01-01, so `endDate` is at most 2024-12-31. A stored payload whose `start_date` is after its `end_date`, or whose `end_date` passes the cap, is refused on re-parse.
 - **Refusals before any request.** A request past the cap, with more than 20 funds, or with a fund id that is not an upper-case ticker is refused before the key is read or any request is made.
 - **One response at a time.** Each response is fully checked before the next ticker is requested, so a refused response stops the batch at once.
 - **Failures.** Any status other than 200, including 429 and 5xx, refuses the batch. No retry is made; the owner allows at most one bounded retry.
@@ -175,6 +179,7 @@ The adjusted fields, the metadata and volume are never requested, parsed or stor
   This is how the audit learns whether Tiingo honours `columns` [unverified].
 - **If Tiingo ignores `columns`, every batch is refused.** In that case the endpoint necessarily exposes information outside the lockbox boundary. The owner must then approve an isolated audit procedure (proposed below) or choose another source. The lockbox is never reinterpreted to let the data through.
 - **Refused responses.** A refused response is never stored or logged. Refusal details name fields, dates and element indices, never a value. No refusal chains an exception that holds the response body: F1's `loads_strict` now raises its `invalid_json` refusal after the except block, because a `JSONDecodeError` keeps the whole document.
+- **What text may contain.** Refusal text and audit output may include counts, dates and derived ratios (2 decimals), never prices, amounts or the key.
 - **Other refusals:**
   - a wrong type (a string, `null` or a boolean where a number belongs);
   - a non-finite number (`NaN`, `Infinity`, `1e999` or an integer beyond the float range);
@@ -202,31 +207,52 @@ Tiingo's `splitFactor` is not assumed to be a pure share-count change. A split i
 |---|---|---|---|
 | VTI | 2008-06-18 | 2.0 | SEC EDGAR 0000036405/000093247108001251, "split-adjusted trading from 2008-06-18" [owner-provided; not fetched here] |
 
+Every check expected near 1 uses one fixed band, `BAND = log 1.25`.
 - **`unverified_split_factor`:** `splitFactor != 1` on any session that is not in the allowlist.
+- **`split_factor_not_discriminable`:** an allowlisted factor with |log f| < 3 × BAND (roughly 0.512 < f < 1.953) is refused, even though it is listed.
+  - For a discriminable factor, a ratio within BAND of f lies at least 2 × BAND away from 1.
+  - A test checks that every `VERIFIED_SPLITS` entry meets this rule. It claims nothing more.
 - **`split_factor_mismatch`:** an allowlisted session inside the request whose vendor factor differs, is 1, or whose row is missing.
-- **`split_price_mismatch`:** at an allowlisted split, r = (raw close × f) / the previous session's raw close fails |log r| < min(log 1.25, |log f| / 2). The raw close may already be split-adjusted. The same reason applies when the previous session's close is absent, including a request that starts on the split date.
-  - The band never reaches halfway to log f, so "unadjusted" (r ≈ 1) and "already adjusted" (r ≈ f) can never both pass. A test checks this for every allowlisted split.
+- **`split_price_mismatch`:** at an allowlisted split, r = (raw close × f) / the previous session's raw close fails |log r| < BAND. The raw close may already be split-adjusted. The same reason applies when the previous session's close is absent, including a request that starts on the split date.
 
 ### Distribution-basis verification (every fund must pass)
 
-F1's `AmountBasis` has no "unknown" value, and adding one would be a contract change needing owner approval. So instead of labelling an unverified amount, the adapter refuses to store it. A fund passes by either route:
-- **(a) A verified split.** There is a `VERIFIED_SPLITS` split in the window, with at least 4 distributions on each side. Let m = median(last 4 before) / (f × median(first 4 after)). The fund passes when |log m| < min(log 1.25, |log f| / 2).
-  - Per-share-as-paid amounts fall by f at the split, so m ≈ 1.
-  - Split-adjusted amounts give m ≈ 1/f, which fails.
-  - Anything in between is ambiguous and also fails.
-- **(b) Verified amounts.** At least 2 entries of the code-reviewed `VERIFIED_DISTRIBUTIONS` allowlist fall in the window, and each matches the vendor's `divCash` on the same ex-date within 1e-6.
-  - Entries are primary-source amounts per share as paid, keyed (fund, ex-date), each with a citation comment.
-  - A listed entry with no served distribution, or a different amount, is a mismatch. A mismatch fails the fund even when route (a) passes.
+F1's `AmountBasis` has no "unknown" value, and adding one would be a contract change needing owner approval. So instead of labelling an unverified amount, the adapter refuses to store it.
 
-**Owner step.** `VERIFIED_DISTRIBUTIONS` starts empty: amounts are never invented. AGG and SHV have no verified split, so they are refused until the owner adds at least two sourced per-share amounts for each window. Each amount comes from the fund sponsor's distribution history or an SEC filing, and its citation goes in a comment. VTI passes by route (a) in any window that spans 2008-06-18 with four distributions on each side. A window with no distributions cannot be verified, so it is not stored.
+**The gate (a fail-closed lead decision).** Storage requires primary-source amounts for every fund. The split ratio is only a consistency check: it can fail a fund but never pass one. Relaxing this gate would be an owner lockbox decision. A fund passes only when all four hold:
+1. **Anchored amounts.** At least 2 entries of the code-reviewed `VERIFIED_DISTRIBUTIONS` allowlist fall in the window, each matching the vendor's `divCash` on the same ex-date within 1e-6, with no mismatch.
+   - Entries are primary-source amounts per share as paid, keyed (fund, ex-date), each with a citation comment.
+   - A listed date with no served distribution counts as a mismatch.
+2. **Both sides of every split.** For every verified split in the window, at least one listed match lies strictly before the split session and one strictly after it. A vendor rescales every amount between one split and the next by the same factor, so matches on one side prove nothing about the other.
+3. **The split ratio, when computable.** With at least 4 distributions on each side, m = median(last 4 before) / (f × median(first 4 after)) must satisfy |log m| < BAND.
+   - Per-share-as-paid amounts fall by f at the split, so m ≈ 1.
+   - Split-adjusted amounts give m ≈ 1/f.
+   - Outside the band the fund fails, whatever the listed amounts say. With fewer than 4 on a side the check is "not computable": it neither passes nor fails the fund.
+4. **No distribution on a split session.** A distribution whose ex-date is a verified split session fails the fund, because its share basis cannot be verified. The T5 specification treats an unknown basis on a split date as unavailable.
 
-**Limit of route (a).** Route (a) is relative. It cannot detect a later split that the vendor applied uniformly to the whole history it serves (close and `divCash` alike). Only route (b), with absolute primary-source amounts, can. Requiring route (b) for every fund would close this gap.
+**What each check reports.** Each fund's `BasisCheck` gives `passed`, `route` ("verified_distributions" when passed) and `split_check`:
+- `no_split`: there is no verified split in the window.
+- `not_computable`: fewer than 4 distributions on a side.
+- `agreed`: every computable ratio is within the band.
+- `failed`: a ratio is outside the band.
+
+The detail holds counts and ratios only.
+
+**Owner step.** `VERIFIED_DISTRIBUTIONS` starts empty: amounts are never invented. So nothing stores today, VTI included.
+- For every fund, add at least two sourced per-share amounts in each window you want stored. Each comes from the fund sponsor's distribution history or an SEC filing, with its citation in a comment.
+- For VTI across 2008-06-18, include at least one amount on each side of the split.
+- A window with no distributions cannot be verified, so it is not stored.
+
+**What neither route detects.** Neither route detects a later split applied uniformly to the whole closing-price history. Route (b) anchors amounts only. Closes are checked against an external fact only at verified split sessions. A uniform rescaling of closes alone would distort D/P, and it is undetectable without a primary-source close anchor. **Follow-up:** add primary-source close anchors (for example sponsor-published closing prices or NAVs on a few dates) as an owner-reviewed allowlist.
 
 ### Raw payload and hashes
 
-- **The payload.** `raw_payload` is the canonical JSON (sorted keys, compact) of the allowlisted fields actually used: `{envelope_version "4", source_id, start_date, end_date, fields, prices: {ticker: [elements]}}`. F1 hashes it (`raw_payload_sha256`).
+- **The payload.** `raw_payload` is the canonical JSON (sorted keys, compact) of the allowlisted fields actually used: `{envelope_version "4", source_id, start_date, end_date, fields, prices: {ticker: [elements]}}`. F1 hashes it (`raw_payload_sha256`). F1's contract text now allows an adapter to define its raw payload this way (see "What is stored").
 - **No original hashes.** No hash of an original vendor response is kept, because a hash of a future-informed payload must not be stored as if it were an admissible input.
-- **The notes.** `vintage_note` records the fields that were not requested (the metadata endpoint and `adjClose`, `adjHigh`, `adjLow`, `adjOpen`, `adjVolume`, `high`, `low`, `open` and `volume`), the vintage caveats below, and each fund's verification route.
+- **The notes.** `vintage_note` records:
+  - the fields that were not requested: the metadata endpoint and `adjClose`, `adjHigh`, `adjLow`, `adjOpen`, `adjVolume`, `high`, `low`, `open` and `volume`;
+  - the vintage caveats below;
+  - the funds whose distribution basis was verified against primary-source amounts.
 - **Re-parsing.** `parse_payload` re-runs every element check on the stored bytes, and the audit requires the stored tables to equal a re-parse.
 
 ### What Tiingo does not provide
@@ -238,11 +264,11 @@ F1's `AmountBasis` has no "unknown" value, and adding one would be a contract ch
 ### What cannot be a true point-in-time vintage
 
 Each batch's `retrieved_at` is the only observed timestamp, and a later retrieval is a new batch. None of the following is known as it stood on its session date:
-- **Raw closes** are as served at retrieval, and vendor corrections are possible.
-- **`divCash` amounts** may have been revised. Their share basis is stored only once verified (above).
+- **Raw closes** are as served at retrieval, and vendor corrections are possible. They are checked against an external fact only at verified split sessions. A uniform rescaling of closes alone, which would distort D/P, is undetectable without a primary-source close anchor (a follow-up, above).
+- **`divCash` amounts** may have been revised. They are stored only when anchored to primary-source amounts (above).
 - **Split factors** are as the vendor reports them; only allowlisted ones are stored.
 - **The ticker-to-security mapping and the set of sessions served** are Tiingo's view at retrieval.
-- **A later split applied by Tiingo** to `close` or `divCash` cannot be detected for a fund with no verified split in the window. Its basis rests on `VERIFIED_DISTRIBUTIONS` alone, and route (a) cannot rule out a uniform rescaling either.
+- **A later split applied uniformly** to the whole closing-price history is detected by neither route; route (b) anchors amounts only.
 - **No declaration, record or pay dates** are available.
 - **No revision history** comes from Tiingo, so a correction cannot be dated.
 
@@ -266,32 +292,31 @@ PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py \
     --root ~/stock-agent-private/fund_store --authorized
 ```
 
-- **Defaults.** `--funds VTI AGG SHV`, `--start 2007-01-01`, and `--end-exclusive` at the holdout start (2025-01-01). That makes three requests.
-  - With the empty `VERIFIED_DISTRIBUTIONS`, this default run is refused at phase 2 (AGG and SHV are unverified), and nothing is stored.
-  - Phase 1 still prints every aggregate.
-  - `--funds VTI` alone can be stored.
+- **Defaults.** `--funds VTI AGG SHV`, `--start 2007-01-01`, and `--end-exclusive` at the holdout start (2025-01-01). That makes three requests. While `VERIFIED_DISTRIBUTIONS` is empty, every run is refused at phase 2 and nothing is stored, though phase 1 still prints every aggregate.
 - **Refusals before anything runs.**
   - Without `--authorized` the script exits with code 2.
   - It refuses a root inside any repository, unless the root lies strictly inside that repository's ignored `data/raw/`. It walks every existing ancestor of the root and matches each with `os.path.samefile`, which also catches a case-variant path on macOS's case-insensitive file system. Any ancestor that is this repository, or holds a `.git` (another clone or a worktree), counts as a repository.
   - It also refuses a root that contains the repository.
-- **Root permissions.** The root is created if needed and then `chmod`ed to 0o700, even when it already existed.
+- **Root permissions.**
+  - A missing root is created with mode 0o700.
+  - An existing root is never changed. It must be a directory whose mode grants no group or other permission (`mode & 0o077 == 0`); otherwise the script exits with code 2 and asks the owner to restrict it (for example `chmod 700 <root>`).
 - **Phase 1 (in memory, aggregates only).** It prints:
   - the request and the allowlist confirmation;
   - row counts, and the first and last session;
   - missing NYSE sessions (before the first session, inside the range, after the last);
   - distributions per year;
   - verified splits, with the raw-close ratio the adapter enforced;
-  - each fund's distribution-basis verification (counts and ratios).
+  - each fund's distribution-basis verification, with its split check (counts and ratios).
 
   It never prints a price, an amount or the key.
-- **Phase 2 (store).** It stores only when every fund passed. It then reads the batch back and checks that the stored tables equal a re-parse of the stored payload. Otherwise it prints `NOT STORED unverified_distribution_basis: <funds>` and exits with 1.
-- **What it never does.** It requests no adjusted series and performs no vendor-adjusted reconciliation (it says so), and computes no return (pending OD8 group A, T5-A).
+- **Phase 2 (store).** It stores only when every fund passed. Otherwise it prints `NOT STORED unverified_distribution_basis: <funds>` and exits with 1. After storing, it reads the batch back and compares the stored tables with a re-parse of the stored payload; if they differ, it says so and exits with 1.
+- **What it never does.** It requests no adjusted series and performs no vendor-adjusted reconciliation (it says so). It computes no return: returns belong to the OD8 group A descriptive calculations, not the audit.
 - **Exit codes.** A refused retrieval prints `REFUSED <reason>` and exits with 1, with nothing stored. A re-run repeats the requests.
 
 ### Still unverified (the audit checks these)
 
 - **Columns.** Whether Tiingo honours `columns`. If it does not, every batch is refused.
-- **`divCash` basis.** Whether `divCash` is per share as paid. Route (a) at VTI's 2008-06-18 split tests this.
+- **`divCash` basis.** Whether `divCash` is per share as paid. Primary-source amounts decide this; the split ratio at VTI's 2008-06-18 split can only contradict it.
 - **`splitFactor` meaning.** Whether `splitFactor` is new shares per old, on the effective session. The audit requires 2.0 on 2008-06-18 for VTI.
 - **Raw closes.** Whether the raw close is truly unadjusted. The split's raw-close ratio must be near 1; if Tiingo's `close` were split-adjusted, it would be near 2.
 - **Date format.** The exact `date` format.
@@ -301,7 +326,7 @@ PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py \
 Comparing the project's total return with a vendor's adjusted series (`t5_portfolio_formulas.md`, F5.3) needs adjusted fields. They carry post-2024 information, so this code stops before them. If the owner wants the comparison, a separate procedure could run as follows (each step needs the owner's explicit approval):
 1. **A separate process.** It is not the adapter, the audit script or the research store, and it runs only with a recorded owner approval for that run.
 2. **Temporary storage only.** It requests the adjusted fields into a temporary directory (mode 0o700) outside the research store and every repository.
-3. **Aggregates only, up to 2024-12-31.** It computes only aggregate reconciliation statistics for sessions up to 2024-12-31, for example the count of sessions per fund and year where the vendor's daily adjusted ratio and the approved T5-A total return differ by more than a pre-registered tolerance. It runs only after OD8 group A is approved.
+3. **Aggregates only, up to 2024-12-31.** It computes only aggregate reconciliation statistics for sessions up to 2024-12-31, for example the count of sessions per fund and year where the vendor's daily adjusted ratio and the OD8 group A total return differ by more than a pre-registered tolerance.
 4. **Deletion.** It deletes the response files before exiting, also on failure. It keeps no row-level output, adjusted value or response hash.
 5. **What it records.** The run date, the request, the tolerance and the aggregates.
 
@@ -313,12 +338,12 @@ One caveat: a daily ratio of adjusted closes cancels later adjustment factors on
 - **Raw close across a split.** An unadjusted price falls by the split factor f on the effective session, so r = (P_t × f) / P_{t−1} ≈ 1 + the day's market move.
   - Example: P_{t−1} = 120.00, a 2-for-1 split, P_t = 60.60, giving r = 60.60 × 2 / 120.00 = 1.01, so |log r| ≈ 0.01, which passes.
   - If the vendor's "raw" close were already split-adjusted, P_{t−1} would read 60.00. Then r = 2.02 and |log r| ≈ 0.70, which is refused.
-- **The band, min(log 1.25, |log f| / 2).**
-  - For f = 2 it is log 1.25 ≈ 0.223, which allows a ±25% daily move. A broad ETF moving that much in a day would be extraordinary.
-  - For a small factor such as f = 1.1, it narrows to half of log 1.1, so the two hypotheses never overlap.
-- **divCash share basis.** Quarterly dividends per share as paid fall by f at the split, and split-adjusted ones do not. Taking the median of four on each side damps seasonality.
+- **The fixed band, BAND = log 1.25 ≈ 0.223.**
+  - It allows a ±25% daily move; a broad ETF moving that much in a day would be extraordinary.
+  - A split is usable only if |log f| ≥ 3 × BAND. For f = 2, |log 2| ≈ 0.693 ≥ 0.669. Then "unadjusted" (r ≈ 1) and "already adjusted" (r ≈ f) are separated by at least two band widths.
+- **Why relative checks are not enough.** A ratio test across a split compares one side with the other. A vendor that rescales everything after the fact (for a later split) moves both sides together and passes it. Only absolute anchors, meaning primary-source amounts or closes, catch that. This is why storage requires listed amounts on both sides of every split.
 - **How it can mislead.**
-  - A fund that changes its payout near the split can move m into the ambiguous zone. That fails closed, and the owner can then add primary-source amounts.
-  - A uniform later rescaling passes route (a) unnoticed (see "Limit of route (a)").
+  - A fund that changes its payout near the split can move m outside the band. That fails closed, and the owner can check the listed amounts.
+  - Listed amounts are only as good as their sources; every entry must cite one.
 - **Leakage.** Every input is a raw observation dated at or before 2024-12-31.
 - **Validation.** Compare with the fund's own distribution notices and the SEC filing cited in the allowlist.

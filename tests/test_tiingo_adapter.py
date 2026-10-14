@@ -8,6 +8,7 @@ stays empty.
 """
 
 import ast
+import dataclasses
 import email.message
 import hashlib
 import http.client
@@ -48,6 +49,7 @@ from stock_agent.data.vendors.tiingo import (
     TiingoRefusal,
     TiingoRequestFailed,
     parse_payload,
+    verified_batch,
     verify_distribution_basis,
 )
 from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
@@ -135,6 +137,21 @@ def vti_rows(pre_split_dividend: float, start=AUDIT_START) -> list[dict]:
     return price_list(
         start, AUDIT_END, dividends=dividends, split=(VTI_SPLIT, 2.0), skip=("2008-01-15",)
     )
+
+
+def invented_vti_entries(
+    pre_split: float, *, before: int = 1, after: int = 1, start: str = AUDIT_START
+) -> dict[tuple[str, str], float]:
+    """
+    Invented allowlist entries equal to `vti_rows`' served amounts, `before`
+    pre-split and `after` post-split ex-dates. Test fixtures, not real amounts.
+    """
+
+    dates = quarterly(start, AUDIT_END)
+    pre, post = [d for d in dates if d < VTI_SPLIT], [d for d in dates if d > VTI_SPLIT]
+    entries = {("VTI", date): pre_split for date in pre[:before]}
+    entries.update({("VTI", date): 0.30 for date in post[:after]})
+    return entries
 
 
 def agg_rows() -> list[dict]:
@@ -335,7 +352,7 @@ def test_div_cash_maps_to_distributions_with_no_invented_dates_or_type():
         assert str(distributions[column].dtype) == "datetime64[us, UTC]"
 
 
-def test_a_verified_batch_records_instruments_notes_and_routes(verified):
+def test_a_verified_batch_records_instruments_and_notes(verified):
     raw = fetch(funds=("VTI", "AGG"))
     assert raw.fund_ids == ("VTI", "AGG")
     assert raw.instruments == (Instrument("VTI", "VTI", None), Instrument("AGG", "AGG", None))
@@ -347,10 +364,8 @@ def test_a_verified_batch_records_instruments_notes_and_routes(verified):
     for name in ("metadata endpoint", "adjClose", "adjVolume", "high", "low", "open", "volume"):
         assert name in note  # the unrequested fields are recorded
     assert "ticker-to-security mapping and the set of sessions served" in note
-    assert "cannot be detected" in note
-    assert note.endswith(
-        "distribution basis verified: VTI by verified_distributions, AGG by verified_distributions"
-    )
+    assert "neither that anchor nor the split checks detect a later split applied uniformly" in note
+    assert note.endswith("distribution basis verified against primary-source amounts: VTI, AGG")
 
 
 # --- the field allowlist ---------------------------------------------------------
@@ -494,14 +509,33 @@ def test_a_request_starting_on_the_split_cannot_verify_it():
     refused(TiingoRefusal.SPLIT_PRICE_MISMATCH, retrieve, transport, start=VTI_SPLIT, end=SPLIT_END)
 
 
-@pytest.mark.parametrize("factor", [*tiingo.VERIFIED_SPLITS.values(), 0.25, 1.1, 3.0])
-def test_every_verified_split_is_distinguishable_from_no_split(factor):
-    band = tiingo.log_band(factor)
-    assert band <= math.log(1.25) and band <= abs(math.log(factor)) / 2  # bands never overlap
-    assert tiingo.split_close_consistent(1.0, factor)  # an unadjusted close
-    assert not tiingo.split_close_consistent(factor, factor)  # a close already adjusted
-    assert tiingo.split_close_consistent(math.exp(0.9 * band), factor)
-    assert not tiingo.split_close_consistent(math.exp(1.1 * band), factor)
+@pytest.mark.parametrize("key", sorted(tiingo.VERIFIED_SPLITS))
+def test_every_verified_split_is_discriminable(key):
+    factor = tiingo.VERIFIED_SPLITS[key]
+    assert tiingo.discriminable(factor)
+    assert abs(math.log(factor)) >= 3 * tiingo.BAND  # the rule, and nothing more
+
+
+def test_the_fixed_band_and_the_discriminability_rule():
+    assert tiingo.BAND == math.log(1.25)
+    assert all(tiingo.discriminable(factor) for factor in (2.0, 1.96, 0.5, 3.0, 0.25))
+    assert not any(tiingo.discriminable(factor) for factor in (1.95, 1.5, 1.1, 0.52, 1.0))
+    assert tiingo.split_close_consistent(1.0) and tiingo.split_close_consistent(1.24)
+    assert tiingo.split_close_consistent(1 / 1.24)
+    assert not tiingo.split_close_consistent(1.26) and not tiingo.split_close_consistent(2.0)
+
+
+def test_a_listed_split_that_is_not_discriminable_refuses_the_batch(monkeypatch):
+    monkeypatch.setattr(tiingo, "VERIFIED_SPLITS", {("VTI", VTI_SPLIT): 1.5})
+    rows = price_list(SPLIT_START, SPLIT_END, split=(VTI_SPLIT, 1.5))
+    transport = FakeTransport(prices={"VTI": rows})
+    refused(
+        TiingoRefusal.SPLIT_FACTOR_NOT_DISCRIMINABLE,
+        retrieve,
+        transport,
+        start=SPLIT_START,
+        end=SPLIT_END,
+    )
 
 
 # --- distribution-basis verification ---------------------------------------------
@@ -521,16 +555,56 @@ def basis(rows, fund="VTI", start=AUDIT_START, end=AUDIT_END):
     "pre_split, passed",
     [(0.60, True), (0.66, True), (0.54, True), (0.30, False), (0.45, False), (0.80, False)],
 )
-def test_the_split_route_needs_amounts_that_fall_by_the_factor(pre_split, passed):
+def test_the_split_ratio_can_only_fail_a_fund(monkeypatch, pre_split, passed):
+    assert not basis(vti_rows(pre_split)).passed  # no primary-source amounts: never stored
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(pre_split))
     check = basis(vti_rows(pre_split))
-    assert check.passed is passed and check.route == ("verified_split" if passed else None)
+    assert check.passed is passed
+    assert check.route == ("verified_distributions" if passed else None)
+    assert check.split_check == ("agreed" if passed else "failed")
     ratio = pre_split / (2 * 0.30)
     assert f"median before / (factor x median after) = {ratio:.2f}" in check.detail
 
 
-def test_the_split_route_needs_four_distributions_on_each_side():
-    check = basis(vti_rows(0.60, start="2007-12-01"), start="2007-12-01")
-    assert not check.passed and "3 before, 4 after (needs 4 each)" in check.detail
+def test_split_adjusted_pre_split_amounts_fail_despite_listed_post_split_matches(monkeypatch):
+    # The statistical probe: pre-split amounts served split-adjusted, and two listed
+    # post-split amounts that match. Post-split matches say nothing about the other side.
+    entries = invented_vti_entries(0.30, before=0, after=2)
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
+    check = basis(vti_rows(0.30))
+    assert not check.passed and check.route is None and check.split_check == "failed"
+    assert "2 (needs 2), 2 match, 0 do not" in check.detail
+    assert "listed matches 0 before, 2 after (needs 1 each)" in check.detail
+
+
+@pytest.mark.parametrize("before, after", [(0, 2), (2, 0)])
+def test_listed_matches_are_needed_on_both_sides_of_each_split(monkeypatch, before, after):
+    entries = invented_vti_entries(0.60, before=before, after=after)
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
+    check = basis(vti_rows(0.60))
+    assert not check.passed and check.split_check == "agreed"  # fails on (ii) alone
+    assert f"listed matches {before} before, {after} after" in check.detail
+
+
+def test_a_distribution_on_a_split_session_fails_the_fund(monkeypatch):
+    rows = vti_rows(0.60)
+    for row in rows:
+        if row["date"].startswith(VTI_SPLIT):
+            row["divCash"] = 0.15  # an invented amount whose share basis cannot be known
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(0.60))
+    check = basis(rows)
+    assert not check.passed and check.split_check == "agreed"
+    assert "distributions on the split session 1" in check.detail
+
+
+def test_a_split_ratio_that_is_not_computable_neither_passes_nor_fails(monkeypatch):
+    start = "2007-12-01"  # three pre-split distributions only
+    assert not basis(vti_rows(0.60, start=start), start=start).passed
+    entries = invented_vti_entries(0.60, start=start)
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
+    check = basis(vti_rows(0.60, start=start), start=start)
+    assert check.passed and check.split_check == "not_computable"
+    assert "3 before, 4 after (needs 4 each), not computable" in check.detail
 
 
 def test_the_amount_route_needs_two_exact_primary_source_matches(monkeypatch):
@@ -548,13 +622,16 @@ def test_the_amount_route_needs_two_exact_primary_source_matches(monkeypatch):
         check = basis(agg_rows(), fund="AGG")
         assert check.passed is passed, (entries, check)
         assert check.route == ("verified_distributions" if passed else None)
+        assert check.split_check == "no_split"
 
 
-def test_a_mismatched_primary_source_amount_fails_even_a_verified_split(monkeypatch):
-    date = quarterly(AUDIT_START, AUDIT_END)[0]
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", {("VTI", date): 0.61})
+def test_a_mismatched_primary_source_amount_fails_the_fund(monkeypatch):
+    pre_split_date = quarterly(AUDIT_START, AUDIT_END)[1]
+    entries = invented_vti_entries(0.60) | {("VTI", pre_split_date): 0.61}
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
     check = basis(vti_rows(0.60))
-    assert not check.passed and "1 do not" in check.detail
+    assert not check.passed and check.split_check == "agreed"
+    assert "3 (needs 2), 2 match, 1 do not" in check.detail
 
 
 def test_a_fund_without_distributions_cannot_be_verified(verified):
@@ -568,6 +645,24 @@ def test_direct_use_of_the_adapter_stores_nothing_unverified(tmp_path):
     with pytest.raises(FundDataRefused):
         ingest_batch(tmp_path, fetch(funds=("VTI",)))
     assert list(tmp_path.iterdir()) == []
+
+
+def test_verified_batch_stores_only_tables_rebuilt_from_the_payload(verified):
+    retrieval = retrieve(funds=("VTI", "AGG"))
+    batch = verified_batch(retrieval)
+    assert batch.distributions.equals(parse_payload(retrieval.raw_payload).distributions)
+    changed = retrieval.distributions.copy()
+    changed.loc[changed.index[0], "amount"] = 0.5  # an in-memory edit the payload lacks
+    tampered = dataclasses.replace(retrieval, distributions=changed)
+    for call in (verified_batch, verify_distribution_basis):
+        refused(TiingoRefusal.PAYLOAD_MISMATCH, call, tampered)
+    for change in (
+        {"fund_ids": ("VTI",)},
+        {"start": day("2014-06-03")},
+        {"end_exclusive": day("2014-06-13")},
+    ):
+        mismatched = dataclasses.replace(retrieval, **change)
+        refused(TiingoRefusal.PAYLOAD_MISMATCH, verified_batch, mismatched)
 
 
 # --- the stored payload ----------------------------------------------------------
@@ -614,12 +709,17 @@ def _past_the_cap(envelope) -> None:
     envelope["end_date"] = f"{MODEL_HOLDOUT_START.date()}"
 
 
+def _reversed_dates(envelope) -> None:
+    envelope["start_date"] = "2014-06-14"  # after its end_date, 2014-06-13
+
+
 @pytest.mark.parametrize(
     "change, reason",
     [
         (_adjusted_field, TiingoRefusal.NON_ALLOWLISTED_FIELD),
         (_unverified_split, TiingoRefusal.UNVERIFIED_SPLIT_FACTOR),
         (_past_the_cap, RefusalReason.REQUEST_AFTER_CAP),
+        (_reversed_dates, RefusalReason.INVALID_REQUEST),
     ],
 )
 def test_a_stored_payload_is_rechecked_on_re_parse(change, reason):
@@ -891,14 +991,28 @@ def test_a_case_variant_path_into_the_repository_is_refused(tmp_path, repo):
         assert audit.private_root(variant / "store", repo) == (variant / "store").resolve()
 
 
-def test_the_root_is_made_private_even_when_it_already_exists(tmp_path, repo, capsys):
+def test_an_existing_root_open_to_others_is_refused_and_never_changed(tmp_path, repo, capsys):
     existing = tmp_path / "existing"
     existing.mkdir()
-    os.chmod(existing, 0o755)
+    for mode in (0o755, 0o710, 0o701):
+        os.chmod(existing, mode)
+        argv = ["--root", str(existing), "--authorized"]
+        assert audit.main(argv, adapter_factory=never, project_root=repo) == 2
+        error = capsys.readouterr().err
+        assert "restrict it yourself" in error and "chmod 700" in error
+        assert stat.S_IMODE(existing.stat().st_mode) == mode  # the audit never changes it
+    afile = tmp_path / "afile"
+    afile.write_text("", encoding="utf-8")
+    argv = ["--root", str(afile), "--authorized"]
+    assert audit.main(argv, adapter_factory=never, project_root=repo) == 2
+    assert "not a directory" in capsys.readouterr().err
+    # A private existing root is used as it is; a missing root is created private.
+    os.chmod(existing, 0o700)
     fresh = tmp_path / "fresh" / "store"
     for root in (existing, fresh):
         transport = FakeTransport(status={"VTI": 429})
-        run_audit(root, repo, transport, funds=("VTI",), start=START, end=END_EXCLUSIVE)
+        code = run_audit(root, repo, transport, funds=("VTI",), start=START, end=END_EXCLUSIVE)
+        assert code == 1 and len(transport.calls) == 1  # past the root check, then refused
         assert stat.S_IMODE(root.stat().st_mode) == 0o700
     capsys.readouterr()
 
@@ -910,8 +1024,9 @@ def _section(lines: list[str], fund: str, following: str | None) -> list[str]:
 
 def test_an_offline_audit_verifies_every_fund_then_stores(tmp_path, repo, capsys, monkeypatch):
     dates = quarterly(AUDIT_START, AUDIT_END)
-    # Invented primary-source entries for AGG's fixture (test-only, not real amounts).
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", {("AGG", d): 0.40 for d in dates[:2]})
+    # Invented primary-source entries matching the fixtures (test-only, not real amounts).
+    entries = invented_vti_entries(0.60) | {("AGG", d): 0.40 for d in dates[:2]}
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
     rows = {"VTI": vti_rows(0.60), "AGG": agg_rows()}
     transport = FakeTransport(prices=rows)
     root = tmp_path / "private"
@@ -933,49 +1048,86 @@ def test_an_offline_audit_verifies_every_fund_then_stores(tmp_path, repo, capsys
         in vti
     )
     assert any(
-        line.startswith("  distribution basis: verified by verified_split (split 2008-06-18 x2")
+        line.startswith(
+            "  distribution basis: verified against primary-source amounts; split check agreed ("
+        )
+        and "listed matches 1 before, 1 after" in line
         and "= 1.00, within" in line
         for line in vti
     )
     assert any(
-        line.startswith("  distribution basis: verified by verified_distributions")
+        line.startswith(
+            "  distribution basis: verified against primary-source amounts; split check no_split ("
+        )
         and "2 (needs 2), 2 match, 0 do not" in line
         for line in agg
     )
     assert "vendor-adjusted reconciliation: not performed" in out
-    assert "total return: pending OD8 group A (T5-A)" in out
+    assert "total return: not computed by the audit (OD8 group A descriptive calculations)" in out
     assert "stored tables match a re-parse of the stored raw payload: True" in out
     assert TOKEN not in out and "40.0" not in out and "0.6" not in out
     batch = read_batch(next(root.iterdir()))
     assert batch.record.vintage_note.endswith(
-        "VTI by verified_split, AGG by verified_distributions"
+        "distribution basis verified against primary-source amounts: VTI, AGG"
     )
     assert _tree(repo) == {repo / "data", repo / "data" / "raw"}  # nothing written in the repo
 
 
-def test_one_unverified_fund_means_nothing_is_stored(tmp_path, repo, capsys):
+def test_vti_alone_is_refused_without_primary_source_amounts(tmp_path, repo, capsys):
+    root = tmp_path / "private"
+    transport = FakeTransport(prices={"VTI": vti_rows(0.60)})
+    code = run_audit(root, repo, transport, funds=("VTI",))  # the real, empty allowlist
+    captured = capsys.readouterr()
+    assert code == 1 and list(root.iterdir()) == []
+    assert "NOT STORED unverified_distribution_basis: VTI;" in captured.err
+    assert "  distribution basis: NOT verified; split check agreed (" in captured.out
+
+
+def test_one_unverified_fund_means_nothing_is_stored(tmp_path, repo, capsys, monkeypatch):
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(0.60))
     root = tmp_path / "private"
     transport = FakeTransport(prices={"VTI": vti_rows(0.60), "AGG": agg_rows()})
-    code = run_audit(root, repo, transport)  # the real, empty distribution allowlist
+    code = run_audit(root, repo, transport)  # AGG has no listed amounts
     captured = capsys.readouterr()
     assert code == 1 and list(root.iterdir()) == []
     assert "NOT STORED unverified_distribution_basis: AGG;" in captured.err
-    assert "  distribution basis: NOT verified (no verified split in the window;" in captured.out
-    assert "  distribution basis: verified by verified_split" in captured.out  # VTI passed
+    assert (
+        "  distribution basis: NOT verified; split check no_split (verified distributions in "
+        "the window: 0 (needs 2)" in captured.out
+    )
+    verified_vti = "  distribution basis: verified against primary-source amounts; split check"
+    assert verified_vti in captured.out  # VTI passed
     assert "stored" not in captured.out.replace("NOT STORED", "")
 
 
-def test_split_adjusted_div_cash_is_never_stored(tmp_path, repo, capsys):
+def test_split_adjusted_div_cash_is_never_stored(tmp_path, repo, capsys, monkeypatch):
+    # Two listed post-split amounts match, but the pre-split side was served split-adjusted.
+    entries = invented_vti_entries(0.30, before=0, after=2)
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
     root = tmp_path / "private"
     transport = FakeTransport(prices={"VTI": vti_rows(pre_split_dividend=0.30)})
     code = run_audit(root, repo, transport, funds=("VTI",))
     captured = capsys.readouterr()
     assert code == 1 and list(root.iterdir()) == []
     assert "NOT STORED unverified_distribution_basis: VTI;" in captured.err
-    assert "= 0.50, outside" in captured.out
+    assert "split check failed" in captured.out and "= 0.50, outside" in captured.out
 
 
-def test_a_stored_audit_holds_no_key_adjusted_level_or_metadata(tmp_path, repo, capsys):
+def test_a_failed_re_parse_comparison_exits_with_an_error(tmp_path, repo, capsys, monkeypatch):
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(0.60))
+    monkeypatch.setattr(audit, "reparse_matches", lambda batch: False)
+    transport = FakeTransport(prices={"VTI": vti_rows(0.60)})
+    code = run_audit(tmp_path / "private", repo, transport, funds=("VTI",))
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "stored tables match a re-parse of the stored raw payload: False" in captured.out
+    assert "FAILED the stored tables differ from a re-parse" in captured.err
+
+
+def test_a_stored_audit_holds_no_key_adjusted_level_or_metadata(
+    tmp_path, repo, capsys, monkeypatch
+):
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(0.60))
     root = tmp_path / "private"
     assert run_audit(root, repo, FakeTransport(prices={"VTI": vti_rows(0.60)}), funds=("VTI",)) == 0
     capsys.readouterr()

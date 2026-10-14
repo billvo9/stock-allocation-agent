@@ -9,8 +9,8 @@ Two phases; nothing is stored unless every fund is verified.
    per fund, allowlisted columns only, each response checked before the next
    request, no retry). A success means every element held exactly the
    allowlisted fields and every reported split was verified. The script then
-   verifies each fund's distribution basis (a verified split, or verified
-   primary-source amounts) and prints aggregates only:
+   verifies each fund's distribution basis (primary-source amounts are
+   required; the split ratio can only fail a fund) and prints aggregates only:
    - row counts, first and last sessions, and missing NYSE sessions;
    - distributions per year;
    - verified splits, with the raw-close ratio the adapter enforced;
@@ -18,13 +18,17 @@ Two phases; nothing is stored unless every fund is verified.
 2. Store. Only when every fund passes does it store the batch with F1
    `ingest_batch` under the private root, read it back with the fail-closed
    reader, and check that the stored tables equal a re-parse of the stored
-   payload. Otherwise nothing is stored and the reason is reported.
+   payload (exit 1 if not). Otherwise nothing is stored and the reason is
+   reported.
 
-It never prints prices or the key, and writes vendor data only under `--root`,
-which must lie outside every repository or under that repository's ignored
-`data/raw/`. It requests no adjusted series and performs no vendor-adjusted
-reconciliation (that needs a separate, owner-approved isolated procedure),
-and it computes no return (pending OD8 group A, T5-A).
+It never prints prices, amounts or the key, and writes vendor data only under
+`--root`, which must lie outside every repository or under that repository's
+ignored `data/raw/`. A missing root is created with mode 0o700; an existing
+root whose mode grants any group or other permission is refused, and the
+owner restricts it. It requests no adjusted series and performs no
+vendor-adjusted reconciliation (that needs a separate, owner-approved isolated
+procedure), and it computes no return (returns belong to the OD8 group A
+descriptive calculations, not the audit).
 
 Usage:
     PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py \
@@ -35,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import stat
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -166,9 +171,33 @@ def verification_lines(retrieval: Retrieval, checks: tuple[BasisCheck, ...]) -> 
                 or "none"
             )
         )
-        verdict = f"verified by {check.route}" if check.passed else "NOT verified"
-        lines.append(f"  distribution basis: {verdict} ({check.detail})")
+        verdict = "verified against primary-source amounts" if check.passed else "NOT verified"
+        lines.append(
+            f"  distribution basis: {verdict}; split check {check.split_check} ({check.detail})"
+        )
     return lines
+
+
+def prepare_root(root: Path) -> str | None:
+    """
+    Create a missing root with mode 0o700. An existing root is never changed:
+    it must be a directory that grants no group or other permission. Returns
+    the refusal message, or None.
+    """
+
+    if not root.exists():
+        root.mkdir(mode=ROOT_MODE, parents=True)
+        os.chmod(root, ROOT_MODE)  # only the directory created here
+        return None
+    if not root.is_dir():
+        return f"--root {root} exists and is not a directory"
+    mode = stat.S_IMODE(root.stat().st_mode)
+    if mode & 0o077:
+        return (
+            f"--root {root} has mode {mode:o}, which grants group or other access; "
+            f"restrict it yourself (for example `chmod 700 {root}`) and run again"
+        )
+    return None
 
 
 def reparse_matches(batch: StoredBatch) -> bool:
@@ -216,14 +245,16 @@ def main(
         print(f"Refused: {error}", file=sys.stderr)
         return 2
 
-    root.mkdir(mode=ROOT_MODE, parents=True, exist_ok=True)
-    os.chmod(root, ROOT_MODE)  # also for a root that already existed
+    refusal = prepare_root(root)
+    if refusal is not None:
+        print(f"Refused: {refusal}", file=sys.stderr)
+        return 2
     try:
         retrieval = adapter_factory().retrieve(args.funds, start, end_exclusive)
+        checks = verify_distribution_basis(retrieval)
     except (FundDataRefused, TiingoRequestFailed) as error:
         print(f"REFUSED {error}", file=sys.stderr)
         return 1
-    checks = verify_distribution_basis(retrieval)
     for line in verification_lines(retrieval, checks):
         print(line)
     print()
@@ -231,7 +262,7 @@ def main(
         "vendor-adjusted reconciliation: not performed; it needs an owner-approved isolated "
         "audit procedure (docs/research/f1_fund_data.md)"
     )
-    print("total return: pending OD8 group A (T5-A)")
+    print("total return: not computed by the audit (OD8 group A descriptive calculations)")
     if not all(check.passed for check in checks):
         failing = " ".join(check.fund_id for check in checks if not check.passed)
         print(
@@ -245,9 +276,16 @@ def main(
     except FundDataRefused as error:
         print(f"REFUSED {error}", file=sys.stderr)
         return 1
+    matches = reparse_matches(stored)
     print(f"stored batch: {stored.record.batch_id}")
-    print(f"stored tables match a re-parse of the stored raw payload: {reparse_matches(stored)}")
+    print(f"stored tables match a re-parse of the stored raw payload: {matches}")
     print(f"stored under: {stored.path}")
+    if not matches:
+        print(
+            "FAILED the stored tables differ from a re-parse of the stored raw payload",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

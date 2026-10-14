@@ -1,10 +1,13 @@
 """
 The replaceable fund-data adapter seam and a deterministic synthetic adapter.
 
-An adapter does retrieval and parsing only. It returns the raw provider bytes
-(stored as-is beside the tables, so they can be re-parsed later), the
-instrument mapping it used (fund id to the source's symbol and security id)
-and the parsed rows without storage ids. Everything else (validation, the
+An adapter does retrieval and parsing only. It returns a raw payload (stored
+as-is beside the tables, so they can be re-parsed later), the instrument
+mapping it used (fund id to the source's symbol and security id) and the
+parsed rows without storage ids. The raw payload is the provider's bytes
+exactly as retrieved, unless the adapter's own documentation defines it
+instead as a canonical envelope of the allowlisted fields it uses (the Tiingo
+adapter does, so that nothing outside its allowlist is persisted). Everything else (validation, the
 lockbox cap, batch ids, writing) belongs to `ingest`, so swapping a provider
 changes one adapter and nothing downstream. An adapter calls
 `validation.validate_request` before retrieving, so a request reaching the

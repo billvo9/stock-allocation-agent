@@ -553,7 +553,8 @@ class BatchRecord:
     `request` covers [start, end_exclusive) as session dates. `instruments`
     maps each requested fund to the source's symbol and optional security id.
     `retrieved_at` is the actual retrieval time (UTC). `raw_payload_sha256`
-    hashes the raw provider bytes stored beside the tables. `vintage_note`
+    hashes the adapter's raw payload stored beside the tables (the provider's
+    bytes, or an adapter-documented canonical envelope). `vintage_note`
     describes what the source's values reflect at retrieval.
     `assumed_availability_rule` must be None until OD9 approves a rule.
     """
