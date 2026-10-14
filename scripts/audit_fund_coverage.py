@@ -4,27 +4,27 @@ Aggregate coverage audit of Tiingo fund data, for private local research.
 Prepared, not yet run: it contacts Tiingo, so run it only after the owner has
 configured `TIINGO_API_KEY` locally and authorized the run (`--authorized`).
 
-It fetches the funds through the Tiingo adapter (one prices call per fund,
-allowlisted columns only, no retry). A success means every element held
-exactly the allowlisted fields, so Tiingo honoured `columns`; any other field
-refuses the batch (`non_allowlisted_field`). Before storing, it checks the
-divCash share basis at each verified split. It then stores the batch with F1
-`ingest_batch` under a private root, reads it back with the fail-closed
-reader, and prints aggregate facts only:
-- row counts, first and last sessions, and missing NYSE sessions;
-- distributions per year;
-- verified splits, with the raw-close consistency ratio the adapter enforced;
-- the divCash share-basis check: the median of the last pre-split divCash
-  amounts over the median of the first post-split amounts. About the split
-  factor means per share as paid; about 1 means split-adjusted, and then the
-  batch is not stored, because its `per_share_as_paid` label would be wrong;
-- whether the stored tables match a re-parse of the stored raw payload.
+Two phases; nothing is stored unless every fund is verified.
+1. Verify in memory. The Tiingo adapter retrieves the funds (one prices call
+   per fund, allowlisted columns only, each response checked before the next
+   request, no retry). A success means every element held exactly the
+   allowlisted fields and every reported split was verified. The script then
+   verifies each fund's distribution basis (a verified split, or verified
+   primary-source amounts) and prints aggregates only:
+   - row counts, first and last sessions, and missing NYSE sessions;
+   - distributions per year;
+   - verified splits, with the raw-close ratio the adapter enforced;
+   - each fund's distribution-basis verification (counts and ratios).
+2. Store. Only when every fund passes does it store the batch with F1
+   `ingest_batch` under the private root, read it back with the fail-closed
+   reader, and check that the stored tables equal a re-parse of the stored
+   payload. Otherwise nothing is stored and the reason is reported.
 
 It never prints prices or the key, and writes vendor data only under `--root`,
-which must lie outside the repository or under its ignored `data/raw/`. It
-requests no adjusted series and performs no vendor-adjusted reconciliation
-(that needs a separate, owner-approved isolated procedure), and it computes no
-return (pending OD8 group A, T5-A).
+which must lie outside every repository or under that repository's ignored
+`data/raw/`. It requests no adjusted series and performs no vendor-adjusted
+reconciliation (that needs a separate, owner-approved isolated procedure),
+and it computes no return (pending OD8 group A, T5-A).
 
 Usage:
     PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py \
@@ -34,16 +34,14 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import math
+import os
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
 from stock_agent.calendars import nyse
-from stock_agent.data.funds.adapter import FundDataAdapter
 from stock_agent.data.funds.ingest import ingest_batch
 from stock_agent.data.funds.reader import StoredBatch, read_batch
 from stock_agent.data.funds.schema import (
@@ -55,34 +53,53 @@ from stock_agent.data.funds.schema import (
 )
 from stock_agent.data.vendors.tiingo import (
     ALLOWED_FIELDS,
+    BasisCheck,
+    Retrieval,
     TiingoAdapter,
     TiingoRequestFailed,
     parse_payload,
+    verified_batch,
+    verify_distribution_basis,
 )
 from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FUNDS = ("VTI", "AGG", "SHV")
-BASIS_WINDOW = 4  # distributions compared on each side of a split (a year of quarterlies)
-PER_SHARE_AS_PAID = "per share as paid"
-SPLIT_ADJUSTED = "split-adjusted"
-INSUFFICIENT = "insufficient distributions"
+ROOT_MODE = 0o700
 _SHOWN = 10  # dates listed per finding
 
 
+def _is_repository(path: Path, project_root: Path) -> bool:
+    return os.path.samefile(path, project_root) or (path / ".git").exists()
+
+
 def private_root(root: Path, project_root: Path) -> Path:
-    """The resolved root; ValueError if it would place vendor data in the repository."""
+    """
+    The resolved root, or ValueError if it could place vendor data in a
+    repository. Every existing ancestor is checked with `os.path.samefile`
+    (which also matches a case-variant path on a case-insensitive file
+    system). An ancestor that is this repository, or holds a `.git` (another
+    clone or a worktree), is allowed only when the root lies strictly inside
+    that repository's `data/raw/`. A root that contains this repository is
+    refused too.
+    """
 
     resolved = root.expanduser().resolve()
-    repo = project_root.resolve()
-    raw = (repo / "data" / "raw").resolve()
-    if resolved.is_relative_to(repo):
-        if resolved == raw or not resolved.is_relative_to(raw):
+    existing = [path for path in (resolved, *resolved.parents) if path.exists()]
+    for index, ancestor in enumerate(existing):
+        if not _is_repository(ancestor, project_root):
+            continue
+        raw = ancestor / "data" / "raw"
+        below = [path for path in existing[:index] if path != resolved]
+        if not (raw.is_dir() and any(os.path.samefile(path, raw) for path in below)):
             raise ValueError(
-                f"--root {resolved} is inside the repository; use a directory outside it "
-                "or a subdirectory of data/raw/"
+                f"--root {resolved} is inside the repository {ancestor}; use a directory "
+                "outside it or a subdirectory of its data/raw/"
             )
-    elif repo.is_relative_to(resolved):
+    project = project_root.resolve()
+    if resolved.exists() and any(
+        os.path.samefile(resolved, path) for path in (project, *project.parents)
+    ):
         raise ValueError(f"--root {resolved} contains the repository")
     return resolved
 
@@ -93,85 +110,36 @@ def _dates(values: pd.Series) -> str:
     return (", ".join(shown) + more) if shown else "none"
 
 
-@dataclass(frozen=True)
-class ShareBasisCheck:
-    fund_id: str
-    split_date: pd.Timestamp
-    factor: float
-    before: int
-    after: int
-    ratio: float | None
-    verdict: str
-
-
-def share_basis_checks(distributions: pd.DataFrame, splits: pd.DataFrame) -> list[ShareBasisCheck]:
-    """
-    At each split: median divCash of the last `BASIS_WINDOW` ex-dates before it
-    over the median of the first `BASIS_WINDOW` from it on. Amounts per share
-    as paid fall by the split factor, so the ratio is near the factor;
-    split-adjusted amounts give a ratio near 1. The verdict is whichever is
-    nearer on a log scale. A heuristic: a dividend change near the split moves it.
-    """
-
-    checks = []
-    for split in splits.itertuples():
-        own = distributions[distributions["fund_id"] == split.fund_id].sort_values("ex_date")
-        before = own.loc[own["ex_date"] < split.effective_date, "amount"].iloc[-BASIS_WINDOW:]
-        after = own.loc[own["ex_date"] >= split.effective_date, "amount"].iloc[:BASIS_WINDOW]
-        ratio, verdict = None, INSUFFICIENT
-        if len(before) >= 2 and len(after) >= 2:
-            ratio = float(before.median() / after.median())
-            nearer_factor = abs(math.log(ratio / split.ratio_new_per_old)) < abs(math.log(ratio))
-            verdict = PER_SHARE_AS_PAID if nearer_factor else SPLIT_ADJUSTED
-        checks.append(
-            ShareBasisCheck(
-                split.fund_id,
-                split.effective_date,
-                split.ratio_new_per_old,
-                len(before),
-                len(after),
-                ratio,
-                verdict,
-            )
-        )
-    return checks
-
-
-def _split_line(batch: StoredBatch, split) -> str:
+def _split_line(prices: pd.DataFrame, split) -> str:
     """The split with the raw-close ratio the adapter enforced: about 1 if unadjusted."""
 
-    closes = batch.prices[batch.prices["fund_id"] == split.fund_id].set_index("session_date")
+    closes = prices[prices["fund_id"] == split.fund_id].set_index("session_date")["close"]
     previous = nyse.sessions(nyse.COVERAGE.first, split.effective_date - pd.Timedelta(days=1))[-1]
-    ratio = (
-        closes.loc[split.effective_date, "close"]
-        * split.ratio_new_per_old
-        / closes.loc[previous, "close"]
-    )
+    ratio = closes[split.effective_date] * split.ratio_new_per_old / closes[previous]
     return (
         f"{split.effective_date:%Y-%m-%d} x{split.ratio_new_per_old:g} (verified; raw close x "
         f"factor / previous raw close {ratio:.2f})"
     )
 
 
-def audit_lines(batch: StoredBatch, checks: list[ShareBasisCheck]) -> list[str]:
-    record = batch.record
-    end_date = record.end_exclusive - pd.Timedelta(days=1)
-    window = f"[{record.start:%Y-%m-%d}, {record.end_exclusive:%Y-%m-%d})"
+def verification_lines(retrieval: Retrieval, checks: tuple[BasisCheck, ...]) -> list[str]:
+    """Phase 1: aggregates of the in-memory retrieval and its basis verification."""
+
+    end_date = retrieval.end_exclusive - pd.Timedelta(days=1)
+    window = f"[{retrieval.start:%Y-%m-%d}, {retrieval.end_exclusive:%Y-%m-%d})"
+    expected = nyse.sessions(retrieval.start, end_date)
     lines = [
         "Tiingo coverage audit (aggregate counts, dates and ratios; no prices are printed)",
-        f"request: {' '.join(record.fund_ids)} {window}, Tiingo endDate {end_date:%Y-%m-%d}",
-        f"batch: {record.batch_id} (retrieved_at {record.retrieved_at})",
+        f"request: {' '.join(retrieval.fund_ids)} {window}, Tiingo endDate {end_date:%Y-%m-%d}",
+        f"retrieved_at {retrieval.retrieved_at}",
         f"field allowlist: every element had exactly {', '.join(ALLOWED_FIELDS)}",
-        "stored: unadjusted closes, divCash distributions, verified splits only",
     ]
-    for fund in record.fund_ids:
-        prices = batch.prices[batch.prices["fund_id"] == fund]
+    for fund, check in zip(retrieval.fund_ids, checks, strict=True):
+        prices = retrieval.prices[retrieval.prices["fund_id"] == fund]
         sessions = prices["session_date"].sort_values()
-        missing = batch.missing_sessions.loc[
-            batch.missing_sessions["fund_id"] == fund, "session_date"
-        ].sort_values()
-        distributions = batch.distributions[batch.distributions["fund_id"] == fund]
-        splits = batch.splits[batch.splits["fund_id"] == fund]
+        missing = pd.Series(expected[~expected.isin(sessions)])
+        distributions = retrieval.distributions[retrieval.distributions["fund_id"] == fund]
+        splits = retrieval.splits[retrieval.splits["fund_id"] == fund]
         lines.append("")
         lines.append(fund)
         lines.append(f"  price rows (unadjusted): {len(prices)}")
@@ -193,21 +161,13 @@ def audit_lines(batch: StoredBatch, checks: list[ShareBasisCheck]) -> list[str]:
         )
         lines.append(
             "  splits: "
-            + (", ".join(_split_line(batch, split) for split in splits.itertuples()) or "none")
-        )
-        for check in (check for check in checks if check.fund_id == fund):
-            ratio = "n/a" if check.ratio is None else f"{check.ratio:.2f}"
-            lines.append(
-                f"  divCash share basis at {check.split_date:%Y-%m-%d} x{check.factor:g}: "
-                f"median of {check.before} before / median of {check.after} after = {ratio} "
-                f"-> {check.verdict}"
+            + (
+                ", ".join(_split_line(retrieval.prices, row) for row in splits.itertuples())
+                or "none"
             )
-    lines.append("")
-    lines.append(
-        "vendor-adjusted reconciliation: not performed; it needs an owner-approved isolated "
-        "audit procedure (docs/research/f1_fund_data.md)"
-    )
-    lines.append("total return: pending OD8 group A (T5-A)")
+        )
+        verdict = f"verified by {check.route}" if check.passed else "NOT verified"
+        lines.append(f"  distribution basis: {verdict} ({check.detail})")
     return lines
 
 
@@ -226,7 +186,7 @@ def reparse_matches(batch: StoredBatch) -> bool:
 def main(
     argv: list[str] | None = None,
     *,
-    adapter_factory: Callable[[], FundDataAdapter] = TiingoAdapter,
+    adapter_factory: Callable[[], TiingoAdapter] = TiingoAdapter,
     project_root: Path = PROJECT_ROOT,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
@@ -256,25 +216,36 @@ def main(
         print(f"Refused: {error}", file=sys.stderr)
         return 2
 
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.mkdir(mode=ROOT_MODE, parents=True, exist_ok=True)
+    os.chmod(root, ROOT_MODE)  # also for a root that already existed
     try:
-        raw = adapter_factory().fetch(args.funds, start, end_exclusive)
-        checks = share_basis_checks(raw.distributions, raw.splits)
-        wrong = [check for check in checks if check.verdict == SPLIT_ADJUSTED]
-        if wrong:
-            first = wrong[0]
-            print(
-                f"REFUSED divcash_basis_mismatch: {first.fund_id} divCash looks split-adjusted "
-                f"at {first.split_date:%Y-%m-%d} (ratio {first.ratio:.2f}); not stored",
-                file=sys.stderr,
-            )
-            return 1
-        stored = read_batch(ingest_batch(root, raw).path)
+        retrieval = adapter_factory().retrieve(args.funds, start, end_exclusive)
     except (FundDataRefused, TiingoRequestFailed) as error:
         print(f"REFUSED {error}", file=sys.stderr)
         return 1
-    for line in audit_lines(stored, checks):
+    checks = verify_distribution_basis(retrieval)
+    for line in verification_lines(retrieval, checks):
         print(line)
+    print()
+    print(
+        "vendor-adjusted reconciliation: not performed; it needs an owner-approved isolated "
+        "audit procedure (docs/research/f1_fund_data.md)"
+    )
+    print("total return: pending OD8 group A (T5-A)")
+    if not all(check.passed for check in checks):
+        failing = " ".join(check.fund_id for check in checks if not check.passed)
+        print(
+            f"NOT STORED unverified_distribution_basis: {failing}; nothing may be stored "
+            "under an unverified basis",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        stored = read_batch(ingest_batch(root, verified_batch(retrieval)).path)
+    except FundDataRefused as error:
+        print(f"REFUSED {error}", file=sys.stderr)
+        return 1
+    print(f"stored batch: {stored.record.batch_id}")
     print(f"stored tables match a re-parse of the stored raw payload: {reparse_matches(stored)}")
     print(f"stored under: {stored.path}")
     return 0

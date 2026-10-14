@@ -1,42 +1,62 @@
 """
 The Tiingo end-of-day adapter for the F1 fund-data store.
 
-Built to the owner's requirements of 2026-10-14. Tiingo's endpoint shape and
-field meanings are recalled from its documentation [unverified]; the
-owner-authorized coverage audit (`scripts/audit_fund_coverage.py`) checks them.
+Built to the owner's requirements of 2026-10-14 and the independent review
+that followed. Tiingo's endpoint shape and field meanings are recalled from its
+documentation [unverified]; the owner-authorized coverage audit
+(`scripts/audit_fund_coverage.py`) checks them.
+
+Two phases (nothing reaches the store unverified)
+    `TiingoAdapter.retrieve` requests, checks and parses in memory and returns
+    a `Retrieval`. `verified_batch` turns a retrieval into an F1 `RawBatch` only
+    when every fund passes `verify_distribution_basis`; otherwise it refuses
+    with `unverified_distribution_basis`. `fetch` (the F1 seam) does both, so a
+    caller that passes its result to `ingest_batch` stores only verified data.
 
 Request (prices only; the metadata endpoint is never called)
-    The F1 request check runs first, and the adapter refuses before any
-    request unless `end_exclusive` is at most `MODEL_HOLDOUT_START`, so the
-    requested `endDate` is at most the day before it. One call per fund:
+    The F1 request check refuses, before the key is read or any request is
+    made, an `end_exclusive` after `MODEL_HOLDOUT_START` (so `endDate` is at
+    most the day before it) and more than `MAX_TICKERS` funds. One call per
+    fund, in order, each response checked before the next request:
 
         GET https://api.tiingo.com/tiingo/daily/{ticker}/prices?startDate=<start>
             &endDate=<end_exclusive - 1 day>&format=json&resampleFreq=daily
-            &columns=date,close,volume,divCash,splitFactor
+            &columns=date,close,divCash,splitFactor
 
-    Tiingo's `endDate` is inclusive. `retrieved_at` is read from the injected
-    clock after the last response arrives.
+    `retrieved_at` is read from the injected clock after the last response.
 
 Field allowlist (the lockbox information-content rule)
     `docs/product/architecture.md`, section 4, rule 7: "dated" means
     information content. Adjusted levels and vendor metadata carry information
     from after the holdout start, so they are never requested, parsed or
-    stored. Each element must hold exactly `ALLOWED_FIELDS`. Any other field
-    (for example `adjClose`) refuses the batch with `non_allowlisted_field`:
-    that is how the audit learns whether Tiingo honours `columns`. A refused
-    response is never stored or logged, and refusal details name fields,
-    dates and indices only, never a value.
+    stored; volume is not requested either (its split basis is unverified).
+    Each element must hold exactly `ALLOWED_FIELDS`. Any other field refuses
+    the batch with `non_allowlisted_field`, which is how the audit learns
+    whether Tiingo honours `columns`. A refused response is never stored or
+    logged; refusal details name fields, dates and indices, never a value.
 
 Mapping
-    close, volume   -> `prices`, basis `unadjusted` only
-    divCash > 0     -> `distributions`: amount = divCash, `per_share_as_paid`
-                       [unverified until the audit], type `unknown`, sequence 0,
-                       declaration, record and pay dates NULL (Tiingo has none)
-    splitFactor     -> `splits` only for a share-count split in the reviewed
-                       `VERIFIED_SPLITS` allowlist, on the same session, with the
-                       same factor, and with a raw close consistent with an
-                       unadjusted price (`SPLIT_PRICE_TOLERANCE`). Any other
-                       factor != 1 refuses the batch.
+    close        -> `prices`, basis `unadjusted` only; volume NULL
+    divCash > 0  -> `distributions`: amount = divCash, `per_share_as_paid`
+                    (stored only after the basis is verified, below), type
+                    `unknown`, sequence 0, declaration, record and pay dates NULL
+    splitFactor  -> `splits` only for a share-count split in the reviewed
+                    `VERIFIED_SPLITS` allowlist, on the same session, with the
+                    same factor, and with a raw close consistent with an
+                    unadjusted price (`split_close_consistent`). Any other
+                    factor != 1 refuses the batch.
+
+Distribution-basis verification (per fund; every fund must pass)
+    (a) A verified split in the window, with at least `MIN_SIDE` distributions
+        on each side: median(before) / (factor x median(after)) must lie
+        within the log band `log_band(factor)` around 1. Per-share-as-paid
+        amounts fall by the factor at the split; anything else is refused.
+    (b) At least `MIN_VERIFIED_AMOUNTS` entries of the reviewed
+        `VERIFIED_DISTRIBUTIONS` allowlist (primary-source amounts) in the
+        window, each matching the vendor's divCash within `AMOUNT_TOLERANCE`.
+    A fund passes by (a) or (b), and fails whenever a listed amount does not
+    match. Route (a) is relative: it cannot detect a later split that the
+    vendor applied uniformly to the whole history; only (b) is absolute.
 
 Raw payload
     The canonical JSON of the allowlisted fields actually used, keyed by
@@ -44,13 +64,14 @@ Raw payload
 
 Secrets and failures
     The key is sent only in the `Authorization: Token <key>` header, never in a
-    URL. It is read once per fetch from the injected provider (by default
+    URL. It is read once per retrieval from the injected provider (by default
     `TIINGO_API_KEY`), held in a wrapper whose repr is redacted, and never
     stored on the adapter. Any status other than 200, including 429 and 5xx,
     refuses the batch with no retry. An expected network failure
     (`TRANSPORT_FAILURES`) is reported by type only, raised outside the except
     block (no chained exception, header or body); other exception types
-    propagate unchanged. The default transport follows no redirects.
+    propagate unchanged. The default transport ignores environment proxies,
+    follows no redirects and sends the key as an unredirected header.
 
 Nothing here computes a return, adjusts a value or fills a gap.
 """
@@ -64,7 +85,7 @@ import re
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 import pandas as pd
@@ -94,13 +115,14 @@ TOKEN_ENV = "TIINGO_API_KEY"
 BASE_URL = "https://api.tiingo.com/tiingo/daily"
 SOURCE_ID = "tiingo"
 TIMEOUT_SECONDS = 30.0
-ENVELOPE_VERSION = "3"
+ENVELOPE_VERSION = "4"
+MAX_TICKERS = 20
 
 # The only fields requested, parsed and stored.
-ALLOWED_FIELDS = ("date", "close", "volume", "divCash", "splitFactor")
+ALLOWED_FIELDS = ("date", "close", "divCash", "splitFactor")
 NOT_REQUESTED = (
     "the metadata endpoint; price fields adjClose, adjHigh, adjLow, adjOpen, adjVolume, "
-    "high, low, open"
+    "high, low, open, volume"
 )
 
 # Externally verified share-count splits: (ticker, session) -> new shares per old.
@@ -109,18 +131,26 @@ VERIFIED_SPLITS = {
     # SEC EDGAR 0000036405/000093247108001251: split-adjusted trading from 2008-06-18.
     ("VTI", "2008-06-18"): 2.0,
 }
-# At a verified split, (raw close x factor) / previous raw close must lie within
-# 1 +/- this. An unadjusted close gives about 1 (the price falls by the factor);
-# a close that is already split-adjusted gives about the factor (2.0 for VTI).
-SPLIT_PRICE_TOLERANCE = 0.25
+
+# Primary-source distribution amounts per share as paid: (ticker, ex_date) ->
+# amount. Code-reviewed; every entry needs a citation comment. Empty until the
+# owner adds sourced entries: amounts are never invented.
+VERIFIED_DISTRIBUTIONS: dict[tuple[str, str], float] = {}
+
+MIN_SIDE = 4  # distributions required on each side of a verified split
+MIN_VERIFIED_AMOUNTS = 2  # VERIFIED_DISTRIBUTIONS entries required in the window
+AMOUNT_TOLERANCE = 1e-6
 
 TERMS_NOTE = (
     "Tiingo free tier, Internal Use Only; no redistribution; "
     "terms https://www.tiingo.com/about/terms accessed 2026-10-13"
 )
 VINTAGE_NOTE = (
-    "close, volume, divCash and splitFactor as served on the retrieval date; not a "
-    "point-in-time vintage; divCash share basis unverified until the coverage audit; "
+    "close, divCash and splitFactor as served on the retrieval date; not a point-in-time "
+    "vintage; the ticker-to-security mapping and the set of sessions served are Tiingo's "
+    "view at retrieval; a later split applied by Tiingo to close or divCash cannot be "
+    "detected for a fund with no verified split in the window, so its basis rests on "
+    "VERIFIED_DISTRIBUTIONS only; "
     f"requested columns {', '.join(ALLOWED_FIELDS)} only; not requested: {NOT_REQUESTED}; "
     "splits stored only from the verified share-count allowlist"
 )
@@ -147,11 +177,28 @@ Transport = Callable[[str, Mapping[str, str]], tuple[int, bytes]]
 Clock = Callable[[], pd.Timestamp]
 
 
+def log_band(factor: float) -> float:
+    """
+    The tolerance on |log ratio| for a check near 1 at a split of `factor`:
+    log 1.25, narrowed to half of |log factor| so that "ratio near 1" and
+    "ratio near the factor" can never overlap.
+    """
+
+    return min(math.log(1.25), abs(math.log(factor)) / 2)
+
+
+def split_close_consistent(ratio: float, factor: float) -> bool:
+    """(raw close x factor) / previous raw close near 1, as an unadjusted price gives."""
+
+    return ratio > 0 and abs(math.log(ratio)) < log_band(factor)
+
+
 class TiingoRefusal(StrEnum):
     NON_ALLOWLISTED_FIELD = "non_allowlisted_field"
     UNVERIFIED_SPLIT_FACTOR = "unverified_split_factor"
     SPLIT_FACTOR_MISMATCH = "split_factor_mismatch"
     SPLIT_PRICE_MISMATCH = "split_price_mismatch"
+    UNVERIFIED_DISTRIBUTION_BASIS = "unverified_distribution_basis"
 
 
 class TiingoDataRefused(FundDataRefused):
@@ -239,21 +286,37 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # urllib then raises HTTPError with the 3xx status
 
 
-def urllib_transport(
-    url: str, headers: Mapping[str, str], *, timeout: float = TIMEOUT_SECONDS
-) -> tuple[int, bytes]:
-    """
-    GET with the standard library: a timeout, no redirects, headers that are
-    never forwarded. Returns (status, body); the body is empty for an error
-    status. Network failures propagate; the adapter reports only their type.
-    """
+def build_opener() -> urllib.request.OpenerDirector:
+    """An opener that ignores environment proxies and follows no redirects."""
+
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+
+
+def build_request(url: str, headers: Mapping[str, str]) -> urllib.request.Request:
+    """A GET whose headers are unredirected: never forwarded to another URL."""
 
     request = urllib.request.Request(url, method="GET")
     for name, value in headers.items():
         request.add_unredirected_header(name, value)
-    opener = urllib.request.build_opener(_NoRedirect)
+    return request
+
+
+def urllib_transport(
+    url: str,
+    headers: Mapping[str, str],
+    *,
+    timeout: float = TIMEOUT_SECONDS,
+    opener: urllib.request.OpenerDirector | None = None,
+) -> tuple[int, bytes]:
+    """
+    GET with the standard library. Returns (status, body); the body is empty
+    for an error status (a redirect included). Network failures propagate; the
+    adapter reports only their type.
+    """
+
+    request = build_request(url, headers)
     try:
-        with opener.open(request, timeout=timeout) as response:
+        with (opener or build_opener()).open(request, timeout=timeout) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as error:
         status = error.code
@@ -315,7 +378,7 @@ def _element(label: str, element: object) -> dict:
         raise TiingoDataRefused(
             TiingoRefusal.NON_ALLOWLISTED_FIELD, f"{label} has non-allowlisted fields {extra}"
         )
-    missing = [field for field in ALLOWED_FIELDS if field not in element]
+    missing = [name for name in ALLOWED_FIELDS if name not in element]
     if missing:
         raise refuse(RefusalReason.SCHEMA_MISMATCH, f"{label} lacks {missing}")
     return element
@@ -323,11 +386,10 @@ def _element(label: str, element: object) -> dict:
 
 @dataclass(frozen=True)
 class CheckedSession:
-    """One element after every check; numbers as floats, volume as an int."""
+    """One element after every check, numbers as floats."""
 
     session: pd.Timestamp
     close: float
-    volume: int
     div_cash: float
     split_factor: float
 
@@ -360,26 +422,19 @@ def check_elements(
         if session in checked:
             raise refuse(RefusalReason.DUPLICATE_KEY, f"{label}.date {session.date()} repeats")
         close, div_cash, split_factor = (
-            _number(f"{label}.{field}", element[field])
-            for field in ("close", "divCash", "splitFactor")
+            _number(f"{label}.{name}", element[name]) for name in ALLOWED_FIELDS[1:]
         )
-        _number(f"{label}.volume", element["volume"])
-        volume = element["volume"]
         if close <= 0:
             raise refuse(RefusalReason.INVALID_VALUE, f"{label}.close must be > 0")
-        if type(volume) is not int or not 0 <= volume < 2**63:
-            raise refuse(RefusalReason.INVALID_VALUE, f"{label}.volume must be a whole number")
         if div_cash < 0 or split_factor <= 0:
             raise refuse(RefusalReason.INVALID_VALUE, f"{label} divCash < 0 or splitFactor <= 0")
-        if split_factor != 1:
-            expected = VERIFIED_SPLITS.get((ticker, f"{session:%Y-%m-%d}"))
-            if expected is None:
-                raise TiingoDataRefused(
-                    TiingoRefusal.UNVERIFIED_SPLIT_FACTOR,
-                    f"{label} reports a split factor on {session.date()}, which is not a "
-                    "verified share-count split",
-                )
-        checked[session] = CheckedSession(session, close, volume, div_cash, split_factor)
+        if split_factor != 1 and (ticker, f"{session:%Y-%m-%d}") not in VERIFIED_SPLITS:
+            raise TiingoDataRefused(
+                TiingoRefusal.UNVERIFIED_SPLIT_FACTOR,
+                f"{label} reports a split factor on {session.date()}, which is not a "
+                "verified share-count split",
+            )
+        checked[session] = CheckedSession(session, close, div_cash, split_factor)
     _check_verified_splits(ticker, checked, first, last)
     return [checked[session] for session in sorted(checked)]
 
@@ -403,16 +458,12 @@ def _check_verified_splits(
             )
         previous = nyse.sessions(nyse.COVERAGE.first, split - _ONE_DAY)[-1]
         before = checked.get(previous)
-        consistent = (
-            before is not None
-            and abs(row.close * factor / before.close - 1) <= SPLIT_PRICE_TOLERANCE
-        )
-        if not consistent:
+        if before is None or not split_close_consistent(row.close * factor / before.close, factor):
             raise TiingoDataRefused(
                 TiingoRefusal.SPLIT_PRICE_MISMATCH,
                 f"{ticker} verified split {date}: the raw close is not consistent with an "
                 f"unadjusted price across the split (previous session {previous.date()}, "
-                f"tolerance {SPLIT_PRICE_TOLERANCE:g})",
+                f"tolerance |log ratio| < {log_band(factor):.3f})",
             )
 
 
@@ -452,7 +503,7 @@ def _frames(
             "session_date": _dates([row.session for _, row in rows]),
             "close": pd.Series([row.close for _, row in rows], dtype="float64"),
             "adjustment_basis": _texts(AdjustmentBasis.UNADJUSTED.value, len(rows)),
-            "volume": pd.Series([row.volume for _, row in rows], dtype="Int64"),
+            "volume": pd.Series([pd.NA] * len(rows), dtype="Int64"),  # not requested
             "source_id": _texts(SOURCE_ID, len(rows)),
         }
     )
@@ -488,8 +539,8 @@ def _frames(
 def parse_payload(payload: bytes) -> ParsedPayload:
     """
     The transformation step: the stored envelope bytes to F1 rows, without a
-    request. It re-runs every check, so a payload with any non-allowlisted
-    field or unverified split is refused here too.
+    request. It re-runs every element check, so a payload with any
+    non-allowlisted field or unverified split is refused here too.
     """
 
     envelope = loads_strict(_utf8("the payload", payload))
@@ -500,7 +551,7 @@ def parse_payload(payload: bytes) -> ParsedPayload:
         or envelope["source_id"] != SOURCE_ID
         or envelope["fields"] != list(ALLOWED_FIELDS)
     ):
-        raise refuse(RefusalReason.INVALID_FIELD, "the payload is not a Tiingo envelope v3")
+        raise refuse(RefusalReason.INVALID_FIELD, "the payload is not a Tiingo envelope v4")
     first = parse_date("payload start_date", envelope["start_date"])
     last = parse_date("payload end_date", envelope["end_date"])
     if last >= MODEL_HOLDOUT_START:
@@ -516,6 +567,143 @@ def parse_payload(payload: bytes) -> ParsedPayload:
     return ParsedPayload(first, last, *_frames(checked))
 
 
+# --- distribution-basis verification ---------------------------------------------
+
+
+@dataclass(frozen=True, eq=False)
+class Retrieval:
+    """
+    One retrieval, in memory only: checked for the field allowlist and the
+    verified splits, but NOT for distribution basis. `verified_batch` is the
+    only way to an F1 `RawBatch`. The tables never appear in its repr.
+    """
+
+    fund_ids: tuple[str, ...]
+    start: pd.Timestamp
+    end_exclusive: pd.Timestamp
+    retrieved_at: pd.Timestamp
+    raw_payload: bytes = field(repr=False)
+    prices: pd.DataFrame = field(repr=False)
+    distributions: pd.DataFrame = field(repr=False)
+    splits: pd.DataFrame = field(repr=False)
+
+
+@dataclass(frozen=True)
+class BasisCheck:
+    """One fund's distribution-basis verification; `detail` holds counts and ratios only."""
+
+    fund_id: str
+    passed: bool
+    route: str | None  # "verified_split" or "verified_distributions" when passed
+    detail: str
+
+
+def _split_route(fund: str, retrieval: Retrieval) -> tuple[bool, str]:
+    splits = retrieval.splits[retrieval.splits["fund_id"] == fund]
+    if splits.empty:
+        return False, "no verified split in the window"
+    own = retrieval.distributions[retrieval.distributions["fund_id"] == fund]
+    own = own.sort_values("ex_date")
+    passed, notes = True, []
+    for split in splits.itertuples():
+        factor = split.ratio_new_per_old
+        before = own.loc[own["ex_date"] < split.effective_date, "amount"].iloc[-MIN_SIDE:]
+        after = own.loc[own["ex_date"] >= split.effective_date, "amount"].iloc[:MIN_SIDE]
+        label = f"split {split.effective_date:%Y-%m-%d} x{factor:g}"
+        if len(before) < MIN_SIDE or len(after) < MIN_SIDE:
+            passed = False
+            notes.append(
+                f"{label}: {len(before)} before, {len(after)} after (needs {MIN_SIDE} each)"
+            )
+            continue
+        ratio = float(before.median() / (factor * after.median()))
+        inside = abs(math.log(ratio)) < log_band(factor)
+        passed = passed and inside
+        notes.append(
+            f"{label}: median before / (factor x median after) = {ratio:.2f}, "
+            f"{'within' if inside else 'outside'} |log| < {log_band(factor):.3f}"
+        )
+    return passed, "; ".join(notes)
+
+
+def _distribution_route(fund: str, retrieval: Retrieval) -> tuple[bool, bool, str]:
+    """(passed, any mismatch, detail): listed amounts in the window against divCash."""
+
+    last = retrieval.end_exclusive - _ONE_DAY
+    listed = {
+        parse_date("verified distribution", date): amount
+        for (symbol, date), amount in VERIFIED_DISTRIBUTIONS.items()
+        if symbol == fund and retrieval.start <= parse_date("verified distribution", date) <= last
+    }
+    own = retrieval.distributions[retrieval.distributions["fund_id"] == fund]
+    served = dict(zip(own["ex_date"], own["amount"], strict=True))
+    matched = sum(
+        1
+        for date, amount in listed.items()
+        if date in served and abs(served[date] - amount) <= AMOUNT_TOLERANCE
+    )
+    mismatched = len(listed) - matched
+    passed = len(listed) >= MIN_VERIFIED_AMOUNTS and mismatched == 0
+    detail = (
+        f"verified distributions in the window: {len(listed)} (needs {MIN_VERIFIED_AMOUNTS}), "
+        f"{matched} match, {mismatched} do not"
+    )
+    return passed, mismatched > 0, detail
+
+
+def verify_distribution_basis(retrieval: Retrieval) -> tuple[BasisCheck, ...]:
+    """
+    Per fund: route (a), a verified split, or route (b), verified amounts. A
+    fund passes by either, and fails whenever a verified amount does not match.
+    """
+
+    checks = []
+    for fund in retrieval.fund_ids:
+        split_passed, split_detail = _split_route(fund, retrieval)
+        amounts_passed, mismatch, amounts_detail = _distribution_route(fund, retrieval)
+        route = (
+            None
+            if mismatch
+            else "verified_split"
+            if split_passed
+            else "verified_distributions"
+            if amounts_passed
+            else None
+        )
+        detail = f"{split_detail}; {amounts_detail}"
+        checks.append(BasisCheck(fund, route is not None, route, detail))
+    return tuple(checks)
+
+
+def verified_batch(retrieval: Retrieval) -> RawBatch:
+    """The F1 batch, only when every fund's distribution basis is verified."""
+
+    checks = verify_distribution_basis(retrieval)
+    failing = [check for check in checks if not check.passed]
+    if failing:
+        raise TiingoDataRefused(
+            TiingoRefusal.UNVERIFIED_DISTRIBUTION_BASIS,
+            "; ".join(f"{check.fund_id}: {check.detail}" for check in failing)
+            + "; nothing may be stored under an unverified basis",
+        )
+    routes = ", ".join(f"{check.fund_id} by {check.route}" for check in checks)
+    return RawBatch(
+        adapter_id=TiingoAdapter.adapter_id,
+        adapter_version=TiingoAdapter.adapter_version,
+        fund_ids=retrieval.fund_ids,
+        start=retrieval.start,
+        end_exclusive=retrieval.end_exclusive,
+        instruments=tuple(Instrument(ticker, ticker, None) for ticker in retrieval.fund_ids),
+        retrieved_at=retrieval.retrieved_at,
+        raw_payload=retrieval.raw_payload,
+        terms_note=TERMS_NOTE,
+        vintage_note=f"{VINTAGE_NOTE}; distribution basis verified: {routes}",
+        prices=retrieval.prices,
+        distributions=retrieval.distributions,
+        splits=retrieval.splits,
+    )
+
+
 # --- the adapter ----------------------------------------------------------------
 
 
@@ -528,7 +716,7 @@ class TiingoAdapter:
     """
 
     adapter_id = "tiingo_daily"
-    adapter_version = "3"
+    adapter_version = "4"
     terms_note = TERMS_NOTE
     vintage_note = VINTAGE_NOTE
 
@@ -577,30 +765,30 @@ class TiingoAdapter:
             raise TiingoRequestFailed(reason, ticker=ticker, status=status)
         return _utf8(f"{ticker} prices response", body)
 
-    def fetch(
+    def retrieve(
         self, fund_ids: Sequence[str], start: pd.Timestamp, end_exclusive: pd.Timestamp
-    ) -> RawBatch:
+    ) -> Retrieval:
+        """Request and check every fund in memory; distribution basis NOT yet verified."""
+
         ids, first, end = validate_request(fund_ids, start, end_exclusive)
-        last = end - _ONE_DAY
-        if last >= MODEL_HOLDOUT_START:  # validate_request already caps; kept explicit
-            raise refuse(RefusalReason.REQUEST_AFTER_CAP, f"endDate {last.date()} passes the cap")
+        if len(ids) > MAX_TICKERS:
+            raise refuse(
+                RefusalReason.INVALID_REQUEST, f"{len(ids)} funds; at most {MAX_TICKERS} a batch"
+            )
         invalid = [fund_id for fund_id in ids if not _TICKER.fullmatch(fund_id)]
         if invalid:
             raise refuse(
                 RefusalReason.INVALID_REQUEST, f"fund ids must be upper-case tickers: {invalid}"
             )
+        last = end - _ONE_DAY
         start_date, end_date = f"{first:%Y-%m-%d}", f"{last:%Y-%m-%d}"
         token = _Token(self._token_provider())
-        texts = {
-            ticker: self._get(token, ticker, prices_url(ticker, start_date, end_date))
-            for ticker in ids
-        }
-        retrieved_at = utc_timestamp("retrieved_at", self._clock())
         elements = {}
-        for ticker in ids:
-            data = loads_strict(texts[ticker])
-            check_elements(ticker, data, first, last)  # refuses before anything is kept
+        for ticker in ids:  # each response is checked before the next request
+            data = loads_strict(self._get(token, ticker, prices_url(ticker, start_date, end_date)))
+            check_elements(ticker, data, first, last)
             elements[ticker] = data
+        retrieved_at = utc_timestamp("retrieved_at", self._clock())
         envelope = {
             "envelope_version": ENVELOPE_VERSION,
             "source_id": SOURCE_ID,
@@ -611,27 +799,32 @@ class TiingoAdapter:
         }
         payload = dumps_canonical(envelope).encode("utf-8")
         parsed = parse_payload(payload)
-        return RawBatch(
-            adapter_id=self.adapter_id,
-            adapter_version=self.adapter_version,
-            fund_ids=ids,
-            start=first,
-            end_exclusive=end,
-            instruments=tuple(Instrument(ticker, ticker, None) for ticker in ids),
-            retrieved_at=retrieved_at,
-            raw_payload=payload,
-            terms_note=self.terms_note,
-            vintage_note=self.vintage_note,
-            prices=parsed.prices,
-            distributions=parsed.distributions,
-            splits=parsed.splits,
+        return Retrieval(
+            ids,
+            first,
+            end,
+            retrieved_at,
+            payload,
+            parsed.prices,
+            parsed.distributions,
+            parsed.splits,
         )
+
+    def fetch(
+        self, fund_ids: Sequence[str], start: pd.Timestamp, end_exclusive: pd.Timestamp
+    ) -> RawBatch:
+        """The F1 seam: a batch only when every fund's distribution basis is verified."""
+
+        return verified_batch(self.retrieve(fund_ids, start, end_exclusive))
 
 
 __all__ = [
     "ALLOWED_FIELDS",
+    "VERIFIED_DISTRIBUTIONS",
     "VERIFIED_SPLITS",
+    "BasisCheck",
     "ParsedPayload",
+    "Retrieval",
     "TiingoAdapter",
     "TiingoDataRefused",
     "TiingoFailure",
@@ -642,4 +835,6 @@ __all__ = [
     "parse_payload",
     "prices_url",
     "urllib_transport",
+    "verified_batch",
+    "verify_distribution_basis",
 ]

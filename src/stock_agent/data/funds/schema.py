@@ -398,7 +398,10 @@ def loads_strict(text: str) -> Any:
     except FundDataRefused:
         raise
     except (TypeError, ValueError) as error:
-        raise refuse(RefusalReason.INVALID_JSON, str(error)) from error
+        failure = str(error)
+    # Raised after the except block: a JSONDecodeError holds the whole document
+    # (`.doc`), which may be a provider response, so the refusal never chains it.
+    raise refuse(RefusalReason.INVALID_JSON, failure)
 
 
 def dumps_canonical(value: Any) -> str:
