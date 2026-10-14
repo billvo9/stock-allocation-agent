@@ -72,3 +72,18 @@ def test_folds_serialize_for_artifacts():
     assert record["train"]["role"] == "train"
     assert record["embargo"] == plan.embargo
     assert splits.SplitPlan.from_dict(record) == plan
+
+
+def test_the_default_embargo_covers_the_feature_lookback():
+    splits.default_split_plan().check_lookback(60)
+
+
+def test_an_embargo_shorter_than_the_lookback_is_rejected():
+    with pytest.raises(splits.LeakageError, match="lookback"):
+        splits.default_split_plan().check_lookback(61)
+
+
+def test_a_train_window_starting_inside_the_lookback_is_rejected():
+    plan = _plan(train=splits.FoldSpec("train", ("mixed",), (0,), 30, 900))
+    with pytest.raises(splits.LeakageError, match="lookback"):
+        plan.check_lookback(60)

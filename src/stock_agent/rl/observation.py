@@ -277,6 +277,21 @@ def fit_normalizer(
     )
 
 
+def require_fitted_on(normalizer: FeatureNormalizer, fold: FoldSpec) -> None:
+    """Refuse a normalizer that was not fitted on exactly this training fold."""
+
+    fitted = normalizer.fitted_on
+    if fitted.get("role") == "identity":
+        raise LeakageError("An identity (unfitted) normalizer cannot train a learned policy.")
+    if fold.role != "train" or (
+        fitted.get("role"),
+        fitted.get("scenario_ids"),
+        fitted.get("seeds"),
+        fitted.get("window"),
+    ) != ("train", list(fold.scenario_ids), list(fold.seeds), [fold.start, fold.stop]):
+        raise LeakageError("The normalizer was not fitted on this plan's train fold.")
+
+
 @dataclass(frozen=True)
 class Observation:
     decision_session: int

@@ -26,7 +26,10 @@ episodes) is a noisy, non-differentiable function of five parameters.
 
 Checkpoint selection. Each iteration's mean parameters are a checkpoint;
 the one with the best mean dev-fold log growth is selected. The test fold is
-never built here.
+never built here. `LearnedResult.to_dict()` records the frozen normalizer and
+its provenance, the folds, the transition and reward identity (with the
+engineering-only label), the environment schedule and every scenario's
+fingerprint, so a result can be replayed and audited.
 """
 
 from __future__ import annotations
@@ -39,10 +42,17 @@ import numpy as np
 from stock_agent.model_diagnostics.seeds import derive_seed
 from stock_agent.rl.actions import logits_to_weights
 from stock_agent.rl.env import EnvConfig, fold_envs
-from stock_agent.rl.observation import Observation, ObservationBuilder
+from stock_agent.rl.observation import (
+    Observation,
+    ObservationBuilder,
+    ScenarioLoader,
+    require_fitted_on,
+)
 from stock_agent.rl.policies import PolicyInputError
 from stock_agent.rl.replay import rollout
-from stock_agent.rl.splits import FoldSpec, LeakageError
+from stock_agent.rl.reward import REWARD_INFO
+from stock_agent.rl.scenarios import generate_scenario
+from stock_agent.rl.splits import SplitPlan
 from stock_agent.rl.transition import PortfolioStep, TransitionInfo
 
 __all__ = [
@@ -211,6 +221,8 @@ def cross_entropy_method(
 
 @dataclass(frozen=True)
 class LearnedResult:
+    """A trained CEM baseline and everything needed to replay and audit it."""
+
     params: LinearSoftmaxParams
     selected_iteration: int
     dev_scores: tuple[float, ...]
@@ -218,29 +230,74 @@ class LearnedResult:
     variants_evaluated: int
     checkpoints_compared: int
     config: CEMConfig
+    plan: SplitPlan
+    builder: ObservationBuilder
+    transition_info: TransitionInfo
+    env_config: EnvConfig
+    scenarios: tuple[dict, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        info = self.transition_info
+        return {
+            "schema": "rl_cem_baseline",
+            "schema_version": "1.0.0",
+            "label": "approved_transition" if info.approved else info.status,
+            "transition": info.to_dict(),
+            "reward": REWARD_INFO.to_dict(),
+            "params": self.params.to_dict(),
+            "selected_iteration": self.selected_iteration,
+            "dev_scores": list(self.dev_scores),
+            "history": [
+                {
+                    "index": step.index,
+                    "mean": list(step.mean),
+                    "std": list(step.std),
+                    "best_score": step.best_score,
+                    "elite_mean_score": step.elite_mean_score,
+                }
+                for step in self.history
+            ],
+            "variants_evaluated": self.variants_evaluated,
+            "checkpoints_compared": self.checkpoints_compared,
+            "cem_config": self.config.to_dict(),
+            "split_plan": self.plan.to_dict(),
+            "feature_spec": self.builder.spec.to_dict(),
+            "normalizer": self.builder.normalizer.to_dict(),
+            "env_config": self.env_config.to_dict(),
+            "scenarios": [dict(entry) for entry in self.scenarios],
+        }
 
 
 def train_linear_softmax(
-    train: FoldSpec,
-    dev: FoldSpec,
+    plan: SplitPlan,
     *,
     builder: ObservationBuilder,
     transition: PortfolioStep,
     transition_info: TransitionInfo,
     env_config: EnvConfig | None = None,
     config: CEMConfig | None = None,
+    loader: ScenarioLoader = generate_scenario,
 ) -> LearnedResult:
-    if train.role != "train" or dev.role != "dev":
-        raise LeakageError("Training uses the train fold and selects on the dev fold only.")
+    """
+    Train on the plan's train fold and select the checkpoint on its dev fold.
+    Refuses a normalizer not fitted on exactly that train fold (including an
+    identity normalizer), an embargo shorter than the feature lookback, and
+    overlapping train and dev seeds. The test fold is never built.
+    """
+
+    require_fitted_on(builder.normalizer, plan.train)
+    plan.check_lookback(builder.spec.lookback)
     config = config or CEMConfig()
+    env_config = env_config or EnvConfig()
     kwargs = {
         "transition": transition,
         "transition_info": transition_info,
         "builder": builder,
         "config": env_config,
+        "loader": loader,
     }
-    train_envs = fold_envs(train, **kwargs)
-    dev_envs = fold_envs(dev, **kwargs)
+    train_envs = fold_envs(plan.train, **kwargs)
+    dev_envs = fold_envs(plan.dev, **kwargs)
     n_funds = len(builder.asset_names) - 1
 
     def mean_log_growth(params: LinearSoftmaxParams, envs) -> float:
@@ -256,6 +313,11 @@ def train_linear_softmax(
     )
     dev_scores = tuple(mean_log_growth(step.mean_params(n_funds), dev_envs) for step in history)
     selected = int(np.argmax(dev_scores))
+    scenarios = tuple(
+        {"role": role, **env.data.identity()}
+        for role, envs in (("train", train_envs), ("dev", dev_envs))
+        for env in envs
+    )
     return LearnedResult(
         params=history[selected].mean_params(n_funds),
         selected_iteration=selected,
@@ -264,4 +326,9 @@ def train_linear_softmax(
         variants_evaluated=config.iterations * config.population,
         checkpoints_compared=len(history),
         config=config,
+        plan=plan,
+        builder=builder,
+        transition_info=transition_info,
+        env_config=env_config,
+        scenarios=scenarios,
     )

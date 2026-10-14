@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import dataclasses
+import json
+
 import numpy as np
 import pytest
 
@@ -102,6 +105,16 @@ def test_cem_is_deterministic_given_its_seed():
     assert first == second
 
 
+def _train(plan, builder, **kwargs):
+    return learned.train_linear_softmax(
+        plan,
+        builder=builder,
+        transition=ref.proposed_portfolio_step,
+        transition_info=ref.TRANSITION_INFO,
+        **kwargs,
+    )
+
+
 def test_training_selects_the_checkpoint_on_dev_and_never_builds_test(plan, builder, monkeypatch):
     seen_roles = []
     original = rl_env.fold_envs
@@ -111,14 +124,7 @@ def test_training_selects_the_checkpoint_on_dev_and_never_builds_test(plan, buil
         return original(fold, **kwargs)
 
     monkeypatch.setattr(learned, "fold_envs", spy)
-    result = learned.train_linear_softmax(
-        plan.train,
-        plan.dev,
-        builder=builder,
-        transition=ref.proposed_portfolio_step,
-        transition_info=ref.TRANSITION_INFO,
-        config=learned.CEMConfig(iterations=2, population=4, seed=0),
-    )
+    result = _train(plan, builder, config=learned.CEMConfig(iterations=2, population=4, seed=0))
     assert sorted(seen_roles) == ["dev", "train"]
     assert result.selected_iteration == int(np.argmax(result.dev_scores))
     assert result.params == result.history[result.selected_iteration].mean_params(3)
@@ -126,20 +132,58 @@ def test_training_selects_the_checkpoint_on_dev_and_never_builds_test(plan, buil
     assert result.checkpoints_compared == 2
 
 
-def test_training_refuses_folds_in_the_wrong_role(plan, builder):
-    with pytest.raises(splits.LeakageError):
-        learned.train_linear_softmax(
-            plan.test,
-            plan.dev,
-            builder=builder,
-            transition=ref.proposed_portfolio_step,
-            transition_info=ref.TRANSITION_INFO,
-        )
-    with pytest.raises(splits.LeakageError):
-        learned.train_linear_softmax(
-            plan.train,
-            plan.test,
-            builder=builder,
-            transition=ref.proposed_portfolio_step,
-            transition_info=ref.TRANSITION_INFO,
-        )
+def test_the_result_records_everything_needed_to_replay_it(plan, builder):
+    result = _train(plan, builder, config=learned.CEMConfig(iterations=1, population=2, seed=0))
+    record = result.to_dict()
+    json.dumps(record, allow_nan=False)
+    assert record["label"] == "engineering_only_unapproved_transition"
+    assert record["transition"] == ref.TRANSITION_INFO.to_dict()
+    assert record["reward"]["status"] == "proposed_d8a_pending_owner_approval"
+    assert record["normalizer"] == builder.normalizer.to_dict()
+    assert record["normalizer"]["fitted_on"]["role"] == "train"
+    assert record["feature_spec"] == SPEC.to_dict()
+    assert record["split_plan"] == plan.to_dict()
+    assert record["env_config"] == rl_env.EnvConfig().to_dict()
+    assert record["params"] == result.params.to_dict()
+    episodes = {(e["role"], e["scenario_id"], e["seed"]) for e in record["scenarios"]}
+    assert episodes == {
+        *(("train", s, seed) for s, seed in plan.train.episodes()),
+        *(("dev", s, seed) for s, seed in plan.dev.episodes()),
+    }
+    calm = next(e for e in record["scenarios"] if e["scenario_id"] == "calm")
+    assert calm["fingerprint"] == sc.generate_scenario("calm", 10).fingerprint()
+
+
+def test_training_refuses_an_identity_normalizer(plan):
+    names = SPEC.market_names(sc.ASSET_NAMES, sc.CASH_INDEX)
+    identity = ob.ObservationBuilder(
+        SPEC, ob.FeatureNormalizer.identity(names), sc.ASSET_NAMES, sc.CASH_INDEX
+    )
+    with pytest.raises(splits.LeakageError, match="identity"):
+        _train(plan, identity)
+
+
+def test_training_refuses_a_normalizer_fitted_outside_the_train_fold(plan):
+    other = splits.FoldSpec("train", ("mixed",), (5,), 60, 200)
+    norm = ob.fit_normalizer(other, SPEC)
+    foreign = ob.ObservationBuilder(SPEC, norm, sc.ASSET_NAMES, sc.CASH_INDEX)
+    with pytest.raises(splits.LeakageError, match="train fold"):
+        _train(plan, foreign)
+
+
+def test_training_refuses_an_embargo_shorter_than_the_lookback(builder):
+    short = splits.SplitPlan(
+        train=splits.FoldSpec("train", ("mixed",), (0, 1), 60, 200),
+        dev=splits.FoldSpec("dev", ("calm",), (10,), 210, 400),
+        test=splits.FoldSpec("test", ("calm",), (20,), 460, 600),
+        embargo=10,
+    )
+    with pytest.raises(splits.LeakageError, match="lookback"):
+        _train(short, builder)
+
+
+def test_training_refuses_dev_seeds_that_overlap_train(plan, builder):
+    leaky = dataclasses.replace(plan)
+    object.__setattr__(leaky, "dev", dataclasses.replace(plan.dev, seeds=(0,)))
+    with pytest.raises(splits.LeakageError, match="seed"):
+        _train(leaky, builder)
