@@ -427,6 +427,33 @@ the owner's answers and messages in session:
   comparison table is published. The owner's earlier rule, "Do not train
   or evaluate PPO on an economically uncorrected simulator", is why the
   label exists. The owner may overrule this at merge.
+- 2026-10-14, prospective forecasting track (owner, by selecting these
+  options in the lead session; the quoted text is the option the owner
+  chose):
+  - Path: "Start prospective track". Register ETF forecasters at 5, 20
+    and 30 sessions, frozen before the first forecast. Record each forecast
+    once, timestamped, labelled "unvalidated, no demonstrated skill", and
+    score it only as real outcomes arrive.
+  - H_end: "H_end today, lookback OK". The sealed holdout is 2025-01-01
+    to 2026-10-14 (H_end), kept for one historical evaluation. A separate
+    prospective store may use the last 63 sessions before H_end only as
+    inputs to frozen models, never to train, tune or evaluate. A test
+    enforces that research code cannot read the prospective store.
+  - Anchors: "Fill by hand". The owner copies issuer amounts into the
+    private, git-ignored anchors file (issuer terms: personal use, no
+    automated access). The rows the research agents gathered are not
+    used as anchors.
+  - Live data: "Audit + prospective". First the read-only pre-2025 Tiingo
+    audit (VTI, AGG, SHV), then collection into the separate prospective
+    store. Each run happens in the owner's terminal, and storing anything
+    still needs the owner's OK at that step. Lead implementation choice
+    (more conservative than authorized): the first collection requests
+    only the 63-session lookback before H_end and later sessions; the
+    rest of the sealed period is not collected until the one-time
+    historical evaluation.
+  - Target: "Risk and return". Forecast volatility and total return, each
+    with an 80% band, with the return forecast shown next to the
+    historical-average null.
 - Pending: the rest of OD3; OD8 groups B-D (the T5a packet B1-B9 is
   prepared); OD9's `signal_cutoff_at` for decisions and the production
   availability rule beyond descriptive display; OD10-OD15 (OD13's
