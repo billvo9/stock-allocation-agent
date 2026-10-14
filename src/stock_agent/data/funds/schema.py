@@ -5,16 +5,20 @@ structured refusals.
 Tables (one batch's rows; the store-wide key adds `batch_id`, because a later
 retrieval of the same fund and date is a new observation, never an overwrite):
 
-    prices          key (fund_id, session_date)
-    distributions   key (fund_id, ex_date, distribution_type)
-    splits          key (fund_id, effective_date)
+    prices            key (fund_id, session_date, adjustment_basis)
+    distributions     key (fund_id, ex_date, distribution_type, source_sequence)
+    splits            key (fund_id, effective_date)
     missing_sessions  the structured missing-session report (status, reason, detail)
+
+A close is stored only as the source provided it, with its declared
+`adjustment_basis`; a raw and a vendor-adjusted close for one session can
+coexist. Nothing here computes a return or an adjusted series.
 
 Every date column holds dates as 00:00 UTC (`datetime64[us, UTC]`). A date
 says when something happened in the market, never when it became known:
-`BatchRecord.retrieved_at` is when this project obtained it, and
-`assumed_availability_rule` is only a label for a modelled convention (none is
-approved yet; OD9). Nothing here reads a clock, a file or the network.
+`BatchRecord.retrieved_at` is when this project obtained it. No availability
+rule is approved (OD9), so `assumed_availability_rule` must be None in
+version 1. Nothing here reads a clock, a file or the network.
 """
 
 from __future__ import annotations
@@ -34,20 +38,22 @@ from stock_agent.calendars import nyse
 
 SCHEMA_VERSION = "1.0"
 
-_TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
-_DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
+# ASCII classes only (`\d` also matches other scripts' digits). Every pattern is
+# applied with fullmatch: `$` alone would accept a trailing newline.
+_TIMESTAMP_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z")
+_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 _ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.\-]{0,63}")
-# All patterns are applied with fullmatch: `$` alone would accept a trailing newline.
-BATCH_ID_PATTERN = re.compile(r"\d{8}T\d{12}Z-[0-9a-f]{12}")
+_SOURCE_TEXT_PATTERN = re.compile(r"[\x21-\x7e]{1,64}")  # printable ASCII, no spaces
+BATCH_ID_PATTERN = re.compile(r"[0-9]{8}T[0-9]{12}Z-[0-9a-f]{12}")
 
 
 class AdjustmentBasis(StrEnum):
     """How a stored close relates to the traded price on its session date."""
 
     UNADJUSTED = "unadjusted"
-    # Adjusted with the actions the source knew at retrieval: the level of an
-    # old close depends on later events, so it is not a point-in-time value.
+    # Adjusted by the source with the actions it knew at retrieval: the level of
+    # an old close depends on later events, so it is not a point-in-time value.
     SPLIT_ADJUSTED_AS_OF_RETRIEVAL = "split_adjusted_as_of_retrieval"
     SPLIT_AND_DISTRIBUTION_ADJUSTED_AS_OF_RETRIEVAL = (
         "split_and_distribution_adjusted_as_of_retrieval"
@@ -69,30 +75,22 @@ class DistributionType(StrEnum):
     UNKNOWN = "unknown"
 
 
-class AssumedAvailabilityRule(StrEnum):
-    """
-    Labels for a modelled availability convention. None is approved: OD9 is
-    pending, and the store never derives a timestamp from a label. A labelled
-    batch is still not verified point-in-time data.
-    """
-
-    PROPOSED_OD9_SESSION_1800_NEW_YORK = "proposed_od9_session_1800_america_new_york"
-
-
 class RefusalReason(StrEnum):
     INVALID_REQUEST = "invalid_request"
     REQUEST_AFTER_CAP = "request_after_cap"
     OUTSIDE_COVERAGE = "outside_coverage"
     LOCKBOX_VIOLATION = "lockbox_violation"
+    PENDING_OD9 = "pending_od9"
     SCHEMA_MISMATCH = "schema_mismatch"
     INVALID_DATE = "invalid_date"
+    INVALID_DATE_ORDER = "invalid_date_order"
     INVALID_TIMESTAMP = "invalid_timestamp"
     INVALID_FIELD = "invalid_field"
     UNKNOWN_ENUM = "unknown_enum"
     INVALID_VALUE = "invalid_value"
     NOT_A_SESSION = "not_a_session"
     OUTSIDE_REQUEST = "outside_request"
-    UNREQUESTED_FUND = "unrequested_fund"
+    UNMAPPED_FUND = "unmapped_fund"
     DUPLICATE_KEY = "duplicate_key"
     UNKNOWN_BATCH = "unknown_batch"
     OBSERVED_AFTER_RETRIEVAL = "observed_after_retrieval"
@@ -121,13 +119,14 @@ def refuse(reason: RefusalReason, detail: str) -> FundDataRefused:
 
 # --- typed tables -----------------------------------------------------------
 
-TEXT, ENUM, DATE, OPTIONAL_DATE, POSITIVE_FLOAT, OPTIONAL_COUNT = (
+TEXT, ENUM, DATE, OPTIONAL_DATE, POSITIVE_FLOAT, OPTIONAL_COUNT, SEQUENCE = (
     "text",
     "enum",
     "date",
     "optional_date",
     "positive_float",
     "optional_count",
+    "sequence",
 )
 
 
@@ -160,29 +159,33 @@ PRICES = TableSpec(
         Column("source_id", TEXT),
         Column("batch_id", TEXT),
     ),
-    key=("fund_id", "session_date"),
+    key=("fund_id", "session_date", "adjustment_basis"),
 )
 DISTRIBUTIONS = TableSpec(
     "distributions",
     (
         Column("fund_id", TEXT),
         Column("ex_date", DATE),
-        Column("pay_date", OPTIONAL_DATE),
+        Column("declaration_date", OPTIONAL_DATE),
         Column("record_date", OPTIONAL_DATE),
+        Column("pay_date", OPTIONAL_DATE),
         Column("amount", POSITIVE_FLOAT),
         Column("amount_basis", ENUM, AmountBasis),
         Column("distribution_type", ENUM, DistributionType),
+        # 0 unless the source lists several distributions of one type on one
+        # ex-date (for example a supplemental dividend); the adapter sets it.
+        Column("source_sequence", SEQUENCE),
         Column("source_id", TEXT),
         Column("batch_id", TEXT),
     ),
-    key=("fund_id", "ex_date", "distribution_type"),
+    key=("fund_id", "ex_date", "distribution_type", "source_sequence"),
 )
 SPLITS = TableSpec(
     "splits",
     (
         Column("fund_id", TEXT),
         Column("effective_date", DATE),
-        Column("ratio_new_per_old", POSITIVE_FLOAT),
+        Column("ratio_new_per_old", POSITIVE_FLOAT),  # < 1 for a reverse split
         Column("source_id", TEXT),
         Column("batch_id", TEXT),
     ),
@@ -207,6 +210,9 @@ BATCH_FILE = "batch.json"
 PAYLOAD_FILE = "raw_payload.bin"
 MANIFEST_FILE = "manifest.json"
 TABLE_FILES = {spec.name: f"{spec.name}.parquet" for spec in (*DATA_TABLES, MISSING_SESSIONS)}
+# A batch is written in a hidden staging directory and renamed into place; the
+# store reader skips only entries with this prefix.
+STAGING_PREFIX = ".staging-"
 
 # The batches table (one row per stored batch; `read_store` builds it).
 BATCH_COLUMNS = (
@@ -216,6 +222,7 @@ BATCH_COLUMNS = (
     "request_fund_ids",
     "request_start",
     "request_end_exclusive",
+    "instruments",
     "retrieved_at",
     "raw_payload_sha256",
     "terms_note",
@@ -255,12 +262,17 @@ def _dates(spec: TableSpec, column: Column, values: pd.Series) -> pd.Series:
     return values
 
 
+def _numeric(label: str, values: pd.Series) -> np.ndarray:
+    if not pd.api.types.is_numeric_dtype(values.dtype) or pd.api.types.is_bool_dtype(values.dtype):
+        raise refuse(RefusalReason.INVALID_VALUE, f"{label} must be numeric, not {values.dtype}")
+    return values.dropna().astype("float64").to_numpy()
+
+
 def _floats(spec: TableSpec, column: Column, values: pd.Series) -> pd.Series:
     label = f"{spec.name}.{column.name}"
     if not len(values):
         return values.astype("float64")
-    if not pd.api.types.is_numeric_dtype(values.dtype) or pd.api.types.is_bool_dtype(values.dtype):
-        raise refuse(RefusalReason.INVALID_VALUE, f"{label} must be numeric, not {values.dtype}")
+    _numeric(label, values)
     numbers = values.astype("float64")
     array = numbers.to_numpy()
     if not (np.isfinite(array) & (array > 0)).all():
@@ -268,16 +280,27 @@ def _floats(spec: TableSpec, column: Column, values: pd.Series) -> pd.Series:
     return numbers
 
 
-def _counts(spec: TableSpec, column: Column, values: pd.Series) -> pd.Series:
-    label = f"{spec.name}.{column.name}"
-    if values.isna().all():
-        return pd.Series(pd.NA, index=values.index, dtype="Int64")
-    if not pd.api.types.is_numeric_dtype(values.dtype) or pd.api.types.is_bool_dtype(values.dtype):
-        raise refuse(RefusalReason.INVALID_VALUE, f"{label} must be numeric, not {values.dtype}")
-    present = values.dropna().astype("float64").to_numpy()
+def _whole(label: str, values: pd.Series) -> None:
+    present = _numeric(label, values)
     if not (np.isfinite(present) & (present >= 0) & (present == np.floor(present))).all():
         raise refuse(RefusalReason.INVALID_VALUE, f"{label} needs non-negative whole numbers")
+
+
+def _counts(spec: TableSpec, column: Column, values: pd.Series) -> pd.Series:
+    if values.isna().all():
+        return pd.Series(pd.NA, index=values.index, dtype="Int64")
+    _whole(f"{spec.name}.{column.name}", values)
     return values.astype("Int64")
+
+
+def _sequences(spec: TableSpec, column: Column, values: pd.Series) -> pd.Series:
+    label = f"{spec.name}.{column.name}"
+    if not len(values):
+        return values.astype("int64")
+    if values.isna().any():
+        raise refuse(RefusalReason.INVALID_VALUE, f"{label} has missing values")
+    _whole(label, values)
+    return values.astype("int64")
 
 
 _CONVERTERS = {
@@ -287,6 +310,7 @@ _CONVERTERS = {
     OPTIONAL_DATE: _dates,
     POSITIVE_FLOAT: _floats,
     OPTIONAL_COUNT: _counts,
+    SEQUENCE: _sequences,
 }
 
 
@@ -329,6 +353,7 @@ def empty(spec: TableSpec) -> pd.DataFrame:
         OPTIONAL_DATE: "datetime64[us, UTC]",
         POSITIVE_FLOAT: "float64",
         OPTIONAL_COUNT: "Int64",
+        SEQUENCE: "int64",
     }
     return pd.DataFrame(
         {column.name: pd.Series(dtype=dtypes[column.kind]) for column in spec.columns}
@@ -343,6 +368,8 @@ def _reject_constant(token: str) -> Any:
 
 
 def _finite_float(text: str) -> float:
+    """parse_float hook: refuses literals that overflow to infinity, such as 1e999."""
+
     value = float(text)
     if not math.isfinite(value):
         raise refuse(RefusalReason.INVALID_JSON, f"non-finite number {text!r}")
@@ -359,7 +386,7 @@ def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def loads_strict(text: str) -> Any:
-    """Parse JSON, refusing NaN/Infinity tokens and duplicate keys."""
+    """Parse JSON, refusing NaN/Infinity tokens, overflowing floats and duplicate keys."""
 
     try:
         return json.loads(
@@ -381,6 +408,15 @@ def dumps_canonical(value: Any) -> str:
         return json.dumps(
             value, sort_keys=True, separators=(",", ":"), allow_nan=False, ensure_ascii=False
         )
+    except (TypeError, ValueError) as error:
+        raise refuse(RefusalReason.INVALID_JSON, str(error)) from error
+
+
+def dumps_file(value: Any) -> str:
+    """The on-disk form: indented, key-sorted JSON with a trailing newline; no NaN."""
+
+    try:
+        return json.dumps(value, sort_keys=True, indent=2, allow_nan=False) + "\n"
     except (TypeError, ValueError) as error:
         raise refuse(RefusalReason.INVALID_JSON, str(error)) from error
 
@@ -434,10 +470,28 @@ def check_id(label: str, value: object) -> str:
     return value
 
 
+def check_source_text(label: str, value: object) -> str:
+    """A source's own identifier (symbol or security id): printable ASCII, no spaces."""
+
+    if not isinstance(value, str) or not _SOURCE_TEXT_PATTERN.fullmatch(value):
+        raise refuse(RefusalReason.INVALID_FIELD, f"{label} {value!r} is not a source identifier")
+    return value
+
+
 def check_note(label: str, value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise refuse(RefusalReason.INVALID_FIELD, f"{label} must be a non-empty string")
     return value
+
+
+def check_availability_rule(value: object) -> None:
+    """Version 1 stores no availability rule: OD9 has approved none."""
+
+    if value is not None:
+        raise refuse(
+            RefusalReason.PENDING_OD9,
+            f"assumed_availability_rule {value!r}: no rule is approved until OD9",
+        )
 
 
 # --- the batch record ---------------------------------------------------------
@@ -448,6 +502,7 @@ BATCH_RECORD_FIELDS = (
     "adapter_id",
     "adapter_version",
     "request",
+    "instruments",
     "retrieved_at",
     "raw_payload_sha256",
     "terms_note",
@@ -456,6 +511,35 @@ BATCH_RECORD_FIELDS = (
     "calendar_id",
 )
 REQUEST_FIELDS = ("fund_ids", "start", "end_exclusive")
+INSTRUMENT_FIELDS = ("fund_id", "source_symbol", "source_security_id")
+
+
+@dataclass(frozen=True)
+class Instrument:
+    """How the source identified one fund in this batch."""
+
+    fund_id: str
+    source_symbol: str
+    source_security_id: str | None = None
+
+    def __post_init__(self) -> None:
+        check_id("instrument fund_id", self.fund_id)
+        check_source_text("source_symbol", self.source_symbol)
+        if self.source_security_id is not None:
+            check_source_text("source_security_id", self.source_security_id)
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "fund_id": self.fund_id,
+            "source_symbol": self.source_symbol,
+            "source_security_id": self.source_security_id,
+        }
+
+    @classmethod
+    def from_json_dict(cls, data: object) -> Instrument:
+        if not isinstance(data, dict) or set(data) != set(INSTRUMENT_FIELDS):
+            raise refuse(RefusalReason.INVALID_FIELD, "an instrument has the wrong fields")
+        return cls(data["fund_id"], data["source_symbol"], data["source_security_id"])
 
 
 @dataclass(frozen=True)
@@ -463,11 +547,12 @@ class BatchRecord:
     """
     One retrieval: who fetched what, when, and under which terms.
 
-    `request` covers [start, end_exclusive) as session dates. `retrieved_at`
-    is the actual retrieval time (UTC). `raw_payload_sha256` hashes the raw
-    provider bytes stored beside the tables. `vintage_note` describes what the
-    source's values reflect at retrieval (for example "split-adjusted as of
-    retrieval"). `assumed_availability_rule` is None until OD9 approves a rule.
+    `request` covers [start, end_exclusive) as session dates. `instruments`
+    maps each requested fund to the source's symbol and optional security id.
+    `retrieved_at` is the actual retrieval time (UTC). `raw_payload_sha256`
+    hashes the raw provider bytes stored beside the tables. `vintage_note`
+    describes what the source's values reflect at retrieval.
+    `assumed_availability_rule` must be None until OD9 approves a rule.
     """
 
     batch_id: str
@@ -476,16 +561,19 @@ class BatchRecord:
     fund_ids: tuple[str, ...]
     start: pd.Timestamp
     end_exclusive: pd.Timestamp
+    instruments: tuple[Instrument, ...]
     retrieved_at: pd.Timestamp
     raw_payload_sha256: str
     terms_note: str
     vintage_note: str
-    assumed_availability_rule: AssumedAvailabilityRule | None
+    assumed_availability_rule: None = None
     calendar_id: str = nyse.CALENDAR_ID
     schema_version: str = SCHEMA_VERSION
 
+    def __post_init__(self) -> None:
+        check_availability_rule(self.assumed_availability_rule)
+
     def to_json_dict(self, *, include_id: bool = True) -> dict[str, Any]:
-        rule = self.assumed_availability_rule
         data: dict[str, Any] = {
             "batch_id": self.batch_id,
             "schema_version": self.schema_version,
@@ -496,11 +584,12 @@ class BatchRecord:
                 "start": self.start.strftime("%Y-%m-%d"),
                 "end_exclusive": self.end_exclusive.strftime("%Y-%m-%d"),
             },
+            "instruments": [instrument.to_json_dict() for instrument in self.instruments],
             "retrieved_at": format_timestamp("retrieved_at", self.retrieved_at),
             "raw_payload_sha256": self.raw_payload_sha256,
             "terms_note": self.terms_note,
             "vintage_note": self.vintage_note,
-            "assumed_availability_rule": None if rule is None else rule.value,
+            "assumed_availability_rule": None,
             "calendar_id": self.calendar_id,
         }
         if not include_id:
@@ -522,9 +611,10 @@ class BatchRecord:
         fund_ids = request["fund_ids"]
         if not isinstance(fund_ids, list):
             raise refuse(RefusalReason.INVALID_FIELD, "request fund_ids must be a list")
-        rule = data["assumed_availability_rule"]
-        if rule is not None and rule not in {member.value for member in AssumedAvailabilityRule}:
-            raise refuse(RefusalReason.UNKNOWN_ENUM, f"assumed_availability_rule {rule!r}")
+        instruments = data["instruments"]
+        if not isinstance(instruments, list):
+            raise refuse(RefusalReason.INVALID_FIELD, "instruments must be a list")
+        check_availability_rule(data["assumed_availability_rule"])
         sha = data["raw_payload_sha256"]
         if not isinstance(sha, str) or not _SHA256_PATTERN.fullmatch(sha):
             raise refuse(RefusalReason.INVALID_FIELD, "raw_payload_sha256 is not a sha256")
@@ -538,11 +628,11 @@ class BatchRecord:
             fund_ids=tuple(check_id("fund_id", fund_id) for fund_id in fund_ids),
             start=parse_date("request start", request["start"]),
             end_exclusive=parse_date("request end_exclusive", request["end_exclusive"]),
+            instruments=tuple(Instrument.from_json_dict(entry) for entry in instruments),
             retrieved_at=parse_timestamp("retrieved_at", data["retrieved_at"]),
             raw_payload_sha256=sha,
             terms_note=check_note("terms_note", data["terms_note"]),
             vintage_note=check_note("vintage_note", data["vintage_note"]),
-            assumed_availability_rule=None if rule is None else AssumedAvailabilityRule(rule),
         )
 
 
@@ -555,7 +645,7 @@ def derive_batch_id(record_without_id: dict[str, Any]) -> str:
 
 
 def batches_frame(records: list[BatchRecord]) -> pd.DataFrame:
-    """The batches table: one row per record, request fund ids as a JSON list."""
+    """The batches table: one row per record; fund ids and instruments as JSON lists."""
 
     rows = [
         {
@@ -565,15 +655,12 @@ def batches_frame(records: list[BatchRecord]) -> pd.DataFrame:
             "request_fund_ids": dumps_canonical(list(record.fund_ids)),
             "request_start": record.start,
             "request_end_exclusive": record.end_exclusive,
+            "instruments": dumps_canonical([item.to_json_dict() for item in record.instruments]),
             "retrieved_at": record.retrieved_at,
             "raw_payload_sha256": record.raw_payload_sha256,
             "terms_note": record.terms_note,
             "vintage_note": record.vintage_note,
-            "assumed_availability_rule": (
-                None
-                if record.assumed_availability_rule is None
-                else record.assumed_availability_rule.value
-            ),
+            "assumed_availability_rule": None,
             "calendar_id": record.calendar_id,
             "schema_version": record.schema_version,
         }

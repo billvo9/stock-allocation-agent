@@ -24,9 +24,14 @@ Lockbox cap
     single row dated on or after it, in any date column, refuses the whole
     batch. Nothing is dropped to make a batch fit.
 
+Assumed availability
+    No rule is approved (OD9), so `assumed_availability_rule` must be None;
+    any value is refused (`pending_od9`) and no label is ever written.
+
 The store keeps observations only. It never adjusts a close, fills a gap or
-computes a return. Hashes prove integrity, not provenance: anyone who can
-write the root can rewrite a batch and its manifest.
+computes a return. The manifest hashes detect inconsistent edits; they are
+integrity, not provenance: a consistent rewrite that recomputes every hash
+passes them (see `reader`).
 """
 
 from __future__ import annotations
@@ -34,7 +39,6 @@ from __future__ import annotations
 import contextlib
 import errno
 import hashlib
-import json
 import os
 import tempfile
 from dataclasses import dataclass
@@ -49,20 +53,21 @@ from stock_agent.data.funds.schema import (
     MISSING_SESSIONS,
     PAYLOAD_FILE,
     SCHEMA_VERSION,
+    STAGING_PREFIX,
     TABLE_FILES,
-    AssumedAvailabilityRule,
     BatchRecord,
+    Instrument,
     RefusalReason,
+    check_availability_rule,
     derive_batch_id,
     dumps_canonical,
+    dumps_file,
     loads_strict,
     refuse,
     utc_timestamp,
 )
 from stock_agent.data.funds.validation import validate_batch, validate_request
 from stock_agent.model_validation.audit import file_sha256, table_sha256
-
-STAGING_PREFIX = ".staging-"
 
 
 @dataclass(frozen=True, eq=False)
@@ -73,23 +78,23 @@ class IngestResult:
 
 
 def _write_json(path: Path, value: object) -> None:
-    path.write_text(json.dumps(value, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    path.write_text(dumps_file(value), encoding="utf-8")
 
 
-def build_record(
-    raw: RawBatch, *, assumed_availability_rule: AssumedAvailabilityRule | None = None
-) -> BatchRecord:
+def build_record(raw: RawBatch, *, assumed_availability_rule: object = None) -> BatchRecord:
     """The batch record for a raw batch, with its derived id."""
 
     if not isinstance(raw, RawBatch):
         raise refuse(RefusalReason.INVALID_FIELD, f"expected a RawBatch, got {type(raw)}")
     if not isinstance(raw.raw_payload, bytes):
         raise refuse(RefusalReason.INVALID_FIELD, "raw_payload must be bytes")
-    if assumed_availability_rule is not None and not isinstance(
-        assumed_availability_rule, AssumedAvailabilityRule
-    ):
-        raise refuse(RefusalReason.UNKNOWN_ENUM, f"rule {assumed_availability_rule!r}")
+    check_availability_rule(assumed_availability_rule)
     fund_ids, start, end_exclusive = validate_request(raw.fund_ids, raw.start, raw.end_exclusive)
+    instruments = raw.instruments
+    if not isinstance(instruments, tuple) or not all(
+        isinstance(item, Instrument) for item in instruments
+    ):
+        raise refuse(RefusalReason.INVALID_FIELD, "instruments must be a tuple of Instrument")
     draft = BatchRecord(
         batch_id="",
         adapter_id=raw.adapter_id,
@@ -97,11 +102,11 @@ def build_record(
         fund_ids=fund_ids,
         start=start,
         end_exclusive=end_exclusive,
+        instruments=tuple(sorted(instruments, key=lambda item: item.fund_id)),
         retrieved_at=utc_timestamp("retrieved_at", raw.retrieved_at),
         raw_payload_sha256=hashlib.sha256(raw.raw_payload).hexdigest(),
         terms_note=raw.terms_note,
         vintage_note=raw.vintage_note,
-        assumed_availability_rule=assumed_availability_rule,
     )
     # A JSON round trip gives the writer exactly the reader's view, and parses
     # every field with the reader's checks.
@@ -122,7 +127,7 @@ def ingest_batch(
     root: str | Path,
     raw: RawBatch,
     *,
-    assumed_availability_rule: AssumedAvailabilityRule | None = None,
+    assumed_availability_rule: object = None,
 ) -> IngestResult:
     """Validate `raw`, then write it once under `root`; return its directory and report."""
 

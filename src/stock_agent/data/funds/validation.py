@@ -6,9 +6,15 @@ refuses the whole batch with a machine-readable reason. Expected data gaps
 (sessions with no close) are not failures: they are reported as structured
 missing-session diagnostics.
 
-Order: request (the lockbox cap, coverage), table schemas and values, batch
-ids, the lockbox on every date column, requested funds and range, calendar
-sessions, retrieval order, then the missing-session report.
+Order: request (the lockbox cap, coverage), the instrument mapping, table
+schemas and values, batch ids, the lockbox on every date column, mapped funds
+and the requested range, calendar sessions, distribution date order, the
+retrieval sanity check, then the missing-session report.
+
+The retrieval check refuses a close dated at or after `retrieved_at`. It is a
+sanity check on the record (no source can return a close for a session that
+had not started), not an availability rule: it says nothing about when a
+close became known, and no close time is modelled.
 """
 
 from __future__ import annotations
@@ -91,7 +97,10 @@ def requested_sessions(record: BatchRecord) -> pd.DatetimeIndex:
 
 
 def missing_sessions(record: BatchRecord, prices: pd.DataFrame) -> pd.DataFrame:
-    """One row per requested fund and requested session with no price row."""
+    """
+    One row per requested fund and requested session with no price row of any
+    adjustment basis.
+    """
 
     expected = pd.MultiIndex.from_product(
         [list(record.fund_ids), requested_sessions(record)], names=["fund_id", "session_date"]
@@ -120,6 +129,41 @@ def _check_lockbox(tables: dict[str, pd.DataFrame]) -> None:
                 )
 
 
+def _check_instruments(record: BatchRecord) -> None:
+    mapped = [instrument.fund_id for instrument in record.instruments]
+    if len(set(mapped)) != len(mapped):
+        raise refuse(RefusalReason.UNMAPPED_FUND, f"instruments repeat a fund: {mapped}")
+    if set(mapped) != set(record.fund_ids):
+        raise refuse(
+            RefusalReason.UNMAPPED_FUND,
+            f"instruments map {sorted(mapped)}, the request names {sorted(record.fund_ids)}",
+        )
+
+
+def _check_distribution_dates(distributions: pd.DataFrame) -> None:
+    ex = distributions["ex_date"]
+    for column in ("declaration_date", "record_date", "pay_date"):
+        early = distributions[column] < nyse.COVERAGE.first
+        if early.any():
+            raise refuse(
+                RefusalReason.OUTSIDE_COVERAGE,
+                f"distributions.{column} {distributions.loc[early, column].min().date()} is "
+                f"before the calendar starts ({nyse.COVERAGE.first.date()})",
+            )
+    for column, wrong, rule in (
+        ("declaration_date", distributions["declaration_date"] > ex, "after"),
+        ("record_date", distributions["record_date"] < ex, "before"),
+        ("pay_date", distributions["pay_date"] < ex, "before"),
+    ):
+        if wrong.any():
+            first = distributions.loc[wrong].iloc[0]
+            raise refuse(
+                RefusalReason.INVALID_DATE_ORDER,
+                f"{first['fund_id']} {column} {first[column].date()} is {rule} "
+                f"its ex_date {first['ex_date'].date()}",
+            )
+
+
 def validate_batch(
     record: BatchRecord,
     prices: pd.DataFrame,
@@ -129,6 +173,7 @@ def validate_batch(
     """The conformed tables and the missing-session report, or a refusal."""
 
     validate_request(record.fund_ids, record.start, record.end_exclusive)
+    _check_instruments(record)
     frames = {PRICES.name: prices, DISTRIBUTIONS.name: distributions, SPLITS.name: splits}
     tables = {spec.name: conform(spec, frames[spec.name]) for spec in DATA_TABLES}
 
@@ -139,11 +184,15 @@ def validate_batch(
     _check_lockbox(tables)
 
     sessions = requested_sessions(record)
+    mapped = {instrument.fund_id for instrument in record.instruments}
     for name, column in _RANGE_COLUMNS.items():
         table = tables[name]
-        unrequested = sorted(set(table["fund_id"]) - set(record.fund_ids))
-        if unrequested:
-            raise refuse(RefusalReason.UNREQUESTED_FUND, f"{name} has funds {unrequested[:5]}")
+        unmapped = sorted(set(table["fund_id"]) - mapped)
+        if unmapped:
+            raise refuse(
+                RefusalReason.UNMAPPED_FUND,
+                f"{name} has funds {unmapped[:5]} with no instrument mapping in this batch",
+            )
         dates = table[column]
         outside = (dates < record.start) | (dates >= record.end_exclusive)
         if outside.any():
@@ -158,6 +207,9 @@ def validate_batch(
                 f"{name}.{column} {dates[off].min().date()} is not a session of {nyse.CALENDAR_ID}",
             )
 
+    _check_distribution_dates(tables[DISTRIBUTIONS.name])
+
+    # Sanity check only (see the module docstring); not an availability rule.
     observed = tables[PRICES.name]["session_date"]
     if (observed >= record.retrieved_at).any():
         raise refuse(

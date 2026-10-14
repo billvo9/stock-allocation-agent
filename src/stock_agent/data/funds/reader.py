@@ -6,10 +6,18 @@ strict JSON and the schema version, every file hash, the batch record and its
 recomputed id, the raw payload hash, the table hashes and row counts, then the
 full batch validation (the same code ingest ran), and finally that the stored
 missing-session report equals a fresh recomputation. Any failure raises
-`FundDataRefused`; nothing is repaired, skipped or returned partially.
+`FundDataRefused`; nothing is repaired, skipped or returned partially. Any
+extra file, including an operating-system file such as `.DS_Store`, refuses
+the batch.
 
-Hashes prove integrity, not provenance: a consistent rewrite of a batch and its
-manifest passes the hash checks, though not the validation.
+Integrity, not provenance. The hashes detect an inconsistent edit (a changed
+file whose manifest entry was not updated). A consistent rewrite that
+recomputes every hash and the batch id passes them, and passes validation too
+if the new rows obey the contract. Nothing here proves who wrote a batch.
+
+Follow-up (not implemented): re-parse `raw_payload.bin` with the adapter's
+parser on read and require the stored tables to match, so the tables are tied
+to the raw bytes and not only to the manifest.
 """
 
 from __future__ import annotations
@@ -30,6 +38,7 @@ from stock_agent.data.funds.schema import (
     PRICES,
     SCHEMA_VERSION,
     SPLITS,
+    STAGING_PREFIX,
     TABLE_FILES,
     BatchRecord,
     FundDataRefused,
@@ -169,16 +178,20 @@ def _stack(spec: TableSpec, frames: list[pd.DataFrame]) -> pd.DataFrame:
 
 def read_store(root: str | Path) -> FundStore:
     """
-    Read and verify every batch under `root`. Hidden entries (names starting
-    with ".", including a crashed write's staging directory) are skipped;
-    anything else that is not a valid batch refuses the whole store.
+    Read and verify every batch under `root`. Only a crashed write's staging
+    directory (the `.staging-` prefix) is skipped. Every other entry must be a
+    valid batch, or the whole store is refused: a hidden or renamed batch can
+    never silently drop out, and an operating-system file such as `.DS_Store`
+    in the root refuses the store.
     """
 
     base = Path(root)
     if base.is_symlink() or not base.is_dir():
         raise refuse(RefusalReason.NOT_A_BATCH, f"root {base} is not a directory")
     batches = [
-        read_batch(entry) for entry in sorted(base.iterdir()) if not entry.name.startswith(".")
+        read_batch(entry)
+        for entry in sorted(base.iterdir())
+        if not entry.name.startswith(STAGING_PREFIX)
     ]
     frame = batches_frame([batch.record for batch in batches])
     store = FundStore(

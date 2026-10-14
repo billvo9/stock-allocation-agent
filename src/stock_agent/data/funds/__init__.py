@@ -8,8 +8,9 @@ Modules:
     ingest      the write-once store writer (the only module that writes)
     reader      the fail-closed reader (re-verifies hashes and validation)
 
-Stored: closes with their adjustment basis, dated distributions with their
-share basis, splits, the raw provider payload and the retrieval time. Never
-stored or computed: returns, adjusted series, filled gaps, availability
-timestamps. See `docs/research/f1_fund_data.md`.
+Stored: closes exactly as the source gave them, each with its declared
+adjustment basis; dated distributions with their share basis; splits; the
+instrument mapping, the raw provider payload and the retrieval time. Never
+computed: returns, adjusted series, filled gaps, availability timestamps. See
+`docs/research/f1_fund_data.md`.
 """
