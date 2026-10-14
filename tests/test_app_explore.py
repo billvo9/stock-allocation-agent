@@ -116,6 +116,9 @@ class GapFillingMetrics(FakeMetrics):
         return super().growth_index(daily_total_returns, start_value).ffill()
 
 
+ADVICE_WORDS = (" buy", " sell", "recommend", "should invest", "outperform")
+
+
 def _page(histories, metrics):
     from stock_agent.app import explore
     from stock_agent.ui.components import apply_theme
@@ -154,7 +157,13 @@ def _text(app) -> str:
     parts += [html.proto.body for html in app.get("html") if "<style>" not in html.proto.body]
     parts += [frame.value.to_csv(index=False) for frame in app.dataframe]
     parts += [f"{metric.label} {metric.value}" for metric in app.metric]
-    return " ".join(parts).replace("\\$", "$").replace("**", "")
+    text = " ".join(parts).replace("\\$", "$").replace("**", "")
+    # Every state test reads the page through here, so every rendered state is
+    # checked for trading or advice wording, including composed strings.
+    lowered = text.lower()
+    for word in ADVICE_WORDS:
+        assert word not in lowered, word
+    return text
 
 
 def _charts(app) -> dict[str, object]:
