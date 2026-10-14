@@ -298,7 +298,8 @@ reproduce T2.
 
 ## Design system
 
-One token module (`dashboard/theme.py`) drives the look:
+One token module (`ui/theme.py`, moved out of `dashboard/` in P1-1b so the
+product app shares it) drives the look:
 - **Streamlit theme** (`.streamlit/config.toml`, kept identical to
   `streamlit_theme()` by a test): warm neutral canvas and surfaces, one
   restrained slate-teal accent, status colours for alerts, the platform UI
@@ -327,7 +328,7 @@ T2 never stored. Under `prefers-reduced-motion` the dashboard's CSS motion
 is off; Streamlit's built-in widget animations (for example its expander
 height animation) follow Streamlit's own handling.
 
-**Shared components** (`dashboard/components.py`): `page_header`,
+**Shared components** (`ui/components.py`): `page_header`,
 `status_banner`, `pill`, `stat_row`, `estimate_card` (a stored estimate
 with its interval, p-value and status in one card), `card`, `section`,
 `notice`, `chart`, `download` and `future_state`. A test checks that

@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from stock_agent.dashboard.components import apply_theme
 from stock_agent.dashboard.views import sidebar
+from stock_agent.ui.components import apply_theme
 
 st.set_page_config(page_title="Model diagnostics", layout="wide")
 apply_theme()

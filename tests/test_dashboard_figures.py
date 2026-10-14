@@ -339,8 +339,10 @@ def _imports(path):
 
 
 def test_pure_modules_do_not_import_streamlit_and_nothing_imports_the_dashboard():
-    for name in ("figures", "loader", "status", "style", "glossary"):
-        assert not any(m.startswith("streamlit") for m in _imports(PACKAGE / f"{name}.py")), name
+    pure = [PACKAGE / f"{name}.py" for name in ("figures", "loader", "status", "glossary")]
+    pure.append(PACKAGE.parent / "ui" / "style.py")  # the chart style moved to the neutral ui/
+    for path in pure:
+        assert not any(m.startswith("streamlit") for m in _imports(path)), path
     for path in PACKAGE.parent.rglob("*.py"):
         if PACKAGE in path.parents:
             continue

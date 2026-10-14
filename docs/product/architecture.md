@@ -120,6 +120,7 @@ Existing packages keep their roles. A new package is created only by the first t
 3. **The reader refuses unknown statuses and newer minor versions.** It never returns a return forecast to a mode that its status and claim level do not allow (`ux_blueprint.md`, section 3).
 4. **UI components take typed records.** A forecast card cannot render a descriptor, and a descriptor card cannot render a forecast.
 5. **An import test proves `app/` imports only the reader, the allocation rules and `ui/`.** Never models, raw data or the writer.
+   - `app/` may also import pure descriptive functions from `stock_agent.portfolio`, which never imports `app/`, `ui/` or the dashboard.
 6. **Every publication records its code SHA and dirty flag.** The reader refuses dirty-tree publications outside Research mode.
 7. **Lockbox boundary (decision OD5; default shown).** No publication reads data dated on or after `MODEL_HOLDOUT_START` (`model_validation/folds.py`, 2025-01-01), for any asset. Every product `as_of` is at most the last development session.
    - This is today's rule ("nothing reads the lockbox except a recorded holdout run", `docs/research/diagnostics_and_visualization_plan.md`) applied to the product.

@@ -19,8 +19,9 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from stock_agent.dashboard import components, evaluation, figures, loader, status, style, theme
+from stock_agent.dashboard import evaluation, figures, loader, status
 from stock_agent.model_diagnostics import artifacts, contract
+from stock_agent.ui import components, style, theme
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "src" / "stock_agent" / "dashboard" / "app.py"

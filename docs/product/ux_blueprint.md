@@ -171,7 +171,7 @@ This is where "why can't I see a forecast?" is answered in full.
 
 ## 5. Evidence and provenance language
 
-Hue already means identity or status (`dashboard/style.py`), so the evidence type is carried by **a text badge, a glyph and a line style**, never by colour alone.
+Hue already means identity or status (`ui/style.py`), so the evidence type is carried by **a text badge, a glyph and a line style**, never by colour alone.
 
 | Evidence type | Badge | Chart treatment |
 |---|---|---|
@@ -207,7 +207,7 @@ Each state has its own component, reason code and copy. A state is never an empt
 - Show ranges before points, and translate them into dollars on the user's reference amount.
 - Frame by frequency with honest denominators over non-overlapping periods ("3 of 17 calendar years").
 - Draw fan bands (50% and 80%) only for calibrated distributions.
-- Use whole percents in Explore and keep decimals in Research.
+- Show percentages with one decimal in Explore (for example −5.0%), never rounding away the sign of a loss, and keep more precision in Research.
 - Keep "What this cannot tell you" visible on every page that shows a number about the future or a simulation.
 
 **Avoid:**
@@ -220,7 +220,7 @@ Each state has its own component, reason code and copy. A state is never an empt
 
 ## 8. Design language
 
-Built on the existing tokens (`dashboard/theme.py`, `components.py`, `style.py`). It takes inspiration from calm, premium research tools without copying any brand.
+Built on the existing tokens (`ui/theme.py`, `components.py`, `style.py`; moved out of `dashboard/` in P1-1b). It takes inspiration from calm, premium research tools without copying any brand.
 
 - **Type.**
   - The platform sans (no web font is fetched), 15 px base, the existing heading scale and tabular figures.

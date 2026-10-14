@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 
-from stock_agent.dashboard import theme
+from stock_agent.ui import theme
 
 OKABE_ITO = (
     "#0072B2",  # blue

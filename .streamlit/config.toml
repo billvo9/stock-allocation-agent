@@ -1,6 +1,7 @@
-# Local research dashboard. This file covers launches from the repository
-# root; scripts/run_dashboard.py passes the same settings explicitly, so they
-# also hold for launches from anywhere else.
+# Local research dashboard and Portfolio Lab. This file covers launches from
+# the repository root; scripts/run_dashboard.py and scripts/run_portfolio_lab.py
+# pass the same settings explicitly, so they also hold for launches from
+# anywhere else.
 [server]
 address = "127.0.0.1"
 headless = true
@@ -11,7 +12,7 @@ gatherUsageStats = false
 [client]
 toolbarMode = "viewer"
 
-# Kept identical to stock_agent/dashboard/theme.py streamlit_theme() by a test,
+# Kept identical to stock_agent/ui/theme.py streamlit_theme() by a test,
 # so change the tokens there. Applied to launches from the repository root,
 # which scripts/run_dashboard.py always uses.
 [theme]
