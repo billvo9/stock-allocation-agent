@@ -40,6 +40,7 @@ SOURCE = REPO / "src"
 PACKAGE = SOURCE / "stock_agent" / "app"
 PORTFOLIO = SOURCE / "stock_agent" / "portfolio"
 RUN = PACKAGE / "run.py"
+EXPLORE_PAGE = "destinations/explore.py"
 TIMEOUT = 120
 EQUITY, BOND, CASH, STALE, DISTRIBUTION_GAP, MISSING = (
     h.fund_id for h in synthetic.demo_histories()
@@ -183,6 +184,13 @@ def _charts(app) -> dict[str, object]:
     return {chart.proto.id.rsplit("-", 1)[-1].removeprefix("explore_"): chart for chart in charts}
 
 
+def _running_explore() -> AppTest:
+    """The running app (run.py) on its Explore destination, the approved calculations included."""
+
+    app = AppTest.from_file(str(RUN), default_timeout=TIMEOUT).run()
+    return app.switch_page(EXPLORE_PAGE).run()
+
+
 def _choose(app, *fund_ids):
     return app.multiselect(key=explore.FUNDS_KEY).set_value(list(fund_ids)).run()
 
@@ -236,7 +244,7 @@ def _independent_growth(history, start):
 
 
 def test_the_running_app_shows_calculated_synthetic_results():
-    app = AppTest.from_file(str(RUN), default_timeout=TIMEOUT).run()
+    app = _running_explore()
     assert not app.exception, [e.value for e in app.exception]
     text = _text(app)
     assert set(_charts(app)) == {"growth", "calendar"}
@@ -273,7 +281,7 @@ def view_money(value: float) -> str:
 
 
 def test_a_break_stops_the_growth_and_makes_later_years_unavailable():
-    app = _choose(AppTest.from_file(str(RUN), default_timeout=TIMEOUT).run(), DISTRIBUTION_GAP)
+    app = _choose(_running_explore(), DISTRIBUTION_GAP)
     assert not app.exception, [e.value for e in app.exception]
     text = _text(app)
     assert "From 2019-03-08, the hypothetical growth cannot be continued" in text
@@ -304,7 +312,7 @@ def test_real_records_are_badged_as_historical_market_data():
 
 
 def test_the_theme_is_applied_once():
-    app = AppTest.from_file(str(RUN), default_timeout=TIMEOUT).run()
+    app = _running_explore()
     styles = [h for h in app.get("html") if "<style>" in h.proto.body]
     assert len(styles) == 1 and ".sa-pills" in styles[0].proto.body
 
@@ -605,7 +613,7 @@ def test_a_metric_unavailable_for_one_fund_names_it_and_keeps_the_others():
 
 
 def test_dollar_signs_are_escaped_exactly_once():
-    for app in (_app(), AppTest.from_file(str(RUN), default_timeout=TIMEOUT).run()):
+    for app in (_app(), _running_explore()):
         rendered = [
             e.value for e in (*app.subheader, *app.markdown, *app.caption, *app.info, *app.warning)
         ]
@@ -654,6 +662,7 @@ def test_the_launcher_binds_to_localhost_without_usage_statistics():
 
 
 ALLOWED_THIRD_PARTY = {"numpy", "pandas", "plotly", "streamlit"}
+DESTINATIONS = [f"destinations/{path.name}" for path in (PACKAGE / "destinations").glob("*.py")]
 APP_PROJECT_PREFIXES = ("stock_agent.app", "stock_agent.ui", "stock_agent.portfolio")
 FORBIDDEN = (
     "stock_agent.dashboard",
@@ -697,7 +706,9 @@ def _loaded_after(script: str) -> set[str]:
     return set(json.loads(completed.stdout.strip().splitlines()[-1]))
 
 
-@pytest.mark.parametrize("path", sorted(PACKAGE.glob("*.py")), ids=lambda p: p.stem)
+@pytest.mark.parametrize(
+    "path", sorted(PACKAGE.rglob("*.py")), ids=lambda p: str(p.relative_to(PACKAGE))
+)
 def test_app_modules_import_only_ui_portfolio_their_own_modules_and_allowed_libraries(path):
     for module in _imports(path):
         top = module.split(".")[0]
@@ -714,13 +725,17 @@ def test_rendering_the_app_loads_no_forbidden_module():
         "from streamlit.testing.v1 import AppTest\n"
         f"app = AppTest.from_file({str(RUN)!r}, default_timeout={TIMEOUT})\n"
         "app.run()\n"
-        "assert not app.exception, [e.value for e in app.exception]"
+        "assert not app.exception, [e.value for e in app.exception]\n"
+        f"for page in {sorted(DESTINATIONS)!r}:\n"
+        "    app.switch_page(page).run()\n"
+        "    assert not app.exception, (page, [e.value for e in app.exception])"
     )
     assert not sorted(m for m in loaded if m.startswith(FORBIDDEN))
     project = sorted(m for m in loaded if m.startswith("stock_agent"))
     outside = [m for m in project if m != "stock_agent" and not m.startswith(APP_PROJECT_PREFIXES)]
     assert not outside, outside
-    assert "stock_agent.app.explore" in loaded
+    for module in ("explore", "overview", "builder", "experiments", "model_health", "evidence"):
+        assert f"stock_agent.app.{module}" in loaded, module
 
 
 PORTFOLIO_FORBIDDEN = ("stock_agent.app", "stock_agent.ui", "stock_agent.dashboard")

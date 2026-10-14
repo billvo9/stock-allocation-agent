@@ -16,6 +16,14 @@ change and never touches a value: a chart fades in when it appears (opacity
 only; Plotly never tweens data, which would draw values T2 never stored),
 and hovering a clickable summary shades it. The dashboard's CSS motion is
 off under prefers-reduced-motion.
+
+Two variants share these rules. The research dashboard uses the tokens
+below (`COLOURS`, `TYPE`, `css()`, `streamlit_theme()`). The Portfolio Lab
+uses the editorial variant (`LAB_COLOURS`, `LAB_TYPE`, `lab_css()`,
+`lab_streamlit_theme()`): warm ivory surfaces, charcoal text, one restrained
+terracotta accent, Source Serif 4 headings and Source Sans 3 for text,
+tables and controls. Its fonts are bundled OFL files served by the Lab's own
+Streamlit static directory (`FONT_FACES`), so nothing is fetched from a CDN.
 """
 
 from __future__ import annotations
@@ -75,33 +83,83 @@ RADIUS = {"control": "8px", "card": "12px", "pill": "999px"}
 MOTION = {"fast_ms": 120, "appear_ms": 200, "easing": "cubic-bezier(0.2, 0, 0, 1)"}
 CONTENT_MAX_WIDTH = "1240px"
 
+# --- the Portfolio Lab's editorial variant ---
+# Same token names as COLOURS, so every shared rule reads either set. Warm
+# ivory and off-white surfaces, deep charcoal text and one terracotta accent
+# (links, focus, selection, a hairline beside eyebrows), each tested for WCAG
+# AA on every surface.
+LAB_COLOURS = {
+    "canvas": "#FAF7F1",  # warm ivory page
+    "surface": "#FFFDF8",  # off-white cards and charts
+    "surface_muted": "#F2EDE4",  # sidebar, widget fills, table headers
+    "border": "#E5DDD0",
+    "border_strong": "#CDBFAE",
+    "text": "#1D1B18",  # deep charcoal
+    "text_muted": "#544E46",
+    "text_subtle": "#685F55",
+    "accent": "#9A4325",  # restrained terracotta
+    "accent_soft": "#F4E5DB",
+    "grid": "#EEE7DC",
+    "fold_boundary": "#B3A898",
+    "reference_line": "#8A8174",
+}
+# CSS family names for the bundled Source Serif 4 and Source Sans 3. Streamlit
+# writes a font face's family unquoted, and an unquoted family cannot contain a
+# token that starts with a digit ("Source Serif 4" would be dropped by the
+# browser), so the aliases are single identifiers.
+SERIF = "SourceSerif4"
+SANS = "SourceSans3"
+LAB_TYPE = {
+    "serif": f"{SERIF}, 'Iowan Old Style', Georgia, serif",
+    "sans": f"{SANS}, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif",
+    "mono": TYPE["mono"],
+    "base_px": 16,
+    "heading_sizes": ["2.55rem", "1.7rem", "1.3rem", "1.05rem", "1rem", "0.95rem"],
+    "heading_weights": [600, 600, 600, 600, 600, 600],
+    "metric_size": "1.65rem",
+    "metric_weight": 600,
+    "chart_title_px": 16,
+    "chart_px": 13,
+}
+LAB_RADIUS = {"control": "10px", "card": "14px", "pill": "999px"}
+LAB_CONTENT_MAX_WIDTH = "1120px"
+# Bundled SIL Open Font License fonts (variable, unmodified Adobe releases:
+# Source Serif 4 4.005, Source Sans 3 3.052; licence in the font directory).
+# Streamlit serves them from the Lab's static directory, src/stock_agent/app/
+# static/, at STATIC_URL; nothing is fetched from another host.
+STATIC_URL = "app/static"
+FONT_DIRECTORY = "fonts"
+FONT_FACES = (
+    {"family": SERIF, "file": "SourceSerif4Variable-Roman.woff2", "weight": "200 900"},
+    {"family": SANS, "file": "SourceSans3VF-Upright.woff2", "weight": "200 900"},
+    {"family": SANS, "file": "SourceSans3VF-Italic.woff2", "weight": "200 900", "style": "italic"},
+)
 
-def streamlit_theme() -> dict[str, dict[str, object]]:
-    """The [theme] and [theme.sidebar] tables of .streamlit/config.toml."""
 
+def _streamlit_theme(colours, type_, radius) -> dict[str, dict[str, object]]:
     status = STATUS
     return {
         "theme": {
             "base": "light",
-            "primaryColor": COLOURS["accent"],
-            "backgroundColor": COLOURS["canvas"],
-            "secondaryBackgroundColor": COLOURS["surface_muted"],
-            "textColor": COLOURS["text"],
-            "linkColor": COLOURS["accent"],
-            "borderColor": COLOURS["border"],
-            "dataframeBorderColor": COLOURS["border"],
-            "dataframeHeaderBackgroundColor": COLOURS["surface_muted"],
+            "primaryColor": colours["accent"],
+            "backgroundColor": colours["canvas"],
+            "secondaryBackgroundColor": colours["surface_muted"],
+            "textColor": colours["text"],
+            "linkColor": colours["accent"],
+            "borderColor": colours["border"],
+            "dataframeBorderColor": colours["border"],
+            "dataframeHeaderBackgroundColor": colours["surface_muted"],
             "showWidgetBorder": True,
-            "baseRadius": RADIUS["control"],
-            "buttonRadius": RADIUS["control"],
-            "font": TYPE["sans"],
-            "headingFont": TYPE["sans"],
-            "codeFont": TYPE["mono"],
-            "baseFontSize": TYPE["base_px"],
-            "headingFontSizes": TYPE["heading_sizes"],
-            "headingFontWeights": TYPE["heading_weights"],
-            "metricValueFontSize": TYPE["metric_size"],
-            "metricValueFontWeight": TYPE["metric_weight"],
+            "baseRadius": radius["control"],
+            "buttonRadius": radius["control"],
+            "font": type_["sans"],
+            "headingFont": type_.get("serif", type_["sans"]),
+            "codeFont": type_["mono"],
+            "baseFontSize": type_["base_px"],
+            "headingFontSizes": type_["heading_sizes"],
+            "headingFontWeights": type_["heading_weights"],
+            "metricValueFontSize": type_["metric_size"],
+            "metricValueFontWeight": type_["metric_weight"],
             "greenColor": status["VALID"]["fg"],
             "greenBackgroundColor": status["VALID"]["bg"],
             "greenTextColor": status["VALID"]["fg"],
@@ -117,27 +175,59 @@ def streamlit_theme() -> dict[str, dict[str, object]]:
             "blueColor": status["NOTICE"]["fg"],
             "blueBackgroundColor": status["NOTICE"]["bg"],
             "blueTextColor": status["NOTICE"]["fg"],
-            "grayColor": COLOURS["text_subtle"],
-            "grayBackgroundColor": COLOURS["surface_muted"],
-            "grayTextColor": COLOURS["text_muted"],
+            "grayColor": colours["text_subtle"],
+            "grayBackgroundColor": colours["surface_muted"],
+            "grayTextColor": colours["text_muted"],
         },
         "theme.sidebar": {
-            "backgroundColor": COLOURS["surface_muted"],
-            "secondaryBackgroundColor": COLOURS["surface"],
-            "borderColor": COLOURS["border"],
+            "backgroundColor": colours["surface_muted"],
+            "secondaryBackgroundColor": colours["surface"],
+            "borderColor": colours["border"],
         },
     }
 
 
-def _variables() -> str:
+def streamlit_theme() -> dict[str, dict[str, object]]:
+    """The [theme] and [theme.sidebar] tables of .streamlit/config.toml."""
+
+    return _streamlit_theme(COLOURS, TYPE, RADIUS)
+
+
+def font_url(face: dict[str, str]) -> str:
+    """Where Streamlit serves a bundled font file (relative to the app's root URL)."""
+
+    return f"{STATIC_URL}/{FONT_DIRECTORY}/{face['file']}"
+
+
+def lab_streamlit_theme() -> dict[str, object]:
+    """
+    The Portfolio Lab's script-level config tables (src/stock_agent/app/
+    .streamlit/config.toml, checked against this by a test): [theme],
+    [theme.sidebar] and one [[theme.fontFaces]] table per bundled font file.
+    """
+
+    tables: dict[str, object] = dict(_streamlit_theme(LAB_COLOURS, LAB_TYPE, LAB_RADIUS))
+    tables["theme.fontFaces"] = [
+        {
+            "family": face["family"],
+            "url": font_url(face),
+            "weight": face["weight"],
+            "style": face.get("style", "normal"),
+        }
+        for face in FONT_FACES
+    ]
+    return tables
+
+
+def _variables(colours=COLOURS, radius=RADIUS, mono=TYPE["mono"]) -> str:
     pairs = {
-        **{f"--sa-{name.replace('_', '-')}": value for name, value in COLOURS.items()},
-        "--sa-radius-card": RADIUS["card"],
-        "--sa-radius-control": RADIUS["control"],
+        **{f"--sa-{name.replace('_', '-')}": value for name, value in colours.items()},
+        "--sa-radius-card": radius["card"],
+        "--sa-radius-control": radius["control"],
         "--sa-motion-fast": f"{MOTION['fast_ms']}ms",
         "--sa-motion-appear": f"{MOTION['appear_ms']}ms",
         "--sa-ease": MOTION["easing"],
-        "--sa-mono": TYPE["mono"],
+        "--sa-mono": mono,
     }
     for level, tones in STATUS.items():
         slug = level.split("/")[-1].lower()
@@ -155,6 +245,12 @@ def status_slug(level: str) -> str:
 def css() -> str:
     """The dashboard's CSS layer. Stable hooks only: data-testid and keyed containers."""
 
+    return _shared_css(COLOURS, RADIUS, CONTENT_MAX_WIDTH, TYPE["mono"])
+
+
+def _shared_css(colours, radius, max_width: str, mono: str) -> str:
+    """The rules both variants share, over one token set."""
+
     pills = "\n".join(
         f".sa-pill--{status_slug(level)} {{ color: var(--sa-{status_slug(level)}-fg); "
         f"background: var(--sa-{status_slug(level)}-bg); "
@@ -164,9 +260,9 @@ def css() -> str:
     space = {name: f"{value}px" for name, value in SPACE.items()}
     return f"""
 :root {{
-{_variables()}
+{_variables(colours, radius, mono)}
 }}
-[data-testid="stMainBlockContainer"] {{ max-width: {CONTENT_MAX_WIDTH}; }}
+[data-testid="stMainBlockContainer"] {{ max-width: {max_width}; }}
 h1, h2, h3 {{ letter-spacing: -0.012em; }}
 .sa-eyebrow {{
   color: var(--sa-text-subtle);
@@ -238,7 +334,7 @@ code {{ font-family: var(--sa-mono); }}
   gap: {space["xs"]};
   padding: 0.18rem 0.65rem;
   border: 1px solid;
-  border-radius: {RADIUS["pill"]};
+  border-radius: {radius["pill"]};
   font-size: 0.8rem;
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -251,6 +347,134 @@ code {{ font-family: var(--sa-mono); }}
   [data-testid="stPlotlyChart"], [data-testid="stExpander"] summary {{
     animation: none !important;
     transition: none !important;
+  }}
+}}
+""".strip()
+
+
+PHONE_MAX_WIDTH = "640px"
+
+
+def lab_css() -> str:
+    """
+    The Portfolio Lab's CSS layer: the shared rules over the editorial tokens,
+    then the editorial type, hero, lists, links and navigation. Every custom
+    motion is opacity only; under prefers-reduced-motion all motion stops,
+    Streamlit's own widget transitions included.
+    """
+
+    shared = _shared_css(LAB_COLOURS, LAB_RADIUS, LAB_CONTENT_MAX_WIDTH, LAB_TYPE["mono"])
+    space = {name: f"{value}px" for name, value in SPACE.items()}
+    return f"""
+{shared}
+:root {{
+  --sa-serif: {LAB_TYPE["serif"]};
+  --sa-sans: {LAB_TYPE["sans"]};
+}}
+[data-testid="stMainBlockContainer"] {{ padding-top: 4.5rem; padding-bottom: 4rem; }}
+h1, h2, h3 {{ font-family: var(--sa-serif); font-weight: 600; letter-spacing: -0.015em; }}
+h1 {{ line-height: 1.12; }}
+h4, h5, h6 {{ font-family: var(--sa-sans); }}
+[data-testid="stMarkdownContainer"] p, [data-testid="stMarkdownContainer"] li {{
+  line-height: 1.6;
+  max-width: 76ch;
+}}
+.sa-eyebrow {{
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: -0.1rem;
+}}
+.sa-eyebrow::before {{
+  content: "";
+  width: 1.5rem;
+  height: 1px;
+  background: var(--sa-accent);
+}}
+.sa-lede {{
+  font-family: var(--sa-serif);
+  font-size: 1.2rem;
+  line-height: 1.5;
+  color: var(--sa-text-muted);
+  max-width: 62ch;
+  margin: 0;
+}}
+[class*="st-key-sa-hero"] {{
+  padding-bottom: {space["xl"]};
+  margin-bottom: {space["sm"]};
+  border-bottom: 1px solid var(--sa-border);
+  animation: sa-appear var(--sa-motion-appear) var(--sa-ease);
+}}
+[class*="st-key-sa-card"], [class*="st-key-sa-future"] {{
+  padding: {space["lg"]} {space["xl"]};
+  animation: sa-appear var(--sa-motion-appear) var(--sa-ease);
+}}
+[class*="st-key-sa-card"] {{ box-shadow: 0 1px 2px rgba(29, 27, 24, 0.04); }}
+[data-testid="stHtml"] .sa-list {{ list-style: none; margin: 0; padding: 0; }}
+.sa-list__item {{
+  display: grid;
+  grid-template-columns: minmax(9.5rem, max-content) 1fr;
+  gap: {space["xs"]} {space["lg"]};
+  align-items: baseline;
+  padding: {space["md"]} 0;
+  border-top: 1px solid var(--sa-border);
+}}
+.sa-list__item:first-child {{ border-top: none; padding-top: {space["xs"]}; }}
+.sa-list__item .sa-pill {{ justify-self: start; }}
+.sa-list__title {{ font-weight: 600; color: var(--sa-text); margin: 0; }}
+.sa-list__text {{ color: var(--sa-text-muted); margin: 0.15rem 0 0; line-height: 1.55; }}
+[data-testid="stPageLink"] a {{
+  border: 1px solid var(--sa-border-strong);
+  border-radius: {LAB_RADIUS["pill"]};
+  padding: 0.35rem 0.95rem;
+  background: var(--sa-surface);
+  transition: background-color var(--sa-motion-fast) var(--sa-ease),
+    border-color var(--sa-motion-fast) var(--sa-ease);
+}}
+[data-testid="stPageLink"] a:hover {{
+  background: var(--sa-accent-soft);
+  border-color: var(--sa-accent);
+}}
+[data-testid="stPageLink"] a p {{ font-weight: 600; white-space: normal; }}
+[data-testid="stPageLink"] a span {{ overflow: visible; max-width: none; }}
+[data-testid="stMultiSelectTagsContainer"] [data-tag] {{
+  background-color: var(--sa-accent-soft);
+  color: var(--sa-accent);
+  border: 1px solid var(--sa-border-strong);
+}}
+[data-testid="stMultiSelectTagsContainer"] [data-tag] svg {{ fill: var(--sa-accent); }}
+[data-testid="stTable"] th {{ color: var(--sa-text-muted); font-weight: 600; }}
+[data-testid="stTable"] td, [data-testid="stTable"] th {{ vertical-align: top; }}
+/* Streamlit's navigation links drop the outline on focus: restore a visible ring. */
+[data-testid="stTopNavLink"][href]:focus-visible,
+[data-testid="stSidebarNavLink"][href]:focus-visible,
+[data-testid="stPageLink-NavLink"][href]:focus-visible {{
+  outline: 2px solid var(--sa-accent);
+  outline-offset: 2px;
+}}
+[data-testid="stHeader"] {{
+  background: var(--sa-canvas);
+  border-bottom: 1px solid var(--sa-border);
+}}
+[data-testid="stCode"] pre {{ border-radius: var(--sa-radius-control); }}
+@media (max-width: {PHONE_MAX_WIDTH}) {{
+  [data-testid="stMainBlockContainer"] {{
+    padding-left: {space["lg"]};
+    padding-right: {space["lg"]};
+    padding-top: 3.75rem;
+  }}
+  [data-testid="stHeading"] h1 {{ font-size: 2rem; }}
+  [data-testid="stHeading"] h2 {{ font-size: 1.45rem; }}
+  .sa-lede {{ font-size: 1.06rem; }}
+  [class*="st-key-sa-card"], [class*="st-key-sa-future"] {{ padding: {space["md"]} {space["lg"]}; }}
+  .sa-list__item {{ grid-template-columns: 1fr; }}
+}}
+@media (prefers-reduced-motion: reduce) {{
+  *, *::before, *::after {{
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }}
 }}
 """.strip()

@@ -9,7 +9,8 @@ Visual language:
 - gains and losses are neutral: they are read from the sign and the zero
   line, never from red or green;
 - long growth histories use a logarithmic axis, labelled as such;
-- gaps stay gaps (never connected across missing sessions).
+- gaps stay gaps (never connected across missing sessions);
+- every chart uses the Lab's editorial layout (`style.lab_layout`).
 """
 
 from __future__ import annotations
@@ -87,7 +88,7 @@ def growth_figure(
         annotation_position="bottom right",
         annotation_font={"color": theme.COLOURS["text_muted"]},
     )
-    layout = style.base_layout(
+    layout = style.lab_layout(
         labels.GROWTH_TITLE,
         x_title="Session date",
         y_title="Value in US dollars (log scale)",
@@ -134,7 +135,7 @@ def calendar_year_figure(
                 ),
             )
         )
-    layout = style.base_layout(
+    layout = style.lab_layout(
         labels.CALENDAR_TITLE,
         x_title="Calendar year",
         y_title="Total return in the year",

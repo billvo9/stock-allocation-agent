@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 import pandas as pd
 import streamlit as st
 
-from stock_agent.app import labels, view
+from stock_agent.app import labels, persist, view
 from stock_agent.app.figures import FundStyle, calendar_year_figure, fund_styles, growth_figure
 from stock_agent.app.history import FundHistory
 from stock_agent.app.provider import DescriptiveMetrics
@@ -29,6 +29,7 @@ from stock_agent.ui import components as ui
 FUNDS_KEY = "explore_funds"
 PERIOD_KEY = "explore_period"
 YEARS_KEY = "explore_years"
+SAVED_KEY = "explore_saved"  # choices kept while another page is shown (`persist`)
 SYNTHETIC_LIMITATION = "synthetic_data"
 CARDS_PER_ROW = 3
 GAPS_LISTED = 3
@@ -69,6 +70,7 @@ def loading_state() -> None:
 def render(
     load_histories: Callable[[], Sequence[FundHistory]], metrics: DescriptiveMetrics
 ) -> None:
+    persist.restore(SAVED_KEY, skip=(YEARS_KEY,))
     ui.page_header(labels.PAGE_TITLE, eyebrow=labels.PAGE_EYEBROW)
     _say(labels.PAGE_PURPOSE, "caption")
     loading = st.empty()
@@ -87,6 +89,7 @@ def render(
     period, requested = _pick_period(coverage, period_column)
     with badges.container():
         _badges(histories, selected)
+    persist.save(SAVED_KEY, (FUNDS_KEY, PERIOD_KEY, YEARS_KEY))
 
     if not selected:
         _say(labels.EMPTY, "notice")
@@ -124,10 +127,10 @@ def _option(history: FundHistory) -> str:
 def _pick_funds(histories: Sequence[FundHistory], where) -> tuple[FundHistory, ...]:
     by_id = {history.fund_id: history for history in histories}
     default = [h.fund_id for h in histories if h.coverage_start is not None and not h.stale][:3]
+    st.session_state.setdefault(FUNDS_KEY, default)
     chosen = where.multiselect(
         "Funds",
         list(by_id),
-        default=default,
         format_func=lambda fund_id: _option(by_id[fund_id]),
         key=FUNDS_KEY,
         help="Listed in a fixed order. No fund is ranked or preferred.",
@@ -153,11 +156,12 @@ def _pick_period(
         first, last = coverage[0].year, coverage[1].year
         start_year, end_year = first, last
         if first < last:
+            years_key = f"{YEARS_KEY}_{first}_{last}"
             start_year, end_year = where.select_slider(
                 "Years",
                 options=list(range(first, last + 1)),
-                value=(first, last),
-                key=f"{YEARS_KEY}_{first}_{last}",
+                value=persist.value(SAVED_KEY, years_key, (first, last)),
+                key=years_key,
             )
         requested = str(start_year) if start_year == end_year else f"{start_year}-{end_year}"
         period = view.clamp_period(start_year, end_year, coverage, requested)
@@ -331,25 +335,6 @@ def _calendar(result: view.ExploreView, styles: dict[str, FundStyle]) -> None:
         st.dataframe(table, hide_index=True)
 
 
-def _sources(selected: Sequence[FundHistory]) -> pd.DataFrame:
-    rows = []
-    for history in selected:
-        start, end = history.coverage_start, history.coverage_end
-        rows.append(
-            {
-                "Fund": history.name,
-                "Role": labels.ROLE_TEXT[history.role],
-                "Source": history.source_label,
-                "Coverage": "No available data" if start is None else f"{day(start)} to {day(end)}",
-                "Retrieved": history.retrieved_label,
-                "Vintage": history.vintage_note,
-                "Freshness": f"Stale: {history.stale_reason}" if history.stale else "Not stale",
-                "Evidence": history.evidence_status,
-            }
-        )
-    return pd.DataFrame(rows)
-
-
 def _about(selected: Sequence[FundHistory]) -> None:
     _section(labels.ABOUT_TITLE)
     facts = (
@@ -360,7 +345,7 @@ def _about(selected: Sequence[FundHistory]) -> None:
     )
     _say("\n".join(f"- {fact}" for fact in facts))
     if selected:
-        st.dataframe(_sources(selected), hide_index=True)
+        st.dataframe(view.sources_table(selected), hide_index=True)
         codes = sorted({code for history in selected for code in history.limitations})
         if codes:
             limits = "\n".join(f"- {labels.LIMITATION_TEXT.get(code, code)}" for code in codes)

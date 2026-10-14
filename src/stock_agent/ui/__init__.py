@@ -3,6 +3,7 @@ Neutral design system shared by the research dashboard and the product app.
 
 Modules:
     theme       design tokens: palette, status treatments, type, space, CSS
+                (the research variant and the Portfolio Lab's editorial one)
     style       chart visual language: identity palettes, markers, Plotly layout
     components  Streamlit components that lay out values and compute nothing
 

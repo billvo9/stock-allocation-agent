@@ -171,3 +171,39 @@ def base_layout(
         # were never stored. Charts change in one step; theme.css() fades a
         # chart in only when it first appears.
     }
+
+
+def lab_layout(
+    title: str,
+    *,
+    x_title: str = "",
+    y_title: str = "",
+    height: int = 380,
+    subtitle: str = "",
+) -> dict:
+    """
+    `base_layout` in the Portfolio Lab's editorial tokens: Source Sans 3 for
+    every chart label, the off-white chart surface and the warm grid.
+    """
+
+    layout = base_layout(title, x_title=x_title, y_title=y_title, height=height, subtitle=subtitle)
+    colours, type_ = theme.LAB_COLOURS, theme.LAB_TYPE
+    layout["font"] = {"family": type_["sans"], "size": type_["chart_px"], "color": colours["text"]}
+    layout["title"] = {
+        **layout["title"],
+        "font": {**layout["title"]["font"], "size": type_["chart_title_px"]},
+        "subtitle": {
+            **layout["title"]["subtitle"],
+            "font": {"size": type_["chart_px"], "color": colours["text_muted"]},
+        },
+    }
+    for axis in ("xaxis", "yaxis"):
+        layout[axis] = {
+            **layout[axis],
+            "gridcolor": colours["grid"],
+            "zerolinecolor": colours["grid"],
+            "linecolor": colours["border_strong"],
+        }
+    layout["plot_bgcolor"] = layout["paper_bgcolor"] = colours["surface"]
+    layout["hoverlabel"] = {"font": {"family": type_["sans"]}}
+    return layout
