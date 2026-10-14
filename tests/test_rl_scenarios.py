@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 
 import numpy as np
 import pytest
@@ -52,9 +53,56 @@ def test_scenarios_with_the_same_seed_differ():
     )
 
 
-def test_an_unknown_generator_version_is_refused_rather_than_approximated():
+@pytest.mark.parametrize("version", ["0.9.0", "1.0.0"])
+def test_an_unsupported_generator_version_is_refused_rather_than_approximated(version):
     with pytest.raises(ValueError, match="generator version"):
-        sc.generate_scenario("calm", seed=0, generator_version="0.9.0")
+        sc.generate_scenario("calm", seed=0, generator_version=version)
+
+
+def test_the_generator_version_is_1_1_0():
+    assert sc.GENERATOR_VERSION == "1.1.0"
+    assert sc.SUPPORTED_GENERATOR_VERSIONS == ("1.1.0",)
+
+
+GOLDEN_SCENARIOS: dict[str, tuple[str, list[float]]] = {
+    "calm": ("9e4e3d0a385cb119", [0.736495756176, 0.221370700766, 0.110284392593, 0.0]),
+    "crash": ("9a58f4d4f58de783", [-0.557887554885, -0.126718766916, 0.082989396319, 0.0]),
+    "extreme_volatility": (
+        "9dd606b0a19585b7",
+        [-0.382874764282, 0.30635467977, 0.107087731396, 0.0],
+    ),
+    "high_correlation": ("044be0f14b9fdfdb", [1.19891985694, 0.385731945602, 0.128736974577, 0.0]),
+    "high_costs": ("351c2fffc2b502e6", [0.043641913529, 0.033147788244, 0.091783731496, 0.0]),
+    "missing_closes": ("d450202f10b1b7d9", [0.734824803449, 0.142364140126, 0.113270656172, 0.0]),
+    "mixed": ("24cd6dd4f1c1cceb", [-0.72644937922, 0.101484969295, 0.105012984643, 0.0]),
+    "stale_observations": (
+        "a9774781d636565c",
+        [0.64383688675, 0.344770720275, 0.116872194327, 0.0],
+    ),
+}
+
+
+def _exact_digest(data):
+    digest = hashlib.sha256()
+    for array in (data.has_close, data.obs_lag, data.cost_multiplier):
+        digest.update(np.ascontiguousarray(array).tobytes())
+    digest.update("|".join(data.regime.tolist()).encode("utf-8"))
+    return digest.hexdigest()[:16]
+
+
+@pytest.mark.parametrize("name", sorted(GOLDEN_SCENARIOS))
+def test_golden_pins_for_every_scenario(name):
+    """
+    Integer and boolean arrays (closes, feed lags, cost multipliers, regimes)
+    come from exact uniform draws, so they are pinned bitwise. Float returns
+    pass through platform maths libraries, so they are pinned by per-asset
+    sums to 1e-9 rather than by bytes.
+    """
+
+    data = sc.generate_scenario(name, seed=0)
+    digest, sums = GOLDEN_SCENARIOS[name]
+    assert _exact_digest(data) == digest
+    np.testing.assert_allclose(np.nansum(data.returns, axis=0), sums, rtol=0, atol=1e-9)
 
 
 def test_an_unknown_scenario_is_refused():
@@ -67,7 +115,7 @@ def test_a_golden_draw_pins_the_generator():
     np.testing.assert_allclose(data.returns[1, :3], GOLDEN_CALM_SEED0_SESSION1, rtol=0, atol=1e-12)
 
 
-GOLDEN_CALM_SEED0_SESSION1 = [-0.01953730213206467, 0.007186431323819886, 0.0004950531996756378]
+GOLDEN_CALM_SEED0_SESSION1 = [0.01128441641962181, -0.0005631654284133033, -3.365694687966892e-05]
 
 
 def test_arrays_are_read_only(library):
@@ -125,6 +173,19 @@ def test_high_costs_multiply_the_base_rates_in_their_segments(library):
     assert np.all(data.cost_multiplier[~high] == 1.0)
     t = int(np.flatnonzero(high)[0])
     np.testing.assert_allclose(data.cost_rates_at(t), 5.0 * np.asarray(sc.BASE_COST_RATES))
+
+
+def test_the_crash_regime_is_reliably_severe():
+    declines = []
+    for seed in range(100):
+        data = sc.generate_scenario("crash", seed)
+        crash = np.flatnonzero(data.regime == "crash")
+        for segment in np.split(crash, np.flatnonzero(np.diff(crash) > 1) + 1):
+            declines.append(np.prod(1.0 + data.latent_returns[segment, 0]) - 1.0)
+    declines = np.array(declines)
+    assert len(declines) == 500
+    assert (declines >= 0).mean() < 0.01
+    assert -0.40 < np.median(declines) < -0.20
 
 
 def test_regime_moments_have_the_intended_signs():

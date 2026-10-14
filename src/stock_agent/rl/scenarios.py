@@ -32,6 +32,14 @@ annual log drifts and volatilities per regime, constant within a segment;
 Gaussian or unit-variance Student-t shocks with a fixed correlation; cash
 earns 0 (decision D4 (a), pending approval); base cost rates are the
 proposed D2 rates (5, 5, 2 and 0 bp), an assumption pending approval.
+
+Generator versions. The version enters every seed, so a new version changes
+every draw, and an old version is refused rather than approximated.
+- 1.1.0 (2026-10-14): the crash regime is reliably severe. Over 1,000
+  40-session crash segments the equity fund's return had a median of about
+  -30%, a 5-95% range of about -44% to -12%, and under 1% of segments were
+  non-negative (1.0.0: median -22%, 8.9% non-negative).
+- 1.0.0: first version; no longer generated.
 """
 
 from __future__ import annotations
@@ -44,8 +52,8 @@ import numpy as np
 
 from stock_agent.model_diagnostics.seeds import derive_seed
 
-GENERATOR_VERSION = "1.0.0"
-SUPPORTED_GENERATOR_VERSIONS = ("1.0.0",)
+GENERATOR_VERSION = "1.1.0"
+SUPPORTED_GENERATOR_VERSIONS = ("1.1.0",)
 
 ASSET_NAMES = ("equity_etf", "bond_etf", "short_treasury_fund", "cash")
 CASH_INDEX = 3
@@ -119,8 +127,8 @@ REGIMES: dict[str, RegimeSpec] = {
     "calm": RegimeSpec(name="calm", **_CALM),
     "crash": RegimeSpec(
         name="crash",
-        annual_drift=(-1.6, 0.08, 0.02),
-        annual_vol=(0.45, 0.09, 0.01),
+        annual_drift=(-2.25, 0.08, 0.02),
+        annual_vol=(0.35, 0.09, 0.01),
         correlation=(-0.4, 0.0, 0.3),
         tail_df=4.0,
     ),
