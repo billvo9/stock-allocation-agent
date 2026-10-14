@@ -1,0 +1,51 @@
+# Equity cross-sectional track: the HistGradientBoosting challenger against the
+# T4 linear baselines on a synthetic panel with a planted NONLINEAR signal (a V shape in quality with its linear part removed).
+# Expected: the challenger's increment over every linear baseline is positive, with fold-block uncertainty.
+# Same folds, nested purged tuning, nulls and checks as the linear models.
+# Synthetic data is never evidence about markets.
+schema_version: "1.0"
+experiment: equity_xs_challenger_nonlinear
+track: equity_cross_sectional
+description: >-
+  HistGradientBoosting challenger (pre-registered 4-point complexity path) against
+  ridge, lasso, elastic net and OLS; synthetic signal: nonlinear.
+data:
+  source: synthetic_equity_panel
+  params:
+    n_assets: 30
+    n_sessions: 1500
+    start: "2012-01-03"
+    signal: nonlinear
+    signal_strength: 0.0004
+    late_listings: 3
+    delistings: 1
+    seed: 20261014
+universe:
+  id: synthetic_equity_30_nonlinear
+  min_history_sessions: 60
+features:
+  families: [relative_technical, risk_liquidity, fundamental_quality]
+label:
+  horizon: 20
+  entry_lag: 1
+  benchmark: equal_weight
+folds:
+  start: "2014-07-01"
+  block_sessions: 63
+  inner_block_sessions: 63
+  inner_windows: 4
+  inner_min_train_sessions: 252
+models:
+  candidates: [ridge, lasso, elastic_net]
+  include_ols: true
+  challengers: [hist_gradient_boosting]
+  increment_reference: ridge
+evaluation:
+  seed: 0
+  permutation_draws: 19
+  permutation_models: [per_symbol_mean, ridge]
+  bootstrap_reps: 199
+  calibration_reps: 2000
+  calibration_bootstrap_reps: 199
+registry:
+  model_prefix: equity_xs

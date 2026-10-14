@@ -57,6 +57,7 @@ from stock_agent.features.missingness import missingness_table
 from stock_agent.features.training import LabelSpec
 from stock_agent.forecasting import artifacts as fa
 from stock_agent.forecasting import metrics as em
+from stock_agent.forecasting import nonlinear
 from stock_agent.forecasting.config import ConfigError, ExperimentConfig
 from stock_agent.forecasting.synthetic import (
     SyntheticEquityPanel,
@@ -220,7 +221,23 @@ def equity_models(config: ExperimentConfig, dataset: EquityDataset) -> list[t2.M
         dataset.label_spec, dataset.features, design, include_ols=config.models.include_ols
     )
     chosen = [s for s in linear if s.name in config.models.candidates or s.name == "ols"]
-    return [*controls, *chosen]
+    challengers = [
+        nonlinear.challenger_spec(dataset.label_spec, dataset.features, design)
+        for name in config.models.challengers
+        if name == nonlinear.NAME
+    ]
+    return [*controls, *chosen, *challengers]
+
+
+def increment_references(config: ExperimentConfig, spec) -> list[str]:
+    """Linear models a model's increment is measured against."""
+
+    linear = [*config.models.candidates, *(["ols"] if config.models.include_ols else [])]
+    if spec.name in config.models.challengers:
+        return linear  # the challenger against every linear baseline
+    if spec.role in ("candidate", "diagnostic") and spec.name != config.models.increment_reference:
+        return [config.models.increment_reference]
+    return []
 
 
 def diagnostics_config(config: ExperimentConfig, models, label_spec) -> t2.DiagnosticsConfig:
@@ -264,13 +281,12 @@ def experiment_metrics(
     )
     rows: list[dict] = []
     candidates = {}
-    ref_name = config.models.increment_reference
     for spec in models:
         scored = by_model[spec.name]
         rows += em.coverage_metrics(spec.name, spec.role, scored, ctx)
-        if spec.role in ("candidate", "diagnostic") and spec.name != ref_name:
+        for reference in increment_references(config, spec):
             rows += em.increment_metrics(
-                spec.name, spec.role, scored, ref_name, by_model[ref_name], ctx
+                spec.name, spec.role, scored, reference, by_model[reference], ctx
             )
         if spec.role == "candidate":
             candidates[spec.name] = next(
@@ -310,7 +326,7 @@ def _t(row) -> float | None:
 
 
 def model_summary(
-    name: str, diagnostics: pd.DataFrame, extra: pd.DataFrame, reference: str
+    name: str, diagnostics: pd.DataFrame, extra: pd.DataFrame, references: list[str]
 ) -> dict[str, float | None]:
     """Headline numbers of one model (decision method fold-block t unless stated)."""
 
@@ -343,16 +359,17 @@ def model_summary(
             _metric(extra, name, "holm_adjusted_p", "holm_one_sided_fold_block_t")
         ),
     }
-    difference = _metric(extra, name, "rank_ic_difference", fold, reference=reference)
-    if difference is not None:
-        summary[f"rank_ic_difference_vs_{reference}"] = value(difference)
-        summary[f"rank_ic_difference_vs_{reference}_t"] = _t(difference)
-        r2 = _metric(
-            extra, name, "oos_r2_vs_reference", "circular_block_bootstrap", reference=reference
-        )
-        summary[f"oos_r2_vs_{reference}"] = value(r2)
-        mse = _metric(extra, name, "mse_improvement_vs_reference", fold, reference=reference)
-        summary[f"mse_improvement_vs_{reference}_t"] = _t(mse)
+    for reference in references:
+        difference = _metric(extra, name, "rank_ic_difference", fold, reference=reference)
+        if difference is not None:
+            summary[f"rank_ic_difference_vs_{reference}"] = value(difference)
+            summary[f"rank_ic_difference_vs_{reference}_t"] = _t(difference)
+            r2 = _metric(
+                extra, name, "oos_r2_vs_reference", "circular_block_bootstrap", reference=reference
+            )
+            summary[f"oos_r2_vs_{reference}"] = value(r2)
+            mse = _metric(extra, name, "mse_improvement_vs_reference", fold, reference=reference)
+            summary[f"mse_improvement_vs_{reference}_t"] = _t(mse)
     return summary
 
 
@@ -527,9 +544,10 @@ def _run(config, root, provenance, started_at, clock) -> ExperimentResult:
             "values_sha256": table_sha256(table.drop(columns="model_version")),
         }
 
-    reference = config.models.increment_reference
     summary = {
-        spec.name: model_summary(spec.name, run.tables["metrics"], extra, reference)
+        spec.name: model_summary(
+            spec.name, run.tables["metrics"], extra, increment_references(config, spec)
+        )
         for spec in models
         if spec.role in ("candidate", "diagnostic")
     }

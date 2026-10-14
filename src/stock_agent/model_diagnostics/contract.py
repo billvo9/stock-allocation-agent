@@ -31,7 +31,10 @@ Versions:
          and the non-candidate role "diagnostic" (an unpenalized OLS
          comparator). Tables are versioned too: a run lists exactly the
          tables of the version it was written with, so 1.0 and 1.1 runs
-         stay readable.
+         stay readable. Any nested-selected model writes `selection` rows
+         (same columns); for the gradient-boosting challenger `penalty` is
+         its pre-registered complexity index (larger = simpler) and
+         l1_ratio is NaN. Only linear models write `coefficients`.
 
 Scopes: "evaluation" = out-of-sample test rows (metrics, curves, drift);
 "training" = one fold's training rows (feature diagnostics). Every row of

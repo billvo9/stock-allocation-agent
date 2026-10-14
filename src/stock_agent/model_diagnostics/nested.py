@@ -297,7 +297,10 @@ def run_nested(
     result = _harness(frame, folds, spec, make_outer, lockbox_start)
     if next(calls) != len(folds):
         raise RuntimeError(f"{spec.name}: the outer refit built one estimator per fold.")
-    coefficients = coefficient_rows(spec, folds, result.estimators) if record else []
+    # Only linear fits expose coefficients; other nested models store selection rows only.
+    coefficients = (
+        coefficient_rows(spec, folds, result.estimators) if record and is_linear(spec) else []
+    )
     return NestedResult(
         result.predictions,
         result.estimators,

@@ -517,13 +517,13 @@ def run_diagnostics(
         _check_complete(spec.name, result.predictions, expected)
         predictions[spec.name] = result.predictions
         audit[spec.name] = _estimator_audit(result.estimators)
+        if nested.is_nested(spec):  # any nested-selected model stores its selection rows
+            coefficient_rows += result.coefficient_rows
+            selection_rows += result.selection_rows
         if nested.is_linear(spec):
             inner = getattr(result, "inner_estimators", ())
             convergence[spec.name] = [linear.has_converged(e) for e in (*result.estimators, *inner)]
-            if nested.is_nested(spec):
-                coefficient_rows += result.coefficient_rows
-                selection_rows += result.selection_rows
-            else:
+            if not nested.is_nested(spec):
                 coefficient_rows += nested.coefficient_rows(spec, folds, result.estimators)
 
     canary_spec = specs.get(config.canary_model)

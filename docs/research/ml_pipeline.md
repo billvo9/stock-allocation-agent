@@ -34,7 +34,7 @@ A config (`configs/ml/*.yaml`, schema 1.0) defines the whole experiment:
 | `features` | `families` (contracted; see `ml_features.md`) |
 | `label` | `horizon`, `entry_lag` (≥ 1: same-close labels are refused), `benchmark` (`equal_weight` or null) |
 | `folds` | Outer `start` and `block_sessions`; the inner design (block, windows, minimum training sessions) |
-| `models` | Linear `candidates` (subset of ridge, lasso, elastic_net), `include_ols`, `increment_reference` |
+| `models` | Linear `candidates` (subset of ridge, lasso, elastic_net), `include_ols`, `challengers` (`hist_gradient_boosting`; see `ml_challenger.md`), `increment_reference` |
 | `evaluation` | Base seed, permutation draws and models, bootstrap and calibration replicates, stale lags |
 | `registry` | `model_prefix` for registry ids |
 
