@@ -55,7 +55,7 @@ from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
 
 CALENDAR_ID = "nyse_full_day_2003_2024_v1"
 
-_DATE_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")  # applied with fullmatch
+_DATE_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")  # ASCII digits only; fullmatch
 
 
 class CalendarRefused(ValueError):
@@ -326,7 +326,10 @@ def session_date(value: object, *, label: str = "date") -> pd.Timestamp:
     if isinstance(value, str):
         if not _DATE_PATTERN.fullmatch(value):
             raise CalendarRefused("invalid_date", f"{label} {value!r} is not YYYY-MM-DD")
-        timestamp = pd.Timestamp(value)
+        try:
+            timestamp = pd.Timestamp(date.fromisoformat(value).isoformat())
+        except ValueError as error:  # for example 2024-02-30 or 2024-13-01
+            raise CalendarRefused("invalid_date", f"{label} {value!r} is not a date") from error
     elif isinstance(value, pd.Timestamp | datetime):
         timestamp = pd.Timestamp(value)
     elif isinstance(value, date):

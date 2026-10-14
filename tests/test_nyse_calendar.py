@@ -178,6 +178,11 @@ def test_saturday_holidays_close_the_preceding_friday_otherwise():
         ("2003-01-01", "outside_coverage"),
         ("1999-06-01", "outside_coverage"),
         ("2024-1-2", "invalid_date"),
+        ("2024-02-30", "invalid_date"),
+        ("2024-13-01", "invalid_date"),
+        ("2023-02-29", "invalid_date"),
+        ("２０２４-01-02", "invalid_date"),  # full-width digits match \d, not [0-9]
+        ("2024-01-02\n", "invalid_date"),
         (pd.Timestamp("2024-01-02 15:00"), "invalid_date"),
         (pd.Timestamp("2024-01-02", tz="America/New_York"), "invalid_date"),
         (pd.NaT, "invalid_date"),
@@ -189,6 +194,14 @@ def test_dates_outside_coverage_or_malformed_are_refused(value, reason):
         with pytest.raises(nyse.CalendarRefused) as caught:
             call(value)
         assert caught.value.reason == reason
+
+
+def test_non_ascii_digits_fail_the_pattern_before_any_parser():
+    # `\d` would match full-width digits; the ASCII-only pattern refuses them first.
+    with pytest.raises(nyse.CalendarRefused) as caught:
+        nyse.session_date("２０２４-01-02")
+    assert caught.value.reason == "invalid_date"
+    assert "is not YYYY-MM-DD" in caught.value.detail
 
 
 def test_a_range_reaching_the_lockbox_is_refused():
