@@ -67,6 +67,11 @@ Distribution-basis verification (per fund; every fund must pass)
           within `BAND` (log scale) of 1;
     (iv)  no distribution may have a verified split session as its ex-date
           (its share basis is unverifiable).
+    Evidence level: a spot check, not a validation of the history. A pass
+    shows that the listed ex-dates match the issuer's amounts and, assuming
+    the vendor uses one basis between consecutive splits, that each split
+    segment's amounts are per share as paid. It does not show that any other
+    amount is correct, or that no distribution is missing or extra.
     Neither route detects a later split applied uniformly to the whole
     closing-price history; route (b) anchors amounts only.
 
@@ -160,8 +165,10 @@ TERMS_NOTE = (
 VINTAGE_NOTE = (
     "close, divCash and splitFactor as served on the retrieval date; not a point-in-time "
     "vintage; the ticker-to-security mapping and the set of sessions served are Tiingo's "
-    "view at retrieval; distribution amounts are stored only when anchored to primary-source "
-    "amounts (VERIFIED_DISTRIBUTIONS); neither that anchor nor the split checks detect a "
+    "view at retrieval; distribution amounts are stored only after a spot check against "
+    "sampled primary-source amounts (VERIFIED_DISTRIBUTIONS), which tests the share basis but "
+    "does not validate any other amount or that no distribution is missing; neither that "
+    "spot check nor the split checks detect a "
     "later split applied uniformly to the whole closing-price history, because closes are "
     "checked against an external fact only at verified split sessions; "
     f"requested columns {', '.join(ALLOWED_FIELDS)} only; not requested: {NOT_REQUESTED}; "
@@ -630,7 +637,7 @@ class SplitCheck(StrEnum):
 class BasisCheck:
     """
     One fund's distribution-basis verification. `route` is
-    "verified_distributions" when the fund passed, else None; `split_check`
+    "primary_source_spot_check" when the fund passed, else None; `split_check`
     is a `SplitCheck` value; `detail` holds counts and ratios only.
     """
 
@@ -703,7 +710,7 @@ def _check_fund(
         else SplitCheck.AGREED
     )
     passed = anchored and split_check is not SplitCheck.FAILED
-    route = "verified_distributions" if passed else None
+    route = "primary_source_spot_check" if passed else None
     return BasisCheck(fund, passed, route, split_check.value, "; ".join(notes))
 
 
@@ -780,7 +787,8 @@ def verified_batch(retrieval: Retrieval) -> RawBatch:
         raw_payload=retrieval.raw_payload,
         terms_note=TERMS_NOTE,
         vintage_note=(
-            f"{VINTAGE_NOTE}; distribution basis verified against primary-source amounts: {funds}"
+            f"{VINTAGE_NOTE}; distribution basis spot-checked against primary-source amounts "
+            f"(a sample, not a validation of every distribution): {funds}"
         ),
         prices=parsed.prices,
         distributions=parsed.distributions,

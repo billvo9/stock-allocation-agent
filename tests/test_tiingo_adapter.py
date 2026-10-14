@@ -364,8 +364,15 @@ def test_a_verified_batch_records_instruments_and_notes(verified):
     for name in ("metadata endpoint", "adjClose", "adjVolume", "high", "low", "open", "volume"):
         assert name in note  # the unrequested fields are recorded
     assert "ticker-to-security mapping and the set of sessions served" in note
-    assert "neither that anchor nor the split checks detect a later split applied uniformly" in note
-    assert note.endswith("distribution basis verified against primary-source amounts: VTI, AGG")
+    assert (
+        "neither that spot check nor the split checks detect a later split applied uniformly"
+        in note
+    )
+    assert "does not validate any other amount or that no distribution is missing" in note
+    assert note.endswith(
+        "distribution basis spot-checked against primary-source amounts "
+        "(a sample, not a validation of every distribution): VTI, AGG"
+    )
 
 
 # --- the field allowlist ---------------------------------------------------------
@@ -560,7 +567,7 @@ def test_the_split_ratio_can_only_fail_a_fund(monkeypatch, pre_split, passed):
     monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(pre_split))
     check = basis(vti_rows(pre_split))
     assert check.passed is passed
-    assert check.route == ("verified_distributions" if passed else None)
+    assert check.route == ("primary_source_spot_check" if passed else None)
     assert check.split_check == ("agreed" if passed else "failed")
     ratio = pre_split / (2 * 0.30)
     assert f"median before / (factor x median after) = {ratio:.2f}" in check.detail
@@ -575,6 +582,42 @@ def test_split_adjusted_pre_split_amounts_fail_despite_listed_post_split_matches
     assert not check.passed and check.route is None and check.split_check == "failed"
     assert "2 (needs 2), 2 match, 0 do not" in check.detail
     assert "listed matches 0 before, 2 after (needs 1 each)" in check.detail
+
+
+@pytest.mark.parametrize(
+    "served_pre_split, ratio, split_check",
+    [
+        (0.60, 1.00, "agreed"),  # as paid, dividend steady: m = 0.60 / (2 x 0.30)
+        (0.30, 0.50, "failed"),  # split-adjusted, dividend steady: m = 1 / f
+        (0.50, 0.83, "agreed"),  # split-adjusted after a 40% cut: a false agreement
+        (1.00, 1.67, "failed"),  # as paid after a 40% cut: a false failure
+    ],
+)
+def test_the_split_ratio_worked_examples(monkeypatch, served_pre_split, ratio, split_check):
+    """
+    After the split VTI pays 0.30 per new share, which is 0.60 per old share.
+    Let R = (amount per old share before the split) / 0.60, so R > 1 is a cut
+    at the split. As paid, m = R. Split-adjusted, the vendor serves the
+    pre-split amounts divided by 2, so m = R / 2, which agrees only when
+    1.6 < R < 2.5: the dividend per old share fell by 37.5% to 60% at the
+    split. Rows 3 and 4 are R = 1 / 0.6, a 40% cut from 1.00 per old share:
+    served split-adjusted (0.50) it agrees; served as paid (1.00) it fails.
+    """
+
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(served_pre_split))
+    check = basis(vti_rows(served_pre_split))
+    assert check.split_check == split_check
+    verdict = "within" if split_check == "agreed" else "outside"
+    assert f"= {ratio:.2f}, {verdict}" in check.detail
+
+
+def test_an_issuer_amount_catches_the_false_agreement(monkeypatch):
+    # The third worked example: the issuer paid 1.00 per old share and the vendor
+    # serves 0.50. The split ratio agrees; the issuer's amount does not match.
+    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(1.00))
+    check = basis(vti_rows(0.50))
+    assert not check.passed and check.split_check == "agreed"
+    assert "2 (needs 2), 1 match, 1 do not" in check.detail
 
 
 @pytest.mark.parametrize("before, after", [(0, 2), (2, 0)])
@@ -621,7 +664,7 @@ def test_the_amount_route_needs_two_exact_primary_source_matches(monkeypatch):
         monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
         check = basis(agg_rows(), fund="AGG")
         assert check.passed is passed, (entries, check)
-        assert check.route == ("verified_distributions" if passed else None)
+        assert check.route == ("primary_source_spot_check" if passed else None)
         assert check.split_check == "no_split"
 
 
@@ -939,9 +982,11 @@ def _tree(path: Path) -> set[Path]:
     return set(path.rglob("*"))
 
 
-def run_audit(root, repo, transport, funds=("VTI", "AGG"), start=AUDIT_START, end=AUDIT_END):
-    argv = ["--root", str(root), "--funds", *funds, "--start", start]
-    argv += ["--end-exclusive", end, "--authorized"]
+def run_audit(
+    root, repo, transport, funds=("VTI", "AGG"), start=AUDIT_START, end=AUDIT_END, store=True
+):
+    argv = (["--store", "--root", str(root)] if store else []) + ["--funds", *funds]
+    argv += ["--start", start, "--end-exclusive", end, "--authorized"]
     return audit.main(argv, adapter_factory=lambda: adapter(transport), project_root=repo)
 
 
@@ -952,12 +997,34 @@ def test_the_audit_refuses_to_run_without_authorization(tmp_path, repo, capsys):
     assert "--authorized" in capsys.readouterr().err
 
 
+def test_the_default_audit_is_a_read_only_report(tmp_path, repo, capsys, verified):
+    before = _tree(tmp_path)
+    transport = FakeTransport()
+    code = run_audit(
+        None, repo, transport, funds=("VTI",), start=START, end=END_EXCLUSIVE, store=False
+    )
+    out = capsys.readouterr().out
+    assert code == 0 and len(transport.calls) == 1
+    assert f"  distribution basis: {audit.SPOT_CHECKED}; split check no_split (" in out
+    assert out.rstrip().endswith(audit.READ_ONLY) and "stored batch" not in out
+    assert _tree(tmp_path) == before  # nothing written anywhere
+
+
+@pytest.mark.parametrize("flags", [["--store"], ["--root"]])
+def test_store_and_root_go_together(tmp_path, repo, capsys, flags):
+    flags = [*flags, str(tmp_path / "private")] if flags == ["--root"] else flags
+    before = _tree(tmp_path)
+    assert audit.main([*flags, "--authorized"], adapter_factory=never, project_root=repo) == 2
+    assert "--store and --root go together" in capsys.readouterr().err
+    assert _tree(tmp_path) == before
+
+
 @pytest.mark.parametrize("inside", ["store", "data", "data/raw", "src/data/raw/x", ".."])
 def test_the_audit_refuses_a_root_that_would_put_vendor_data_in_the_repository(
     tmp_path, repo, inside, capsys
 ):
     before = _tree(tmp_path)
-    argv = ["--root", str(repo / inside), "--authorized"]
+    argv = ["--root", str(repo / inside), "--authorized", "--store"]
     assert audit.main(argv, adapter_factory=never, project_root=repo) == 2
     assert "Refused" in capsys.readouterr().err
     assert _tree(tmp_path) == before
@@ -996,14 +1063,14 @@ def test_an_existing_root_open_to_others_is_refused_and_never_changed(tmp_path, 
     existing.mkdir()
     for mode in (0o755, 0o710, 0o701):
         os.chmod(existing, mode)
-        argv = ["--root", str(existing), "--authorized"]
+        argv = ["--root", str(existing), "--authorized", "--store"]
         assert audit.main(argv, adapter_factory=never, project_root=repo) == 2
         error = capsys.readouterr().err
         assert "restrict it yourself" in error and "chmod 700" in error
         assert stat.S_IMODE(existing.stat().st_mode) == mode  # the audit never changes it
     afile = tmp_path / "afile"
     afile.write_text("", encoding="utf-8")
-    argv = ["--root", str(afile), "--authorized"]
+    argv = ["--root", str(afile), "--authorized", "--store"]
     assert audit.main(argv, adapter_factory=never, project_root=repo) == 2
     assert "not a directory" in capsys.readouterr().err
     # A private existing root is used as it is; a missing root is created private.
@@ -1048,17 +1115,13 @@ def test_an_offline_audit_verifies_every_fund_then_stores(tmp_path, repo, capsys
         in vti
     )
     assert any(
-        line.startswith(
-            "  distribution basis: verified against primary-source amounts; split check agreed ("
-        )
+        line.startswith(f"  distribution basis: {audit.SPOT_CHECKED}; split check agreed (")
         and "listed matches 1 before, 1 after" in line
         and "= 1.00, within" in line
         for line in vti
     )
     assert any(
-        line.startswith(
-            "  distribution basis: verified against primary-source amounts; split check no_split ("
-        )
+        line.startswith(f"  distribution basis: {audit.SPOT_CHECKED}; split check no_split (")
         and "2 (needs 2), 2 match, 0 do not" in line
         for line in agg
     )
@@ -1068,7 +1131,8 @@ def test_an_offline_audit_verifies_every_fund_then_stores(tmp_path, repo, capsys
     assert TOKEN not in out and "40.0" not in out and "0.6" not in out
     batch = read_batch(next(root.iterdir()))
     assert batch.record.vintage_note.endswith(
-        "distribution basis verified against primary-source amounts: VTI, AGG"
+        "distribution basis spot-checked against primary-source amounts "
+        "(a sample, not a validation of every distribution): VTI, AGG"
     )
     assert _tree(repo) == {repo / "data", repo / "data" / "raw"}  # nothing written in the repo
 
@@ -1095,7 +1159,7 @@ def test_one_unverified_fund_means_nothing_is_stored(tmp_path, repo, capsys, mon
         "  distribution basis: NOT verified; split check no_split (verified distributions in "
         "the window: 0 (needs 2)" in captured.out
     )
-    verified_vti = "  distribution basis: verified against primary-source amounts; split check"
+    verified_vti = f"  distribution basis: {audit.SPOT_CHECKED}; split check"
     assert verified_vti in captured.out  # VTI passed
     assert "stored" not in captured.out.replace("NOT STORED", "")
 
