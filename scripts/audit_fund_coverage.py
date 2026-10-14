@@ -4,8 +4,9 @@ Aggregate coverage audit of Tiingo fund data, for private local research.
 Prepared, not yet run: it contacts Tiingo, so run it only after the owner has
 configured `TIINGO_API_KEY` locally and authorized the run (`--authorized`).
 
-Two phases; nothing is stored unless every fund is verified.
-1. Verify in memory. The Tiingo adapter retrieves the funds (one prices call
+Read-only by default: without `--store` it writes nothing anywhere. Storing
+a real fund batch needs the owner's separate approval (`--store --root`).
+1. Verify in memory (always). The Tiingo adapter retrieves the funds (one prices call
    per fund, allowlisted columns only, each response checked before the next
    request, no retry). A success means every element held exactly the
    allowlisted fields and every reported split was verified. The script then
@@ -15,14 +16,14 @@ Two phases; nothing is stored unless every fund is verified.
    - distributions per year;
    - verified splits, with the raw-close ratio the adapter enforced;
    - each fund's distribution-basis verification (counts and ratios).
-2. Store. Only when every fund passes does it store the batch with F1
+2. Store (only with `--store`). Only when every fund passes does it store the batch with F1
    `ingest_batch` under the private root, read it back with the fail-closed
    reader, and check that the stored tables equal a re-parse of the stored
    payload (exit 1 if not). Otherwise nothing is stored and the reason is
    reported.
 
-It never prints prices, amounts or the key, and writes vendor data only under
-`--root`, which must lie outside every repository or under that repository's
+It never prints prices, amounts or the key, and writes vendor data only with
+`--store`, under `--root`, which must lie outside every repository or under that repository's
 ignored `data/raw/`. A missing root is created with mode 0o700; an existing
 root whose mode grants any group or other permission is refused, and the
 owner restricts it. It requests no adjusted series and performs no
@@ -30,9 +31,12 @@ vendor-adjusted reconciliation (that needs a separate, owner-approved isolated
 procedure), and it computes no return (returns belong to the OD8 group A
 descriptive calculations, not the audit).
 
-Usage:
-    PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py \
-        --root ~/stock-agent-private/fund_store --authorized
+Usage (a read-only coverage report):
+    PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py --authorized
+
+Storing, only after the owner separately approves persisting a batch:
+    PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py --authorized \
+        --store --root ~/stock-agent-private/fund_store
 """
 
 from __future__ import annotations
@@ -71,6 +75,14 @@ from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FUNDS = ("VTI", "AGG", "SHV")
 ROOT_MODE = 0o700
+# A pass is a spot check of sampled amounts, never proof that the history is valid.
+SPOT_CHECKED = (
+    "spot-checked against primary-source amounts (not a validation of every distribution)"
+)
+READ_ONLY = (
+    "NOT STORED read-only coverage report: nothing was written; storing a batch needs the "
+    "owner's separate approval (--store --root)"
+)
 _SHOWN = 10  # dates listed per finding
 
 
@@ -171,7 +183,7 @@ def verification_lines(retrieval: Retrieval, checks: tuple[BasisCheck, ...]) -> 
                 or "none"
             )
         )
-        verdict = "verified against primary-source amounts" if check.passed else "NOT verified"
+        verdict = SPOT_CHECKED if check.passed else "NOT verified"
         lines.append(
             f"  distribution basis: {verdict}; split check {check.split_check} ({check.detail})"
         )
@@ -219,7 +231,7 @@ def main(
     project_root: Path = PROJECT_ROOT,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
-    parser.add_argument("--root", type=Path, required=True, help="private store directory")
+    parser.add_argument("--root", type=Path, help="private store directory (with --store only)")
     parser.add_argument("--funds", nargs="+", default=list(DEFAULT_FUNDS))
     parser.add_argument("--start", default="2007-01-01")
     parser.add_argument("--end-exclusive", default=f"{MODEL_HOLDOUT_START:%Y-%m-%d}")
@@ -227,6 +239,11 @@ def main(
         "--authorized",
         action="store_true",
         help="confirm the owner configured TIINGO_API_KEY and authorized this network run",
+    )
+    parser.add_argument(
+        "--store",
+        action="store_true",
+        help="persist the verified batch under --root; needs the owner's separate approval",
     )
     args = parser.parse_args(argv)
 
@@ -237,15 +254,22 @@ def main(
             file=sys.stderr,
         )
         return 2
+    if args.store != (args.root is not None):
+        print(
+            "Refused: --store and --root go together. A report-only run writes nothing; "
+            "storing needs --root and the owner's separate approval.",
+            file=sys.stderr,
+        )
+        return 2
     try:
-        root = private_root(args.root, project_root)
+        root = private_root(args.root, project_root) if args.store else None
         start = parse_date("--start", args.start)
         end_exclusive = parse_date("--end-exclusive", args.end_exclusive)
     except (ValueError, FundDataRefused) as error:
         print(f"Refused: {error}", file=sys.stderr)
         return 2
 
-    refusal = prepare_root(root)
+    refusal = prepare_root(root) if args.store else None
     if refusal is not None:
         print(f"Refused: {refusal}", file=sys.stderr)
         return 2
@@ -263,6 +287,9 @@ def main(
         "audit procedure (docs/research/f1_fund_data.md)"
     )
     print("total return: not computed by the audit (OD8 group A descriptive calculations)")
+    if not args.store:
+        print(READ_ONLY)
+        return 0
     if not all(check.passed for check in checks):
         failing = " ".join(check.fund_id for check in checks if not check.passed)
         print(
