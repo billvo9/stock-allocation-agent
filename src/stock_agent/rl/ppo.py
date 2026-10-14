@@ -31,6 +31,7 @@ import hashlib
 import json
 import math
 import platform
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import version as package_version
@@ -236,7 +237,7 @@ def train_ppo_seed(
     created_at: str,
     loader: ScenarioLoader = generate_scenario,
 ) -> SeedRun:
-    require_fitted_on(builder.normalizer, config.plan.train)
+    require_fitted_on(builder.normalizer, config.plan.train, builder.spec)
     config.plan.check_lookback(builder.spec.lookback)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=False)
@@ -313,9 +314,25 @@ class LoadedCheckpoint:
     policy: PPOPolicy
     metadata: dict
     builder: ObservationBuilder
+    provenance: dict
 
 
-def load_ppo_checkpoint(directory: Path) -> LoadedCheckpoint:
+def load_ppo_checkpoint(
+    directory: Path,
+    *,
+    expected_config_sha256: str | None = None,
+    expected_code_sha: str | None = None,
+) -> LoadedCheckpoint:
+    """
+    Load a checkpoint this pipeline wrote, after checking its provenance:
+    - the model file must match its recorded SHA-256 (integrity);
+    - it must come from this code's scenario generator version (its scenarios
+      cannot be regenerated otherwise) and, when given, the expected config;
+    - a different code SHA warns loudly (RuntimeWarning) and is recorded in
+      `provenance`, since evaluating after an unrelated commit is common but
+      must be visible.
+    """
+
     directory = Path(directory)
     metadata = json.loads((directory / METADATA_FILE).read_text(encoding="utf-8"))
     if (metadata.get("schema"), metadata.get("schema_version")) != (
@@ -323,6 +340,26 @@ def load_ppo_checkpoint(directory: Path) -> LoadedCheckpoint:
         CHECKPOINT_SCHEMA_VERSION,
     ):
         raise ValueError("Unsupported checkpoint schema.")
+    if metadata.get("scenario_generator_version") != GENERATOR_VERSION:
+        raise ValueError(
+            f"The checkpoint was trained on scenario generator "
+            f"{metadata.get('scenario_generator_version')!r}; this code generates "
+            f"{GENERATOR_VERSION!r}."
+        )
+    config_matches = expected_config_sha256 is None or (
+        metadata.get("config_sha256") == expected_config_sha256
+    )
+    if not config_matches:
+        raise ValueError("The checkpoint was trained with a different config than the run's.")
+    trained_sha = metadata.get("code", {}).get("git_sha")
+    code_matches = expected_code_sha is None or trained_sha == expected_code_sha
+    if not code_matches:
+        warnings.warn(
+            f"Checkpoint {directory} was trained by code {trained_sha}, but the current code is "
+            f"{expected_code_sha}; results may differ from training-time behaviour.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     model_path = directory / metadata["model"]["file"]
     if file_sha256(model_path) != metadata["model"]["sha256"]:
         raise ValueError("The checkpoint's model file does not match its recorded hash.")
@@ -334,4 +371,13 @@ def load_ppo_checkpoint(directory: Path) -> LoadedCheckpoint:
     )
     model = PPO.load(model_path, device="cpu")
     policy = PPOPolicy(model, builder.cash_index, name=f"ppo_seed_{metadata['seed']}")
-    return LoadedCheckpoint(policy=policy, metadata=metadata, builder=builder)
+    provenance = {
+        "trained_code_sha": trained_sha,
+        "current_code_sha": expected_code_sha,
+        "code_sha_matches": code_matches,
+        "config_sha256_matches": config_matches,
+        "scenario_generator_version": metadata["scenario_generator_version"],
+    }
+    return LoadedCheckpoint(
+        policy=policy, metadata=metadata, builder=builder, provenance=provenance
+    )

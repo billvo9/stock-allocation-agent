@@ -94,7 +94,16 @@ def _state(model):
     return {k: v.detach().clone() for k, v in model.policy.state_dict().items()}
 
 
-def test_sb3_scores_the_raw_sampled_logits_it_stores():
+def test_clipped_samples_keep_their_raw_logits_and_likelihoods():
+    """
+    With a wide policy (log std 3, a standard deviation near 20) many sampled
+    fund logits fall outside the +/-10 action box. SB3 must store the raw
+    sample and its log probability while the environment receives the
+    clipped logits; re-scoring the stored raw actions must reproduce the
+    stored log probabilities. That is what keeps the PPO ratio valid under
+    the clip.
+    """
+
     config = tiny_config()
     builder = builder_for(config)
     env = gym_env.AllocationGymEnv(
@@ -104,21 +113,43 @@ def test_sb3_scores_the_raw_sampled_logits_it_stores():
         transition_info=ref.TRANSITION_INFO,
         env_config=config.env,
     )
+    received = []
+    step = env.step
+
+    def recording_step(action):
+        received.append(np.array(action, dtype=np.float64))
+        return step(action)
+
+    env.step = recording_step
     vec_env = DummyVecEnv([lambda: env])
-    model = PPO("MlpPolicy", vec_env, seed=0, device="cpu", n_steps=64, batch_size=32)
-    obs = vec_env.reset()
+    model = PPO(
+        "MlpPolicy",
+        vec_env,
+        seed=0,
+        device="cpu",
+        n_steps=64,
+        batch_size=32,
+        policy_kwargs={"log_std_init": 3.0},
+    )
+    _, callback = model._setup_learn(64, callback=None)
+    model.collect_rollouts(model.env, callback, model.rollout_buffer, n_rollout_steps=64)
+    buffer = model.rollout_buffer
+    stored = buffer.actions.reshape(-1, 3)
+    beyond = np.abs(stored) > actions.ACTION_BOUND
+    assert beyond.sum() >= 10
+    np.testing.assert_allclose(
+        np.vstack(received),
+        np.clip(stored, -actions.ACTION_BOUND, actions.ACTION_BOUND),
+        rtol=1e-6,
+    )
+    observations = torch.as_tensor(buffer.observations.reshape(64, -1))
     with torch.no_grad():
-        tensor = model.policy.obs_to_tensor(obs)[0]
-        sampled, _, log_prob = model.policy(tensor)
-        mean = model.policy.get_distribution(tensor).distribution.mean.numpy()
-        log_std = model.policy.log_std.numpy()
-        _, rescored, _ = model.policy.evaluate_actions(tensor, sampled)
-    logits = sampled.numpy()
-    ours = actions.gaussian_log_prob(logits[0], mean[0], log_std)
-    assert ours == pytest.approx(float(log_prob[0]), abs=1e-4)
-    assert float(rescored[0]) == pytest.approx(float(log_prob[0]), abs=1e-6)
-    space = env.action_space
-    np.testing.assert_array_equal(np.clip(logits, space.low, space.high), logits)
+        _, rescored, _ = model.policy.evaluate_actions(observations, torch.as_tensor(stored))
+        mean = model.policy.get_distribution(observations).distribution.mean.numpy()
+    np.testing.assert_allclose(rescored.numpy(), buffer.log_probs.reshape(-1), atol=1e-5)
+    row = int(np.flatnonzero(beyond.any(axis=1))[0])
+    ours = actions.gaussian_log_prob(stored[row], mean[row], model.policy.log_std.detach().numpy())
+    assert ours == pytest.approx(float(buffer.log_probs.reshape(-1)[row]), abs=1e-4)
 
 
 def test_training_records_health_and_a_dev_selected_checkpoint(trained):
@@ -152,6 +183,43 @@ def test_a_checkpoint_loads_with_its_frozen_normalizer_and_acts_identically(trai
     data = sc.generate_scenario("calm", 10)
     obs = loaded.builder.build(ob.snapshot_at(data, 400), np.eye(4)[3], 0.0)
     np.testing.assert_array_equal(loaded.policy.decide(obs), again.policy.decide(obs))
+
+
+def _copy_checkpoint(source, target, **metadata_changes):
+    target.mkdir()
+    (target / ppo.MODEL_FILE).write_bytes((source / ppo.MODEL_FILE).read_bytes())
+    meta = json.loads((source / ppo.METADATA_FILE).read_text())
+    meta.update(metadata_changes)
+    (target / ppo.METADATA_FILE).write_text(json.dumps(meta))
+    return target
+
+
+def test_a_checkpoint_from_another_generator_version_is_refused(tmp_path, trained):
+    _, run = trained
+    stale = _copy_checkpoint(run.directory, tmp_path / "stale", scenario_generator_version="1.0.0")
+    with pytest.raises(ValueError, match="generator"):
+        ppo.load_ppo_checkpoint(stale)
+
+
+def test_a_checkpoint_from_another_config_is_refused(trained):
+    _, run = trained
+    with pytest.raises(ValueError, match="config"):
+        ppo.load_ppo_checkpoint(run.directory, expected_config_sha256="0" * 64)
+
+
+def test_a_checkpoint_from_other_code_warns_loudly_and_records_it(trained):
+    config, run = trained
+    with pytest.warns(RuntimeWarning, match="code"):
+        loaded = ppo.load_ppo_checkpoint(
+            run.directory, expected_config_sha256=config.sha256(), expected_code_sha="f" * 40
+        )
+    assert loaded.provenance == {
+        "trained_code_sha": "abc",
+        "current_code_sha": "f" * 40,
+        "code_sha_matches": False,
+        "config_sha256_matches": True,
+        "scenario_generator_version": sc.GENERATOR_VERSION,
+    }
 
 
 def test_a_tampered_checkpoint_is_refused(tmp_path, trained):
