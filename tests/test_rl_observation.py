@@ -235,3 +235,15 @@ def test_a_builder_refuses_a_normalizer_for_other_features(calm):
     norm = ob.FeatureNormalizer.identity(("x",))
     with pytest.raises(ValueError, match="normalizer"):
         ob.ObservationBuilder(SPEC, norm, calm.asset_names, calm.cash_index)
+
+
+def test_a_normalizer_for_another_feature_spec_or_generator_is_refused():
+    plan = _small_plan()
+    norm = ob.fit_normalizer(plan.train, SPEC)
+    ob.require_fitted_on(norm, plan.train, SPEC)
+    other_spec = ob.FeatureSpec(return_windows=(5, 20, 60), vol_windows=(20, 60), min_fraction=0.6)
+    with pytest.raises(splits.LeakageError, match="feature spec"):
+        ob.require_fitted_on(norm, plan.train, other_spec)
+    stale = dataclasses.replace(norm, fitted_on={**norm.fitted_on, "generator_versions": ["1.0.0"]})
+    with pytest.raises(splits.LeakageError, match="generator"):
+        ob.require_fitted_on(stale, plan.train, SPEC)

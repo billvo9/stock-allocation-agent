@@ -288,3 +288,51 @@ def test_an_invalid_code_sha_is_refused():
             scenario_version="1.1.0",
             thresholds=THRESHOLDS,
         )
+
+
+def test_a_missing_dev_score_is_unhealthy_and_fails_nan_or_inf_without_crashing():
+    record = health.seed_health(
+        0,
+        updates=_updates(),
+        rollouts=_rollouts(),
+        evaluations=[
+            {"timesteps": 0, "score": 0.01},
+            {"timesteps": 100, "score": None},
+            {"timesteps": 200, "score": 0.02},
+        ],
+        thresholds=THRESHOLDS,
+    )
+    assert "non_finite_dev_score" in record["reasons"]
+    assert record["dev_selection"]["selected_timesteps"] == 200
+    assert record["dev_selection"]["non_finite_scores"] == 1
+    checks = {c["check_id"]: c for c in _input([record])["checks"]}
+    assert checks["nan_or_inf"]["status"] == "fail" and checks["nan_or_inf"]["value"] == 1
+
+
+def test_no_finite_dev_score_selects_nothing():
+    record = health.seed_health(
+        0,
+        updates=_updates(),
+        rollouts=_rollouts(),
+        evaluations=[{"timesteps": 0, "score": None}],
+        thresholds=THRESHOLDS,
+    )
+    assert record["dev_selection"]["selected_timesteps"] is None
+    assert record["dev_selection"]["selected_score"] is None
+    json.dumps(_input([record]), allow_nan=False)
+
+
+def test_the_envelope_records_whether_the_tree_was_dirty():
+    assert _input([_seed(0)], git_dirty=True)["git_dirty"] is True
+    assert _input([_seed(0)])["git_dirty"] is None
+
+
+def test_the_seed_spread_detail_never_lists_dev_scores():
+    seeds = []
+    for seed, best in enumerate([0.0123, 0.0456, -0.0789]):
+        record = _seed(seed)
+        record["dev_selection"]["selected_score"] = best
+        seeds.append(record)
+    check = next(c for c in _input(seeds)["checks"] if c["check_id"] == "seed_spread")
+    for score in ("0.0123", "0.0456", "0.0789"):
+        assert score not in check["detail"]

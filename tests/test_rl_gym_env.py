@@ -107,12 +107,21 @@ def test_non_finite_features_are_zero_imputed_for_the_network_and_counted(builde
     assert np.all(np.isfinite(vector)) and vector.dtype == np.float32
 
 
-def test_a_fixed_episode_can_be_requested_for_evaluation(builder):
+def test_a_fixed_episode_inside_the_fold_can_be_requested(builder):
     env = make(builder)
-    _, info = env.reset(options={"episode": ("calm", 1, 100, 300)})
-    assert info["episode"] == ("calm", 1, 100, 300)
+    _, info = env.reset(options={"episode": ("mixed", 1, 100, 300)})
+    assert info["episode"] == ("mixed", 1, 100, 300)
 
 
 def test_the_sampler_refuses_windows_longer_than_the_fold():
     with pytest.raises(ValueError, match="episode_sessions"):
         gym_env.EpisodeSampler(TRAIN, TRAIN.stop - TRAIN.start + 1)
+
+
+@pytest.mark.parametrize(
+    "episode",
+    [("calm", 0, 100, 300), ("mixed", 99, 100, 300), ("mixed", 0, 500, 700), ("mixed", 0, 10, 200)],
+)
+def test_a_requested_episode_outside_the_fold_is_refused(builder, episode):
+    with pytest.raises(splits.LeakageError, match="fold"):
+        make(builder).reset(options={"episode": episode})

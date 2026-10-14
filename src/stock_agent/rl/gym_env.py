@@ -10,7 +10,10 @@ likelihood on the raw logits it sampled.
 
 Each `reset` samples one training episode, a (scenario, seed) pair of the
 fold and a window of `episode_sessions` inside the fold's window, from the
-environment's seeded generator, so `reset(seed=s)` replays exactly.
+environment's seeded generator, so `reset(seed=s)` replays exactly. A fixed
+episode may be requested with `options={"episode": (scenario, seed, start,
+stop)}`, but only one of the same fold, inside its window (`LeakageError`
+otherwise), so the option cannot reach another fold's data.
 
 Network input. Market features that cannot be computed (too little visible
 history, for example under a stale feed) are set to 0, the training mean of
@@ -31,7 +34,7 @@ from stock_agent.rl.actions import ACTION_BOUND, fund_logits_to_weights
 from stock_agent.rl.env import AllocationEnv, EnvConfig
 from stock_agent.rl.observation import Observation, ObservationBuilder, ScenarioLoader
 from stock_agent.rl.scenarios import ScenarioData, generate_scenario
-from stock_agent.rl.splits import FoldSpec
+from stock_agent.rl.splits import FoldSpec, LeakageError
 from stock_agent.rl.transition import PortfolioStep, TransitionInfo
 
 
@@ -66,6 +69,16 @@ class EpisodeSampler:
         if key not in self._cache:
             self._cache[key] = self.loader(scenario_id, int(seed))
         return self._cache[key]
+
+    def require_inside(self, scenario_id: str, seed: int, start: int, stop: int) -> None:
+        """A requested episode must be a (scenario, seed) of the fold, inside its window."""
+
+        if (scenario_id, seed) not in self.episodes or not (
+            self.fold.start <= start < stop <= self.fold.stop
+        ):
+            raise LeakageError(
+                f"Episode {(scenario_id, seed, start, stop)} is outside the {self.fold.role} fold."
+            )
 
     def sample(self, rng: np.random.Generator) -> tuple[str, int, int, int]:
         scenario_id, seed = self.episodes[int(rng.integers(len(self.episodes)))]
@@ -109,6 +122,7 @@ class AllocationGymEnv(gym.Env):
         super().reset(seed=seed)
         if options and "episode" in options:
             scenario_id, scenario_seed, start, stop = options["episode"]
+            self.sampler.require_inside(scenario_id, int(scenario_seed), int(start), int(stop))
         else:
             scenario_id, scenario_seed, start, stop = self.sampler.sample(self.np_random)
         self.core = AllocationEnv(

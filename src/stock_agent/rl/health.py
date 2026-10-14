@@ -15,7 +15,7 @@ plain records, so it needs no learning library:
 
 Status per seed:
 - unhealthy: no_updates, non_finite_reward, non_finite_loss,
-  non_finite_parameters, parameter_explosion;
+  non_finite_parameters, parameter_explosion, non_finite_dev_score;
 - warning: approx_kl_spike, high_clip_fraction, action_std_collapse;
 - healthy otherwise.
 The run is as bad as its worst seed. `seed_spread` reports every seed's
@@ -73,21 +73,22 @@ def _series(updates: list[dict], key: str) -> dict[str, float | None]:
     }
 
 
+def _usable(score) -> bool:
+    return score is not None and math.isfinite(score)
+
+
 def _selection(evaluations: list[dict]) -> dict[str, object]:
-    if not evaluations:
-        return {
-            "evaluations": [],
-            "selected_timesteps": None,
-            "selected_score": None,
-            "checkpoints_compared": 0,
-        }
-    best = max(range(len(evaluations)), key=lambda i: (evaluations[i]["score"], -i))
+    """The best finite dev score (ties: the earliest); missing scores never crash."""
+
+    usable = [i for i, row in enumerate(evaluations) if _usable(row["score"])]
+    best = max(usable, key=lambda i: (evaluations[i]["score"], -i)) if usable else None
     return {
         "metric": "mean dev-fold log growth (deterministic policy)",
         "evaluations": [dict(row) for row in evaluations],
-        "selected_timesteps": evaluations[best]["timesteps"],
-        "selected_score": evaluations[best]["score"],
+        "selected_timesteps": None if best is None else evaluations[best]["timesteps"],
+        "selected_score": None if best is None else evaluations[best]["score"],
         "checkpoints_compared": len(evaluations),
+        "non_finite_scores": len(evaluations) - len(usable),
     }
 
 
@@ -116,6 +117,8 @@ def seed_health(
         reasons.append("non_finite_parameters")
     if any(float(row["param_max_abs"]) > thresholds.max_param_abs for row in updates):
         reasons.append("parameter_explosion")
+    if any(not _usable(row["score"]) for row in evaluations):
+        reasons.append("non_finite_dev_score")
 
     kl = _series(updates, "approx_kl")
     clip = _series(updates, "clip_fraction")
@@ -243,14 +246,19 @@ def _check(check_id, status, value, unit, threshold, detail) -> dict[str, object
     }
 
 
-def _envelope(*, run_id, generated_at, code_sha, scenario_version, transition_status, seeds):
+def _envelope(
+    *, run_id, generated_at, code_sha, git_dirty, scenario_version, transition_status, seeds
+):
     if code_sha is not None and (len(code_sha) != 40 or not set(code_sha) <= _HEX):
         raise ValueError("code_sha must be a 40-character lowercase hex SHA or None.")
+    if git_dirty is not None and not isinstance(git_dirty, bool):
+        raise ValueError("git_dirty must be a bool or None.")
     return {
         "artifact": HEALTH_INPUT_ARTIFACT,
         "schema_version": HEALTH_INPUT_SCHEMA_VERSION,
         "generated_at": generated_at,
         "code_sha": code_sha,
+        "git_dirty": git_dirty,
         "synthetic": True,
         "run_id": run_id,
         "algorithm": "ppo",
@@ -276,6 +284,7 @@ def health_input_record(
     code_sha: str | None,
     scenario_version: str,
     thresholds,
+    git_dirty: bool | None = None,
     status: str = "completed",
 ) -> dict[str, object]:
     """
@@ -287,8 +296,10 @@ def health_input_record(
     """
 
     seeds = report["seeds"]
-    non_finite = sum(int(s["reward"]["non_finite"]) for s in seeds) + sum(
-        int(s["parameters"]["non_finite"]) for s in seeds
+    non_finite = (
+        sum(int(s["reward"]["non_finite"]) for s in seeds)
+        + sum(int(s["parameters"]["non_finite"]) for s in seeds)
+        + sum(int(s["dev_selection"].get("non_finite_scores", 0)) for s in seeds)
     )
     loss_seeds = [s["seed"] for s in seeds if "non_finite_loss" in s["reasons"]]
     nan_value = non_finite + len(loss_seeds)
@@ -299,7 +310,7 @@ def health_input_record(
             nan_value,
             "count",
             0,
-            "non-finite rewards and parameters, plus seeds with a non-finite loss"
+            "non-finite rewards, parameters and dev scores, plus seeds with a non-finite loss"
             + (f" (loss: seeds {loss_seeds})" if loss_seeds else ""),
         )
     ]
@@ -405,8 +416,9 @@ def health_input_record(
             spread["std"],
             "standard deviation of the selected dev score across seeds",
             None,
-            f"{spread['n']} seeds, every one reported (values {spread['values']}); "
-            f"fewer than {MIN_SEEDS_FOR_SPREAD} seeds cannot show a spread",
+            f"{spread['n']} seeds, every one counted (the dev scores themselves stay in the "
+            f"run's training report, never in a published view); fewer than "
+            f"{MIN_SEEDS_FOR_SPREAD} seeds cannot show a spread",
         )
     )
 
@@ -415,6 +427,7 @@ def health_input_record(
             run_id=report["run_id"],
             generated_at=generated_at,
             code_sha=code_sha,
+            git_dirty=git_dirty,
             scenario_version=scenario_version,
             transition_status=_transition_status(report["transition"]["status"]),
             seeds=len(seeds),
@@ -433,12 +446,14 @@ def failed_health_input_record(
     transition: TransitionInfo,
     seeds: int,
     detail: str,
+    git_dirty: bool | None = None,
 ) -> dict[str, object]:
     return {
         **_envelope(
             run_id=run_id,
             generated_at=generated_at,
             code_sha=code_sha,
+            git_dirty=git_dirty,
             scenario_version=scenario_version,
             transition_status=_transition_status(transition.status),
             seeds=seeds,

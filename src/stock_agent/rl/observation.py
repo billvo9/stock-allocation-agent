@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from stock_agent.rl.scenarios import ScenarioData, generate_scenario
+from stock_agent.rl.scenarios import GENERATOR_VERSION, ScenarioData, generate_scenario
 from stock_agent.rl.splits import FoldSpec, LeakageError
 
 FEATURE_SPEC_VERSION = "1.0.0"
@@ -277,8 +277,11 @@ def fit_normalizer(
     )
 
 
-def require_fitted_on(normalizer: FeatureNormalizer, fold: FoldSpec) -> None:
-    """Refuse a normalizer that was not fitted on exactly this training fold."""
+def require_fitted_on(normalizer: FeatureNormalizer, fold: FoldSpec, spec: FeatureSpec) -> None:
+    """
+    Refuse a normalizer that was not fitted on exactly this training fold,
+    with this feature spec, on scenarios from this code's generator version.
+    """
 
     fitted = normalizer.fitted_on
     if fitted.get("role") == "identity":
@@ -290,6 +293,13 @@ def require_fitted_on(normalizer: FeatureNormalizer, fold: FoldSpec) -> None:
         fitted.get("window"),
     ) != ("train", list(fold.scenario_ids), list(fold.seeds), [fold.start, fold.stop]):
         raise LeakageError("The normalizer was not fitted on this plan's train fold.")
+    if fitted.get("feature_spec") != spec.to_dict():
+        raise LeakageError("The normalizer was fitted for a different feature spec.")
+    if fitted.get("generator_versions") != [GENERATOR_VERSION]:
+        raise LeakageError(
+            f"The normalizer was fitted on scenario generator {fitted.get('generator_versions')}, "
+            f"not {GENERATOR_VERSION}."
+        )
 
 
 @dataclass(frozen=True)
