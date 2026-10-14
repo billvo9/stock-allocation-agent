@@ -12,8 +12,10 @@ Modules:
     explore    the Explore page "Fund history" (Streamlit)
     run        Streamlit entry point (launch with scripts/run_portfolio_lab.py)
 
-Boundary (tested): the app imports only `stock_agent.ui`, its own modules,
-pandas, numpy, plotly, streamlit and the standard library. It never imports
-the research dashboard, models, raw data, features or the publication writer,
-and it computes no financial formula itself.
+Boundary (tested): the app imports only `stock_agent.ui`,
+`stock_agent.portfolio` (descriptive result types now; pure descriptive
+functions with T5-A), its own modules, pandas, numpy, plotly, streamlit and
+the standard library. It never imports the research dashboard, models, raw
+data, features or the publication writer, and it computes no financial
+formula itself. `stock_agent.portfolio` never imports the app.
 """

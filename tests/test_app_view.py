@@ -22,16 +22,18 @@ import pytest
 from stock_agent.app import figures, labels, synthetic, view
 from stock_agent.app.history import FundHistory
 from stock_agent.app.provider import (
-    CALENDAR_COLUMNS,
-    GROWTH_START_VALUE,
     PENDING_DETAIL,
     PENDING_REASON,
     DescriptiveMetrics,
-    DrawdownSummary,
-    MetricUnavailable,
     PendingMetrics,
 )
 from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
+from stock_agent.portfolio.descriptive import (
+    CALENDAR_COLUMNS,
+    GROWTH_START_VALUE,
+    DrawdownSummary,
+    MetricUnavailable,
+)
 from stock_agent.ui import theme
 
 APP = Path(__file__).resolve().parents[1] / "src" / "stock_agent" / "app"
@@ -83,7 +85,6 @@ DRAWDOWN = DrawdownSummary(
     duration_sessions=2,
     duration_days=2,
     dollar_decline=2_750.0,
-    recovered=False,
 )
 CALENDAR = pd.DataFrame(
     {"year": [2021], "total_return": [-0.0004], "partial": [True], "losing": [True]}
@@ -91,15 +92,20 @@ CALENDAR = pd.DataFrame(
 
 
 class RecordingMetrics:
-    """Hand-written results; records what the view passes in."""
+    """
+    Hand-written results that honour the contract; records what the view
+    passes in. Growth is 11,000 after t0 and NaN wherever the return is NaN;
+    the drawdown dates are moved onto the series' first and last valued
+    sessions so they always exist. No formula is computed.
+    """
 
     def __init__(self, start: pd.Timestamp | None, unavailable: dict[str, str] | None = None):
         self.start = start
         self.unavailable = unavailable or {}
         self.calls: list[tuple] = []
 
-    def common_start(self, histories, window_start):
-        self.calls.append(("common_start", histories, window_start))
+    def common_start(self, available_sessions, window_start):
+        self.calls.append(("common_start", available_sessions, window_start))
         return self.start
 
     def growth_index(self, daily_total_returns, start_value=GROWTH_START_VALUE):
@@ -107,11 +113,14 @@ class RecordingMetrics:
         if daily_total_returns.name in self.unavailable:
             reason = self.unavailable[daily_total_returns.name]
             raise MetricUnavailable("growth_index", reason, "too few sessions")
-        values = [start_value] + [11_000.0] * (len(daily_total_returns) - 1)
+        values = np.full(len(daily_total_returns), 11_000.0)
+        values[daily_total_returns.isna().to_numpy()] = np.nan
+        values[0] = start_value
         return pd.Series(values, index=daily_total_returns.index)
 
     def drawdown_summary(self, growth):
-        return DRAWDOWN
+        valued = growth.dropna().index
+        return dataclasses.replace(DRAWDOWN, peak_date=valued[0], trough_date=valued[-1])
 
     def calendar_year_returns(self, growth):
         return CALENDAR.copy()
@@ -145,7 +154,6 @@ def _records(**changes) -> pd.DataFrame:
     ("change", "message"),
     [
         ({"role": "crypto"}, "role must be"),
-        ({"evidence_status": "rules_illustration"}, "evidence_status"),
         ({"stale": True}, "stale_reason"),
         ({"stale_reason": "old"}, "stale_reason"),
         ({"records": fund().records.drop(columns="reason")}, "record columns"),
@@ -181,6 +189,13 @@ def test_an_unavailable_record_needs_a_reason():
 def test_limitations_must_be_a_tuple():
     with pytest.raises(TypeError):
         fund(limitations=["synthetic_data"])
+
+
+def test_evidence_status_is_a_constant_not_a_field():
+    assert FundHistory.evidence_status == fund().evidence_status == "descriptive"
+    assert "evidence_status" not in {field.name for field in dataclasses.fields(FundHistory)}
+    with pytest.raises(TypeError):
+        fund(evidence_status="rules_illustration")
 
 
 # --- the synthetic demo funds ---
@@ -261,7 +276,7 @@ def test_the_pending_provider_marks_every_metric_unavailable():
     assert isinstance(pending, DescriptiveMetrics)
     returns = pd.Series([0.0], index=pd.DatetimeIndex([utc("2021-01-04")]))
     calls = [
-        lambda: pending.common_start([fund()], utc("2021-01-04")),
+        lambda: pending.common_start({"fund-a": fund().available_sessions}, utc("2021-01-04")),
         lambda: pending.growth_index(returns),
         lambda: pending.drawdown_summary(returns),
         lambda: pending.calendar_year_returns(returns),
@@ -269,16 +284,23 @@ def test_the_pending_provider_marks_every_metric_unavailable():
     for call in calls:
         with pytest.raises(MetricUnavailable) as caught:
             call()
+        # The machine reason keeps the decision code; the words do not.
         assert caught.value.reason == PENDING_REASON == "pending_od8_group_a"
-        assert caught.value.detail == "calculation pending approval of OD8 group A"
-    assert PENDING_DETAIL == "calculation pending approval of OD8 group A"
+        assert caught.value.detail == PENDING_DETAIL
+    assert PENDING_DETAIL == "awaiting the project owner's approval of the descriptive formulas"
+
+
+def test_recovered_is_derived_from_the_recovery_date():
+    assert DRAWDOWN.recovered is False
+    assert dataclasses.replace(DRAWDOWN, recovery_date=utc("2021-01-07")).recovered is True
+    assert "recovered" not in {field.name for field in dataclasses.fields(DrawdownSummary)}
 
 
 def test_a_drawdown_summary_must_be_consistent():
     with pytest.raises(ValueError, match="fraction"):
         dataclasses.replace(DRAWDOWN, max_drawdown=1.5)
-    with pytest.raises(ValueError, match="recovered"):
-        dataclasses.replace(DRAWDOWN, recovered=True)
+    with pytest.raises(ValueError, match="recovery cannot precede"):
+        dataclasses.replace(DRAWDOWN, recovery_date=utc("2021-01-05"))
     with pytest.raises(ValueError, match="trough"):
         dataclasses.replace(DRAWDOWN, trough_date=utc("2021-01-04"))
     with pytest.raises(ValueError, match="non-negative"):
@@ -357,24 +379,28 @@ PERIOD = view.Period(utc("2021-01-04"), utc("2021-01-06"), "test", clamped=False
 
 def test_the_common_start_is_delegated_to_the_provider():
     metrics = RecordingMetrics(start=utc("2021-01-05"))
-    result = view.build_view([fund("a"), fund("b")], PERIOD, metrics)
+    late = fund("b", reasons={0: "missing_input"})  # first available close 2021-01-05
+    result = view.build_view([fund("a"), late], PERIOD, metrics)
     assert result.start == utc("2021-01-05")
     _, passed, window_start = metrics.calls[0]
     assert window_start == PERIOD.start
-    # Point in time: the provider never sees a record after the period's end.
-    assert all(h.records["date"].max() <= PERIOD.end for h in passed)
+    # The provider gets each fund's available sessions, and none after the period's end.
+    assert list(passed) == ["a", "b"]
+    assert list(passed["a"]) == [utc("2021-01-04"), utc("2021-01-05"), utc("2021-01-06")]
+    assert list(passed["b"]) == [utc("2021-01-05"), utc("2021-01-06")]
     growth_inputs = [call[1] for call in metrics.calls if call[0] == "growth_index"]
     assert [series.index[0] for series in growth_inputs] == [utc("2021-01-05")] * 2
     assert all(series.index[-1] == PERIOD.end for series in growth_inputs)
-    assert result.funds[0].drawdown is DRAWDOWN
+    assert result.funds[0].drawdown.max_drawdown == DRAWDOWN.max_drawdown
     pd.testing.assert_frame_equal(result.funds[0].calendar, CALENDAR)
 
 
-def test_gaps_reach_the_provider_as_nan_never_filled():
+def test_gaps_reach_the_provider_as_nan_and_stay_nan_in_growth():
     metrics = RecordingMetrics(start=utc("2021-01-04"))
-    view.build_view([fund(reasons={1: "missing_input"})], PERIOD, metrics)
+    result = view.build_view([fund(reasons={1: "missing_input"})], PERIOD, metrics)
     returns = next(call[1] for call in metrics.calls if call[0] == "growth_index")
     assert returns.isna().tolist() == [False, True, False]
+    assert result.funds[0].growth.isna().tolist() == [False, True, False]
 
 
 def test_an_unavailable_input_makes_its_derived_metrics_unavailable():
@@ -397,29 +423,84 @@ def test_no_common_start_and_a_pending_provider_are_unavailable_states():
 
 
 class BrokenMetrics(RecordingMetrics):
+    """The compliant fake with one contract violation, named by `broken`."""
+
     def __init__(self, broken: str):
         super().__init__(start=utc("2021-01-04"))
         self.broken = broken
 
-    def common_start(self, histories, window_start):
-        return utc("2021-01-07") if self.broken == "start" else self.start
+    def common_start(self, available_sessions, window_start):
+        starts = {"start_outside": utc("2021-01-07"), "start_in_gap": utc("2021-01-06")}
+        return starts.get(self.broken, self.start)
 
     def growth_index(self, daily_total_returns, start_value=GROWTH_START_VALUE):
         growth = super().growth_index(daily_total_returns, start_value)
-        if self.broken == "index":
-            return growth.iloc[:-1]
-        return growth * 2 if self.broken == "start_value" else growth
+        changed = {
+            "index": lambda: growth.iloc[:-1],
+            "start_value": lambda: growth * 2,
+            "negative": lambda: growth.where(growth.index != utc("2021-01-05"), -1.0),
+            "infinite": lambda: growth.where(growth.index != utc("2021-01-05"), np.inf),
+            "fills_gap": lambda: growth.fillna(11_000.0),
+        }
+        return changed.get(self.broken, lambda: growth)()
+
+    def drawdown_summary(self, growth):
+        summary = super().drawdown_summary(growth)
+        if self.broken == "drawdown_type":
+            return dataclasses.asdict(summary)
+        if self.broken == "drawdown_outside":
+            return dataclasses.replace(summary, recovery_date=utc("2021-01-08"))
+        if self.broken == "drawdown_in_gap":
+            return dataclasses.replace(summary, trough_date=utc("2021-01-06"))
+        return summary
 
     def calendar_year_returns(self, growth):
-        if self.broken == "columns":
-            return CALENDAR.drop(columns="losing")
-        return pd.concat([CALENDAR, CALENDAR]) if self.broken == "years" else CALENDAR
+        changed = {
+            "columns": lambda: CALENDAR.drop(columns="losing"),
+            "duplicate_years": lambda: pd.concat([CALENDAR, CALENDAR]),
+            "year_outside": lambda: CALENDAR.assign(year=2020),
+            "losing_flag": lambda: CALENDAR.assign(losing=False),
+            "zero_is_losing": lambda: CALENDAR.assign(total_return=0.0),
+        }
+        return changed.get(self.broken, CALENDAR.copy)()
 
 
-@pytest.mark.parametrize("broken", ["start", "index", "start_value", "columns", "years"])
-def test_a_provider_breaking_the_contract_is_an_error_not_a_state(broken):
-    with pytest.raises(ValueError):
-        view.build_view([fund()], PERIOD, BrokenMetrics(broken))
+# The fund has a gap on 2021-01-06, so the period 2021-01-04..06 ends in it.
+GAPPED = {"reasons": {2: "missing_input"}}
+
+
+def test_the_compliant_fake_passes_every_check():
+    result = view.build_view([fund(**GAPPED)], PERIOD, BrokenMetrics("none"))
+    assert result.funds[0].growth.isna().tolist() == [False, False, True]
+
+
+@pytest.mark.parametrize(
+    ("broken", "message"),
+    [
+        ("start_outside", "outside the period"),
+        ("start_in_gap", "without a close"),
+        ("index", "session dates"),
+        ("start_value", "start at the start value"),
+        ("negative", "finite and positive"),
+        ("infinite", "finite and positive"),
+        ("fills_gap", "filled a gap"),
+        ("drawdown_outside", "drawdown dates"),
+        ("drawdown_in_gap", "drawdown dates"),
+        ("columns", "columns"),
+        ("duplicate_years", "one row per year"),
+        ("year_outside", "outside the growth series"),
+        ("losing_flag", "losing must equal"),
+        ("zero_is_losing", "losing must equal"),
+    ],
+)
+def test_a_provider_breaking_the_contract_is_an_error_not_a_state(broken, message):
+    with pytest.raises(ValueError, match=message):
+        view.build_view([fund(**GAPPED)], PERIOD, BrokenMetrics(broken))
+
+
+def test_a_drawdown_result_of_the_wrong_type_is_a_type_error():
+    with pytest.raises(TypeError, match="must return a DrawdownSummary"):
+        view.build_view([fund(**GAPPED)], PERIOD, BrokenMetrics("drawdown_type"))
 
 
 # --- formatting and tables ---
@@ -483,6 +564,17 @@ def test_the_required_honest_labels_are_worded_exactly():
         "Fund expenses are already reflected in fund prices and are not deducted again.",
     )
     assert labels.SYNTHETIC_NOTICE.startswith("Synthetic demo data, not real fund performance")
+
+
+def test_user_facing_copy_names_no_decision_code_and_translates_reason_codes():
+    shown = [
+        value for name, value in vars(labels).items() if name.isupper() and isinstance(value, str)
+    ]
+    shown += [PENDING_DETAIL, *labels.REASON_TEXT.values(), *labels.LIMITATION_TEXT.values()]
+    assert not [text for text in shown if "OD8" in text]
+    assert labels.reason_text("missing_input") == "no value from the source"
+    assert labels.reason_text("late_vendor_file") == "late vendor file"  # unknown: never hidden
+    assert labels.FRACTIONAL_SHARES == "Fractional shares assumed."
 
 
 def test_the_copy_has_no_trading_or_advice_wording():

@@ -20,7 +20,9 @@ session), so it cannot disagree with them.
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import dataclass
+from typing import ClassVar
 
 import numpy as np
 import pandas as pd
@@ -74,8 +76,11 @@ class FundHistory:
     from the data's producer. `limitations` are codes (for example
     `synthetic_data`); the page translates known codes and shows unknown ones
     as they are. `stale` marks data not refreshed by its stated end, with a
-    `stale_reason` in words.
+    `stale_reason` in words. Every fund history is descriptive evidence:
+    `evidence_status` is a class constant, not a field.
     """
+
+    evidence_status: ClassVar[str] = EVIDENCE_STATUS
 
     fund_id: str
     name: str
@@ -85,7 +90,6 @@ class FundHistory:
     retrieved_label: str
     vintage_note: str
     limitations: tuple[str, ...]
-    evidence_status: str = EVIDENCE_STATUS
     stale: bool = False
     stale_reason: str | None = None
 
@@ -94,8 +98,6 @@ class FundHistory:
             raise ValueError("a fund needs an id and a name")
         if self.role not in ROLES:
             raise ValueError(f"role must be one of {ROLES}, got {self.role!r}")
-        if self.evidence_status != EVIDENCE_STATUS:
-            raise ValueError(f"evidence_status must be {EVIDENCE_STATUS!r}")
         if not isinstance(self.limitations, tuple):
             raise TypeError("limitations must be a tuple of codes")
         if self.stale != bool(self.stale_reason):
@@ -109,6 +111,12 @@ class FundHistory:
         """The `ok` records only."""
 
         return self.records[self.records["status"].eq(OK)]
+
+    @property
+    def available_sessions(self) -> pd.DatetimeIndex:
+        """The sorted sessions with an available return."""
+
+        return pd.DatetimeIndex(self.available["date"])
 
     @property
     def coverage_start(self) -> pd.Timestamp | None:
@@ -128,17 +136,4 @@ class FundHistory:
         """The same fund restricted to records dated in [start, end]; nothing later is kept."""
 
         dates = self.records["date"]
-        kept = self.records[dates.ge(start) & dates.le(end)]
-        return FundHistory(
-            fund_id=self.fund_id,
-            name=self.name,
-            role=self.role,
-            records=kept,
-            source_label=self.source_label,
-            retrieved_label=self.retrieved_label,
-            vintage_note=self.vintage_note,
-            limitations=self.limitations,
-            evidence_status=self.evidence_status,
-            stale=self.stale,
-            stale_reason=self.stale_reason,
-        )
+        return dataclasses.replace(self, records=self.records[dates.ge(start) & dates.le(end)])

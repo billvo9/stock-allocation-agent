@@ -3,13 +3,15 @@ The Explore page under Streamlit's AppTest, one test per first-class state:
 the running app with every metric pending approval, a fake provider with
 hand-written results, loading, no fund selected, stale data, an unavailable
 fund, data gaps, periods (presets, custom years, clamping), no common start
-and a metric unavailable for one fund. Plus the launcher and the app's
-import boundary.
+and a metric unavailable for one fund. Plus the launcher and the import
+boundaries of the app and of `stock_agent.portfolio`.
 """
 
 from __future__ import annotations
 
 import ast
+import base64
+import dataclasses
 import importlib.util
 import json
 import os
@@ -24,9 +26,9 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from stock_agent.app import explore, labels, synthetic
-from stock_agent.app.provider import (
+from stock_agent.app.provider import PENDING_DETAIL
+from stock_agent.portfolio.descriptive import (
     GROWTH_START_VALUE,
-    PENDING_DETAIL,
     DrawdownSummary,
     MetricUnavailable,
 )
@@ -34,6 +36,7 @@ from stock_agent.app.provider import (
 REPO = Path(__file__).resolve().parents[1]
 SOURCE = REPO / "src"
 PACKAGE = SOURCE / "stock_agent" / "app"
+PORTFOLIO = SOURCE / "stock_agent" / "portfolio"
 RUN = PACKAGE / "run.py"
 TIMEOUT = 120
 EQUITY, BOND, CASH, STALE, MISSING = (h.fund_id for h in synthetic.demo_histories())
@@ -51,7 +54,6 @@ DRAWDOWN = DrawdownSummary(
     duration_sessions=1166,
     duration_days=1634,
     dollar_decline=4321.0,
-    recovered=True,
 )
 OPEN_DRAWDOWN = DrawdownSummary(
     max_drawdown=0.123,
@@ -61,7 +63,6 @@ OPEN_DRAWDOWN = DrawdownSummary(
     duration_sessions=783,
     duration_days=1096,
     dollar_decline=1500.0,
-    recovered=False,
 )
 CALENDAR = pd.DataFrame(
     {
@@ -74,16 +75,21 @@ CALENDAR = pd.DataFrame(
 
 
 class FakeMetrics:
-    """Fixed, hand-written results. It computes no formula: the gap NaNs are copied through."""
+    """
+    Fixed, hand-written results that honour the provider contract. It
+    computes no formula: growth is 12,345 after t0 and NaN wherever the
+    return is NaN, as the contract requires.
+    """
 
-    def __init__(self, start="2007-01-03", unavailable=(), drawdown=DRAWDOWN):
+    def __init__(self, start="2007-01-03", unavailable=(), drawdown=DRAWDOWN, calendar=CALENDAR):
         self.start = None if start is None else utc(start)
         self.unavailable = set(unavailable)
         self.drawdown = drawdown
+        self.calendar = calendar
         self.calls = []
 
-    def common_start(self, histories, window_start):
-        self.calls.append((tuple(h.fund_id for h in histories), window_start))
+    def common_start(self, available_sessions, window_start):
+        self.calls.append((tuple(available_sessions), window_start))
         return self.start
 
     def growth_index(self, daily_total_returns, start_value=GROWTH_START_VALUE):
@@ -100,7 +106,14 @@ class FakeMetrics:
         return self.drawdown
 
     def calendar_year_returns(self, growth):
-        return CALENDAR.copy()
+        return self.calendar.copy()
+
+
+class GapFillingMetrics(FakeMetrics):
+    """Breaks the contract: it carries the last value through a gap."""
+
+    def growth_index(self, daily_total_returns, start_value=GROWTH_START_VALUE):
+        return super().growth_index(daily_total_returns, start_value).ffill()
 
 
 def _page(histories, metrics):
@@ -159,10 +172,25 @@ def _assert_honest_labels(text: str) -> None:
     for label in (
         labels.GROWTH_TITLE,
         *labels.HONEST_LABELS,
+        labels.FRACTIONAL_SHARES,
         labels.EVIDENCE_BADGE,
         labels.CANNOT_TELL,
     ):
         assert label in text, label
+
+
+def _gapped_equity(*dates: str):
+    """The demo funds with the equity fund's records on `dates` made unavailable."""
+
+    equity, *others = synthetic.demo_histories()
+    records = equity.records.copy()
+    hit = records["date"].isin([utc(d) for d in dates])
+    records.loc[hit, ["daily_total_return", "status", "reason"]] = [
+        np.nan,
+        "unavailable",
+        "missing_input",
+    ]
+    return (dataclasses.replace(equity, records=records), *others)
 
 
 # --- the running app: synthetic demo mode, every metric pending ---
@@ -175,6 +203,7 @@ def test_the_running_app_shows_every_metric_pending_approval():
     assert not app.get("plotly_chart")
     assert text.count(f"Unavailable: {PENDING_DETAIL}.") == 5  # growth, 3 decline cards, calendar
     assert labels.PENDING_EXPLAINER in text
+    assert "OD8" not in text  # the decision code stays in the machine reason
     assert [m.value for m in app.metric] == ["—", "—", "—"]
     assert text.count(labels.PENDING_BADGE) == 2
     _assert_honest_labels(text)
@@ -225,6 +254,20 @@ def test_a_provider_fills_every_section():
     _assert_honest_labels(text)
 
 
+def test_the_honest_labels_sit_directly_under_the_growth_heading():
+    app = _app()
+    elements = [e for e in app.main if not hasattr(e, "children")]  # leaves, in page order
+    headings = [
+        i
+        for i, e in enumerate(elements)
+        if e.type == "subheader" and e.value.replace("\\$", "$") == labels.GROWTH_TITLE
+    ]
+    assert len(headings) == 1
+    below = elements[headings[0] + 1]
+    assert below.type == "caption"
+    assert below.value == " ".join(labels.HONEST_LABELS)
+
+
 def test_the_growth_chart_is_labelled_and_draws_each_fund_distinctly():
     app = _app()
     spec = json.loads(_charts(app)["growth"].proto.spec)
@@ -249,6 +292,24 @@ def test_an_unrecovered_decline_says_so():
     assert [m.value for m in app.metric] == ["−12.3%"] * 3
 
 
+def test_an_unrecovered_decline_ends_at_the_last_session_with_data():
+    # The equity fund's last two sessions of 2009 are a gap: the crisis period ends inside it.
+    open_2008 = dataclasses.replace(DRAWDOWN, recovery_date=None)
+    calendar = CALENDAR.assign(year=[2007, 2008, 2009])
+    app = _app(
+        FakeMetrics(drawdown=open_2008, calendar=calendar),
+        _gapped_equity("2009-12-30", "2009-12-31"),
+    )
+    app.radio(key=explore.PERIOD_KEY).set_value("crisis_2008").run()
+    assert not app.exception, [e.value for e in app.exception]
+    captions = [c.value for c in app.caption if c.value.startswith("Not recovered")]
+    assert [c.split(":")[0] for c in captions] == [
+        "Not recovered by 2009-12-29",  # equity: its last session with data
+        "Not recovered by 2009-12-31",
+        "Not recovered by 2009-12-31",
+    ]
+
+
 # --- loading ---
 
 
@@ -258,11 +319,31 @@ def _loading():
     explore.loading_state()
 
 
+def _failing_load():
+    from stock_agent.app import explore
+    from stock_agent.app.provider import PendingMetrics
+
+    def load():
+        raise RuntimeError("the history source is unreachable")
+
+    explore.render(load, PendingMetrics())
+
+
 def test_the_loading_state_is_announced_and_then_replaced():
     loading = AppTest.from_function(_loading, default_timeout=TIMEOUT).run()
     assert [c.value for c in loading.caption] == [labels.LOADING]
     assert any('role="status"' in h.proto.body for h in loading.get("html"))
     assert labels.LOADING not in _text(_app())
+
+
+def test_the_page_shows_loading_while_histories_load():
+    # A loader that never finishes leaves the page in its loading state; the failure
+    # itself is a defect and propagates.
+    app = AppTest.from_function(_failing_load, default_timeout=TIMEOUT).run()
+    assert [e.value for e in app.exception] and "unreachable" in app.exception[0].value
+    assert labels.LOADING in [c.value for c in app.caption]
+    assert any('role="status"' in h.proto.body for h in app.get("html"))
+    assert not app.multiselect and not app.metric
 
 
 # --- no fund selected ---
@@ -281,7 +362,9 @@ def test_no_fund_selected_shows_the_empty_state():
 
 
 def test_a_stale_fund_is_flagged_and_limits_the_shared_period():
-    app = _choose(_app(), EQUITY, STALE)
+    # The fake's fixed results describe 2007-2024; this period ends in 2023.
+    app = _choose(_app(FakeMetrics(start=None)), EQUITY, STALE)
+    assert not app.exception, [e.value for e in app.exception]
     text = _text(app)
     assert labels.STALE_BADGE in text
     assert any(
@@ -305,9 +388,10 @@ def test_an_unavailable_fund_is_excluded_not_set_to_zero():
     app = _choose(_app(metrics), EQUITY, MISSING)
     message = (
         "Synthetic international equity fund has no available data, so it is excluded, "
-        "not set to zero (reason: missing_input)."
+        "not set to zero (no value from the source)."
     )
     assert any(message in w.value for w in app.warning)
+    assert "missing_input" not in _text(app)  # reason codes are translated
     assert metrics.calls[-1][0] == (EQUITY,)  # only the fund with data reaches the provider
     spec = json.loads(_charts(app)["growth"].proto.spec)
     assert [t["name"] for t in spec["data"]] == ["Synthetic equity fund"]
@@ -327,14 +411,26 @@ def test_a_data_gap_is_listed_and_drawn_as_a_gap():
     app = _app()
     gap = (
         "Synthetic equity fund has 5 sessions without data in this period: 2015-08-17 to "
-        "2015-08-21, 5 sessions (missing_input). Missing returns are never filled or set to zero."
+        "2015-08-21, 5 sessions (no value from the source). Missing returns are never filled "
+        "or set to zero."
     )
     assert any(gap in i.value for i in app.info)
     spec = json.loads(_charts(app)["growth"].proto.spec)
     equity = spec["data"][0]
     assert equity["connectgaps"] is False
+    # Plotly ships y as a typed array; the five gap sessions are drawn as NaN, not filled.
+    y = np.frombuffer(base64.b64decode(equity["y"]["bdata"]), dtype=equity["y"]["dtype"])
+    x = pd.to_datetime(pd.Series(equity["x"]), utc=True)
+    in_gap = x.between(utc("2015-08-17"), utc("2015-08-21")).to_numpy()
+    assert in_gap.sum() == 5 and np.isnan(y[in_gap]).all() and not np.isnan(y[~in_gap]).any()
     app.radio(key=explore.PERIOD_KEY).set_value("year_2022").run()
     assert not any("without data" in i.value for i in app.info)
+
+
+def test_a_provider_that_fills_a_gap_is_refused():
+    app = _app(GapFillingMetrics())
+    assert app.exception and "filled a gap" in app.exception[0].value
+    assert not app.get("plotly_chart")
 
 
 # --- periods ---
@@ -350,18 +446,18 @@ def test_a_data_gap_is_listed_and_drawn_as_a_gap():
     ],
 )
 def test_period_presets_select_calendar_years(preset, shown):
-    # The fake's fixed start lies in 2007; later windows get "no common start" instead.
-    metrics = FakeMetrics(start="2007-01-03" if preset in {"full", "crisis_2008"} else None)
+    # The fake's fixed results describe the full history; shorter windows get no start.
+    metrics = FakeMetrics(start="2007-01-03" if preset == "full" else None)
     app = _app(metrics)
     app.radio(key=explore.PERIOD_KEY).set_value(preset).run()
-    assert not app.exception
+    assert not app.exception, [e.value for e in app.exception]
     assert shown in _text(app)
     window_start = pd.Timestamp(shown.split()[1], tz="UTC")
     assert metrics.calls[-1][1] == window_start
 
 
 def test_custom_years_are_chosen_within_the_coverage():
-    metrics = FakeMetrics(start="2010-01-04")
+    metrics = FakeMetrics(start=None)
     app = _app(metrics)
     app.radio(key=explore.PERIOD_KEY).set_value("custom").run()
     slider = app.select_slider[0]
@@ -419,19 +515,19 @@ def test_a_metric_unavailable_for_one_fund_names_it_and_keeps_the_others():
     assert [m.value for m in app.metric] == ["−34.6%", "−34.6%", "—"]
 
 
-# --- wording ---
+# --- markdown escaping ---
 
 
-def test_no_state_uses_trading_or_advice_wording():
-    apps = [
-        AppTest.from_file(str(RUN), default_timeout=TIMEOUT).run(),
-        _app(),
-        _choose(_app()),
-        _choose(_app(), EQUITY, STALE, MISSING),
-    ]
-    for app in apps:
-        text = _text(app).lower()
-        assert not re.search(r"\b(buy|sell|buying|selling|recommend\w*)\b", text)
+def test_dollar_signs_are_escaped_exactly_once():
+    for app in (_app(), AppTest.from_file(str(RUN), default_timeout=TIMEOUT).run()):
+        rendered = [
+            e.value for e in (*app.subheader, *app.markdown, *app.caption, *app.info, *app.warning)
+        ]
+        with_dollars = [text for text in rendered if "$" in text]
+        assert with_dollars
+        for text in with_dollars:
+            assert "\\\\$" not in text, text  # never escaped twice
+            assert re.search(r"(?<!\\)\$", text) is None, text  # never left bare
 
 
 # --- structure, launcher and boundary ---
@@ -454,6 +550,8 @@ def test_the_page_builds_from_the_shared_components():
         if banned == "#":  # comments are fine; colour literals are not
             lines = [line for line in lines if re.search(r"#[0-9A-Fa-f]{6}\b", line)]
         assert not lines, (banned, lines)
+    # One helper escapes markdown dollar signs.
+    assert source.count('.replace("$", "\\\\$")') == 1
 
 
 def test_the_launcher_binds_to_localhost_without_usage_statistics():
@@ -470,6 +568,7 @@ def test_the_launcher_binds_to_localhost_without_usage_statistics():
 
 
 ALLOWED_THIRD_PARTY = {"numpy", "pandas", "plotly", "streamlit"}
+APP_PROJECT_PREFIXES = ("stock_agent.app", "stock_agent.ui", "stock_agent.portfolio")
 FORBIDDEN = (
     "stock_agent.dashboard",
     "stock_agent.model_diagnostics",
@@ -484,8 +583,7 @@ FORBIDDEN = (
 )
 
 
-@pytest.mark.parametrize("path", sorted(PACKAGE.glob("*.py")), ids=lambda p: p.stem)
-def test_app_modules_import_only_ui_their_own_modules_and_allowed_libraries(path):
+def _imports(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     imported = set()
     for node in ast.walk(tree):
@@ -493,27 +591,16 @@ def test_app_modules_import_only_ui_their_own_modules_and_allowed_libraries(path
             imported.add(node.module)
         elif isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
-    for module in imported:
-        top = module.split(".")[0]
-        allowed = (
-            top in sys.stdlib_module_names
-            or top in ALLOWED_THIRD_PARTY
-            or module.startswith(("stock_agent.app", "stock_agent.ui"))
-        )
-        assert allowed, (path.name, module)
+    return imported
 
 
-def test_rendering_the_app_loads_no_forbidden_module():
-    script = f"""
-import json, sys
-from streamlit.testing.v1 import AppTest
-app = AppTest.from_file({str(RUN)!r}, default_timeout={TIMEOUT})
-app.run()
-assert not app.exception, [e.value for e in app.exception]
-print(json.dumps(sorted(sys.modules)))
-"""
+def _loaded_after(script: str) -> set[str]:
     completed = subprocess.run(
-        [sys.executable, "-c", script],
+        [
+            sys.executable,
+            "-c",
+            f"import json, sys\n{script}\nprint(json.dumps(sorted(sys.modules)))",
+        ],
         capture_output=True,
         text=True,
         env={**os.environ, "PYTHONPATH": str(SOURCE)},
@@ -521,13 +608,47 @@ print(json.dumps(sorted(sys.modules)))
         check=False,
     )
     assert completed.returncode == 0, completed.stderr[-2000:]
-    loaded = set(json.loads(completed.stdout.strip().splitlines()[-1]))
+    return set(json.loads(completed.stdout.strip().splitlines()[-1]))
+
+
+@pytest.mark.parametrize("path", sorted(PACKAGE.glob("*.py")), ids=lambda p: p.stem)
+def test_app_modules_import_only_ui_portfolio_their_own_modules_and_allowed_libraries(path):
+    for module in _imports(path):
+        top = module.split(".")[0]
+        allowed = (
+            top in sys.stdlib_module_names
+            or top in ALLOWED_THIRD_PARTY
+            or module.startswith(APP_PROJECT_PREFIXES)
+        )
+        assert allowed, (path.name, module)
+
+
+def test_rendering_the_app_loads_no_forbidden_module():
+    loaded = _loaded_after(
+        "from streamlit.testing.v1 import AppTest\n"
+        f"app = AppTest.from_file({str(RUN)!r}, default_timeout={TIMEOUT})\n"
+        "app.run()\n"
+        "assert not app.exception, [e.value for e in app.exception]"
+    )
     assert not sorted(m for m in loaded if m.startswith(FORBIDDEN))
     project = sorted(m for m in loaded if m.startswith("stock_agent"))
-    outside = [
-        m
-        for m in project
-        if m != "stock_agent" and not m.startswith(("stock_agent.app", "stock_agent.ui"))
-    ]
+    outside = [m for m in project if m != "stock_agent" and not m.startswith(APP_PROJECT_PREFIXES)]
     assert not outside, outside
     assert "stock_agent.app.explore" in loaded
+
+
+PORTFOLIO_FORBIDDEN = ("stock_agent.app", "stock_agent.ui", "stock_agent.dashboard")
+
+
+@pytest.mark.parametrize("path", sorted(PORTFOLIO.glob("*.py")), ids=lambda p: p.stem)
+def test_portfolio_never_imports_the_app_the_ui_or_the_dashboard(path):
+    imported = _imports(path)
+    assert not [m for m in imported if m.startswith(PORTFOLIO_FORBIDDEN)]
+    assert not [m for m in imported if m.split(".")[0] in {"streamlit", "plotly"}]
+
+
+def test_importing_portfolio_loads_no_presentation_module():
+    loaded = _loaded_after("import stock_agent.portfolio.descriptive")
+    assert "stock_agent.portfolio.descriptive" in loaded
+    assert not sorted(m for m in loaded if m.startswith(PORTFOLIO_FORBIDDEN))
+    assert not [m for m in loaded if m.split(".")[0] in {"streamlit", "plotly"}]

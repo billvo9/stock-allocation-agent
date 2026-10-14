@@ -31,6 +31,7 @@ REINVESTMENT = (
 BEFORE_COSTS = "Before taxes and transaction costs."
 EXPENSES = "Fund expenses are already reflected in fund prices and are not deducted again."
 HONEST_LABELS = (REINVESTMENT, BEFORE_COSTS, EXPENSES)
+FRACTIONAL_SHARES = "Fractional shares assumed."
 LOG_SCALE = "Logarithmic scale: equal vertical distances are equal percentage changes."
 
 DECLINE_TITLE = "Worst decline"
@@ -72,10 +73,22 @@ NO_COMMON_START_REASON = "no_common_start"
 PENDING_BADGE = "Pending approval"
 UNAVAILABLE_BADGE = "Unavailable"
 PENDING_EXPLAINER = (
-    "The formulas behind these figures (OD8 group A: growth of $10,000, worst decline and "
-    "calendar-year returns) await the project owner's approval. Nothing is estimated or "
-    "filled in meanwhile."
+    "The formulas behind these figures (growth of $10,000, worst decline and calendar-year "
+    "returns) are awaiting the project owner's approval. Nothing is estimated or filled in "
+    "meanwhile."
 )
+
+# Machine reason codes shown on the page, in plain words. An unknown code is
+# shown with its underscores as spaces, never hidden.
+REASON_TEXT = {
+    "missing_input": "no value from the source",
+    "no_records": "no records from the source",
+}
+
+
+def reason_text(code: str) -> str:
+    return REASON_TEXT.get(code, code.replace("_", " "))
+
 
 LIMITATION_TEXT = {
     "synthetic_data": "Synthetic demo data, not real fund performance.",

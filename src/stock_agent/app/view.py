@@ -14,14 +14,15 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from stock_agent.app import labels
 from stock_agent.app.history import UNAVAILABLE, FundHistory
-from stock_agent.app.provider import (
+from stock_agent.app.provider import DescriptiveMetrics
+from stock_agent.portfolio.descriptive import (
     CALENDAR_COLUMNS,
     GROWTH_START_VALUE,
-    DescriptiveMetrics,
     DrawdownSummary,
     MetricUnavailable,
 )
@@ -210,23 +211,66 @@ def returns_from(history: FundHistory, start: pd.Timestamp) -> pd.Series:
     )
 
 
+# Contract checks on provider results (`provider.DescriptiveMetrics`). A
+# violation is a defect in the provider, never a page state: ValueError, or
+# TypeError when a result has the wrong type.
+
+
+def _checked_start(
+    start: Any, period: Period, available: dict[str, pd.DatetimeIndex]
+) -> pd.Timestamp | Unavailable:
+    if start is None:
+        return Unavailable(labels.NO_COMMON_START_REASON, labels.NO_COMMON_START)
+    if isinstance(start, Unavailable):
+        return start
+    if not period.start <= start <= period.end:
+        raise ValueError("common_start returned a session outside the period")
+    missing = [fund_id for fund_id, sessions in available.items() if start not in sessions]
+    if missing:
+        raise ValueError(f"common_start returned a session without a close for {missing}")
+    return start
+
+
 def _checked_growth(growth: Any, returns: pd.Series) -> pd.Series | Unavailable:
     if isinstance(growth, Unavailable):
         return growth
     if not isinstance(growth, pd.Series) or not growth.index.equals(returns.index):
         raise ValueError("growth_index must return a series on the input's session dates")
     if growth.iloc[0] != GROWTH_START_VALUE:
-        raise ValueError("growth_index must start at the start value")
+        raise ValueError("growth_index must start at the start value on the start session")
+    present = growth.dropna().to_numpy(dtype="float64")
+    if not (np.isfinite(present).all() and (present > 0).all()):
+        raise ValueError("growth values must be finite and positive (the axis is logarithmic)")
+    if growth[returns.isna()].notna().any():
+        raise ValueError("growth_index filled a gap: growth must be NaN where the return is NaN")
     return growth
 
 
-def _checked_calendar(table: Any) -> pd.DataFrame | Unavailable:
+def _checked_drawdown(summary: Any, growth: pd.Series) -> DrawdownSummary | Unavailable:
+    if isinstance(summary, Unavailable):
+        return summary
+    if not isinstance(summary, DrawdownSummary):
+        raise TypeError("drawdown_summary must return a DrawdownSummary")
+    sessions = growth.dropna().index
+    dates = (summary.peak_date, summary.trough_date, summary.recovery_date)
+    if any(date is not None and date not in sessions for date in dates):
+        raise ValueError("drawdown dates must be sessions of the growth series with a value")
+    return summary
+
+
+def _checked_calendar(table: Any, growth: pd.Series) -> pd.DataFrame | Unavailable:
     if isinstance(table, Unavailable):
         return table
     if not isinstance(table, pd.DataFrame) or not set(CALENDAR_COLUMNS) <= set(table.columns):
         raise ValueError(f"calendar_year_returns must return the columns {CALENDAR_COLUMNS}")
-    if table["year"].duplicated().any():
+    years = table["year"].astype(int)
+    if years.duplicated().any():
         raise ValueError("calendar_year_returns must return one row per year")
+    if not set(years) <= set(growth.dropna().index.year):
+        raise ValueError("calendar_year_returns has a year outside the growth series")
+    losing = table["losing"].astype(bool).to_numpy()
+    if not np.array_equal(losing, (table["total_return"] < 0).to_numpy()):
+        raise ValueError("calendar_year_returns: losing must equal total_return < 0")
     return table
 
 
@@ -236,17 +280,16 @@ def build_view(
     """
     Every metric for `histories` (funds with available data) over `period`.
 
-    The shared start t0 comes from the provider's `common_start`; the page
-    never picks it. A metric whose input is unavailable is unavailable for
-    the same reason.
+    The shared start t0 comes from the provider's `common_start`, given each
+    fund's available sessions inside the period; the page never picks it. A
+    metric whose input is unavailable is unavailable for the same reason.
     """
 
     windowed = tuple(history.between(period.start, period.end) for history in histories)
-    start = _attempt(metrics.common_start, windowed, period.start)
-    if start is None:
-        start = Unavailable(labels.NO_COMMON_START_REASON, labels.NO_COMMON_START)
-    elif not isinstance(start, Unavailable) and not period.start <= start <= period.end:
-        raise ValueError("common_start returned a session outside the period")
+    available = {history.fund_id: history.available_sessions for history in windowed}
+    start = _checked_start(
+        _attempt(metrics.common_start, available, period.start), period, available
+    )
     funds = []
     for history in windowed:
         if isinstance(start, Unavailable):
@@ -259,8 +302,8 @@ def build_view(
         if isinstance(growth, Unavailable):
             drawdown, calendar = growth, growth
         else:
-            drawdown = _attempt(metrics.drawdown_summary, growth)
-            calendar = _checked_calendar(_attempt(metrics.calendar_year_returns, growth))
+            drawdown = _checked_drawdown(_attempt(metrics.drawdown_summary, growth), growth)
+            calendar = _checked_calendar(_attempt(metrics.calendar_year_returns, growth), growth)
         funds.append(FundView(history, gaps(history), growth, drawdown, calendar))
     return ExploreView(period=period, start=start, funds=tuple(funds))
 
