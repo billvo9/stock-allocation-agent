@@ -22,11 +22,13 @@ Equity panel (`synthetic_equity_panel`)
 
         none       mu = 0
         linear     mu = s z
-        nonlinear  mu = s (|z| - mean over the date of |z|)
+        nonlinear  mu = s r, with r the residual of |z| regressed on (1, z)
+                   within the date
 
     so a 20-session label has an expected excess return of about 20 s z
-    (linear). The nonlinear drift is symmetric in z: a linear model cannot
-    use it, a tree ensemble can. Leverage and volume are unrelated to
+    (linear). The nonlinear drift has exactly zero covariance with z on every
+    date (a V shape with its linear part removed): no linear function of the
+    characteristic can use it, a tree ensemble can. Leverage and volume are unrelated to
     returns (noise features). `truth` holds mu_it.
 
 Every random draw uses numpy's legacy RandomState (stream frozen across
@@ -165,6 +167,22 @@ def _standardize_rows(matrix: np.ndarray) -> np.ndarray:
     return np.where(usable[:, None], centred / np.where(usable, scale, 1.0)[:, None], np.nan)
 
 
+def _orthogonal_magnitude(z: np.ndarray) -> np.ndarray:
+    """
+    |z| minus its within-row least-squares fit on (1, z): zero mean and
+    exactly zero covariance with z on every row, so no linear function of z
+    carries any of it.
+    """
+
+    magnitude = np.where(np.isfinite(z), np.abs(z), np.nan)
+    centred_m = magnitude - _row_mean(magnitude)[:, None]
+    centred_z = z - _row_mean(z)[:, None]
+    covariance = _row_mean(centred_m * centred_z)
+    variance = _row_mean(centred_z**2)
+    slope = np.divide(covariance, variance, out=np.zeros_like(variance), where=variance > 0)
+    return centred_m - slope[:, None] * centred_z
+
+
 def synthetic_equity_panel(spec: SyntheticEquitySpec) -> SyntheticEquityPanel:
     rng = np.random.RandomState(spec.seed)
     calendar = _calendar(spec.start, spec.n_sessions)
@@ -199,9 +217,7 @@ def synthetic_equity_panel(spec: SyntheticEquitySpec) -> SyntheticEquityPanel:
     if spec.signal == "linear":
         drift = spec.signal_strength * np.where(known, z, 0.0)
     elif spec.signal == "nonlinear":
-        magnitude = np.where(known, np.abs(z), np.nan)
-        centre = _row_mean(magnitude)
-        drift = spec.signal_strength * np.where(known, magnitude - centre[:, None], 0.0)
+        drift = spec.signal_strength * np.where(known, _orthogonal_magnitude(z), 0.0)
     else:
         drift = np.zeros((n, k))
     drift = np.where(listed, drift, 0.0)

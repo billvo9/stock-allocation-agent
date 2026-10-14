@@ -217,7 +217,12 @@ def test_null_and_nonlinear_drifts_have_the_documented_shape():
     frame = bent.truth.assign(q=q)
     by_date = frame.groupby("date")
     assert (by_date["drift"].sum().abs() < 1e-15).all()
-    linear_fit = by_date.apply(
-        lambda g: np.corrcoef(g["q"], g["drift"])[0, 1], include_groups=False
+    covariance = by_date.apply(
+        lambda g: ((g["q"] - g["q"].mean()) * g["drift"]).mean(), include_groups=False
     )
-    assert linear_fit.abs().median() < 0.5  # mostly symmetric: little linear content
+    assert covariance.abs().max() < 1e-18  # no linear content in the characteristic
+    magnitude = by_date.apply(
+        lambda g: np.corrcoef(np.abs(g["q"] - g["q"].mean()), g["drift"])[0, 1],
+        include_groups=False,
+    )
+    assert magnitude.median() > 0.5  # the drift is the V shape's nonlinear part
