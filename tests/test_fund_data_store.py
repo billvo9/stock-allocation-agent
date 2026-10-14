@@ -305,7 +305,6 @@ def test_non_finite_or_non_positive_values_are_refused(raw, root, table, column,
         ("pay_date", "2014-05-01", RefusalReason.INVALID_DATE_ORDER),  # before its ex-date
         ("record_date", "2014-05-01", RefusalReason.INVALID_DATE_ORDER),
         ("declaration_date", "2014-07-15", RefusalReason.INVALID_DATE_ORDER),  # after
-        ("declaration_date", "2002-12-31", RefusalReason.OUTSIDE_COVERAGE),
         ("pay_date", "2002-12-31", RefusalReason.OUTSIDE_COVERAGE),
     ],
 )
@@ -314,6 +313,14 @@ def test_distribution_dates_must_be_ordered_and_inside_coverage(raw, root, colum
     late = distributions.index[distributions["ex_date"] >= day("2014-06-01")][0]
     frame = with_value(distributions, column, day(value), row=int(late))
     refused(reason, ingest_batch, root, changed(raw, distributions=frame))
+
+
+def test_a_declaration_may_precede_calendar_coverage(raw, root):
+    distributions = raw.distributions
+    late = int(distributions.index[distributions["ex_date"] >= day("2014-06-01")][0])
+    frame = with_value(distributions, "declaration_date", day("2002-12-31"), row=late)
+    stored = read_batch(ingest_batch(root, changed(raw, distributions=frame)).path)
+    assert (stored.distributions["declaration_date"] == day("2002-12-31")).sum() == 1
 
 
 def test_a_same_type_supplemental_needs_its_own_sequence(raw, root):

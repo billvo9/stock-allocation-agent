@@ -142,7 +142,9 @@ def _check_instruments(record: BatchRecord) -> None:
 
 def _check_distribution_dates(distributions: pd.DataFrame) -> None:
     ex = distributions["ex_date"]
-    for column in ("declaration_date", "record_date", "pay_date"):
+    # A declaration may precede calendar coverage (a January 2003 ex-date declared
+    # in December 2002); it is still ordered against the ex-date and lockbox-capped.
+    for column in ("record_date", "pay_date"):
         early = distributions[column] < nyse.COVERAGE.first
         if early.any():
             raise refuse(

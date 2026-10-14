@@ -91,13 +91,12 @@ Deterministic checks, each refusing the whole batch with a machine-readable `Ref
 - the instrument mapping covers exactly the requested funds, and every row's fund is mapped (`unmapped_fund`);
 - rows inside the requested range (`outside_request`);
 - price dates, ex-dates and split dates on NYSE sessions (`not_a_session`);
-- distribution dates in order: pay and record dates not before the ex-date, and the declaration date not after it (`invalid_date_order`); no optional date before the calendar starts (`outside_coverage`);
+- distribution dates in order: pay and record dates not before the ex-date, and the declaration date not after it (`invalid_date_order`); no record or pay date before the calendar starts (`outside_coverage`); a declaration date may precede it;
 - no close dated at or after retrieval (`observed_after_retrieval`; a sanity check only);
 - strict parsing: JSON containing `NaN`, `Infinity`, an overflowing number such as `1e999` or a duplicate key is refused (`invalid_json`). Dates, timestamps and ids must fully match ASCII-only patterns, so a trailing newline or a full-width digit is refused. This matters because pandas parses full-width digits.
 
 Known limitations of the date-order rules (fail-closed by choice; revisit with real data):
 - For a distribution of 25% or more of the share price, the exchange rule sets the ex-date after the payable date [from memory; not verified in this slice]. Such an event has pay and record dates before its ex-date and would refuse its batch. This is rare for broad funds.
-- A January 2003 ex-date declared in December 2002 has a declaration date before the calendar starts and would refuse its batch.
 
 Sessions in the requested range with no close of any basis are not an error. They are reported in `missing_sessions` (status `unavailable`, reason `missing_session`) and never repaired.
 
