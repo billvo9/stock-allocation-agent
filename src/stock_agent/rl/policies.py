@@ -140,11 +140,12 @@ class MeanVariance:
     """
     Myopic long-only mean-variance on trailing sample estimates.
 
-    mu: sample mean of each asset's visible returns over the window, scaled by
-    (1 - mean_shrinkage) (a registered sensitivity; 0 by default).
-    Sigma: the funds' sample covariance over rows where every fund is
-    visible, plus `ridge` times its average variance on the diagonal; cash
-    is riskless. Sample means over 60 sessions are very noisy, so this
+    mu: for the funds, the sample mean over the window's complete rows (rows
+    where every fund's return is visible), the same rows as Sigma; for cash,
+    the mean of its visible returns. Scaled by (1 - mean_shrinkage) (a
+    registered sensitivity; 0 by default).
+    Sigma: the funds' sample covariance over those complete rows, plus
+    `ridge` times its average variance on the diagonal; cash is riskless. Sample means over 60 sessions are very noisy, so this
     baseline is expected to trade often; that is its honest behaviour.
     """
 
