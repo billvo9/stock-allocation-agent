@@ -28,7 +28,7 @@ label:
   entry_lag: 1
   benchmark: null
 folds:
-  start: "2012-03-01"
+  start: "2012-04-02"
   block_sessions: 63
   inner_block_sessions: 63
   inner_windows: 4
