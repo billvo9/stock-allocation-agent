@@ -110,7 +110,22 @@ Both outcomes are asserted in `tests/test_challenger.py`.
 - **Synthetic data only.** The planted nonlinear drift is exactly orthogonal to the characteristic within each date (the residual of |z| on (1, z)), so no linear function of that characteristic can use it.
   - Linear models can still capture part of it through price features. Past returns carry the realized planted drift, so momentum is a legitimate channel (seen with 16 names).
 - **No permutation null for the challenger.** It is too expensive at this size; the null config is the null evidence instead.
-- **Only the simplest point chosen.** On these panels the challenger almost always chose the simplest grid point. The grid's upper end is untested by the data.
+- **Only the simplest point chosen.**
+  - Across the three full runs, nested selection chose the simplest point (penalty 4: 4 leaves, 50 trees) in 40 of 42 outer folds: 14 of 14 (nonlinear), 14 of 14 (linear), 12 of 14 (null; the other 2 chose penalty 3).
+  - The fast nonlinear test chose it in 8 of 8.
+  - So the grid's upper end is untested by these data, and what was measured is "a heavily regularized boosted model", not boosting in general.
+  - A grid extending toward even simpler models (fewer trees, stronger L2) would show whether the selection sits on a boundary. That would be a new variant.
+- **Multiplicity of the increment rows.**
+  - Each run reports the challenger against 4 linear references (ridge, lasso, elastic net, OLS) on 3 measures (rank-IC difference, OOS R², MSE improvement): 12 related comparisons.
+  - They are not adjusted, because only one is a pre-stated decision: the challenger against ridge (`increment_reference`, the best-tuned linear baseline) on the zero-filled rank-IC difference, with the MSE improvement as its squared-error companion. The other rows are reported for transparency, and none is read as a separate claim.
+  - If any were promoted to a claim, Holm (or Romano-Wolf, which accounts for their strong correlation) over the 12 would apply. Holm across the candidates' own skill tests is already recorded (`holm_adjusted_p`).
+
+## Follow-ups
+
+- **A permutation null for the challenger.** At least 199 block-permutation draws with nested selection rerun inside each draw (about 238 boosted fits per draw at the shipped size, so a long background run), before any challenger result is read beyond engineering.
+- **Increment multiplicity.** Romano-Wolf stepdown across the 4 references × 3 measures, if any non-reference comparison is ever used as a claim.
+- **Grid boundary.** A pre-registered grid that extends past the simplest point, recorded as a new variant, to check whether selection is pinned at the boundary.
+- **A batch-invariance guard.** `predict` must not depend on the other rows of its batch. It is tested now: a mutant that refitted the imputer on training plus test rows passed every earlier test, and the new test kills it.
 
 ## Learning Notes
 
