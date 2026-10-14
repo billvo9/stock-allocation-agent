@@ -5,9 +5,10 @@ Layout only. Every number comes from the metrics provider through
 `view.build_view`, every caveat from `labels`, and every surface from the
 shared components (`stock_agent.ui`). Each first-class state is shown in
 words, never as an empty chart or a zero: loading, no fund selected, stale
-data, an unavailable fund, data gaps, a period outside the coverage, no
-common start, and a metric that is unavailable (until T5-A: pending the
-owner's approval of the descriptive formulas).
+data, an unavailable fund, sessions without a close, labelled
+multi-session returns, a growth chain that cannot continue, an incomplete
+history, a period outside the coverage, no common start, and an
+unavailable metric.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ import streamlit as st
 from stock_agent.app import labels, view
 from stock_agent.app.figures import FundStyle, calendar_year_figure, fund_styles, growth_figure
 from stock_agent.app.history import FundHistory
-from stock_agent.app.provider import PENDING_REASON, DescriptiveMetrics
+from stock_agent.app.provider import DescriptiveMetrics
 from stock_agent.app.view import MINUS, day, money, percent
 from stock_agent.portfolio.descriptive import GROWTH_START_VALUE
 from stock_agent.ui import components as ui
@@ -105,8 +106,6 @@ def render(
         result = view.build_view(usable, period, metrics)
         styles = fund_styles(histories)
         _gap_notices(result)
-        if _any_pending(result):
-            _say(labels.PENDING_EXPLAINER, "notice")
         _growth(result, styles)
         _declines(result)
         _calendar(result, styles)
@@ -173,7 +172,9 @@ def _pick_period(
 
 def _badges(histories: Sequence[FundHistory], selected: Sequence[FundHistory]) -> None:
     items = [("NOTICE", labels.EVIDENCE_BADGE)]
-    if any(SYNTHETIC_LIMITATION in history.limitations for history in histories):
+    if any(not history.synthetic for history in histories):
+        items.append(("NOTICE", labels.HISTORICAL_BADGE))
+    if any(history.synthetic for history in histories):
         items.append(("WARNING", labels.SYNTHETIC_BADGE))
     if any(history.stale for history in selected):
         items.append(("WARNING", labels.STALE_BADGE))
@@ -196,26 +197,33 @@ def _status_notices(selected: Sequence[FundHistory]) -> None:
 
 def _gap_notices(result: view.ExploreView) -> None:
     for fund in result.funds:
-        if not fund.gaps:
-            continue
-        listed = "; ".join(
-            f"{day(gap.first)} to {day(gap.last)}, {_sessions(gap.sessions)} "
-            f"({labels.reason_text(gap.reason)})"
-            for gap in fund.gaps[:GAPS_LISTED]
-        )
-        extra = len(fund.gaps) - GAPS_LISTED
-        more = f"; and {extra:,} more" if extra > 0 else ""
-        total = sum(gap.sessions for gap in fund.gaps)
-        _say(
-            f"{fund.history.name} has {_sessions(total)} without data in this period: "
-            f"{listed}{more}. Missing returns are never filled or set to zero.",
-            "notice",
-        )
-
-
-def _any_pending(result: view.ExploreView) -> bool:
-    values = [result.start, *(m for f in result.funds for m in (f.growth, f.drawdown, f.calendar))]
-    return any(isinstance(v, view.Unavailable) and v.reason == PENDING_REASON for v in values)
+        name = fund.history.name
+        if fund.gaps:
+            listed = "; ".join(
+                f"{day(gap.first)} to {day(gap.last)}, {_sessions(gap.sessions)}"
+                for gap in fund.gaps[:GAPS_LISTED]
+            )
+            extra = len(fund.gaps) - GAPS_LISTED
+            more = f"; and {extra:,} more" if extra > 0 else ""
+            total = sum(gap.sessions for gap in fund.gaps)
+            _say(
+                f"{name} has {_sessions(total)} without a close in this period: "
+                f"{listed}{more}. Missing values are never filled or set to zero.",
+                "notice",
+            )
+        for span in fund.spans:
+            text = labels.SPAN_NOTE.format(
+                date=day(span.date),
+                value=percent(span.total_return, signed=True),
+                sessions=_sessions(span.sessions),
+                missing=_sessions(span.sessions - 1),
+            )
+            _say(f"{name}, multi-session return. {text}", "notice")
+        for broken in fund.breaks:
+            text = labels.BREAK_NOTE.format(
+                date=day(broken.date), reason=labels.reason_text(broken.reason)
+            )
+            _say(f"{name}: {text}", "warning")
 
 
 def _unavailable(key: str, title: str, items: Sequence[tuple[str, view.Unavailable]]) -> None:
@@ -224,10 +232,9 @@ def _unavailable(key: str, title: str, items: Sequence[tuple[str, view.Unavailab
     groups: dict[tuple[str, str], list[str]] = {}
     for name, missing in items:
         groups.setdefault((missing.reason, missing.detail), []).append(name)
-    for index, ((reason, detail), names) in enumerate(groups.items()):
-        pending = reason == PENDING_REASON
+    for index, ((_reason, detail), names) in enumerate(groups.items()):
         with ui.state_card(f"{key}-{index}"):
-            ui.pill("FUTURE", labels.PENDING_BADGE if pending else labels.UNAVAILABLE_BADGE)
+            ui.pill("FUTURE", labels.UNAVAILABLE_BADGE)
             _say(f"**{title}** is not shown for {', '.join(names)}.")
             _say(f"Unavailable: {detail}.", "caption")
 
@@ -266,14 +273,18 @@ def _decline_card(fund: view.FundView) -> None:
     _say(f"**{fund.history.name}**")
     summary = fund.drawdown
     if isinstance(summary, view.Unavailable):
-        st.metric("Worst decline", "—")
+        st.metric(labels.MAX_DRAWDOWN, "—")
         _say(f"Unavailable: {summary.detail}.", "caption")
         return
+    title = labels.MAX_DRAWDOWN if summary.history_complete else labels.OBSERVED_DECLINE
+    if not summary.history_complete:
+        missing = labels.INCOMPLETE_HISTORY.format(missing=_sessions(summary.missing_sessions))
+        _say(missing, "caption")
     if summary.max_drawdown == 0:
-        st.metric("Worst decline", "None")
-        _say("No decline from a previous high in this period.", "caption")
+        st.metric(title, "None")
+        _say("No decline from a previous high at the closes shown.", "caption")
         return
-    st.metric("Worst decline", f"{MINUS}{percent(summary.max_drawdown)}")
+    st.metric(title, f"{MINUS}{percent(summary.max_drawdown)}")
     _say(
         f"{money(summary.dollar_decline)} below its peak, from a hypothetical "
         f"{money(GROWTH_START_VALUE)} start.",
@@ -284,7 +295,7 @@ def _decline_card(fund: view.FundView) -> None:
     if summary.recovered:
         text = f"Recovered on {day(summary.recovery_date)}: {span} from peak to recovery."
     else:
-        # The open decline runs to the last session with data, never into a trailing gap.
+        # The open decline runs to the last session with a value, never into a trailing gap.
         last_with_data, _ = view.last_value(fund.growth)
         text = f"Not recovered by {day(last_with_data)}: {span} since the peak."
     _say(text, "caption")
@@ -313,7 +324,8 @@ def _calendar(result: view.ExploreView, styles: dict[str, FundStyle]) -> None:
     if not tables:
         return
     _say("\n".join(f"- {view.losing_summary(h.name, table)}" for h, table in tables))
-    ui.chart(calendar_year_figure(tables, styles), key="explore_calendar")
+    shown = [(h, table[table["status"].eq("ok")]) for h, table in tables]
+    ui.chart(calendar_year_figure(shown, styles), key="explore_calendar")
     with st.expander("Calendar-year returns as a table"):
         table = view.calendar_table([(history.name, frame) for history, frame in tables])
         st.dataframe(table, hide_index=True)

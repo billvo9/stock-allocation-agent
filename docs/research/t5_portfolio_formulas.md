@@ -1,6 +1,6 @@
 # T5 portfolio readiness: financial-formula specification
 
-**Status: every formula in this document is PENDING OD8 OWNER APPROVAL.** This is a specification for review, not an implementation. No execution, transaction-cost, cash-return, benchmark, performance-metric or reward code changes until the owner approves the relevant formulas under OD8 (`docs/product/vision_and_prd.md`, section 13), and each approval is recorded with its date and quotation.
+**Status: every formula in this document is PENDING OD8 OWNER APPROVAL, except group A (F5.1–F5.4, F6.5, F6.6, the F4.1 fee rule and the OD8.13 label), approved on 2026-10-14 with the decisions recorded in section 9.** This is a specification for review, not an implementation. No execution, transaction-cost, cash-return, benchmark, performance-metric or reward code changes until the owner approves the relevant formulas under OD8 (`docs/product/vision_and_prd.md`, section 13), and each approval is recorded with its date and quotation.
 
 - Written 2026-10-12 against `main` at `ad99749`. Code line references are as of that commit.
 - Every numerical example is synthetic and was checked by a scratch Python run.
@@ -230,14 +230,14 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
   - D_t = the cash distribution per share held at t−1, with ex-date t (dividends, capital gains, return of capital);
   - D_t is on the pre-split basis. A distribution quoted per post-split share is converted, D_old = f_t·D_new. Every stored distribution records its share basis, and an unknown basis on a split date gives `unavailable`, never a guess.
 
-  *Status: PENDING OD8 OWNER APPROVAL.*
-- **F5.2** Reinvestment at the ex-date close, in the same asset (implicit in compounding F5.1). *Status: PENDING OD8 OWNER APPROVAL.*
-- **F5.3** Store raw closes, distributions (ex-date, pay date, amount, type), split factors and retrieval times. Vendor-adjusted closes are only a cross-check (a flag, never a correction). The vendor's back-multiplier differs from F5.1 by design, by about (D/P)·r on the ex-date (0.505% vs 0.500% above), so the flag tolerance must exceed that or every ex-date is flagged. *Status: PENDING OD8 OWNER APPROVAL.*
+  *Status: APPROVED 2026-10-14 (OD8 group A); see the decision record in section 9.*
+- **F5.2** Reinvestment at the ex-date close, in the same asset (implicit in compounding F5.1). *Status: APPROVED 2026-10-14 (OD8 group A); see the decision record in section 9.*
+- **F5.3** Store raw closes, distributions (ex-date, pay date, amount, type), split factors and retrieval times. Vendor-adjusted closes are only a cross-check (a flag, never a correction). The vendor's back-multiplier differs from F5.1 by design, by about (D/P)·r on the ex-date (0.505% vs 0.500% above), so the flag tolerance must exceed that or every ex-date is flagged. *Status: APPROVED 2026-10-14 (OD8 group A); see the decision record in section 9.*
 - **F5.4** Hypothetical growth index (P1-1b): G_t = 10,000 × Π_{s=t₀+1..t}(1 + r_s), with r from F5.1.
   - **Start t₀ is fixed by rule before any chart is viewed:** the first session on or after the registered window start at which the fund has a close. Funds on one chart share t₀, the latest of their individual starts. No start date is chosen by looking.
   - No transaction or build cost is charged, and the expense ratio is never subtracted again: it is already reflected in the fund's NAV and hence its price (F4.1).
 
-  *Status: PENDING OD8 OWNER APPROVAL.*
+  *Status: APPROVED 2026-10-14 (OD8 group A); see the decision record in section 9.*
 
 **Actual records versus hypothetical growth.**
 - **Actual historical records:** a fund's closing prices, its declared distributions (amount, ex-date, pay date, type) and its split factors.
@@ -327,8 +327,8 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
   > - At 2 blocks the t interval over-covers only because t with 1 degree of freedom is 12.7; it is uninformative there, hence the 8-block minimum.
   > - **This does not validate 95% coverage on real data.** Real returns have heavier tails, regime changes and dependence longer than a block (the 2008 drawdown ran about 350 sessions). Before any interval is described as more than nominal, T5c must run a registered coverage simulation that includes heavy-tailed, regime-switching and long-memory scenarios.
 
-- **F6.5** DD_t = 1 − W_t/max_{s≤t}W_s. Duration runs from the peak to the first close at or above it, in sessions and calendar days, or "not recovered". A point estimate only: maximum drawdown is not a smooth statistic, depends on the horizon, and is driven by episodes longer than a block (2008 ran about 350 sessions), so a block-bootstrap interval would mislead. Stress windows sit beside it. It is computed on daily closes, so intraday declines may have been deeper, and the label says so. For a growth index (F5.4), the worst decline is the episode with the largest percentage drawdown, and its dollar size is that episode's peak value minus its trough value. (The largest dollar decline can be a different, later episode, because later peaks are higher; the page states which one it shows.) *Status: PENDING OD8 OWNER APPROVAL.*
-- **F6.6** Calendar-year return = W(last close of year)/W(last close of prior year) − 1; a partial first or last year is labelled partial and never annualized. A losing year has an unrounded return below 0; display rounding never changes the classification (−0.04% displays as −0.0% and counts as losing). Rule: CAGR is never divided by volatility (Sharpe keeps its own 252 scale; Calmar = CAGR/MDD is fine). *Status: PENDING OD8 OWNER APPROVAL.*
+- **F6.5** DD_t = 1 − W_t/max_{s≤t}W_s. Duration runs from the peak to the first close at or above it, in sessions and calendar days, or "not recovered". A point estimate only: maximum drawdown is not a smooth statistic, depends on the horizon, and is driven by episodes longer than a block (2008 ran about 350 sessions), so a block-bootstrap interval would mislead. Stress windows sit beside it. It is computed on daily closes, so intraday declines may have been deeper, and the label says so. For a growth index (F5.4), the worst decline is the episode with the largest percentage drawdown, and its dollar size is that episode's peak value minus its trough value. (The largest dollar decline can be a different, later episode, because later peaks are higher; the page states which one it shows.) *Status: APPROVED 2026-10-14 (OD8 group A); see the decision record in section 9.*
+- **F6.6** Calendar-year return = W(last close of year)/W(last close of prior year) − 1; a partial first or last year is labelled partial and never annualized. A losing year has an unrounded return below 0; display rounding never changes the classification (−0.04% displays as −0.0% and counts as losing). Rule: CAGR is never divided by volatility (Sharpe keeps its own 252 scale; Calmar = CAGR/MDD is fine). *Status: APPROVED 2026-10-14 (OD8 group A); see the decision record in section 9.*
 
 **(c) Examples.**
 - **CAGR:** G = 1.10 over 365 days and 248 sessions gives **10.007%** (session-based: 10.169%).
@@ -471,6 +471,31 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 | OD8.13 | Tax label | — | "Before taxes" on every return output; no tax model |
 | OD8.14 | Changed test expectations | — | Approving OD8.1–8.3 approves rewriting the tests encoding lag 0, the cash-leg cost and the free build (`test_baseline.py:432, 474, 971`, and others found) |
 | OD8.15 | Descriptive histories | — | Hypothetical growth index from actual prices and distributions (F5.1), labelled as hypothetical; start fixed by rule; no transaction or build cost; "before transaction costs and taxes" (F5.4) |
+
+### Group A decision record (owner, 2026-10-14)
+
+The owner approved OD8 group A for descriptive history only, with these decisions. Implemented in `src/stock_agent/portfolio/descriptive.py` (ticket T5-A).
+
+| Item | Formula ids | Decision |
+|---|---|---|
+| A1 | F5.1 | Approved. Raw-price total returns handle split ratios and dividend amounts on consistent share bases; a distribution on a split date needs its share basis, else unavailable |
+| A2 | F5.2 | Approved. Ex-date reinvestment is a hypothetical comparison convention, not actual cash-payment timing |
+| A3 | F5.3 | Approved. Inputs stored as received (F1 contract) |
+| A4 | F5.4 | Approved |
+| A5 | F4.1 (fee rule only) | Approved. Fund expenses already in observed performance are not deducted again. The rest of F4.1 (benchmarks) stays in group C |
+| A6 | F6.5 | Approved |
+| A7 | F6.6 | Approved |
+| A8 | OD8.13 | Approved: "Before taxes and transaction costs" |
+| R1 | F5.1, F5.3 | Approved. No double counting of distributions or vendor adjustment factors; only unadjusted closes and as-paid amounts are accepted |
+| R2 | F5.4, F6.5, F6.6 | Approved. A user-chosen period restarts growth at $10,000; drawdown uses peaks inside it; cut years are partial |
+| R3 | Labels | "Historical market data" for the records; "Hypothetical growth of $10,000 — distributions reinvested" for the calculated series |
+| R4 | F5.4 (start) | Approved. t0 = the first session, on or after the latest of the funds' first closes, at which every fund has a close |
+| R5a | F5.1, F5.4 | Approved. A return across sessions without a close is an explicitly labelled multi-session return (`sessions_spanned`), never described as a one-session return; missing observations are never filled |
+| R5b | F5.1 | **Not approved.** No automatic reinvestment through gaps: a distribution with its ex-date on a session without a close makes that return unavailable, and nothing chains through it, unless the economic return can be reconstructed and validated |
+| R5c | F6.5 | **Thresholds not approved.** An observed drawdown over an incomplete history is distinguished from a valid full-period maximum drawdown: with any session missing, the full-period maximum is unavailable and only the "largest observed decline" is shown, labelled incomplete |
+| R5d | F6.6 | Approved. A year-end without a value makes both affected years unavailable |
+
+Not authorized by these approvals: T5a–T5c simulator formulas (groups B–D) and any PPO or RL work.
 
 ### Decision groups (how to approve)
 

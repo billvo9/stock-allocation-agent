@@ -1,10 +1,12 @@
 """
 The Explore page under Streamlit's AppTest, one test per first-class state:
-the running app with every metric pending approval, a fake provider with
-hand-written results, loading, no fund selected, stale data, an unavailable
-fund, data gaps, periods (presets, custom years, clamping), no common start
-and a metric unavailable for one fund. Plus the launcher and the import
-boundaries of the app and of `stock_agent.portfolio`.
+the running app with the approved calculations on synthetic data, a fake
+provider with hand-written results, loading, no fund selected, stale data,
+an unavailable fund, sessions without a close, a labelled multi-session
+return, a growth chain that cannot continue, an incomplete history, periods
+(presets, custom years, clamping), no common start and a metric unavailable
+for one fund. Plus the launcher and the import boundaries of the app and of
+`stock_agent.portfolio`.
 """
 
 from __future__ import annotations
@@ -26,9 +28,9 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from stock_agent.app import explore, labels, synthetic
-from stock_agent.app.provider import PENDING_DETAIL
 from stock_agent.portfolio.descriptive import (
     GROWTH_START_VALUE,
+    DescriptiveCalculator,
     DrawdownSummary,
     MetricUnavailable,
 )
@@ -39,7 +41,9 @@ PACKAGE = SOURCE / "stock_agent" / "app"
 PORTFOLIO = SOURCE / "stock_agent" / "portfolio"
 RUN = PACKAGE / "run.py"
 TIMEOUT = 120
-EQUITY, BOND, CASH, STALE, MISSING = (h.fund_id for h in synthetic.demo_histories())
+EQUITY, BOND, CASH, STALE, DISTRIBUTION_GAP, MISSING = (
+    h.fund_id for h in synthetic.demo_histories()
+)
 
 
 def utc(text: str) -> pd.Timestamp:
@@ -54,6 +58,8 @@ DRAWDOWN = DrawdownSummary(
     duration_sessions=1166,
     duration_days=1634,
     dollar_decline=4321.0,
+    history_complete=True,
+    missing_sessions=0,
 )
 OPEN_DRAWDOWN = DrawdownSummary(
     max_drawdown=0.123,
@@ -63,6 +69,8 @@ OPEN_DRAWDOWN = DrawdownSummary(
     duration_sessions=783,
     duration_days=1096,
     dollar_decline=1500.0,
+    history_complete=True,
+    missing_sessions=0,
 )
 CALENDAR = pd.DataFrame(
     {
@@ -70,6 +78,8 @@ CALENDAR = pd.DataFrame(
         "total_return": [-0.0004, 0.08, -0.05],
         "partial": [True, False, True],
         "losing": [True, False, True],
+        "status": ["ok", "ok", "ok"],
+        "reason": [None, None, None],
     }
 )
 
@@ -92,28 +102,28 @@ class FakeMetrics:
         self.calls.append((tuple(available_sessions), window_start))
         return self.start
 
-    def growth_index(self, daily_total_returns, start_value=GROWTH_START_VALUE):
-        if daily_total_returns.name in self.unavailable:
+    def growth_index(self, returns, sessions_spanned, start_value=GROWTH_START_VALUE):
+        if returns.name in self.unavailable:
             raise MetricUnavailable(
                 "growth_index", "too_few_sessions", "fewer sessions than needed"
             )
-        values = np.full(len(daily_total_returns), 12_345.0)
-        values[daily_total_returns.isna().to_numpy()] = np.nan
+        values = np.full(len(returns), 12_345.0)
+        values[returns.isna().to_numpy()] = np.nan
         values[0] = start_value
-        return pd.Series(values, index=daily_total_returns.index)
+        return pd.Series(values, index=returns.index)
 
     def drawdown_summary(self, growth):
         return self.drawdown
 
-    def calendar_year_returns(self, growth):
+    def calendar_year_returns(self, growth, year_end_sessions):
         return self.calendar.copy()
 
 
 class GapFillingMetrics(FakeMetrics):
     """Breaks the contract: it carries the last value through a gap."""
 
-    def growth_index(self, daily_total_returns, start_value=GROWTH_START_VALUE):
-        return super().growth_index(daily_total_returns, start_value).ffill()
+    def growth_index(self, returns, sessions_spanned, start_value=GROWTH_START_VALUE):
+        return super().growth_index(returns, sessions_spanned, start_value).ffill()
 
 
 ADVICE_WORDS = (" buy", " sell", "recommend", "should invest", "outperform")
@@ -189,40 +199,108 @@ def _assert_honest_labels(text: str) -> None:
 
 
 def _gapped_equity(*dates: str):
-    """The demo funds with the equity fund's records on `dates` made unavailable."""
+    """
+    The demo funds with the equity fund's closes on consecutive `dates`
+    removed. The next close's return then spans the gap; with no
+    distribution or split inside, it is the product of the one-session
+    returns it replaces.
+    """
 
     equity, *others = synthetic.demo_histories()
     records = equity.records.copy()
     hit = records["date"].isin([utc(d) for d in dates])
-    records.loc[hit, ["daily_total_return", "status", "reason"]] = [
+    after = int(np.flatnonzero(hit.to_numpy())[-1]) + 1
+    covered = records.index[hit.to_numpy()].tolist() + [after]
+    spanned = float(np.prod(1 + records.loc[covered, "total_return"]) - 1)
+    records.loc[hit, ["close_observed", "total_return", "sessions_spanned", "status", "reason"]] = [
+        False,
         np.nan,
+        0,
         "unavailable",
         "missing_input",
     ]
+    records.loc[after, ["total_return", "sessions_spanned"]] = [spanned, len(covered)]
     return (dataclasses.replace(equity, records=records), *others)
 
 
-# --- the running app: synthetic demo mode, every metric pending ---
+# --- the running app: the approved calculations on synthetic data ---
 
 
-def test_the_running_app_shows_every_metric_pending_approval():
+def _independent_growth(history, start):
+    """Growth recomputed here by plain compounding, apart from the calculator."""
+
+    records = history.records[history.records["date"].ge(start)]
+    ok = records["status"].eq("ok").to_numpy().copy()
+    ok[0] = False  # t0's own return is never applied
+    return GROWTH_START_VALUE * float(np.prod(1 + records["total_return"].to_numpy()[ok]))
+
+
+def test_the_running_app_shows_calculated_synthetic_results():
     app = AppTest.from_file(str(RUN), default_timeout=TIMEOUT).run()
     assert not app.exception, [e.value for e in app.exception]
     text = _text(app)
-    assert not app.get("plotly_chart")
-    assert text.count(f"Unavailable: {PENDING_DETAIL}.") == 5  # growth, 3 decline cards, calendar
-    assert labels.PENDING_EXPLAINER in text
-    assert "OD8" not in text  # the decision code stays in the machine reason
-    assert [m.value for m in app.metric] == ["—", "—", "—"]
-    assert text.count(labels.PENDING_BADGE) == 2
+    assert set(_charts(app)) == {"growth", "calendar"}
     _assert_honest_labels(text)
     assert labels.SYNTHETIC_NOTICE in text and labels.SYNTHETIC_BADGE in text
-    assert "Synthetic demo data, not real fund performance" in text
-    # Sources, coverage and vintage are shown even while metrics are pending.
+    assert labels.HISTORICAL_BADGE not in text  # synthetic records are not market data
+    # Values: each fund's last growth value matches plain compounding of its returns.
+    equity, bond, cash = synthetic.demo_histories()[:3]
+    start = utc("2007-01-01")
+    assert "A hypothetical $10,000 placed in each fund on 2007-01-01." in text
+    for history in (equity, bond, cash):
+        expected = view_money(_independent_growth(history, start))
+        assert f"{history.name} {expected} on 2024-12-31" in text
+    # Maximum drawdown: complete histories say so; the equity fund's gap makes it observed only.
+    assert [m.label for m in app.metric] == [
+        labels.OBSERVED_DECLINE,
+        labels.MAX_DRAWDOWN,
+        labels.MAX_DRAWDOWN,
+    ]
+    assert "Incomplete history: 5 sessions in this period have no value" in text
+    # The equity gap is one labelled six-session return.
+    assert "Synthetic equity fund, multi-session return. 2015-08-24:" in text
+    assert "over 6 sessions (5 sessions without a close)" in text
     sources = next(f.value for f in app.dataframe if "Vintage" in f.value.columns)
     assert sources["Coverage"].tolist() == ["2007-01-01 to 2024-12-31"] * 3
     assert sources["Evidence"].eq("descriptive").all()
     assert sources["Vintage"].str.contains(str(synthetic.SEED)).all()
+
+
+def view_money(value: float) -> str:
+    from stock_agent.app import view
+
+    return view.money(value)
+
+
+def test_a_break_stops_the_growth_and_makes_later_years_unavailable():
+    app = _choose(AppTest.from_file(str(RUN), default_timeout=TIMEOUT).run(), DISTRIBUTION_GAP)
+    assert not app.exception, [e.value for e in app.exception]
+    text = _text(app)
+    assert "From 2019-03-08, the hypothetical growth cannot be continued" in text
+    assert labels.reason_text("distribution_in_gap") in text
+    assert "on 2019-02-28" in text  # the last value before the break
+    years = next(f.value for f in app.dataframe if "Year" in f.value.columns)
+    by_year = dict(zip(years["Year"], years.iloc[:, 1], strict=True))
+    assert by_year[2018] != "unavailable"
+    assert by_year[2019] == by_year[2024] == "unavailable"
+    assert [m.label for m in app.metric] == [labels.OBSERVED_DECLINE]
+
+
+def test_real_records_are_badged_as_historical_market_data():
+    real = [
+        dataclasses.replace(
+            history,
+            limitations=(),
+            source_label="Test vendor, private evaluation",
+            retrieved_label="Retrieved in a test",
+            vintage_note="Test vintage",
+        )
+        for history in synthetic.demo_histories()[:3]
+    ]
+    app = _app(DescriptiveCalculator(), tuple(real))
+    text = _text(app)
+    assert labels.HISTORICAL_BADGE in text
+    assert labels.SYNTHETIC_BADGE not in text and labels.SYNTHETIC_NOTICE not in text
 
 
 def test_the_theme_is_applied_once():
@@ -241,6 +319,7 @@ def test_a_provider_fills_every_section():
     assert set(_charts(app)) == {"growth", "calendar"}
     # Worst decline: a card per fund, percent with one decimal, dollars, dates, duration.
     assert [m.value for m in app.metric] == ["−34.6%"] * 3
+    assert [m.label for m in app.metric] == [labels.MAX_DRAWDOWN] * 3
     assert "$4,321 below its peak, from a hypothetical $10,000 start." in text
     assert "Peak 2007-10-09 · low 2009-03-09." in text
     assert "Recovered on 2012-03-30: 1,166 sessions (1,634 calendar days)" in text
@@ -259,7 +338,6 @@ def test_a_provider_fills_every_section():
         "+8.0%",
         "−5.0% · lost money · partial year",
     ]
-    assert labels.PENDING_EXPLAINER not in text
     _assert_honest_labels(text)
 
 
@@ -330,12 +408,12 @@ def _loading():
 
 def _failing_load():
     from stock_agent.app import explore
-    from stock_agent.app.provider import PendingMetrics
+    from stock_agent.portfolio.descriptive import DescriptiveCalculator
 
     def load():
         raise RuntimeError("the history source is unreachable")
 
-    explore.render(load, PendingMetrics())
+    explore.render(load, DescriptiveCalculator())
 
 
 def test_the_loading_state_is_announced_and_then_replaced():
@@ -397,7 +475,7 @@ def test_an_unavailable_fund_is_excluded_not_set_to_zero():
     app = _choose(_app(metrics), EQUITY, MISSING)
     message = (
         "Synthetic international equity fund has no available data, so it is excluded, "
-        "not set to zero (no value from the source)."
+        "not set to zero (no close from the source)."
     )
     assert any(message in w.value for w in app.warning)
     assert "missing_input" not in _text(app)  # reason codes are translated
@@ -419,9 +497,8 @@ def test_only_unavailable_funds_show_a_message_not_charts():
 def test_a_data_gap_is_listed_and_drawn_as_a_gap():
     app = _app()
     gap = (
-        "Synthetic equity fund has 5 sessions without data in this period: 2015-08-17 to "
-        "2015-08-21, 5 sessions (no value from the source). Missing returns are never filled "
-        "or set to zero."
+        "Synthetic equity fund has 5 sessions without a close in this period: 2015-08-17 to "
+        "2015-08-21, 5 sessions. Missing values are never filled or set to zero."
     )
     assert any(gap in i.value for i in app.info)
     spec = json.loads(_charts(app)["growth"].proto.spec)
@@ -433,7 +510,7 @@ def test_a_data_gap_is_listed_and_drawn_as_a_gap():
     in_gap = x.between(utc("2015-08-17"), utc("2015-08-21")).to_numpy()
     assert in_gap.sum() == 5 and np.isnan(y[in_gap]).all() and not np.isnan(y[~in_gap]).any()
     app.radio(key=explore.PERIOD_KEY).set_value("year_2022").run()
-    assert not any("without data" in i.value for i in app.info)
+    assert not any("without a close" in i.value for i in app.info)
 
 
 def test_a_provider_that_fills_a_gap_is_refused():
@@ -511,13 +588,13 @@ def test_no_common_start_is_a_state_not_a_chart():
     assert not app.get("plotly_chart")
     assert f"Unavailable: {labels.NO_COMMON_START}" in text
     assert [m.value for m in app.metric] == ["—", "—", "—"]
-    assert labels.UNAVAILABLE_BADGE in text and labels.PENDING_BADGE not in text
+    assert labels.UNAVAILABLE_BADGE in text
 
 
 def test_a_metric_unavailable_for_one_fund_names_it_and_keeps_the_others():
     app = _app(FakeMetrics(unavailable={CASH}))
     text = _text(app)
-    assert "Hypothetical growth of $10,000 is not shown for Synthetic cash fund." in text
+    assert f"{labels.GROWTH_TITLE} is not shown for Synthetic cash fund." in text
     assert "Unavailable: fewer sessions than needed." in text
     spec = json.loads(_charts(app)["growth"].proto.spec)
     assert [t["name"] for t in spec["data"]] == ["Synthetic equity fund", "Synthetic bond fund"]

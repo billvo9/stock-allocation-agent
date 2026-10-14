@@ -1,15 +1,11 @@
 """
-The descriptive-metrics provider the Explore page calls.
+The descriptive-metrics interface the Explore page calls.
 
-The formulas behind these metrics are OD8 group A in
-`docs/research/t5_portfolio_formulas.md`: the start rule and the
-hypothetical growth of $10,000 (F5.4), the worst decline (F6.5) and
-calendar-year returns (F6.6). The owner has not approved them, so this
-module defines only the protocol. Ticket T5-A implements it in
-`stock_agent.portfolio`, which holds the result types and never imports the
-app: the protocol uses only pandas types and those result types. Until then
-the app runs with `PendingMetrics`, which computes nothing and marks every
-metric unavailable.
+The calculations are OD8 group A of `docs/research/t5_portfolio_formulas.md`,
+approved on 2026-10-14 and implemented in `stock_agent.portfolio.descriptive`
+(`DescriptiveCalculator`), which never imports the app. This module states
+the interface only, in pandas types and the result types from
+`stock_agent.portfolio.descriptive`, so tests can substitute a fake.
 
 Unavailability is structured, never free text: a provider raises
 `MetricUnavailable` with a machine-readable `reason` and a `detail` in plain
@@ -25,21 +21,13 @@ from typing import Protocol, runtime_checkable
 
 import pandas as pd
 
-from stock_agent.portfolio.descriptive import (
-    GROWTH_START_VALUE,
-    DrawdownSummary,
-    MetricUnavailable,
-)
-
-# The machine reason keeps the decision code; the words shown to readers do not.
-PENDING_REASON = "pending_od8_group_a"
-PENDING_DETAIL = "awaiting the project owner's approval of the descriptive formulas"
+from stock_agent.portfolio.descriptive import GROWTH_START_VALUE, DrawdownSummary
 
 
 @runtime_checkable
 class DescriptiveMetrics(Protocol):
     """
-    What the Explore page needs from a metrics provider (implemented by T5-A).
+    What the Explore page needs from a metrics provider.
 
     The page passes only data inside the selected window, so no result can
     depend on later data.
@@ -49,81 +37,37 @@ class DescriptiveMetrics(Protocol):
         self, available_sessions: Mapping[str, pd.DatetimeIndex], window_start: pd.Timestamp
     ) -> pd.Timestamp | None:
         """
-        The shared start t0 of the selected funds (F5.4), or None when there
-        is none.
-
-        `available_sessions` maps each selected fund to the sorted sessions
-        inside the window at which it has an available close. t0 is the first
-        session, on or after the latest of the funds' individual first
-        available closes in the window, at which every selected fund has a
-        close. Growth starts at `GROWTH_START_VALUE` on that close, and the
-        first applied return is the next session's. The start is fixed by
-        this rule, never chosen by the caller. The final rule is an owner
-        decision under OD8 group A.
+        The shared start t0 (R4), or None. `available_sessions` maps each
+        selected fund to its sessions with a close inside the window. t0 is
+        the first session, on or after the latest of the funds' first closes,
+        at which every fund has a close.
         """
         ...
 
     def growth_index(
-        self, daily_total_returns: pd.Series, start_value: float = GROWTH_START_VALUE
+        self,
+        returns: pd.Series,
+        sessions_spanned: pd.Series,
+        start_value: float = GROWTH_START_VALUE,
     ) -> pd.Series:
         """
-        Hypothetical growth of `start_value` (F5.4), indexed by the same
-        session dates as `daily_total_returns`, whose first label is t0.
-
-        Contract checked by the page:
-        - the first value is `start_value` at t0 (t0's own return is not
-          applied);
-        - every value present is finite and positive (the chart's axis is
-          logarithmic);
-        - on every session whose input return is missing (NaN), the growth is
-          NaN: a gap is never filled.
-
-        What the growth does after a gap (resume from the last value, stay
-        unavailable, or something else) is an owner formula decision under
-        OD8 group A. This protocol encodes no rule for it.
+        Hypothetical growth of `start_value` (A4), indexed like `returns`,
+        whose first session is t0. Checked by the page: the first value is
+        `start_value`; every value present is finite and positive; a session
+        whose return is missing has no value (a gap is never filled).
         """
         ...
 
     def drawdown_summary(self, growth: pd.Series) -> DrawdownSummary:
-        """
-        The worst decline of a growth series (F6.5). Its peak, trough and
-        recovery dates are sessions of `growth` that have a value.
-        """
+        """The worst decline (A6); its dates are sessions of `growth` with a value."""
         ...
 
-    def calendar_year_returns(self, growth: pd.Series) -> pd.DataFrame:
+    def calendar_year_returns(
+        self, growth: pd.Series, year_end_sessions: pd.DatetimeIndex
+    ) -> pd.DataFrame:
         """
-        One row per calendar year of `growth` (F6.6), with the columns
-        `CALENDAR_COLUMNS` of `stock_agent.portfolio.descriptive`: `year`
-        (int, unique, a year in which `growth` has a value), `total_return`
-        (a fraction), `partial` (the year is not fully covered by the series)
-        and `losing` (exactly `total_return < 0` on the unrounded value).
-        Partial years are never annualized.
+        One row per calendar year (A7, R5d), with the columns `CALENDAR_COLUMNS`:
+        `year` (unique), `total_return`, `partial`, `losing` (exactly
+        `total_return < 0` when available), `status` and `reason`.
         """
         ...
-
-
-class PendingMetrics:
-    """
-    The provider the app runs with until T5-A: every metric is unavailable,
-    with reason `PENDING_REASON`. It computes nothing.
-    """
-
-    def _pending(self, metric: str) -> MetricUnavailable:
-        return MetricUnavailable(metric, PENDING_REASON, PENDING_DETAIL)
-
-    def common_start(
-        self, available_sessions: Mapping[str, pd.DatetimeIndex], window_start: pd.Timestamp
-    ) -> pd.Timestamp | None:
-        raise self._pending("common_start")
-
-    def growth_index(
-        self, daily_total_returns: pd.Series, start_value: float = GROWTH_START_VALUE
-    ) -> pd.Series:
-        raise self._pending("growth_index")
-
-    def drawdown_summary(self, growth: pd.Series) -> DrawdownSummary:
-        raise self._pending("drawdown_summary")
-
-    def calendar_year_returns(self, growth: pd.Series) -> pd.DataFrame:
-        raise self._pending("calendar_year_returns")
