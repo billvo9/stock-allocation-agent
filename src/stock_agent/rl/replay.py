@@ -41,27 +41,37 @@ class EpisodeRecord:
     def targets(self) -> list[np.ndarray | None]:
         return [decision.target for decision in self.decisions]
 
-    def summary(self) -> dict[str, object]:
+    def engineering_diagnostics(self) -> dict[str, object]:
         """
-        Engineering facts about the episode, measured from the first
-        execution close (where every policy starts from cash, decision D3).
-        Not a strategy comparison: costs, turnover and wealth come from the
-        injected transition and inherit its approval status.
+        Engineering diagnostics for tests and health checks. NOT reported
+        metrics: risk and performance metrics are owner-gated formulas (the
+        approved ones live in `evaluation` and `portfolio.descriptive`), so
+        nothing here may enter a strategy comparison table.
+
+        Every wealth quantity is scaled to the marked wealth at the first
+        execution close, where every policy starts from cash (D3).
+        `max_observed_decline` is the largest decline at the complete
+        sessions the episode books; gap sessions are not valued, so it is not
+        a full-period maximum drawdown.
         """
 
         first_execution = self.decisions[0].decision_index + 1
-        wealth = self.wealth_path[first_execution:] / self.wealth_path[first_execution]
+        origin = float(self.wealth_path[first_execution])
+        wealth = self.wealth_path[first_execution:] / origin
         peaks = np.maximum.accumulate(wealth)
         traded = [row for row in self.ledger if row.target is not None]
         return {
+            "kind": "engineering_diagnostics_not_reported_metrics",
             "policy": self.policy,
             "transition_status": self.identity["transition"]["status"],
             "n_decisions": len(self.decisions),
             "n_trades": sum(row.cost > 0 for row in self.ledger),
-            "terminal_wealth": float(wealth[-1]),
+            "terminal_wealth_ratio": float(wealth[-1]),
             "log_growth": self.total_reward,
-            "max_drawdown": float(np.max(1.0 - wealth / peaks)),
-            "total_cost": float(sum(row.cost * row.wealth_before for row in self.ledger)),
+            "max_observed_decline": float(np.max(1.0 - wealth / peaks)),
+            "total_cost_fraction": float(
+                sum(row.cost * row.wealth_before for row in self.ledger) / origin
+            ),
             "mean_turnover_one_way": float(np.mean([row.turnover_one_way for row in traded]))
             if traded
             else 0.0,

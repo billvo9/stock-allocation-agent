@@ -136,19 +136,55 @@ def _random_targets(seed, count, n=4):
     return [None if rng.rand() < 0.2 else rng.dirichlet(np.ones(n)) for _ in range(count)]
 
 
-def test_an_observation_at_d_is_unchanged_by_every_return_after_d():
-    data = sc.generate_scenario("calm", seed=4)
-    targets = _random_targets(2, 400)
-    base_obs, base_infos = run(make_env(data, 60, 360), targets)
-    j = 50
+def perturb_after(data, d, seed=0):
+    """Change everything the scenario holds for sessions after d."""
+
+    rng = np.random.RandomState(seed)
+    returns = np.array(data.returns)
+    has_close = np.array(data.has_close)
+    obs_lag = np.array(data.obs_lag)
+    multiplier = np.array(data.cost_multiplier)
+    later = slice(d + 1, None)
+    returns[later, :3] += 0.3
+    gaps = rng.random_sample(has_close[later, :3].shape) < 0.2
+    gaps[0, 0] = True  # the session right after d always loses a close
+    has_close[later, :3] &= ~gaps
+    returns[~has_close] = np.nan
+    obs_lag[later, :3] = rng.randint(0, 6, size=obs_lag[later, :3].shape)
+    multiplier[later] *= 3.0
+    return dataclasses.replace(
+        data, returns=returns, has_close=has_close, obs_lag=obs_lag, cost_multiplier=multiplier
+    )
+
+
+@pytest.mark.parametrize("scenario", ["calm", "missing_closes", "stale_observations", "high_costs"])
+@pytest.mark.parametrize("j", [5, 60, 150])
+def test_the_observation_and_info_at_d_ignore_everything_after_d(scenario, j):
+    data = sc.generate_scenario(scenario, seed=4)
+    targets = _random_targets(2, 600)
+    base_obs, base_infos = run(make_env(data, 60, 600), targets)
     d = base_infos[j]["decision_session"]
-    future = np.array(data.returns)
-    future[d + 1 :, :3] += 0.3
-    changed = dataclasses.replace(data, returns=future)
-    new_obs, new_infos = run(make_env(changed, 60, 360), targets)
-    assert new_infos[j]["decision_session"] == d
+    new_obs, new_infos = run(make_env(perturb_after(data, d), 60, 600), targets)
     np.testing.assert_array_equal(new_obs[j].vector, base_obs[j].vector)
+    assert new_obs[j].max_obs_age == base_obs[j].max_obs_age
+    assert new_infos[j] == base_infos[j]
     assert not np.array_equal(new_obs[j + 1].vector, base_obs[j + 1].vector)
+
+
+def test_every_info_field_is_known_at_the_decision_close():
+    env = make_env(sc.generate_scenario("missing_closes", seed=1), 60, 400)
+    _, infos = run(env, _random_targets(3, 1000))
+    for info in infos[1:]:
+        assert set(info) == {
+            "decision_index",
+            "decision_session",
+            "transition",
+            "reward",
+            "executed_session",
+            "cost",
+            "turnover_one_way",
+        }
+        assert info["executed_session"] <= info["decision_session"]
 
 
 def test_decisions_happen_only_on_complete_sessions_and_spans_cover_gaps_d6():
@@ -181,13 +217,34 @@ def test_rebalancing_every_k_sessions_holds_in_between_d7():
     data = sc.generate_scenario("calm", seed=0)
     env = make_env(data, 60, 300, rebalance_every=5, rebalance_offset=2)
     _, infos = run(env, [np.full(4, 0.25)] * 100)
-    assert infos[-1]["terminal"] and not any(info["terminal"] for info in infos[:-1])
-    indices = [info["decision_index"] for info in infos[:-1]]
+    indices = [info["decision_index"] for info in infos]
     assert indices[0] == 2
     assert all(b - a == 5 for a, b in itertools.pairwise(indices))
     traded = [m for m, row in enumerate(env.ledger) if row.target is not None]
-    assert traded == [i + 1 for i in indices]
+    assert traded == [i + 1 for i in indices[:-1]]
     assert all(row.target is None for row in env.ledger[:3])
+
+
+@pytest.mark.parametrize(("every", "offset"), [(1, 0), (3, 1), (5, 0), (7, 4)])
+def test_the_final_observation_stays_on_the_decision_schedule(every, offset):
+    data = sc.generate_scenario("missing_closes", seed=3)
+    env = make_env(data, 60, 400, rebalance_every=every, rebalance_offset=offset)
+    obs, info = env.reset()
+    indices, total, done = [info["decision_index"]], 0.0, False
+    while not done:
+        obs, reward, terminated, truncated, info = env.step(np.full(4, 0.25))
+        indices.append(info["decision_index"])
+        total += reward
+        done = terminated or truncated
+    assert all((index - offset) % every == 0 for index in indices)
+    final = indices[-1]
+    assert final <= len(env.complete) - 2 and final + every > len(env.complete) - 2
+    assert obs.decision_session == int(env.complete[final])
+    first_execution = env.first_decision_index + 1
+    assert total == pytest.approx(
+        math.log(env.wealth_path[-1] / env.wealth_path[first_execution]), rel=1e-12
+    )
+    assert len(env.wealth_path) == final + 2
 
 
 def plain_loop(data, start, stop, transition, targets):

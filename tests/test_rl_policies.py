@@ -115,18 +115,50 @@ def test_every_rule_runs_on_the_identical_environment_and_replays_exactly(calm, 
             assert np.all(target >= 0) and target.sum() == pytest.approx(1.0, abs=1e-12)
 
 
-def test_the_episode_record_summarizes_engineering_facts(calm):
+def test_engineering_diagnostics_are_labelled_and_never_called_metrics(calm):
     record = replay.rollout(make_env(calm), pol.equal_weight())
-    summary = record.summary()
-    assert summary["log_growth"] == pytest.approx(record.total_reward, rel=1e-12)
-    first_execution = record.ledger[record.decisions[0].decision_index + 1]
-    assert summary["terminal_wealth"] == pytest.approx(
-        record.wealth_path[-1] / first_execution.wealth_before, rel=1e-12
+    diagnostics = record.engineering_diagnostics()
+    assert diagnostics["kind"] == "engineering_diagnostics_not_reported_metrics"
+    assert diagnostics["log_growth"] == pytest.approx(record.total_reward, rel=1e-12)
+    assert diagnostics["n_decisions"] == len(record.decisions)
+    assert 0.0 <= diagnostics["max_observed_decline"] < 1.0
+    assert diagnostics["transition_status"] == "engineering_only_unapproved_transition"
+    assert not hasattr(record, "summary")
+
+
+def _cash_earning_scenario():
+    sessions = 120
+    rng = np.random.RandomState(3)
+    returns = np.zeros((sessions, 4))
+    returns[:, :3] = rng.normal(0.0, 0.01, size=(sessions, 3))
+    returns[:, 3] = 0.01  # cash earns 1% per session, so W(c_1) != W(c_0)
+    return sc.ScenarioData(
+        scenario_id="cash_earning",
+        generator_version="test",
+        seed=0,
+        returns=returns,
+        has_close=np.ones((sessions, 4), dtype=bool),
+        obs_lag=np.zeros((sessions, 4), dtype=np.int64),
+        cost_multiplier=np.ones(sessions),
+        regime=np.array(["test"] * sessions, dtype=object),
+        latent_returns=returns.copy(),
     )
-    assert summary["n_decisions"] == len(record.decisions)
-    assert 0.0 <= summary["max_drawdown"] < 1.0
-    assert summary["total_cost"] > 0
-    assert summary["transition_status"] == "engineering_only_unapproved_transition"
+
+
+def test_every_diagnostic_is_scaled_to_the_first_execution_close():
+    record = replay.rollout(make_env(_cash_earning_scenario(), 60, 120), pol.equal_weight())
+    first = record.decisions[0].decision_index + 1
+    origin = record.wealth_path[first]
+    assert record.wealth_path[first - 1] != origin
+    diagnostics = record.engineering_diagnostics()
+    assert diagnostics["terminal_wealth_ratio"] == pytest.approx(
+        record.wealth_path[-1] / origin, rel=1e-12
+    )
+    expected_cost = sum(row.cost * row.wealth_before for row in record.ledger) / origin
+    assert diagnostics["total_cost_fraction"] == pytest.approx(expected_cost, rel=1e-12)
+    assert diagnostics["log_growth"] == pytest.approx(
+        np.log(diagnostics["terminal_wealth_ratio"]), rel=1e-12
+    )
 
 
 def test_a_scripted_policy_refuses_to_run_past_its_script(calm):

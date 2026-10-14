@@ -19,8 +19,12 @@ there) and earns each asset's span return over (c_m, c_{m+1}]:
   EVERY asset has a close. It equals D6 whenever a policy holds or targets
   every asset (all softmax policies do) and is stricter otherwise, but the
   same for every compared policy.
-- Schedule (D7): decisions at indices j >= o with (j - o) mod k = 0, the
-  last one at J - 3 so its trade still earns one span.
+- Schedule (D7): scheduled indices j >= o with (j - o) mod k = 0, up to
+  T*, the last scheduled index <= J - 2. T* is the episode's final
+  observation, on the schedule like every decision state, so a learner
+  bootstraps from a state of the same kind; decisions are the scheduled
+  indices before T*. Up to k - 1 trailing complete sessions of the window
+  are left unbooked, identically for every policy.
 - Start (D3): 100% cash. The first execution close pays the build.
 
 Episode accounting. reset() books calls c_0..c_o (cash; identical for every
@@ -30,11 +34,21 @@ growth: everything the action at c_j influences. The call at c_{j'} is
 booked before the observation at c_{j'} is built, but the observation reads
 only rows <= c_{j'} of the market data, the post-trade weights at c_{j'}
 (which do not depend on the next span's returns) and wealth marked at
-closes <= c_{j'}. A test proves the observation is invariant to every
-return after c_{j'}.
+closes <= c_{j'}; `info` holds only facts known at the close of c_{j'}.
+Tests prove both are invariant to every return, close, feed lag and cost
+multiplier after c_{j'}.
+
+Because the transition books a trade together with the following span, the
+environment's own state (`ledger`, `wealth_path`, the pending drifted
+weights) already contains the span after c_{j'} when the observation is
+returned. A policy or learner must never read environment state or the
+reward as an input: the observation is the only decision input, and the
+reward is a training signal only.
 
 The window end is a time limit (truncated=True): the investor would carry
-on, so learners may bootstrap from the final observation.
+on, so learners may bootstrap from the final observation. The `truncated`
+flag is an episode-boundary signal (it depends on the window's remaining
+complete sessions), never an observation.
 """
 
 from __future__ import annotations
@@ -124,17 +138,18 @@ class AllocationEnv:
         if len(self.complete) < 3:
             raise ValueError("An episode window needs at least three complete sessions.")
         self.first_decision_index = self.config.rebalance_offset
-        if self.first_decision_index > len(self.complete) - 3:
-            raise ValueError("The rebalance offset leaves no decision inside the window.")
+        every = self.config.rebalance_every
+        last_possible = len(self.complete) - 2
+        if self.first_decision_index + every > last_possible:
+            raise ValueError("The rebalance schedule leaves no decision inside the window.")
+        self.final_index = (
+            self.first_decision_index + (last_possible - self.first_decision_index) // every * every
+        )
         self._ready = False
 
     @property
     def n_assets(self) -> int:
         return self.data.n_assets
-
-    @property
-    def last_call_index(self) -> int:
-        return len(self.complete) - 2
 
     @property
     def wealth_path(self) -> np.ndarray:
@@ -168,9 +183,7 @@ class AllocationEnv:
         if not self._ready:
             raise RuntimeError("The episode has ended (or never started); call reset().")
         j = self._j
-        candidate = j + self.config.rebalance_every
-        next_decision = candidate if candidate <= len(self.complete) - 3 else None
-        last = self.last_call_index if next_decision is None else next_decision
+        last = j + self.config.rebalance_every
         decided_at = int(self.complete[j])
         reward = 0.0
         for m in range(j + 1, last + 1):
@@ -181,7 +194,7 @@ class AllocationEnv:
                 decision_session=decided_at if first else None,
             )
             reward += row.reward
-        truncated = next_decision is None
+        truncated = last == self.final_index
         self._j = last
         self._ready = not truncated
         info = self._info(last, j)
@@ -238,7 +251,6 @@ class AllocationEnv:
         info = {
             "decision_index": j,
             "decision_session": int(self.complete[j]),
-            "terminal": not self._ready,
             "transition": self.transition_info.to_dict(),
             "reward": REWARD_INFO.to_dict(),
         }
@@ -248,7 +260,6 @@ class AllocationEnv:
                 executed_session=executed.session,
                 cost=executed.cost,
                 turnover_one_way=executed.turnover_one_way,
-                sessions_spanned=int(self.complete[j + 1] - executed.session),
             )
         return info
 

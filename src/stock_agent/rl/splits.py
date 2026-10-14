@@ -11,10 +11,13 @@ observations may look back before `start` (that is the past, not leakage).
 
 Separation rules (enforced, `LeakageError` otherwise):
 - windows are ordered train < dev < test, with at least `embargo` sessions
-  between them, so no reward in one fold uses returns of the next and no
-  later fold's lookback reaches into an earlier fold's rewards;
+  between them, so no reward in one fold uses returns of the next;
 - seed sets are pairwise disjoint, so dev and test paths are realizations the
-  training never saw.
+  training never saw;
+- `check_lookback(lookback)`, called by every trainer with its feature
+  lookback, requires embargo >= lookback, so no later fold's observation
+  window reaches into an earlier fold's sessions, and requires the train
+  window to start after one full lookback.
 """
 
 from __future__ import annotations
@@ -101,6 +104,27 @@ class SplitPlan:
                     raise LeakageError(
                         f"The {first.role} and {second.role} folds share seeds {sorted(shared)}."
                     )
+
+    def check_lookback(self, lookback: int) -> None:
+        """Require the embargo and the train start to cover a feature lookback."""
+
+        if self.embargo < lookback:
+            raise LeakageError(
+                f"The {self.embargo}-session embargo is shorter than the {lookback}-session "
+                "feature lookback."
+            )
+        if self.train.start < lookback:
+            raise LeakageError(
+                f"The train window starts at {self.train.start}, inside the {lookback}-session "
+                "feature lookback."
+            )
+        for first, second in (
+            (self.train, self.dev),
+            (self.train, self.test),
+            (self.dev, self.test),
+        ):
+            if set(first.seeds) & set(second.seeds):
+                raise LeakageError(f"The {first.role} and {second.role} folds share a seed.")
 
     def to_dict(self) -> dict[str, object]:
         return {
