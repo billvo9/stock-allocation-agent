@@ -6,9 +6,11 @@ page builds from these instead of styling itself, so the design system
     page_header     eyebrow, title, one-line purpose
     status_banner   the run status in words, colour-coded by the theme
     pill            a compact labelled status or scope tag
+    pills           several pills on one wrapping line (a page's badges)
     stat_row        a row of metric cards with optional captions
     estimate_card   a stored estimate with its interval, p-value and status
     card            a keyed surface container
+    state_card      a dashed container for loading, pending or unavailable states
     section         a subsection title with an optional caption
     notice          blocking / warning / notice / success callouts
     chart           a Plotly figure with the shared config
@@ -67,6 +69,13 @@ def pill_html(level: str, text: str | None = None, *, live: bool = False) -> str
 
 def pill(level: str, text: str | None = None, *, where=None, live: bool = False) -> None:
     (where or st).html(pill_html(level, text, live=live))
+
+
+def pills(items: Sequence[tuple[str, str]], *, where=None) -> None:
+    """Several (level, text) pills on one wrapping line, for a page's badges."""
+
+    body = "".join(pill_html(level, text) for level, text in items)
+    (where or st).html(f'<div class="sa-pills">{body}</div>')
 
 
 def status_banner(level: str, reasons: Sequence[str]) -> None:
@@ -137,6 +146,15 @@ def card(key: str):
     """A surface container; use as `with card("name"):`."""
 
     return st.container(key=f"sa-card-{key}")
+
+
+def state_card(key: str):
+    """
+    A dashed container for a state that is not a value (loading, pending,
+    unavailable), so it never reads as a number; use as `with state_card(...)`.
+    """
+
+    return st.container(key=f"sa-future-{key}")
 
 
 def section(title: str, caption: str | None = None) -> None:

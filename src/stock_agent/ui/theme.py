@@ -243,6 +243,7 @@ code {{ font-family: var(--sa-mono); }}
   font-weight: 600;
   letter-spacing: 0.01em;
 }}
+.sa-pills {{ display: flex; flex-wrap: wrap; gap: {space["sm"]}; }}
 {pills}
 @keyframes sa-appear {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
 /* Only the dashboard's own motion; Streamlit handles its own widgets. */
