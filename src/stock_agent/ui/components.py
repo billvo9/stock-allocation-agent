@@ -4,6 +4,10 @@ page builds from these instead of styling itself, so the design system
 (theme.py) stays consistent:
 
     page_header     eyebrow, title, one-line purpose
+    hero            an editorial page opening: eyebrow, serif title, lede
+    lede            a short serif paragraph that says what a page is for
+    status_list     rows of (status in words, title, sentence): what needs attention
+    page_links      a row of links to other pages: a page's next actions
     status_banner   the run status in words, colour-coded by the theme
     pill            a compact labelled status or scope tag
     pills           several pills on one wrapping line (a page's badges)
@@ -43,10 +47,15 @@ NOTICES = {
 _WRITERS = {"blocking": "error", "warning": "warning", "notice": "info", "success": "success"}
 
 
-def apply_theme() -> None:
-    """Inject the CSS layer once per script run (style-only: takes no space)."""
+# CSS layers by variant: the research dashboard's, and the Portfolio Lab's
+# editorial layer (theme.py).
+THEMES = {"research": theme.css, "lab": theme.lab_css}
 
-    st.html(f"<style>{theme.css()}</style>")
+
+def apply_theme(variant: str = "research") -> None:
+    """Inject a CSS layer once per script run (style-only: takes no space)."""
+
+    st.html(f"<style>{THEMES[variant]()}</style>")
 
 
 def page_header(title: str, *, eyebrow: str | None = None, purpose: str | None = None) -> None:
@@ -55,6 +64,63 @@ def page_header(title: str, *, eyebrow: str | None = None, purpose: str | None =
     st.title(title)
     if purpose:
         st.caption(purpose)
+
+
+def hero(
+    title: str, *, eyebrow: str | None = None, lede: str | None = None, key: str = "page"
+) -> None:
+    """An editorial page opening in a keyed container: eyebrow, title and lede."""
+
+    with st.container(key=f"sa-hero-{key}"):
+        if eyebrow:
+            st.html(f'<div class="sa-eyebrow">{escape(eyebrow)}</div>')
+        st.title(title, anchor=False)
+        if lede:
+            st.html(_lede_html(lede))
+
+
+def _lede_html(text: str) -> str:
+    return f'<p class="sa-lede">{escape(text)}</p>'
+
+
+def lede(text: str, *, where=None) -> None:
+    """A short serif paragraph (plain text, escaped) saying what a page is for."""
+
+    (where or st).html(_lede_html(text))
+
+
+@dataclass(frozen=True)
+class Item:
+    """One row of a status list: a status level, its word, a title and a sentence."""
+
+    level: str
+    word: str
+    title: str
+    text: str = ""
+
+
+def status_list(items: Sequence[Item], *, where=None) -> None:
+    """
+    Rows that each lead with a status written in words (a pill), then a
+    title and one plain sentence. Plain text only: everything is escaped.
+    """
+
+    rows = []
+    for item in items:
+        text = f'<p class="sa-list__text">{escape(item.text)}</p>' if item.text else ""
+        rows.append(
+            f'<li class="sa-list__item">{pill_html(item.level, item.word)}'
+            f'<div><p class="sa-list__title">{escape(item.title)}</p>{text}</div></li>'
+        )
+    (where or st).html(f'<ul class="sa-list">{"".join(rows)}</ul>')
+
+
+def page_links(links: Sequence[tuple[object, str]], *, key: str) -> None:
+    """A wrapping row of links to other pages, each (page, label): a page's next actions."""
+
+    with st.container(key=f"sa-actions-{key}", horizontal=True, gap="small"):
+        for page, label in links:
+            st.page_link(page, label=label)
 
 
 def pill_html(level: str, text: str | None = None, *, live: bool = False) -> str:

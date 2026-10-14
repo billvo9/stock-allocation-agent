@@ -1,0 +1,268 @@
+"""
+The copy of the Portfolio Lab's destinations other than Explore (whose copy
+is `labels`): Overview, Portfolio Builder, Experiments, Model Health and
+Evidence. One data module, so tests assert the exact wording and scan it.
+
+Wording rules (as for `labels`): describe the past only; no forecast, no
+advice, no trading verbs; nothing is ranked or preferred; every pending
+capability is named as pending, with the date it was recorded.
+"""
+
+from __future__ import annotations
+
+LAB_NAME = "Portfolio Lab"
+
+# Navigation: (title, url path), in display order.
+NAV = {
+    "overview": ("Overview", "overview"),
+    "explore": ("Explore", "explore"),
+    "builder": ("Portfolio Builder", "builder"),
+    "experiments": ("Experiments", "experiments"),
+    "health": ("Model Health", "model-health"),
+    "evidence": ("Evidence", "evidence"),
+}
+
+CANNOT_TELL_TITLE = "What this lab cannot tell you"
+CANNOT_TELL = (
+    "The lab describes the past. It makes no forecast and does not say what anyone should "
+    "hold. Past returns, real or synthetic, do not predict future returns."
+)
+DETAILS = "Exact measurements"
+
+# --- Overview ---
+
+OVERVIEW_EYEBROW = LAB_NAME
+OVERVIEW_TITLE = "Overview"
+OVERVIEW_LEDE = (
+    "What the lab can show today, what needs attention, and what is still waiting on a "
+    "decision. Everything here describes the past; nothing is a forecast."
+)
+HAPPENING_TITLE = "What is happening"
+ATTENTION_TITLE = "Needs attention"
+NOTHING_NEEDS_ATTENTION = "Nothing needs attention: every fund has current, complete data."
+PENDING_TITLE = "Waiting on a decision"
+NEXT_TITLE = "Where to go next"
+NEXT_LINKS = {
+    "explore": "Explore fund history",
+    "builder": "Build a mix",
+    "evidence": "See where the numbers come from",
+}
+# Recorded from the project's state on this date: (word, title, sentence).
+PENDING_AS_OF = "2026-10-14"
+PENDING = (
+    (
+        "Awaiting approval",
+        "How a mix would have grown",
+        (
+            "A fixed mix held without rebalancing or costs needs one more formula approval, "
+            "so the Builder shows weights and concentration only."
+        ),
+    ),
+    (
+        "Awaiting approval",
+        "Simulator formulas",
+        (
+            "Rebalancing, transaction costs and execution timing are specified but not "
+            "approved, so the lab shows no simulated portfolio."
+        ),
+    ),
+    (
+        "Not loaded",
+        "Real fund data",
+        (
+            "Real fund histories need an approved data source and publication first. Until "
+            "then every fund is synthetic demo data."
+        ),
+    ),
+    (
+        "None",
+        "Forecasts",
+        (
+            "No forecast exists and no model is validated, so no expected return, probability "
+            "or confidence level is shown anywhere."
+        ),
+    ),
+    (
+        "Not yet",
+        "Experiments and model health",
+        (
+            "No machine-learning or reinforcement-learning result is ready to show, and model "
+            "health is not yet collected."
+        ),
+    ),
+)
+
+# --- Portfolio Builder ---
+
+BUILDER_EYEBROW = "Build"
+BUILDER_TITLE = "Portfolio Builder"
+BUILDER_LEDE = (
+    "Combine synthetic funds with weights you choose and see how those weights are spread. "
+    "The weights are illustrative, from the rule you chose."
+)
+ILLUSTRATIVE_BADGE = "Illustrative weights from the rule you chose"
+NO_HISTORY_BADGE = "No mix history yet"
+INPUTS_TITLE = "Your mix"
+INPUTS_SCOPE = "Choose funds and a rule for their weights. Nothing is ranked or preferred."
+FUNDS_LABEL = "Funds"
+FUNDS_HELP = "Listed in a fixed order. No fund is ranked or preferred."
+RULE_LABEL = "Weights"
+RULES = {"equal": "Equal weights", "entered": "Weights I enter"}
+RULE_HELP = "Equal weights split the mix evenly. Entered weights are whole percentage points."
+WEIGHT_HELP = "Whole percentage points in steps of 5. A fund at 0% is left out of the mix."
+NO_DATA_FUNDS = "Not listed, because they have no available data: {names}."
+EMPTY = "No fund chosen. Choose one or more funds above to build a mix."
+POINTS_SHORT = "The weights add to {total}%. Add {gap} points so they reach 100%."
+POINTS_OVER = "The weights add to {total}%. Remove {gap} points so they add to 100%."
+MIX_NAME = "This mix"
+CONCENTRATION_TITLE = "Concentration"
+CONCENTRATION_SCOPE = (
+    "How the weights are spread across funds and their roles. Holdings inside each fund are "
+    "not known for synthetic funds, so concentration inside a fund is not shown."
+)
+WEIGHTS_SUMMARY = "Weights: {weights}."
+CONCENTRATED = "More than half of the mix sits in one fund: {fund}, {weight}."
+SINGLE_FUND = "The whole mix sits in one fund: {fund}."
+FUNDS_HELD_LABEL = "Funds held"
+LARGEST_LABEL = "Largest weight"
+ROLES_LABEL = "Roles held"
+WHAT_IF_TITLE = "What if the weights were different?"
+WHAT_IF_SCOPE = (
+    "Another rule for the same funds, and how its weights would be spread. It shows weights "
+    "only: no past or future result."
+)
+WHAT_IF_LABEL = "Compare with"
+NO_VARIANT = "No alternative applies: choose two or more funds to compare other weights."
+HISTORY_PENDING_TITLE = "How this mix would have grown"
+HISTORY_PENDING = (
+    "How a fixed mix would have grown needs one more formula approval: a mix held from its "
+    "start without rebalancing or costs. Until it is approved, the Builder shows weights and "
+    "concentration only. Each fund's own history is on the Explore page."
+)
+NOT_MODELLED_BADGE = "Awaiting approval"
+NOT_MODELLED = (
+    "Rebalancing, transaction costs, execution timing and taxes need simulator formulas that "
+    "are also awaiting approval, and the Builder makes no forecast."
+)
+EXPLORE_LINK = "See each fund's history"
+
+# --- Experiments ---
+
+EXPERIMENTS_EYEBROW = "Research"
+EXPERIMENTS_TITLE = "Experiments"
+EXPERIMENTS_LEDE = (
+    "Machine-learning and reinforcement-learning experiments will appear here once they "
+    "produce results this lab can show, each with its evidence status."
+)
+EXPERIMENTS_EMPTY_BADGE = "No experiments yet"
+EXPERIMENTS_EMPTY_TITLE = "No experiment to show yet"
+EXPERIMENTS_EMPTY = (
+    "No run has produced a result for this lab. Nothing is estimated or filled in while that is so."
+)
+EXPERIMENTS_LATER = (
+    "When runs exist, each will show its data window, validation status and limitations, as "
+    "research evidence only: never as a portfolio to hold."
+)
+DASHBOARD_TITLE = "Research diagnostics dashboard"
+DASHBOARD_TEXT = (
+    "Saved model-diagnostics runs are read by a separate local research dashboard. Start it "
+    "from the repository root, then open it on this machine:"
+)
+DASHBOARD_COMMAND = ".venv/bin/python scripts/run_dashboard.py"
+DASHBOARD_URL = "http://127.0.0.1:8501"
+DASHBOARD_LINK = "Open the research dashboard (once it is running)"
+
+# --- Model Health ---
+
+HEALTH_EYEBROW = "Research"
+HEALTH_TITLE = "Model Health"
+HEALTH_LEDE = (
+    "Checks on data freshness, model drift and calibration, once there are models and data "
+    "to check."
+)
+HEALTH_EMPTY_BADGE = "Not yet collected"
+HEALTH_EMPTY_TITLE = "Not yet collected"
+HEALTH_EMPTY = (
+    "No health check has been collected yet. Nothing here is estimated or assumed while that is so."
+)
+HEALTH_LATER = (
+    "When checks are collected, each will show its status in words, what it measured and when."
+)
+HEALTH_COLLECTED = "Collected {collected_at} from {source}."
+
+# --- Evidence ---
+
+EVIDENCE_EYEBROW = "Provenance"
+EVIDENCE_TITLE = "Evidence"
+EVIDENCE_LEDE = (
+    "Where every number in the lab comes from, what it assumes, and why none of it is ready "
+    "for investment decisions."
+)
+NOT_READY_TITLE = "Why nothing here is investment-ready"
+# (status level, word, title, sentence)
+NOT_READY = (
+    (
+        "NOTICE",
+        "Descriptive",
+        "Facts about the past only",
+        (
+            "Every number describes the past. Nothing is a forecast, an expected return or a "
+            "confidence level."
+        ),
+    ),
+    (
+        "FUTURE",
+        "Awaiting approval",
+        "No simulator",
+        (
+            "Transaction costs, rebalancing and execution timing are not modelled, so no result "
+            "reflects what holding a portfolio would have cost."
+        ),
+    ),
+    (
+        "FUTURE",
+        "None",
+        "No validated model",
+        (
+            "No model or rule has been checked on data it has not seen, so nothing here has "
+            "evidence that it would hold up later."
+        ),
+    ),
+)
+SYNTHETIC_REASON = (
+    "WARNING",
+    "Synthetic",
+    "Synthetic demo data",
+    "Every fund is generated by a seeded random generator and is not real fund performance.",
+)
+DATA_TITLE = "Data versions"
+DATA_SCOPE = "Every fund the lab loads, with its source, coverage, vintage and limitations."
+CALCULATIONS_TITLE = "Calculations"
+CALCULATIONS = (
+    "Total returns from raw closes, distributions and share-count splits.",
+    "Hypothetical growth of $10,000, distributions reinvested on the ex-date.",
+    (
+        "Maximum drawdown and recovery, or the largest observed decline when a history is "
+        "incomplete."
+    ),
+    "Calendar-year returns, partial years labelled and never annualized.",
+)
+CALCULATIONS_SOURCE = (
+    "Approved by the project owner on 2026-10-14 for descriptive use only, and implemented in "
+    "`stock_agent.portfolio.descriptive`."
+)
+BUILDER_STEP = (
+    "The Builder restates weights only (their spread by fund and by role). How a mix would "
+    "have grown awaits approval of one more formula."
+)
+MODELS_TITLE = "Models"
+MODELS = "No model is registered, and no model output appears anywhere in the lab."
+PUBLICATION_TITLE = "Publication provenance"
+PUBLICATION = (
+    "No publication is read yet. The funds are generated in memory by the synthetic demo "
+    "generator, version {version}, seed {seed}, on weekday sessions from {start} to {end}."
+)
+SEALED = "Data after {end} is never shown: later dates are reserved for one final test."
+ASSUMPTIONS_TITLE = "Assumptions"
+SOFTWARE_TITLE = "Software"
+SOFTWARE_SCOPE = "The versions this page is running with."

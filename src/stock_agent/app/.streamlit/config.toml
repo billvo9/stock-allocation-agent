@@ -1,0 +1,72 @@
+# The Portfolio Lab's own Streamlit settings. Streamlit reads this script-level
+# file (next to run.py) after the repository's .streamlit/config.toml, so the
+# Lab gets its editorial theme while the research dashboard keeps its own.
+# Kept identical to stock_agent/ui/theme.py lab_streamlit_theme() by a test,
+# so change the tokens there.
+
+# Serves src/stock_agent/app/static/ (the bundled OFL fonts) at app/static/.
+[server]
+enableStaticServing = true
+
+[theme]
+base = "light"
+primaryColor = "#9A4325"
+backgroundColor = "#FAF7F1"
+secondaryBackgroundColor = "#F2EDE4"
+textColor = "#1D1B18"
+linkColor = "#9A4325"
+borderColor = "#E5DDD0"
+dataframeBorderColor = "#E5DDD0"
+dataframeHeaderBackgroundColor = "#F2EDE4"
+showWidgetBorder = true
+baseRadius = "10px"
+buttonRadius = "10px"
+font = "SourceSans3, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif"
+headingFont = "SourceSerif4, 'Iowan Old Style', Georgia, serif"
+codeFont = "SF Mono, JetBrains Mono, Menlo, Consolas, monospace"
+baseFontSize = 16
+headingFontSizes = ["2.55rem", "1.7rem", "1.3rem", "1.05rem", "1rem", "0.95rem"]
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+metricValueFontSize = "1.65rem"
+metricValueFontWeight = 600
+greenColor = "#1E6633"
+greenBackgroundColor = "#E6F0E8"
+greenTextColor = "#1E6633"
+yellowColor = "#874A0E"
+yellowBackgroundColor = "#FAEFDF"
+yellowTextColor = "#874A0E"
+orangeColor = "#874A0E"
+orangeBackgroundColor = "#FAEFDF"
+orangeTextColor = "#874A0E"
+redColor = "#99202C"
+redBackgroundColor = "#F7E5E6"
+redTextColor = "#99202C"
+blueColor = "#26505D"
+blueBackgroundColor = "#E5EDEF"
+blueTextColor = "#26505D"
+grayColor = "#685F55"
+grayBackgroundColor = "#F2EDE4"
+grayTextColor = "#544E46"
+
+[theme.sidebar]
+backgroundColor = "#F2EDE4"
+secondaryBackgroundColor = "#FFFDF8"
+borderColor = "#E5DDD0"
+
+[[theme.fontFaces]]
+family = "SourceSerif4"
+url = "app/static/fonts/SourceSerif4Variable-Roman.woff2"
+weight = "200 900"
+style = "normal"
+
+[[theme.fontFaces]]
+family = "SourceSans3"
+url = "app/static/fonts/SourceSans3VF-Upright.woff2"
+weight = "200 900"
+style = "normal"
+
+[[theme.fontFaces]]
+family = "SourceSans3"
+url = "app/static/fonts/SourceSans3VF-Italic.woff2"
+weight = "200 900"
+style = "italic"

@@ -449,3 +449,24 @@ def losing_summary(name: str, table: pd.DataFrame) -> str:
         f"{name}: lost money in {years}: {len(losing)} of {shown} calendar years shown"
         f"{partial_text}."
     )
+
+
+def sources_table(histories: Sequence[FundHistory]) -> pd.DataFrame:
+    """Each fund's source, coverage, retrieval, vintage, freshness and evidence status, as text."""
+
+    rows = []
+    for history in histories:
+        start, end = history.coverage_start, history.coverage_end
+        rows.append(
+            {
+                "Fund": history.name,
+                "Role": labels.ROLE_TEXT[history.role],
+                "Source": history.source_label,
+                "Coverage": "No available data" if start is None else f"{day(start)} to {day(end)}",
+                "Retrieved": history.retrieved_label,
+                "Vintage": history.vintage_note,
+                "Freshness": f"Stale: {history.stale_reason}" if history.stale else "Not stale",
+                "Evidence": history.evidence_status,
+            }
+        )
+    return pd.DataFrame(rows)
