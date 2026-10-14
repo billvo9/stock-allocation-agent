@@ -122,6 +122,11 @@ Runs `20261014T183807Z-9e1249871d2d` (planted) and `20261014T184120Z-4ca40e0dfe1
 | null | elastic_net | 0.021 (1.28) | 0.69 | 0.071 | −0.02% | −0.17 | not run | 0.33 |
 | null | ols (diagnostic) | 0.019 (1.26) | 1.00 | 0.045 | −0.88% | −2.22 | not run | n/a |
 
+**Provenance.**
+- Both configs were re-run from commit `8585adf`: planted run `20261014T185004Z-2a6b19d242b5`, null run `20261014T185312Z-0197282e2832`. They reproduced the pre-commit runs' `results_sha256` exactly (`84e7d017…` and `8f9f66da…`).
+- **Why `git_dirty` is true.** The records say `git_dirty = true` only because the session worktree holds an untracked `.venv` symlink, which `.gitignore`'s `.venv/` pattern does not match (open item 7).
+- **Proof.** The recorded `git_diff_sha256` (`01217fdf…`) is the SHA-256 of an empty diff plus the untracked path `.venv`, so no source file differed from the commit.
+
 **Planted run.**
 - Every candidate recovers the planted ordering (Holm p ≤ 0.024). Clark-West for the nested pair (ols, zero) gives t 3.12.
 - The ranking signal sits right at the minimum detectable effect, so a slightly weaker signal or fewer folds would be missed.
