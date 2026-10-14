@@ -11,7 +11,7 @@ gatherUsageStats = false
 [client]
 toolbarMode = "viewer"
 
-# Kept identical to stock_agent/dashboard/theme.py streamlit_theme() by a test,
+# Kept identical to stock_agent/ui/theme.py streamlit_theme() by a test,
 # so change the tokens there. Applied to launches from the repository root,
 # which scripts/run_dashboard.py always uses.
 [theme]

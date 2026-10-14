@@ -20,8 +20,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from stock_agent.dashboard import components as ui
-from stock_agent.dashboard import evaluation, figures, glossary, regimes, style
+from stock_agent.dashboard import evaluation, figures, glossary, regimes
 from stock_agent.dashboard.loader import (
     RunRefused,
     RunView,
@@ -37,6 +36,8 @@ from stock_agent.dashboard.status import (
     run_status,
 )
 from stock_agent.model_diagnostics import contract
+from stock_agent.ui import components as ui
+from stock_agent.ui import style
 
 RUN_KEY = "selected_run"
 MODELS_KEY = "selected_models"

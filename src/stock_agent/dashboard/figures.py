@@ -27,7 +27,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from stock_agent.dashboard import style
+from stock_agent.ui import style
 
 ROLE_ORDER = ("null", "control", "canary", "canary_unsafe_reference", "diagnostic", "candidate")
 METHOD_NAMES = {

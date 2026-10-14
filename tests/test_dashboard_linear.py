@@ -16,8 +16,9 @@ import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
-from stock_agent.dashboard import evaluation, figures, loader, style, theme, views
+from stock_agent.dashboard import evaluation, figures, loader, views
 from stock_agent.model_diagnostics import artifacts, contract
+from stock_agent.ui import style, theme
 
 APP = Path(__file__).resolve().parents[1] / "src" / "stock_agent" / "dashboard" / "app.py"
 PAGE = "page_scripts/linear_models.py"

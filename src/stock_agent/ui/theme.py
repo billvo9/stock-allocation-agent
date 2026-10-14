@@ -1,5 +1,6 @@
 """
-Design tokens for the research dashboard: the single source of its look.
+Design tokens shared by the research dashboard and the product app: the
+single source of their look.
 
 Three consumers read these tokens, so pages never style themselves:
 - Streamlit's theme (`.streamlit/config.toml`, checked against

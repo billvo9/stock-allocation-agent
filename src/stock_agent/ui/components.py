@@ -1,7 +1,7 @@
 """
-Shared dashboard components. Every page, including T4's model pages, builds
-from these instead of styling itself, so the design system (theme.py) stays
-consistent:
+Shared UI components for the research dashboard and the product app. Every
+page builds from these instead of styling itself, so the design system
+(theme.py) stays consistent:
 
     page_header     eyebrow, title, one-line purpose
     status_banner   the run status in words, colour-coded by the theme
@@ -29,7 +29,7 @@ from html import escape
 import pandas as pd
 import streamlit as st
 
-from stock_agent.dashboard import style, theme
+from stock_agent.ui import style, theme
 
 # Notice levels, their words, icons and theme status.
 NOTICES = {
