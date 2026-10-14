@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from fractions import Fraction
 
 import numpy as np
 
@@ -21,9 +22,14 @@ from stock_agent.app.history import FundHistory
 
 TOTAL_POINTS = 100
 WEIGHT_STEP = 5  # percentage points per step of an entered weight
-SHIFT = 0.10  # what-if alternatives move ten percentage points between roles
+SHIFT_POINTS = 10  # what-if alternatives move ten percentage points between roles
+SHIFT = Fraction(SHIFT_POINTS, TOTAL_POINTS)
+# Weights are whole points (p/100) or equal shares (1/n), so their exact
+# rational values have small denominators.
+MAX_DENOMINATOR = 1_000
 ROLES = ("equity", "bonds", "cash proxy")
 DEFENSIVE_ROLES = ("bonds", "cash proxy")
+ROLE_WORDS = {"equity": "equity", "bonds": "bond", "cash proxy": "cash"}
 
 
 # --- weights ---
@@ -122,10 +128,22 @@ class Variant:
     weights: dict[str, float]
 
 
+def _exact(weights: Mapping[str, float]) -> dict[str, Fraction]:
+    """The weights as exact fractions (p/100 or 1/n), scaled to add to exactly 1."""
+
+    rational = {f: Fraction(w).limit_denominator(MAX_DENOMINATOR) for f, w in weights.items()}
+    total = sum(rational.values())
+    return {fund_id: weight / total for fund_id, weight in rational.items()}
+
+
 def _shift(
-    weights: dict[str, float], source: Sequence[str], target: Sequence[str]
+    weights: dict[str, Fraction], source: Sequence[str], target: Sequence[str]
 ) -> dict[str, float]:
-    """Move SHIFT from `source` funds to `target` funds, in proportion to their weights."""
+    """
+    Move SHIFT from `source` funds to `target` funds, in proportion to their
+    weights, in exact rational arithmetic: a fund that gives up all of its
+    weight ends at exactly 0, never at a rounding error below it.
+    """
 
     source_total = sum(weights[f] for f in source)
     target_total = sum(weights[f] for f in target)
@@ -134,18 +152,29 @@ def _shift(
         moved[fund_id] -= SHIFT * weights[fund_id] / source_total
     for fund_id in target:
         moved[fund_id] += SHIFT * weights[fund_id] / target_total
-    return moved
+    return {fund_id: float(weight) for fund_id, weight in moved.items()}
+
+
+def _group(fund_ids: Sequence[str], roles: Mapping[str, str]) -> str:
+    """'the equity fund', 'bond and cash funds': the funds a shift names, as they are held."""
+
+    present = [r for r in ROLES if any(roles[f] == r for f in fund_ids)]
+    words = " and ".join(ROLE_WORDS[role] for role in present)
+    return f"the {words} fund" if len(fund_ids) == 1 else f"{words} funds"
 
 
 def variants(histories: Sequence[FundHistory], weights: Mapping[str, float]) -> tuple[Variant, ...]:
     """
     The discrete alternatives offered for the current weights, each over the
     same funds: equal weights (unless already equal), and ten points moved
-    from equity funds to bond and cash funds or back, where the mix holds
-    both and the funds giving up weight hold at least ten points.
+    from the equity funds to the bond and cash funds or back, where the mix
+    holds both and the funds giving up weight hold at least ten points. A
+    fund that gives up all of its weight is left at exactly 0. Labels name
+    the roles actually held.
     """
 
     positive = held(weights)
+    exact = _exact(positive)
     roles = {history.fund_id: history.role for history in histories}
     equity = [fund_id for fund_id in positive if roles[fund_id] == "equity"]
     defensive = [fund_id for fund_id in positive if roles[fund_id] in DEFENSIVE_ROLES]
@@ -154,20 +183,21 @@ def variants(histories: Sequence[FundHistory], weights: Mapping[str, float]) -> 
     if len(positive) > 1 and not all(np.isclose(positive[f], equal[f]) for f in positive):
         found.append(Variant(EQUAL, "Equal weights across the same funds", equal))
     if equity and defensive:
-        if sum(positive[f] for f in equity) >= SHIFT - 1e-12:
+        stocks, others = _group(equity, roles), _group(defensive, roles)
+        if sum(exact[f] for f in equity) >= SHIFT:
             found.append(
                 Variant(
                     TOWARD_DEFENSIVE,
-                    "Ten points moved from equity funds to bond and cash funds",
-                    _shift(positive, equity, defensive),
+                    f"Ten points moved from {stocks} to {others}",
+                    _shift(exact, equity, defensive),
                 )
             )
-        if sum(positive[f] for f in defensive) >= SHIFT - 1e-12:
+        if sum(exact[f] for f in defensive) >= SHIFT:
             found.append(
                 Variant(
                     TOWARD_EQUITY,
-                    "Ten points moved from bond and cash funds to equity funds",
-                    _shift(positive, defensive, equity),
+                    f"Ten points moved from {others} to {stocks}",
+                    _shift(exact, defensive, equity),
                 )
             )
     return tuple(found)

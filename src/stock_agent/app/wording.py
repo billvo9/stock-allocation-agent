@@ -24,8 +24,8 @@ NAV = {
 
 CANNOT_TELL_TITLE = "What this lab cannot tell you"
 CANNOT_TELL = (
-    "The lab describes the past. It makes no forecast and does not say what anyone should "
-    "hold. Past returns, real or synthetic, do not predict future returns."
+    "The lab describes the past. It makes no forecast and does not tell anyone what to hold. "
+    "Past returns, real or synthetic, do not predict future returns."
 )
 DETAILS = "Exact measurements"
 
@@ -47,7 +47,11 @@ NEXT_LINKS = {
     "builder": "Build a mix",
     "evidence": "See where the numbers come from",
 }
-# Recorded from the project's state on this date: (word, title, sentence).
+# What is waiting on a decision, recorded from the project's state on
+# PENDING_AS_OF: (word, title, sentence, decision). `decision` is never shown;
+# it names the pending entry of docs/PROJECT_STATE.md ("Pending:") the item
+# waits for, and a test fails once that entry is no longer pending, so this
+# list is updated when the decision is taken. None: a fact about the lab itself.
 PENDING_AS_OF = "2026-10-14"
 PENDING = (
     (
@@ -57,6 +61,7 @@ PENDING = (
             "A fixed mix held without rebalancing or costs needs one more formula approval, "
             "so the Builder shows weights and concentration only."
         ),
+        "OD8 groups B-D",
     ),
     (
         "Awaiting approval",
@@ -65,6 +70,7 @@ PENDING = (
             "Rebalancing, transaction costs and execution timing are specified but not "
             "approved, so the lab shows no simulated portfolio."
         ),
+        "OD8 groups B-D",
     ),
     (
         "Not loaded",
@@ -73,6 +79,7 @@ PENDING = (
             "Real fund histories need an approved data source and publication first. Until "
             "then every fund is synthetic demo data."
         ),
+        "OD9",
     ),
     (
         "None",
@@ -81,6 +88,7 @@ PENDING = (
             "No forecast exists and no model is validated, so no expected return, probability "
             "or confidence level is shown anywhere."
         ),
+        None,
     ),
     (
         "Not yet",
@@ -89,6 +97,7 @@ PENDING = (
             "No machine-learning or reinforcement-learning result is ready to show, and model "
             "health is not yet collected."
         ),
+        None,
     ),
 )
 
@@ -262,7 +271,10 @@ PUBLICATION = (
     "No publication is read yet. The funds are generated in memory by the synthetic demo "
     "generator, version {version}, seed {seed}, on weekday sessions from {start} to {end}."
 )
-SEALED = "Data after {end} is never shown: later dates are reserved for one final test."
+SEALED = (
+    "Data from {sealed} on is reserved for one final test and is never shown; the demo data "
+    "ends {end}."
+)
 ASSUMPTIONS_TITLE = "Assumptions"
 SOFTWARE_TITLE = "Software"
 SOFTWARE_SCOPE = "The versions this page is running with."

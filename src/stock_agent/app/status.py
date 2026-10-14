@@ -15,6 +15,11 @@ import pandas as pd
 from stock_agent.app import labels, view
 from stock_agent.app.history import FundHistory
 
+# The owner's lockbox: dates from here on are reserved for one final test and
+# never shown. It mirrors `stock_agent.model_validation.folds.MODEL_HOLDOUT_START`,
+# which the app may not import; a test keeps the two equal.
+SEALED_FROM = pd.Timestamp("2025-01-01", tz="UTC")
+
 
 @dataclass(frozen=True)
 class Attention:

@@ -87,7 +87,10 @@ def render(load_histories: Callable[[], Sequence[FundHistory]]) -> None:
                     end=synthetic.CALENDAR_END,
                 )
             )
-            say(wording.SEALED.format(end=synthetic.CALENDAR_END), "caption")
+            sealed = wording.SEALED.format(
+                sealed=view.day(status.SEALED_FROM), end=synthetic.CALENDAR_END
+            )
+            say(sealed, "caption")
         else:
             say("Each fund's source, retrieval and vintage are listed under Data versions.")
 

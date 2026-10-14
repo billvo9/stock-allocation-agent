@@ -212,8 +212,8 @@ def test_the_what_if_compares_weights_and_their_spread_only():
     app = running()
     options = app.radio(key=builder.VARIANT_KEY).options
     assert options == [
-        "Ten points moved from equity funds to bond and cash funds",
-        "Ten points moved from bond and cash funds to equity funds",
+        "Ten points moved from the equity fund to bond and cash funds",
+        "Ten points moved from bond and cash funds to the equity fund",
     ]
     table = next(t.value for t in app.table if wording.MIX_NAME in t.value.columns)
     assert list(table.columns) == [wording.MIX_NAME, options[0]]
@@ -231,6 +231,23 @@ def test_the_what_if_compares_weights_and_their_spread_only():
     table = next(t.value for t in app.table if wording.MIX_NAME in t.value.columns)
     assert table.loc["Equity", options[1]] == "43.3%"
     assert_no_mix_history(app, text_of(app))
+
+
+def test_moving_a_sides_last_ten_points_renders_without_an_error():
+    # Regression: the side giving up exactly ten points used to land at -1.4e-17
+    # and the page raised "weights cannot be negative".
+    for equity, bond, option, emptied in (
+        (10, 90, mix.TOWARD_DEFENSIVE, "Equity"),
+        (90, 10, mix.TOWARD_EQUITY, "Bonds"),
+    ):
+        app = enter(choose(running(), EQUITY, BOND), synthetic_equity=equity, synthetic_bond=bond)
+        app = app.radio(key=builder.VARIANT_KEY).set_value(option).run()
+        assert not app.exception, [e.value for e in app.exception]
+        table = next(t.value for t in app.table if wording.MIX_NAME in t.value.columns)
+        alternative = table.columns[1]
+        assert table.loc[emptied, alternative] == "0.0%"
+        assert table.loc["Funds held", alternative] == "1"
+        assert_no_mix_history(app, text_of(app))
 
 
 def test_equal_weights_are_offered_as_an_alternative_to_entered_weights():

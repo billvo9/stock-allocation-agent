@@ -63,7 +63,7 @@ def render(
     with ui.card("overview-pending"):
         section(wording.PENDING_TITLE, f"As recorded on {wording.PENDING_AS_OF}.")
         ui.status_list(
-            [ui.Item("FUTURE", word, title, text) for word, title, text in wording.PENDING]
+            [ui.Item("FUTURE", word, title, text) for word, title, text, _ in wording.PENDING]
         )
 
     with st.expander(wording.DETAILS):

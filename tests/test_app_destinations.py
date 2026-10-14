@@ -9,6 +9,7 @@ the Builder too (test_app_builder.py).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -30,14 +31,62 @@ PACKAGE = REPO / "src" / "stock_agent" / "app"
 RUN = PACKAGE / "run.py"
 TIMEOUT = 120
 ADVICE_WORDS = (" buy", " sell", "recommend", "should invest", "outperform")
+# Wider than ADVICE_WORDS: word starts ("buy", "sell") or whole words.
+ADVICE_PATTERNS = (
+    r"\bbuy",
+    r"\bsell",
+    r"recommend",
+    r"should invest",
+    r"should hold",
+    r"outperform",
+    r"\bconsider\b",
+    r"\ballocate\b",
+    r"\bbest\b",
+)
+# The Explore page's approved disclaimer negates advice ("it does not say which
+# fund anyone should hold"); it is removed, verbatim, before the scan.
+DISCLAIMERS = (labels.CANNOT_TELL,)
 KEYS = list(wording.NAV)
+
+
+def scan_for_advice(text: str) -> None:
+    lowered = text
+    for disclaimer in DISCLAIMERS:
+        lowered = lowered.replace(disclaimer, "")
+    lowered = lowered.lower()
+    for word in ADVICE_WORDS:
+        assert word not in lowered, word
+    for pattern in ADVICE_PATTERNS:
+        assert not re.search(pattern, lowered), pattern
+
+
+def widget_text(app: AppTest) -> list[str]:
+    """Labels, options and help of every widget, expander labels and code blocks."""
+
+    parts = []
+    widgets = (
+        *app.radio,
+        *app.multiselect,
+        *app.number_input,
+        *app.select_slider,
+        *app.selectbox,
+        *app.button,
+    )
+    for widget in widgets:
+        parts.append(str(getattr(widget, "label", "") or ""))
+        parts.append(str(getattr(widget, "help", "") or ""))
+        parts.extend(str(option) for option in (getattr(widget, "options", None) or ()))
+    parts += [expander.label for expander in app.expander]
+    parts += [code.proto.code_text for code in app.get("code")]
+    return parts
 
 
 def text_of(app: AppTest) -> str:
     """
-    Every rendered text as read (markdown escapes and bold markers removed),
-    tables and page links included. Every state test reads the page through
-    here, so every rendered state is scanned for trading or advice wording.
+    Every rendered text as read (markdown escapes and bold markers removed):
+    tables, page links, widget labels, options and help, expander labels and
+    code included. Every state test reads the page through here, so every
+    rendered state is scanned for trading or advice wording.
     """
 
     parts = [
@@ -58,10 +107,9 @@ def text_of(app: AppTest) -> str:
     parts += [f"{metric.label} {metric.value}" for metric in app.metric]
     parts += [link.proto.label for link in app.get("page_link")]
     parts += [button.proto.label for button in app.get("link_button")]
+    parts += widget_text(app)
     text = " ".join(parts).replace("\\$", "$").replace("**", "")
-    lowered = text.lower()
-    for word in ADVICE_WORDS:
-        assert word not in lowered, word
+    scan_for_advice(text)
     return text
 
 
@@ -111,15 +159,20 @@ def test_every_destination_showing_data_labels_it_synthetic(key):
 
 def test_copy_has_no_trading_advice_or_decision_codes():
     shown = []
-    for value in vars(wording).values():
-        if isinstance(value, str):
+    for name, value in vars(wording).items():
+        if name == "PENDING":  # the decision tags (last field) are never shown
+            shown += [" ".join(item[:3]) for item in value]
+        elif isinstance(value, str):
             shown.append(value)
         elif isinstance(value, tuple | dict):
             shown.append(repr(value))
-    text = " ".join(shown).lower()
-    for word in (*ADVICE_WORDS, "best", "optimal", "guarantee", "safe"):
-        assert word not in text, word
-    assert "od8" not in text and "od5" not in text
+    text = " ".join(shown)
+    scan_for_advice(text)
+    for word in ("optimal", "guarantee", "safe"):
+        assert word not in text.lower(), word
+    assert not re.search(r"\bOD\d", text, re.IGNORECASE)
+    # The rendered Overview names no decision code either.
+    assert not re.search(r"\bOD\d", text_of(running()), re.IGNORECASE)
 
 
 # --- Overview ---
@@ -140,7 +193,7 @@ def test_the_overview_summarizes_the_data_and_what_needs_attention():
         assert f">{word}</span>" in text, word
     # Waiting on a decision: dated, each item named as pending.
     assert f"As recorded on {wording.PENDING_AS_OF}." in text
-    for _, title, sentence in wording.PENDING:
+    for _, title, sentence, _ in wording.PENDING:
         assert title in text and sentence in text
     # The exact counts sit in the expander.
     counts = next(f.value for f in app.dataframe if "Sessions with a close" in f.value.columns)
@@ -308,7 +361,8 @@ def test_evidence_lists_data_versions_calculations_and_provenance_from_metadata(
     for line in (*wording.CALCULATIONS, wording.BUILDER_STEP, wording.MODELS):
         assert line in text, line
     assert f"version {synthetic.GENERATOR_VERSION}, seed {synthetic.SEED}" in text
-    assert "Data after 2024-12-31 is never shown" in text
+    assert "Data from 2025-01-01 on is reserved for one final test" in text
+    assert "the demo data ends 2024-12-31" in text
     for assumption in (*labels.HONEST_LABELS, labels.FRACTIONAL_SHARES, labels.DAILY_CLOSES):
         assert assumption in text, assumption
     for limitation in labels.LIMITATION_TEXT.values():
@@ -345,3 +399,126 @@ def test_explore_choices_are_kept_when_visiting_another_page():
     assert app.multiselect(key=explore.FUNDS_KEY).value == [bond.fund_id, cash.fund_id]
     assert app.radio(key=explore.PERIOD_KEY).value == "custom"
     assert "Shown: 2010-01-01 to 2015-12-31." in text_of(app)
+
+
+# --- the advice scan over states other than the defaults ---
+
+
+def _builder_entered(app):
+    from stock_agent.app import builder
+
+    app = app.radio(key=builder.RULE_KEY).set_value(builder.ENTERED).run()
+    for fund, points in (("synthetic-equity", 60), ("synthetic-bond", 40), ("synthetic-cash", 0)):
+        app = app.number_input(key=f"{builder.WEIGHT_PREFIX}{fund}").set_value(points).run()
+    return app
+
+
+def _builder_each_alternative(app):
+    from stock_agent.app import builder
+
+    for option in app.radio(key=builder.VARIANT_KEY).options:
+        key = next(k for k, v in _variant_labels(app).items() if v == option)
+        app = app.radio(key=builder.VARIANT_KEY).set_value(key).run()
+        text_of(app)
+    return app
+
+
+def _variant_labels(app):
+    from stock_agent.app import builder, mix
+
+    weights = mix.equal_weights(app.multiselect(key=builder.FUNDS_KEY).value)
+    held = [h for h in synthetic.demo_histories() if h.fund_id in weights]
+    return {v.key: v.label for v in mix.variants(held, weights)}
+
+
+def _builder_over_100(app):
+    app = _builder_entered(app)
+    return app.number_input(key="builder_weight_synthetic-equity").set_value(70).run()
+
+
+def _builder_empty(app):
+    from stock_agent.app import builder
+
+    return app.multiselect(key=builder.FUNDS_KEY).set_value([]).run()
+
+
+def _explore_custom_years(app):
+    from stock_agent.app import explore
+
+    app = app.radio(key=explore.PERIOD_KEY).set_value("custom").run()
+    years = next(s for s in app.select_slider if s.key.startswith(explore.YEARS_KEY))
+    return years.set_range(2008, 2009).run()
+
+
+def _explore_gap_and_stale(app):
+    from stock_agent.app import explore
+
+    funds = ["synthetic-bond-distribution-gap", "synthetic-bond-stale"]
+    return app.multiselect(key=explore.FUNDS_KEY).set_value(funds).run()
+
+
+def _explore_empty(app):
+    from stock_agent.app import explore
+
+    return app.multiselect(key=explore.FUNDS_KEY).set_value([]).run()
+
+
+STATES = {
+    "builder-entered": ("builder", _builder_entered),
+    "builder-alternatives": ("builder", _builder_each_alternative),
+    "builder-over-100": ("builder", _builder_over_100),
+    "builder-empty": ("builder", _builder_empty),
+    "explore-custom-years": ("explore", _explore_custom_years),
+    "explore-gap-and-stale": ("explore", _explore_gap_and_stale),
+    "explore-empty": ("explore", _explore_empty),
+}
+
+
+@pytest.mark.parametrize("state", sorted(STATES))
+def test_non_default_states_carry_no_advice_wording(state):
+    key, drive = STATES[state]
+    app = drive(running(key))
+    assert not app.exception, [e.value for e in app.exception]
+    assert text_of(app)
+
+
+def test_the_scan_catches_advice_and_spares_the_approved_disclaimer():
+    scan_for_advice(labels.CANNOT_TELL + " " + wording.CANNOT_TELL)
+    for phrase in ("You should hold more bonds.", "Consider this mix.", "The best fund.", "buy"):
+        with pytest.raises(AssertionError):
+            scan_for_advice(phrase)
+
+
+# --- pending items and the sealed date stay tied to the project's records ---
+
+STATE_FILE = REPO / "docs" / "PROJECT_STATE.md"
+
+
+def _pending_paragraph() -> str:
+    text = STATE_FILE.read_text(encoding="utf-8")
+    start = text.index("- Pending:")
+    end = text.find("\n\n", start)
+    return " ".join(text[start:end].split())
+
+
+def test_every_pending_item_still_waits_for_a_pending_decision():
+    import datetime
+
+    datetime.date.fromisoformat(wording.PENDING_AS_OF)
+    pending = _pending_paragraph()
+    for _, title, _, decision in wording.PENDING:
+        if decision is not None:
+            assert decision in pending, (
+                f"'{title}' waits for {decision}, which docs/PROJECT_STATE.md no longer lists "
+                "as pending: update wording.PENDING and PENDING_AS_OF."
+            )
+
+
+def test_the_sealed_date_is_the_owners_lockbox_and_no_demo_data_reaches_it():
+    from stock_agent.app import status
+    from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
+
+    assert status.SEALED_FROM == MODEL_HOLDOUT_START
+    for history in synthetic.demo_histories():
+        assert (history.records["date"] < status.SEALED_FROM).all(), history.fund_id
+    assert pd.Timestamp(synthetic.CALENDAR_END, tz="UTC") < status.SEALED_FROM

@@ -144,6 +144,76 @@ def test_no_role_shift_without_both_roles_or_ten_points_to_give():
     assert mix.TOWARD_DEFENSIVE in keys and mix.TOWARD_EQUITY not in keys
 
 
+def test_a_side_holding_exactly_ten_points_gives_all_of_it_and_lands_on_zero():
+    # Regression: in floating point 0.1 - 0.1 * 0.1 / 0.1 is -1.4e-17, which made
+    # the alternative's weights negative and the page raise.
+    found = {v.key: v for v in mix.variants((A, B), {"a": 0.1, "b": 0.9})}
+    assert found[mix.TOWARD_DEFENSIVE].weights == {"a": 0.0, "b": 1.0}
+    found = {v.key: v for v in mix.variants((A, B), {"a": 0.9, "b": 0.1})}
+    assert found[mix.TOWARD_EQUITY].weights == {"a": 1.0, "b": 0.0}
+    for variant in found.values():
+        row = mix.concentration_row(variant.label, (A, B), variant.weights)
+        assert row["Funds held"] in {"1", "2"}
+    split = {v.key: v for v in mix.variants((A, B, C), {"a": 0.9, "b": 0.05, "c": 0.05})}
+    assert split[mix.TOWARD_EQUITY].weights == {"a": 1.0, "b": 0.0, "c": 0.0}
+
+
+def _grid(count: int, steps: int = mix.TOTAL_POINTS // mix.WEIGHT_STEP):
+    """Every split of 100 points in steps of 5 over `count` funds."""
+
+    if count == 1:
+        yield (steps * mix.WEIGHT_STEP,)
+        return
+    for first in range(steps + 1):
+        for rest in _grid(count - 1, steps - first):
+            yield (first * mix.WEIGHT_STEP, *rest)
+
+
+STALE = fund("s", "bonds")
+
+
+@pytest.mark.parametrize(
+    "funds", [(A, B), (A, C), (A, B, C), (A, B, C, STALE)], ids=["a-b", "a-c", "a-b-c", "a-b-c-s"]
+)
+def test_every_alternative_on_the_five_point_grid_is_a_valid_mix(funds):
+    ids = [history.fund_id for history in funds]
+    checked = 0
+    for points in _grid(len(ids)):
+        entered = dict(zip(ids, points, strict=True))
+        if not any(entered.values()):
+            continue
+        weights = mix.from_points(entered)
+        held = [h for h in funds if h.fund_id in weights]
+        for variant in mix.variants(held, weights):
+            assert min(variant.weights.values()) >= 0.0, (entered, variant)
+            assert sum(variant.weights.values()) == pytest.approx(1.0, abs=1e-12)
+            mix.concentration(held, variant.weights)  # raises on an invalid mix
+            mix.concentration_row(variant.label, held, variant.weights)
+            checked += 1
+    assert checked > 0
+    # Equal weights over every subset are valid starting points too.
+    for size in range(1, len(funds) + 1):
+        subset = funds[:size]
+        weights = mix.equal_weights([h.fund_id for h in subset])
+        for variant in mix.variants(subset, weights):
+            assert min(variant.weights.values()) >= 0.0
+            mix.concentration(subset, variant.weights)
+
+
+def test_shift_labels_name_the_roles_actually_held():
+    labels = {v.key: v.label for v in mix.variants((A, B), {"a": 0.5, "b": 0.5})}
+    assert labels[mix.TOWARD_DEFENSIVE] == "Ten points moved from the equity fund to the bond fund"
+    assert labels[mix.TOWARD_EQUITY] == "Ten points moved from the bond fund to the equity fund"
+    other = fund("e", "equity")
+    labels = {v.key: v.label for v in mix.variants((A, other, C), {"a": 0.4, "e": 0.4, "c": 0.2})}
+    assert labels[mix.TOWARD_DEFENSIVE] == "Ten points moved from equity funds to the cash fund"
+    labels = {v.key: v.label for v in mix.variants((A, B, C), {"a": 0.6, "b": 0.3, "c": 0.1})}
+    assert (
+        labels[mix.TOWARD_DEFENSIVE]
+        == "Ten points moved from the equity fund to bond and cash funds"
+    )
+
+
 def test_variant_labels_never_rank_or_advise():
     text = " ".join(v.label for v in mix.variants((A, B, C), {"a": 0.6, "b": 0.3, "c": 0.1}))
     for word in (" buy", " sell", "recommend", "better", "best", "optimal", "outperform"):
