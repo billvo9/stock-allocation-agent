@@ -6,12 +6,19 @@ Import boundaries of the `rl` package.
 - It reaches no network or stored data.
 - Only the scenario generator touches the latent (true) returns; the
   environment, observations and policies see observed data only.
-- PR 1 adds no dependency: no gymnasium, torch, stable-baselines3 or SciPy.
+- The optional learning libraries stay in two modules: gymnasium in
+  `gym_env` and `ppo`, torch and stable-baselines3 in `ppo` only. Every
+  other module, and importing the package, works without them. SciPy is
+  not used at all.
 """
 
 from __future__ import annotations
 
 import ast
+import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -28,10 +35,11 @@ FORBIDDEN_TOP_LEVEL = {
     "yfinance",
     "edgar",
     "duckdb",
-    "gymnasium",
-    "torch",
-    "stable_baselines3",
     "scipy",
+}
+LEARNING_LIBRARIES = {
+    "gym_env": {"gymnasium"},
+    "ppo": {"gymnasium", "torch", "stable_baselines3"},
 }
 
 
@@ -59,9 +67,35 @@ def test_project_imports_stay_inside_rl_and_the_seed_utility(path):
 
 
 @pytest.mark.parametrize("path", MODULES, ids=lambda p: p.stem)
-def test_no_network_storage_or_new_dependency_imports(path):
+def test_no_network_storage_or_scipy_imports(path):
     top_level = {name.split(".")[0] for name in _imports(path)}
     assert not top_level & FORBIDDEN_TOP_LEVEL, sorted(top_level & FORBIDDEN_TOP_LEVEL)
+
+
+@pytest.mark.parametrize("path", MODULES, ids=lambda p: p.stem)
+def test_learning_libraries_stay_in_their_two_modules(path):
+    top_level = {name.split(".")[0] for name in _imports(path)}
+    learning = top_level & {"gymnasium", "torch", "stable_baselines3"}
+    assert learning <= LEARNING_LIBRARIES.get(path.stem, set()), sorted(learning)
+
+
+def test_importing_the_package_and_its_core_loads_no_learning_library():
+    script = (
+        "import json, sys\n"
+        "import stock_agent.rl.env, stock_agent.rl.harness, stock_agent.rl.config\n"
+        "import stock_agent.rl.learned, stock_agent.rl.health, stock_agent.rl.safety\n"
+        "print(json.dumps(sorted(m for m in sys.modules if m.split('.')[0] in "
+        "('gymnasium', 'torch', 'stable_baselines3'))))"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(PACKAGE.parents[1])},
+        timeout=120,
+        check=True,
+    )
+    assert json.loads(completed.stdout) == []
 
 
 @pytest.mark.parametrize(
