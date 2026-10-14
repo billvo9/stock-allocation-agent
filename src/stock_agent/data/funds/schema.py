@@ -398,7 +398,10 @@ def loads_strict(text: str) -> Any:
     except FundDataRefused:
         raise
     except (TypeError, ValueError) as error:
-        raise refuse(RefusalReason.INVALID_JSON, str(error)) from error
+        failure = str(error)
+    # Raised after the except block: a JSONDecodeError holds the whole document
+    # (`.doc`), which may be a provider response, so the refusal never chains it.
+    raise refuse(RefusalReason.INVALID_JSON, failure)
 
 
 def dumps_canonical(value: Any) -> str:
@@ -550,7 +553,8 @@ class BatchRecord:
     `request` covers [start, end_exclusive) as session dates. `instruments`
     maps each requested fund to the source's symbol and optional security id.
     `retrieved_at` is the actual retrieval time (UTC). `raw_payload_sha256`
-    hashes the raw provider bytes stored beside the tables. `vintage_note`
+    hashes the adapter's raw payload stored beside the tables (the provider's
+    bytes, or an adapter-documented canonical envelope). `vintage_note`
     describes what the source's values reflect at retrieval.
     `assumed_availability_rule` must be None until OD9 approves a rule.
     """

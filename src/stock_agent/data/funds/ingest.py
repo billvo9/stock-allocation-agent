@@ -9,7 +9,9 @@ Private root (caller-given; there is no default)
 
 Layout: `<root>/<batch_id>/`
     batch.json                 the batch record (request, adapter, retrieval time, notes)
-    raw_payload.bin            the provider's bytes, exactly as retrieved
+    raw_payload.bin            the adapter's raw payload: the provider's bytes exactly
+                               as retrieved, or the canonical envelope of allowlisted
+                               fields that the adapter's own documentation defines
     prices.parquet, distributions.parquet, splits.parquet
     missing_sessions.parquet   the structured missing-session report
     manifest.json              file and table hashes, written last
