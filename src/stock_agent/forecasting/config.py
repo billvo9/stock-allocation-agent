@@ -28,7 +28,10 @@ from stock_agent.model_diagnostics.record import sha256_json
 
 CONFIG_SCHEMA_VERSION = "1.0"
 TRACKS = ("equity_cross_sectional", "etf_return_risk")
-DATA_SOURCES = {"synthetic_equity_panel": "equity_cross_sectional"}
+DATA_SOURCES = {
+    "synthetic_equity_panel": "equity_cross_sectional",
+    "synthetic_etf_panel": "etf_return_risk",
+}
 LINEAR_CANDIDATES = ("ridge", "lasso", "elastic_net")
 CHALLENGERS = ("hist_gradient_boosting",)
 BENCHMARKS = (None, "equal_weight")

@@ -56,8 +56,8 @@ from stock_agent.features.invariant_labels import frozen_universe_labels
 from stock_agent.features.missingness import missingness_table
 from stock_agent.features.training import LabelSpec
 from stock_agent.forecasting import artifacts as fa
+from stock_agent.forecasting import etf, nonlinear
 from stock_agent.forecasting import metrics as em
-from stock_agent.forecasting import nonlinear
 from stock_agent.forecasting.config import ConfigError, ExperimentConfig
 from stock_agent.forecasting.synthetic import (
     SyntheticEquityPanel,
@@ -114,7 +114,7 @@ class ExperimentResult:
     run_id: str
     record: dict[str, object]
     directory: Path
-    diagnostics: t2.DiagnosticsRun
+    diagnostics: t2.DiagnosticsRun | None  # None for the ETF track (no T2 contract run)
     tables: dict[str, pd.DataFrame]
     entries: tuple[RegistryEntry, ...]
 
@@ -457,11 +457,14 @@ def run_experiment(
 
 
 def _run(config, root, provenance, started_at, clock) -> ExperimentResult:
-    if config.track != "equity_cross_sectional":
-        raise ConfigError(f"Track {config.track!r} is not implemented by this runner.")
     for key in ("code", "environment"):
         if key not in provenance:
             raise ValueError(f"provenance must include {key!r}.")
+    if config.track == "etf_return_risk":
+        identifier, record, directory, tables, entries = etf.run_etf(
+            config, root, provenance, started_at, clock, write_directory, _json_bytes
+        )
+        return ExperimentResult(identifier, record, directory, None, tables, entries)
     dataset = build_equity_dataset(config)
     models = equity_models(config, dataset)
     settings = diagnostics_config(config, models, dataset.label_spec)

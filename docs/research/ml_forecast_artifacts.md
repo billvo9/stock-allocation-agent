@@ -83,6 +83,9 @@ usable = forecasts_asof(artifact.frame, decision_time)
   - A policy trained on forecasts dated [a, b] and evaluated on [c, d] must still use c > b, plus a gap of at least the forecast horizon plus the entry lag. A forecast's label window overlaps the policy's reward window.
   - The forecasting design itself (feature families, grids, model classes) was chosen by a researcher who saw the whole development period. That design-level selection is not removed by out-of-fold construction. Count it as a variant (multiple testing).
 - **Forecast kinds.** Use `interval` artifacts only where a risk input needs a range. Interval calibration is reported in the experiment run, not assumed.
+- **ETF track artifacts** (`ml_etf_track.md`):
+  - `etf.ret.ridge` is an `interval` artifact. Its 80% central interval is μ̂ ± z·σ̂·√h, built from the same model's volatility forecast; its coverage is measured in the run.
+  - `etf.vol.ridge` (log realized volatility) and the challenger's artifacts are `point` artifacts.
 
 ## Versioning
 

@@ -29,7 +29,7 @@ A config (`configs/ml/*.yaml`, schema 1.0) defines the whole experiment:
 
 | Section | Contents |
 |---|---|
-| `data` | `source` (only `synthetic_equity_panel` in this PR) and its `params`, including the data seed |
+| `data` | `source` (`synthetic_equity_panel` for the equity track, `synthetic_etf_panel` for the ETF track; see `ml_etf_track.md`) and its `params`, including the data seed |
 | `universe` | `id` and `min_history_sessions` (frozen eligible universe) |
 | `features` | `families` (contracted; see `ml_features.md`) |
 | `label` | `horizon`, `entry_lag` (≥ 1: same-close labels are refused), `benchmark` (`equal_weight` or null) |
@@ -72,6 +72,8 @@ reports/ml/
   registry/               one new version per candidate (ml_registry.md)
   ledger.jsonl            one line per attempt, failures included
 ```
+
+The ETF track writes no T2 contract run (it is not a cross-sectional panel). Its experiment directory holds `predictions`, `metrics`, `selection`, `checks` and `missingness` tables instead (`ml_etf_track.md`).
 
 **Every run registers its candidates.**
 - Each candidate is registered as `<model_prefix>.<model>`. Its parent is the previous version, and its research scope is `<track>:<data class>:<target>:h<horizon>:<universe id>`.
