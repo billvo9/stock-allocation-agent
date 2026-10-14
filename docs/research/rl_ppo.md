@@ -76,12 +76,18 @@ close c_{j+1}   the trade executes (cost charged on drifted weights)
   span return G_i - 1, where G_i is the asset's growth over the span. The
   reward for that call is log(W_end / W_start), one span reward.
 - **The universe-complete rule.** A trade waits for a session where every
-  asset has a close. D6 only requires the traded assets' closes; the two are
-  equal whenever a policy holds or targets every asset (every softmax policy
-  does) and the stricter rule is the same for every compared policy.
-- **Schedule (D7).** Decisions at indices j >= o with (j - o) mod k = 0, the
-  last at J - 3 so its trade still earns one span. Every compared policy uses
-  the same k and o.
+  asset has a close. Corrected D6 (2026-10-14) requires the closes of every
+  held or targeted asset; the two are equal whenever a policy holds or
+  targets every asset (every softmax policy does), the stricter rule is the
+  same for every compared policy, and because decisions happen only on
+  complete sessions, a deferred rebalance never meets a newer decision (D6's
+  open superseding sub-question does not arise here).
+- **Schedule (D7).** Scheduled indices j >= o with (j - o) mod k = 0, up to
+  T*, the last scheduled index <= J - 2. T* is the episode's final
+  observation, on the schedule like every decision state, so a learner
+  bootstraps from a state of the same kind; decisions are the scheduled
+  indices before T*. Up to k - 1 trailing complete sessions of the window
+  stay unbooked. Every compared policy uses the same k and o.
 - **Start (D3).** 100% cash; the first execution close pays the build.
 
 ### 2.3 Episode accounting
@@ -96,11 +102,23 @@ The call at c_{j'} is booked before the observation at c_{j'} is built (the
 transition API couples the trade at a close with the next span's earnings).
 The observation reads only market rows <= c_{j'}, the post-trade weights at
 c_{j'} (which do not depend on the next span's returns) and wealth marked at
-closes <= c_{j'}. `test_an_observation_at_d_is_unchanged_by_every_return_after_d`
-proves the observation is invariant to every return after c_{j'}.
+closes <= c_{j'}, and `info` holds only facts known at the close of c_{j'}
+(decision index and session, the last executed trade's session, cost and
+turnover, and the transition and reward identity).
+`test_the_observation_and_info_at_d_ignore_everything_after_d` proves both are
+invariant to every return, close, feed lag and cost multiplier after c_{j'},
+on the calm, missing-close, stale-feed and high-cost scenarios.
+
+Because of the trade-and-earn transition API, the environment's own state
+(`ledger`, `wealth_path`, the pending drifted weights) already contains the
+span after c_{j'} when the observation is returned. A policy or learner must
+never read environment state or the reward as an input: the observation is
+the only decision input, and the reward is a training signal only.
 
 The window end is a time limit (`truncated=True`, never `terminated`): the
 investor would carry on, so a learner may bootstrap from the final state.
+`truncated` depends on the window's remaining complete sessions, so it is an
+episode-boundary signal, never an observation.
 
 ### 2.4 Replay and fairness
 
@@ -123,7 +141,7 @@ to real funds.
 | Regime | Equity drift / vol (annual) | Notes |
 |---|---|---|
 | calm | 6% / 15% | equity-bond correlation -0.2 |
-| crash | -160% / 45% (log drift, about -22% over 40 sessions) | Student-t (4), bonds rally |
+| crash | -225% / 35% (log drift; 40-session median about -30%, under 1% of segments non-negative) | Student-t (4), bonds rally |
 | high_correlation | 3% / 20% | equity-bond correlation 0.9 |
 | extreme_volatility | 0% / 80% | Student-t (3), bond vol 25% |
 | stale_feed | calm | the data feed lags 1-5 sessions (4% of sessions start a lag) |
@@ -137,8 +155,14 @@ and `mixed` (every regime in turn; the training scenario).
 
 - **Replay.** Each draw comes from a legacy `RandomState` stream (frozen across
   NumPy versions) seeded by SHA-256 of (seed, scenario, generator version,
-  purpose, segment). A golden test pins one draw. An unsupported generator
+  purpose, segment). Golden tests pin every scenario: closes, feed lags, cost
+  multipliers and regimes bitwise, and returns by per-asset sums to 1e-9
+  (floats pass through platform maths libraries). An unsupported generator
   version is refused, never approximated.
+- **Generator 1.1.0** (2026-10-14) made the crash regime reliably severe:
+  1.0.0's crash segments were non-negative 8.9% of the time (median -22%).
+  The version enters every seed, so 1.1.0 changes every draw; 1.0.0 is
+  refused.
 - **Returns.** Log returns are simulated and exponentiated, so every return
   exceeds -100%. The return at the close after a gap covers the whole gap.
 - **Cash** earns 0 (D4 (a), pending): it understates cash, so no strategy is
@@ -156,7 +180,9 @@ and `mixed` (every regime in turn; the training scenario).
 `default_split_plan()`: train on `mixed`, seeds 0-15, sessions [60, 900);
 dev on every scenario, seeds 100-103, [960, 1200); test on every scenario,
 seeds 200-203, [1260, 1500); embargo 60 sessions. `SplitPlan` rejects
-overlapping seeds and windows inside the embargo (`LeakageError`).
+overlapping seeds and windows inside the embargo (`LeakageError`), and
+`check_lookback(lookback)`, called by every trainer, requires the embargo to
+cover the feature lookback and the train window to start after it.
 Hyperparameters and checkpoints are chosen on dev only; the test fold is
 reported once, after every choice is fixed.
 
@@ -182,7 +208,8 @@ Controls, each with a negative test:
 | The cost regime is the one known at d | `test_the_cost_regime_is_the_one_known_at_d_not_at_execution` |
 | Normalization is fitted on the train fold only | `test_normalization_is_fitted_on_the_training_fold_only` |
 | Normalization never reads sessions after the train window | `test_normalization_never_reads_sessions_after_the_training_window` |
-| The env's observation ignores every later return | `test_an_observation_at_d_is_unchanged_by_every_return_after_d` |
+| The env's observation and info ignore every later return, close, feed lag and cost multiplier | `test_the_observation_and_info_at_d_ignore_everything_after_d` |
+| A learned policy trains only with a normalizer fitted on its plan's train fold | `test_training_refuses_a_normalizer_fitted_outside_the_train_fold`, `test_training_refuses_an_identity_normalizer` |
 
 Normalization: market features only (they do not depend on the policy, so
 the statistics are fixed before any training), mean and standard deviation
@@ -230,7 +257,7 @@ and see the same observation at the same decisions of the same environment.
 | equal_weight | 1/3 in each fund, no cash, at every decision |
 | fixed_balanced | Rebalance to 60 / 30 / 10 / 0 |
 | inverse_volatility | w_i proportional to 1 / sigma_i (60 sessions), funds only |
-| mean_variance | max mu'w - (5/2) w'Sigma w, long-only; 60-session sample mean and covariance, cash riskless |
+| mean_variance | max mu'w - (5/2) w'Sigma w, long-only; sample mean and covariance over the 60-session window's complete rows, cash riskless |
 | linear_softmax_cem | logit_i = b_i + beta_mom z(ret_20)_i + beta_vol z(vol_20)_i, cash 0; CEM |
 | fallback_reference | Fixed balanced; hold on stale inputs |
 
@@ -250,6 +277,17 @@ and see the same observation at the same decisions of the same environment.
   far noisier than CEM's ranking at this size. Each iteration's mean
   parameters are a checkpoint; the best mean dev-fold log growth selects
   one. The test fold is never built during training (a test spies on it).
+  Training takes a `SplitPlan` and refuses a normalizer not fitted on its
+  train fold (or an identity one), an embargo shorter than the lookback and
+  overlapping seeds. `LearnedResult.to_dict()` records the frozen normalizer
+  and its provenance, the folds, the transition and reward identity with the
+  engineering-only label, the environment schedule and every scenario's
+  fingerprint.
+- **Diagnostics are not metrics.** `EpisodeRecord.engineering_diagnostics()`
+  (log growth, wealth ratio, largest observed decline, cost, turnover, all
+  scaled to the first execution close) serves tests and health checks only.
+  Risk and performance metrics are owner-gated formulas; none of these
+  numbers may enter a strategy comparison table.
 
 ## 8. Health gate and fallback
 
