@@ -126,3 +126,158 @@ Sessions in the requested range with no close of any basis are not an error. The
 - **Leakage risks.** Adjusted levels used as features; distributions backfilled after the fact; treating the retrieval date as the date information was available; a 2025 pay date slipping into the development store.
 - **How practitioners validate.** Prefix stability (re-retrieve later and check that earlier observations are unchanged, or record each change as a new vintage); cross-checking raw closes plus actions against the vendor's adjusted series, as a flag only (F5.3); coverage reports from the missing-session table.
 - **Next to learn.** How CRSP-style adjustment factors are built, and why the ex-date return P_ex/(P_{ex−1} − D) − 1 differs slightly from F5.1's (P_ex + D)/P_{ex−1} − 1.
+
+## Tiingo adapter
+
+Status (2026-10-14): code and offline tests only. No request has been made to Tiingo, and no Tiingo data exists in this repository.
+
+Owner approvals and requirements (2026-10-14):
+- Evaluate the Tiingo Starter (free) API for private, local research, subject to its terms and a coverage audit, for VTI, AGG and SHV. Data is never redistributed or committed, and credentials are never exposed. The real audit runs only after the owner confirms the key is configured and authorizes the run.
+- No post-2024 metadata and no adjusted historical level in any stored artifact. Only allowlisted columns are requested and stored. Splits are stored only from a verified allowlist. There is no reconciliation against vendor-adjusted series in this code; an isolated procedure is proposed below.
+
+Code:
+- `data/vendors/tiingo.py`: `TiingoAdapter`, an F1 `FundDataAdapter`. It lives outside `data/funds`, whose boundary tests ban network imports, and uses only the standard library (`urllib.request`).
+- `scripts/audit_fund_coverage.py`: the coverage audit (prepared, not run).
+- `tests/test_tiingo_adapter.py`: offline tests with invented fixture values and a sentinel key.
+
+### Why an allowlist (the lockbox information-content rule)
+
+`docs/product/architecture.md`, section 4, rule 7, says that "dated" means information content.
+- **Adjusted fields.** Tiingo's adjusted fields (`adjClose`, `adjHigh`, `adjLow`, `adjOpen`, `adjVolume`) are scaled by every split and distribution Tiingo knows at retrieval, including those after 2024. So an adjusted level for a 2024 session encodes holdout-period distributions.
+- **Metadata.** The metadata endpoint describes the vendor at retrieval. Its `endDate` and `description` postdate the holdout start.
+- **Raw closes.** A raw close is not rescaled for later events. It is still a vendor observation, subject to correction (see the list below).
+
+The adjusted fields and the metadata are never requested, parsed or stored.
+
+### Request
+
+- **One call per fund**, prices only; the metadata endpoint is never called. The request is `GET https://api.tiingo.com/tiingo/daily/{ticker}/prices?startDate=…&endDate=…&format=json&resampleFreq=daily&columns=date,close,volume,divCash,splitFactor` [endpoint and parameter names recalled from Tiingo's documentation; unverified].
+- **Date bounds.** Tiingo's `endDate` is inclusive, so the request asks for `endDate = end_exclusive − 1 day`. `end_exclusive` may be at most 2025-01-01, so `endDate` is at most 2024-12-31. Anything else is refused before the key is read or any request is made.
+- **Failures.** Any status other than 200, including 429 and 5xx, refuses the batch. No retry is made; the owner allows at most one bounded retry.
+- **Retrieval time.** `retrieved_at` comes from the injected clock, read after the last response.
+
+### Field allowlist and fail-closed parsing
+
+- **Exact field set.** Each element must hold exactly `date`, `close`, `volume`, `divCash` and `splitFactor`.
+  - Any other field refuses the batch with `non_allowlisted_field`, whether it is `adjClose`, `high` or a field nobody has heard of.
+  - A missing allowlisted field is `schema_mismatch`.
+
+  This is how the audit learns whether Tiingo honours `columns` [unverified].
+- **If Tiingo ignores `columns`, every batch is refused.** In that case the endpoint necessarily exposes information outside the lockbox boundary. The owner must then approve an isolated audit procedure (proposed below) or choose another source. The lockbox is never reinterpreted to let the data through.
+- **Refused responses.** A refused response is never stored or logged. Refusal details name fields, dates and element indices, never a value.
+- **Other refusals:**
+  - a wrong type (a string, `null` or a boolean where a number belongs);
+  - a non-finite number (`NaN`, `Infinity`, `1e999` or an integer beyond the float range);
+  - a non-positive close, a fractional, negative or oversized volume, a negative `divCash` or a non-positive `splitFactor`;
+  - a date that is not exactly `YYYY-MM-DDT00:00:00.000Z`, a repeated date, or a date outside the request;
+  - any date on or after the holdout start (`lockbox_violation`).
+
+  Vendor-specific reasons are `TiingoRefusal` values on a `FundDataRefused` subclass, so F1's own `RefusalReason` is unchanged.
+
+### Mapping
+
+| Tiingo | F1 |
+|---|---|
+| `date` | `session_date`, `ex_date` or `effective_date` |
+| `close`, `volume` | a `prices` row with basis `unadjusted` (the only basis this adapter writes) |
+| `divCash > 0` | a `distributions` row: `amount = divCash`, `per_share_as_paid` [share basis unverified until the audit], type `unknown`, `source_sequence` 0; declaration, record and pay dates NULL |
+| `splitFactor != 1` | a `splits` row only for a verified share-count split (below); any other factor refuses the batch |
+| the requested ticker | `fund_id` and `source_symbol`; `source_security_id` NULL |
+
+### Splits: verified share-count changes only
+
+Tiingo's `splitFactor` is not assumed to be a pure share-count change. A split is stored only if its (ticker, session) is in the code-reviewed `VERIFIED_SPLITS` allowlist, and every entry cites a primary source:
+
+| Ticker | Session | New shares per old | Source |
+|---|---|---|---|
+| VTI | 2008-06-18 | 2.0 | SEC EDGAR 0000036405/000093247108001251, "split-adjusted trading from 2008-06-18" [owner-provided; not fetched here] |
+
+- **`unverified_split_factor`:** `splitFactor != 1` on any session that is not in the allowlist.
+- **`split_factor_mismatch`:** an allowlisted session inside the request whose vendor factor differs, is 1, or whose row is missing.
+- **`split_price_mismatch`:** at an allowlisted split, (raw close × factor) / the previous session's raw close lies outside 1 ± 0.25. The raw close may already be split-adjusted. The same reason applies when the previous session's close is absent, including a request that starts on the split date.
+
+### Raw payload and hashes
+
+- **The payload.** `raw_payload` is the canonical JSON (sorted keys, compact) of the allowlisted fields actually used: `{envelope_version "3", source_id, start_date, end_date, fields, prices: {ticker: [elements]}}`. F1 hashes it (`raw_payload_sha256`).
+- **No original hashes.** No hash of an original vendor response is kept, because a hash of a future-informed payload must not be stored as if it were an admissible input.
+- **The notes.** `vintage_note` records the fields that were not requested: the metadata endpoint and `adjClose`, `adjHigh`, `adjLow`, `adjOpen`, `adjVolume`, `high`, `low` and `open`.
+- **Re-parsing.** `parse_payload` re-runs every check on the stored bytes, and the audit requires the stored tables to equal a re-parse.
+
+### What Tiingo does not provide
+
+- **Distribution dates and types.** Tiingo gives no declaration, record or pay date, and no distribution type: `divCash` is one number per ex-date, so income and capital gains are not separated. These stay NULL and `unknown`, and are never invented. The open 2025 pay-date question above cannot arise for Tiingo rows, but nothing downstream can use Tiingo for pay timing.
+- **Security identifier.** No stable security id is requested, so instruments are mapped by ticker only.
+- **Revision history.** Tiingo serves only its current view of history.
+
+### What cannot be a true point-in-time vintage
+
+Each batch's `retrieved_at` is the only observed timestamp, and a later retrieval is a new batch. None of the following is known as it stood on its session date:
+- **Raw closes** are as served at retrieval, and vendor corrections are possible.
+- **`divCash` amounts** may have been revised, and their share basis is unverified until the audit.
+- **Split factors** are as the vendor reports them; only allowlisted ones are stored.
+- **No declaration, record or pay dates** are available.
+- **No revision history** comes from Tiingo, so a correction cannot be dated.
+
+### Secrets
+
+- **Header authentication.** The key travels only in the `Authorization: Token <key>` header. It never appears in a URL, the raw payload, the batch record, an exception, a log or the audit output. A test scans every stored byte for a sentinel key.
+- **Reading the key.** It comes from `TIINGO_API_KEY` at fetch time (an injected provider in tests). It is wrapped in an object whose repr is redacted, and is never stored on the adapter. A missing or malformed key raises `TiingoRequestFailed` (`missing_token` or `invalid_token`) without echoing the value.
+- **Network failures.** The expected types (`URLError`, `HTTPException`, `OSError`, `TimeoutError`, `ValueError`) are reported by type name only, together with the reason, ticker and HTTP status. The error is raised outside the except block, so no chained exception, header or response body reaches a traceback.
+  - A `ValueError` from an invalid header value would contain the key, which is why `ValueError` is in this list.
+  - Any other exception type propagates unchanged, so a programming error is not hidden.
+- **Redirects.** The default transport follows no redirects, and it sends the header as an unredirected header.
+
+### Running the coverage audit (after the owner configures the key and authorizes it)
+
+```bash
+read -rs TIINGO_API_KEY && export TIINGO_API_KEY    # typed, not echoed or kept in history
+PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py \
+    --root ~/stock-agent-private/fund_store --authorized
+```
+
+- **Defaults.** `--funds VTI AGG SHV`, `--start 2007-01-01`, and `--end-exclusive` at the holdout start (2025-01-01). That makes three requests.
+- **Refusals before anything runs.** Without `--authorized` the script exits with code 2. It also refuses a `--root` inside the repository (unless it is a subdirectory of the ignored `data/raw/`) and a root that contains the repository.
+- **What a success shows.** A success means Tiingo honoured `columns`: every element had exactly the allowlisted fields, and every reported split was verified.
+- **The divCash share-basis check (before storing).** At each verified split it compares the median `divCash` of the last four pre-split ex-dates with the median of the first four post-split ones. Per-share-as-paid amounts fall by the split factor, so the ratio is near 2 for VTI; split-adjusted amounts give about 1. If the verdict is "split-adjusted", the batch is refused (`divcash_basis_mismatch`) and nothing is stored, because its `per_share_as_paid` label would be wrong.
+- **What it prints.** Aggregates only:
+  - row counts, and the first and last session;
+  - missing NYSE sessions (before the first session, inside the range, after the last);
+  - distributions per year;
+  - verified splits, with the raw-close ratio the adapter enforced;
+  - the share-basis ratio and its verdict;
+  - whether the stored tables equal a re-parse of the stored payload.
+
+  It never prints a price or the key.
+- **What it never does.** It requests no adjusted series and performs no vendor-adjusted reconciliation (it says so), and computes no return (pending OD8 group A, T5-A).
+- **Exit codes.** A refused batch prints `REFUSED <reason>` and exits with 1, with nothing stored. A re-run repeats the requests.
+
+### Still unverified (the audit checks these)
+
+- **Columns.** Whether Tiingo honours `columns`. If it does not, every batch is refused.
+- **`divCash` basis.** Whether `divCash` is per share as paid. The share-basis check at VTI's 2008-06-18 split tests this.
+- **`splitFactor` meaning.** Whether `splitFactor` is new shares per old, on the effective session. The audit requires 2.0 on 2008-06-18 for VTI.
+- **Raw closes.** Whether the raw close is truly unadjusted. The split's raw-close ratio must be near 1; if Tiingo's `close` were split-adjusted, it would be near 2.
+- **Date format.** The exact `date` format.
+
+### Proposed, not implemented: an isolated vendor-adjusted reconciliation
+
+Comparing the project's total return with a vendor's adjusted series (`t5_portfolio_formulas.md`, F5.3) needs adjusted fields. They carry post-2024 information, so this code stops before them. If the owner wants the comparison, a separate procedure could run as follows (each step needs the owner's explicit approval):
+1. **A separate process.** It is not the adapter, the audit script or the research store, and it runs only with a recorded owner approval for that run.
+2. **Temporary storage only.** It requests the adjusted fields into a temporary directory (mode 0o700) outside the research store and the repository.
+3. **Aggregates only, up to 2024-12-31.** It computes only aggregate reconciliation statistics for sessions up to 2024-12-31, for example the count of sessions per fund and year where the vendor's daily adjusted ratio and the approved T5-A total return differ by more than a pre-registered tolerance. It runs only after OD8 group A is approved.
+4. **Deletion.** It deletes the response files before exiting, also on failure. It keeps no row-level output, adjusted value or response hash.
+5. **What it records.** The run date, the request, the tolerance and the aggregates.
+
+One caveat: a daily ratio of adjusted closes cancels later adjustment factors only if the vendor applies one consistent methodology to the whole history it serves. It is not claimed to remove all vintage leakage, which is why nothing from such a run would be persisted.
+
+### Learning notes: the split and share-basis checks
+
+- **Problem.** Make sure a vendor's split and dividend fields mean what the store's labels say, without using any adjusted series.
+- **Raw close across a split.** An unadjusted price falls by the split factor f on the effective session, so (P_t × f) / P_{t−1} ≈ 1 + the day's market move.
+  - Example: P_{t−1} = 120.00, a 2-for-1 split, P_t = 60.60, giving 60.60 × 2 / 120.00 = 1.01.
+  - If the vendor's "raw" close were already split-adjusted, P_{t−1} would read 60.00 and the ratio would be 2.02, so the batch is refused.
+  - The ±0.25 tolerance separates 1 from 2 (or from 0.25 for a 1-for-4 reverse split). A daily move of a broad ETF beyond 25% would be extraordinary.
+- **divCash share basis.** Quarterly dividends per share as paid fall by the split factor at the split, and split-adjusted ones do not. Taking the median of four on each side damps seasonality. The verdict is the nearer of 1 and f on a log scale.
+- **How it can mislead.** A fund that changes its payout near the split can move the ratio. With fewer than two distributions on either side, the verdict is "insufficient distributions" and nothing is concluded.
+- **Leakage.** Every input is a raw observation dated at or before 2024-12-31.
+- **Validation.** Compare with the fund's own distribution notices and the SEC filing cited in the allowlist.
