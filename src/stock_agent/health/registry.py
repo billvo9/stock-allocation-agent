@@ -25,13 +25,16 @@ registry.experiments        multiple-testing counts. Fails when an entry records
 Forecast coverage and calibration come from the registry's export
 (`health.forecast`), not from here.
 
-Health never writes to the registry and changes no stage.
+In the private scope a registry whose versions are all synthetic is at most
+insufficient_evidence (`synthetic_input`); a failure still shows. Health
+never writes to the registry and changes no stage.
 """
 
 from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -253,11 +256,31 @@ def _experiments_check(entries, **common) -> Check:
     )
 
 
+def _cap_synthetic(checks: list[Check], entries) -> list[Check]:
+    """In the private scope, a registry of synthetic versions only is never healthy."""
+
+    if not entries or any(entry.data_class != "synthetic" for entry in entries):
+        return checks
+    return [
+        replace(
+            check,
+            state=HealthState.INSUFFICIENT_EVIDENCE,
+            reason="synthetic_input",
+            summary="Every registered version is synthetic, so the registry says nothing "
+            "about real models.",
+        )
+        if check.state is HealthState.HEALTHY
+        else check
+        for check in checks
+    ]
+
+
 def registry_checks(
     root: Path | None,
     *,
     artifacts_root: Path | None = None,
     now: Callable[[], datetime],
+    allow_synthetic: bool = False,
 ) -> list[Check]:
     evidence = None if root is None else str(root)
     if root is None:
@@ -305,9 +328,10 @@ def registry_checks(
 
     common = {"measured_at": measured_at, "evidence": evidence}
     unverified = [ref for ref, ok in verified.items() if not ok]
-    return [
+    checks = [
         _entries_check(entries, unverified, **common),
         _stages_check(assessments, **common),
         _history_check(reader, events, verified, **common),
         _experiments_check(entries, **common),
     ]
+    return checks if allow_synthetic else _cap_synthetic(checks, entries)

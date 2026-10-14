@@ -166,12 +166,14 @@ def test_a_pass_that_ran_nothing_fails():
 # --- CI runs on main ---------------------------------------------------------------
 
 
-def run(run_id, conclusion, created, status="completed"):
+def run(run_id, conclusion, created, status="completed", branch="main", workflow="CI"):
     return {
         "databaseId": run_id,
         "status": status,
         "conclusion": conclusion,
         "headSha": "6b33c1b215ef89acc600d72021dd013ba6fd56a2",
+        "headBranch": branch,
+        "workflowName": workflow,
         "createdAt": created,
         "url": f"https://github.com/o/r/actions/runs/{run_id}",
         "event": "push",
@@ -194,7 +196,7 @@ def test_the_latest_completed_run_decides():
     )
     assert (check.state, check.value) == (HealthState.HEALTHY, "success")
     assert "run 2 on 6b33c1b215ef" in check.detail
-    assert "1 of the last 2 completed runs failed" in check.detail
+    assert "1 of the last 2 completed CI runs on main failed" in check.detail
 
 
 @pytest.mark.parametrize(
@@ -220,3 +222,27 @@ def test_run_list_states_without_a_judgeable_run():
     assert (garbage.state, garbage.reason) == (HealthState.UNAVAILABLE, "unrecognized_format")
     absent = main_runs_check(None, measured_at=None, now=NOW, evidence=None)
     assert (absent.state, absent.reason) == (HealthState.INSUFFICIENT_EVIDENCE, "not_collected")
+
+
+def test_runs_of_other_branches_or_workflows_are_ignored():
+    check = main_runs(
+        [
+            run(5, "failure", "2026-10-14T17:00:00Z", branch="claude/feature"),
+            run(4, "failure", "2026-10-14T16:00:00Z", workflow="Model health"),
+            run(3, "success", "2026-10-14T12:00:00Z"),
+        ]
+    )
+    assert (check.state, check.value) == (HealthState.HEALTHY, "success")
+    assert "run 3 on" in check.detail
+    assert "2 runs of other workflows or branches ignored" in check.detail
+    only_other = main_runs([run(5, "success", "2026-10-14T17:00:00Z", branch="dev")])
+    assert (only_other.state, only_other.reason) == (
+        HealthState.INSUFFICIENT_EVIDENCE,
+        "no_completed_runs",
+    )
+
+
+def test_a_log_without_a_recorded_time_is_unavailable_not_dated_by_its_file():
+    gates, tests = verify_checks(verify_text(), measured_at=None, now=NOW, evidence="x.log")
+    for check in (gates, tests):
+        assert (check.state, check.reason) == (HealthState.UNAVAILABLE, "verify_time_unknown")

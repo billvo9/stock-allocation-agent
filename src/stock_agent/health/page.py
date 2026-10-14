@@ -14,6 +14,7 @@ Health destination; `scripts/run_model_health.py` runs it on its own.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -66,10 +67,19 @@ def sources_from_environment(environment: Mapping[str, str]) -> list[Source]:
     ]
 
 
-def _md(text: str) -> str:
-    """Escape dollar signs, which Streamlit markdown would read as LaTeX."""
+# Every ASCII punctuation character markdown can give meaning to.
+_MARKDOWN = re.compile(r"""([\\`*_{}\[\]()#+\-.!|<>~$&:/=^%@?'"])""")
 
-    return text.replace("$", "\\$")
+
+def _esc(text: object) -> str:
+    """
+    Text from a summary (much of it written by producers) as literal
+    characters: every markdown-significant character is backslash-escaped,
+    so no text can form a link, an image, emphasis, HTML or LaTeX. Only this
+    page's own templates add markdown.
+    """
+
+    return _MARKDOWN.sub(r"\\\1", str(text))
 
 
 def _load(source: Source) -> HealthSummary | SummaryRefused | None:
@@ -84,55 +94,59 @@ def _load(source: Source) -> HealthSummary | SummaryRefused | None:
 def _missing(source: Source) -> None:
     with ui.state_card(f"health-{source.key}-missing"):
         ui.pill("NOTICE", "No summary yet")
-        where = f" at `{source.path}`" if source.path else ""
-        st.markdown(_md(f"No {source.label.lower()} health summary was found{where}."))
+        where = f" at {_esc(source.path)}" if source.path else ""
+        st.markdown(f"No {_esc(source.label.lower())} health summary was found{where}.")
         st.caption("Create one with:")
         st.code(source.create_with, language="bash")
 
 
-def _stated(level: str, state_word: str, text: str) -> None:
-    """A state pill beside its text (stacked on narrow screens)."""
+def _stated(level: str, state_word: str, markdown: str) -> None:
+    """A state pill beside its (already escaped) markdown, stacked on narrow screens."""
 
     pill, words = st.columns(STATE_COLUMNS, vertical_alignment="center")
     ui.pill(level, state_word, where=pill)
-    words.markdown(_md(text))
+    words.markdown(markdown)
 
 
 def _render_view(source: Source, view: HealthView) -> None:
     ui.pills([(view.level, view.state_word)])
-    st.subheader(_md(view.headline))
-    st.markdown(_md(view.summary))
-    ui.notice(view.notice, _md(f"Next action: {view.next_action}"))
+    st.subheader(_esc(view.headline))
+    st.markdown(_esc(view.summary))
+    ui.notice(view.notice, f"Next action: {_esc(view.next_action)}")
     if view.age_warning:
-        ui.notice("warning", _md(view.age_warning))
-    ui.notice("notice", _md(view.caveat))
-    st.caption(_md(view.scope_note))
+        ui.notice("warning", _esc(view.age_warning))
+    ui.notice("notice", _esc(view.caveat))
+    st.caption(_esc(view.scope_note))
 
-    ui.stat_row([ui.Stat(fact.label, fact.value, _md(fact.caption)) for fact in view.facts])
+    ui.stat_row([ui.Stat(fact.label, fact.value, _esc(fact.caption)) for fact in view.facts])
 
     ui.section("Alerts", "Informational only: nothing acts on an alert.")
     if not view.alerts:
         st.caption("No alerts.")
     for alert in view.alerts:
-        ui.notice(alert.notice, _md(f"{alert.kind_word}: {alert.message}"))
+        ui.notice(alert.notice, f"{_esc(alert.kind_word)}: {_esc(alert.message)}")
 
     ui.section("Checks by area", "Plain summaries first; open a check for its measurements.")
     for area in view.areas:
         with ui.card(f"health-{source.key}-{area.area.value}"):
-            _stated(area.level, area.state_word, f"#### {area.title}\n{area.counts}")
+            _stated(area.level, area.state_word, f"#### {_esc(area.title)}\n{_esc(area.counts)}")
             for check in area.checks:
-                _stated(check.level, check.state_word, f"**{check.title}**: {check.summary}")
-                with st.expander(f"Measurements: {check.title}"):
+                _stated(
+                    check.level,
+                    check.state_word,
+                    f"**{_esc(check.title)}**: {_esc(check.summary)}",
+                )
+                with st.expander(f"Measurements: {_esc(check.title)}"):
+                    # Reason codes and check ids match strict patterns; the runbook
+                    # URL is this page's base plus a validated anchor.
                     st.markdown(
-                        _md(
-                            f"- **Value:** {check.value}\n"
-                            f"- **Threshold:** {check.threshold}\n"
-                            f"- **Measured:** {check.measured}\n"
-                            f"- **Reason code:** `{check.reason}`\n"
-                            f"- **Check id:** `{check.check_id}`\n"
-                            f"- **Evidence:** `{check.evidence}`\n"
-                            f"- **Runbook:** [{check.check_id}]({check.runbook_url})"
-                        )
+                        f"- **Value:** {_esc(check.value)}\n"
+                        f"- **Threshold:** {_esc(check.threshold)}\n"
+                        f"- **Measured:** {_esc(check.measured)}\n"
+                        f"- **Reason code:** `{check.reason}`\n"
+                        f"- **Check id:** `{check.check_id}`\n"
+                        f"- **Evidence:** {_esc(check.evidence)}\n"
+                        f"- **Runbook:** [{check.check_id}]({check.runbook_url})"
                     )
                     st.code(check.detail, language=None, wrap_lines=True)
 
@@ -142,11 +156,11 @@ def _render_view(source: Source, view: HealthView) -> None:
             "Checks that do not apply to what was measured; they never count towards the state.",
         )
         for line in view.not_applicable:
-            st.markdown(_md(f"- {line}"))
+            st.markdown(f"- {_esc(line)}")
 
     ui.section("Provenance")
     for line in view.provenance:
-        st.caption(_md(line))
+        st.caption(_esc(line))
 
 
 def render_source(source: Source, *, now: datetime) -> None:
@@ -156,10 +170,8 @@ def render_source(source: Source, *, now: datetime) -> None:
     elif isinstance(loaded, SummaryRefused):
         ui.notice(
             "blocking",
-            _md(
-                f"The summary at `{source.path}` was refused ({loaded.reason.value}): "
-                f"{loaded.detail}. Nothing from it is shown."
-            ),
+            f"The summary at {_esc(source.path)} was refused ({_esc(loaded.reason.value)}): "
+            f"{_esc(loaded.detail)}. Nothing from it is shown.",
         )
     else:
         _render_view(source, build_view(loaded, now=now))

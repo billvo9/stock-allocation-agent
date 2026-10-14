@@ -112,7 +112,8 @@ def text(app) -> str:
     ]
     parts += [html.proto.body for html in app.get("html") if "<style>" not in html.proto.body]
     parts += [f"{metric.label} {metric.value}" for metric in app.metric]
-    return " ".join(parts).replace("\\$", "$").replace("**", "")
+    joined = " ".join(parts).replace("**", "")
+    return re.sub(r"\\(.)", r"\1", joined)  # markdown escapes read as the characters
 
 
 def test_missing_summaries_show_how_to_create_them(tmp_path):
@@ -136,7 +137,7 @@ def test_a_healthy_ci_summary_leads_with_plain_words_and_real_counts(tmp_path):
     assert metrics["Checks healthy"] == "2 of 2"
     assert "Nothing on this page trades" in rendered
     assert "CI cannot see private data" in rendered
-    assert [e.label for e in app.expander] == [
+    assert [re.sub(r"\\(.)", r"\1", e.label) for e in app.expander] == [
         "Measurements: Quality gates (verify.py)",
         "Measurements: Test suite",
     ]
@@ -293,7 +294,7 @@ def test_the_page_builds_from_the_shared_components():
     for banned in ("st.title(", "unsafe_allow_html", "st.error(", "st.warning(", "st.html("):
         assert banned not in source, banned
     assert not re.search(r"#[0-9A-Fa-f]{6}\b", source)  # no colour literals
-    assert source.count('.replace("$", "\\\\$")') == 1
+    assert source.count("def _esc(") == 1  # one escaping helper for summary text
 
 
 def test_loading_the_view_loads_no_streamlit_pandas_or_collector():
@@ -337,3 +338,28 @@ def test_not_applicable_checks_are_shown_without_a_state(tmp_path):
     assert "Not applicable" in rendered
     assert "Forecast interval coverage (Forecasts): All 3 evaluated forecasts" in rendered
     assert "Everything measured is healthy" in rendered
+
+
+def test_markdown_in_producer_text_stays_literal(tmp_path):
+    hostile = Check(
+        check_id="training.health",
+        area=Area.TRAINING,
+        title="Training health",
+        state=HealthState.FAILED,
+        reason="training_check_failed",
+        measured_at=NOW,
+        value=0,
+        unit="of 8 listed training checks pass",
+        threshold="all pass",
+        summary="Checks failed: ![x](https://example.com/p.png) and [click](https://example.com).",
+        detail="detail",
+        evidence="reports/health_inputs/rl_training_health/[run](https://example.com).json",
+    )
+    app = app_for(write(tmp_path / "ci.json", hostile), None)
+    sources = [e.value for e in (*app.markdown, *app.caption, *app.error, *app.warning)]
+    joined = " ".join(sources)
+    assert "\\!\\[x\\]\\(https\\:\\/\\/example" in joined  # escaped, rendered as text
+    for value in sources:
+        assert re.search(r"(?<!\\)!(?<!\\)\[", value) is None, value
+        assert re.search(r"(?<!\\)\]\((?!https://github\.com/)", value) is None, value
+    assert "![x](https://example.com/p.png)" in text(app)  # read back as literal characters

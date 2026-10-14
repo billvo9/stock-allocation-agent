@@ -179,6 +179,11 @@ does, then runs
 
 and uploads `health_summary.json` with `evidence/verify.log` and
 `evidence/pip_check.txt` as the `model-health` artifact (30-day retention).
+The artifact is public to anyone with read access, so the CI run shows
+repository paths as relative and the home directory as `~`, checks the
+summary and every evidence text for an absolute path, the home directory or
+an email address, and writes nothing at all if any is found (the job then
+fails and the upload finds no files).
 The job fails when the overall state is `failed`, so GitHub's own
 notification reaches the owner; nothing else happens.
 
@@ -214,8 +219,15 @@ whose input is given, on the owner's Mac:
   private (`chmod 700`).
 - Each run compares with the previous `latest.json` and raises
   deterioration alerts.
-- `--run-verify` runs the full gates (about three minutes). Without it, or
-  `--verify-log`, `ci.verify` and `ci.tests` are `insufficient_evidence`.
+- `--run-verify` runs the full gates (about three minutes); the recorded log
+  starts with `health_check: verify.py finished at <UTC>`, and its age is read
+  from that line. `--verify-log` accepts such a log (an evidence
+  `verify.log`); a log without the line is `unavailable`
+  (`verify_time_unknown`), never dated by its file time. Without either,
+  `ci.verify` and `ci.tests` are `insufficient_evidence`.
+- Producer inputs marked `synthetic: true`, and a registry of synthetic
+  versions only, are at most `insufficient_evidence` (`synthetic_input`) here;
+  only the CI smoke checks read synthetic fixtures as such.
 
 ### Scheduling it (owner steps; nothing here installs them)
 
@@ -234,7 +246,7 @@ step. Replace `YOU` and the paths, then:
    set -u
    cd /Users/YOU/Desktop/OMSA/stock-allocation-agent || exit 2
    gh run list --repo billvo9/stock-allocation-agent --workflow ci.yml --branch main --limit 20 \
-     --json databaseId,status,conclusion,headSha,createdAt,url,event \
+     --json databaseId,status,conclusion,headSha,headBranch,workflowName,createdAt,url,event \
      > ~/stock-agent-private/health/ci_runs.json
    .venv/bin/python scripts/health_check.py local --run-verify \
      --ci-runs ~/stock-agent-private/health/ci_runs.json \

@@ -62,6 +62,8 @@ from stock_agent.health.model import (
     Scope,
     SummaryRefused,
     dumps,
+    format_timestamp,
+    parse_timestamp,
     read_summary,
 )
 from stock_agent.health.summary import build_summary, write_summary
@@ -134,16 +136,23 @@ def check_public(environment: Environment, label: str, text: str) -> None:
         raise PublicSummaryRefused(f"{label} would publish {', '.join(problems)}")
 
 
+# The first line of every verify log this script records: when verify.py
+# finished. A log's age comes from this line, never from the file's mtime
+# (a copied old log would look fresh).
+VERIFY_STAMP = "health_check: verify.py finished at "
+
+
 @dataclass(frozen=True)
 class VerifyOutput:
     text: str
-    measured_at: datetime
+    measured_at: datetime | None  # None: the log records no run time
 
 
-def run_verify(environment: Environment, log: Path, *, public: bool = False) -> VerifyOutput:
+def run_verify(environment: Environment, *, public: bool) -> VerifyOutput:
     """
-    Run scripts/verify.py once and keep its whole output as evidence. For a
-    public summary the output's local paths are redacted (`public_text`).
+    Run scripts/verify.py once. The output starts with a `VERIFY_STAMP` line;
+    for a public summary its local paths are redacted (`public_text`).
+    Nothing is written here: the caller writes the evidence.
     """
 
     command = [environment.python, str(environment.root / "scripts" / "verify.py")]
@@ -162,34 +171,48 @@ def run_verify(environment: Environment, log: Path, *, public: bool = False) -> 
         text = f"verify.py could not be run: {type(error).__name__}: {error}\n"
     if public:
         text = public_text(environment, text)
-    log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text(text, encoding="utf-8")
-    return VerifyOutput(text, environment.now())
+    finished = environment.now()
+    return VerifyOutput(f"{VERIFY_STAMP}{format_timestamp(finished)}\n{text}", finished)
 
 
 def read_verify_log(path: Path) -> VerifyOutput:
-    """An existing verify log; measured at the file's modification time."""
+    """An existing verify log, dated by its `VERIFY_STAMP` line (None without one)."""
 
-    modified = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
-    return VerifyOutput(path.read_text(encoding="utf-8", errors="replace"), modified)
+    text = path.read_text(encoding="utf-8", errors="replace")
+    first = text.split("\n", 1)[0]
+    measured_at = None
+    if first.startswith(VERIFY_STAMP):
+        try:
+            measured_at = parse_timestamp("verify stamp", first.removeprefix(VERIFY_STAMP))
+        except SummaryRefused:
+            measured_at = None
+    return VerifyOutput(text, measured_at)
+
+
+VERIFY_LOG = "verify.log"
+PIP_LOG = "pip_check.txt"
 
 
 def _shared_checks(
     environment: Environment,
     verify: VerifyOutput | None,
     *,
-    evidence_dir: Path,
-    show: Callable[[Path], str],
+    show: Callable[[str], str],
     public: bool,
-) -> list[Check]:
+) -> tuple[list[Check], dict[str, str]]:
+    """The shared checks and their evidence texts by file name (nothing written)."""
+
     now = environment.now
     interpreter = public_text(environment, environment.python) if public else environment.python
+    evidence: dict[str, str] = {}
+    if verify is not None:
+        evidence[VERIFY_LOG] = public_text(environment, verify.text) if public else verify.text
     checks = list(
         verification.verify_checks(
             None if verify is None else verify.text,
             measured_at=None if verify is None else verify.measured_at,
             now=now(),
-            evidence=None if verify is None else show(evidence_dir / "verify.log"),
+            evidence=None if verify is None else show(VERIFY_LOG),
         )
     )
     requirements = environment.root / "requirements.txt"
@@ -202,36 +225,37 @@ def _shared_checks(
             evidence="requirements.txt",
         )
     )
-    pip_log = evidence_dir / "pip_check.txt"
     pip, output = dependencies.pip_check(
         python=environment.python,
         display=interpreter,
         runner=environment.runner,
         measured_at=now(),
-        evidence=show(pip_log),
+        evidence=show(PIP_LOG),
     )
-    if public:
-        output = public_text(environment, output)
-    evidence_dir.mkdir(parents=True, exist_ok=True)
-    pip_log.write_text(output, encoding="utf-8")
+    evidence[PIP_LOG] = public_text(environment, output) if public else output
     checks.append(pip)
     checks.extend(contracts.contract_checks(now=now))
     checks.extend(smoke.smoke_checks(now=now))
-    return checks
+    return checks, evidence
+
+
+def _write_evidence(directory: Path, evidence: dict[str, str]) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    for name, text in evidence.items():
+        (directory / name).write_text(text, encoding="utf-8")
 
 
 def run_ci(
     environment: Environment, output_dir: Path, *, verify: VerifyOutput | None
 ) -> tuple[HealthSummary, Path]:
-    """The public-safe summary at `<output_dir>/health_summary.json`."""
+    """
+    The public-safe summary at `<output_dir>/health_summary.json`. The summary
+    and every evidence text are checked before anything is written, so a
+    refused run leaves nothing in `output_dir` for the workflow to upload.
+    """
 
-    evidence_dir = output_dir / EVIDENCE_DIR
-
-    def relative(path: Path) -> str:
-        return path.relative_to(output_dir).as_posix()
-
-    checks = _shared_checks(
-        environment, verify, evidence_dir=evidence_dir, show=relative, public=True
+    checks, evidence = _shared_checks(
+        environment, verify, show=lambda name: f"{EVIDENCE_DIR}/{name}", public=True
     )
     summary = build_summary(
         checks,
@@ -241,8 +265,9 @@ def run_ci(
         run_context=run_context(environment.env),
     )
     check_public(environment, "the summary", dumps(summary.to_json_dict()))
-    for evidence in sorted(evidence_dir.glob("*")):
-        check_public(environment, f"evidence/{evidence.name}", evidence.read_text("utf-8"))
+    for name, text in evidence.items():
+        check_public(environment, f"{EVIDENCE_DIR}/{name}", text)
+    _write_evidence(output_dir / EVIDENCE_DIR, evidence)
     return summary, write_summary(output_dir / SUMMARY_FILE, summary)
 
 
@@ -332,7 +357,10 @@ def run_local(
     started = environment.now()
     stamp = started.strftime("%Y%m%dT%H%M%S%fZ")
     evidence_dir = output_dir / EVIDENCE_DIR / stamp
-    checks = _shared_checks(environment, verify, evidence_dir=evidence_dir, show=str, public=False)
+    checks, evidence = _shared_checks(
+        environment, verify, show=lambda name: str(evidence_dir / name), public=False
+    )
+    _write_evidence(evidence_dir, evidence)
 
     ci_runs = inputs.ci_runs
     runs_text, runs_written = None, None

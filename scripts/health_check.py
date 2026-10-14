@@ -46,7 +46,9 @@ def _parser() -> argparse.ArgumentParser:
     for command in (ci, local):
         verify = command.add_mutually_exclusive_group()
         verify.add_argument("--run-verify", action="store_true", help="run scripts/verify.py")
-        verify.add_argument("--verify-log", type=Path, help="an existing verify.py output")
+        verify.add_argument(
+            "--verify-log", type=Path, help="a verify log this script recorded (dated inside)"
+        )
     local.add_argument("--ci-runs", type=Path, help="gh run list --json output (runbook)")
     local.add_argument("--fund-store", type=Path, help="a private F1 fund-store root")
     local.add_argument(
@@ -65,9 +67,9 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _verify(arguments, environment: collect.Environment, evidence_log: Path, *, public: bool):
+def _verify(arguments, environment: collect.Environment, *, public: bool):
     if arguments.run_verify:
-        return collect.run_verify(environment, evidence_log, public=public)
+        return collect.run_verify(environment, public=public)
     if arguments.verify_log is not None:
         if not arguments.verify_log.is_file():
             raise collect.LocalRunRefused(f"--verify-log {arguments.verify_log} is not a file")
@@ -81,14 +83,12 @@ def main(argv: list[str] | None = None, environment: collect.Environment | None 
     try:
         if arguments.command == "ci":
             output = arguments.output_dir.resolve()
-            log = output / collect.EVIDENCE_DIR / "verify.log"
-            verify = _verify(arguments, environment, log, public=True)
+            verify = _verify(arguments, environment, public=True)
             summary, path = collect.run_ci(environment, output, verify=verify)
         else:
             output = arguments.output_dir.expanduser()
             collect.check_private_output(environment, output)
-            log = output.resolve() / collect.EVIDENCE_DIR / "verify-latest.log"
-            verify = _verify(arguments, environment, log, public=False)
+            verify = _verify(arguments, environment, public=False)
             inputs = collect.PrivateInputs(
                 ci_runs=arguments.ci_runs,
                 fund_store=arguments.fund_store,

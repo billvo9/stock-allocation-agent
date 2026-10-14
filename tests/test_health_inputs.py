@@ -37,6 +37,13 @@ def by_id(checks) -> dict:
 
 def approved(document: dict) -> dict:
     document["transition_status"] = APPROVED
+    return real(document)
+
+
+def real(document: dict) -> dict:
+    """The fixture as a real (non-synthetic) input: synthetic ones are capped in private scope."""
+
+    document["synthetic"] = False
     return document
 
 
@@ -140,7 +147,7 @@ def test_extra_producer_fields_are_ignored(tmp_path):
 
 
 def training_check(tmp_path, change=None, *, transition=APPROVED):
-    document = fixtures.training_health()
+    document = real(fixtures.training_health())
     document["transition_status"] = transition
     if change:
         change(document)
@@ -156,7 +163,7 @@ def test_a_completed_run_with_every_listed_check_passing_is_healthy(tmp_path):
         "of 8 listed training checks pass",
     )
     assert "ppo, status completed, 4 seeds, scenario synthetic-v1" in check.detail
-    assert "synthetic input" in check.detail
+    assert "real input" in check.detail
     assert check.measured_at.isoformat() == "2024-12-31T22:00:00+00:00"
 
 
@@ -240,7 +247,7 @@ def test_unknown_check_ids_are_shown_and_absent_listed_ones_named(tmp_path):
 
 
 def forecast_items(tmp_path, change=None) -> dict:
-    document = fixtures.registry_export()
+    document = real(fixtures.registry_export())
     if change:
         change(document)
     items = forecast.forecast_checks(inputs(tmp_path, document) / forecast.ARTIFACT)
@@ -338,9 +345,23 @@ def test_a_malformed_export_is_unavailable(tmp_path, change):
 # --- registry (the ML track's registry, through its read API) -----------------------
 
 
-def registry_states(root, artifacts_root=None) -> dict:
-    checks = registry.registry_checks(root, artifacts_root=artifacts_root, now=lambda: NOW)
+def registry_states(root, artifacts_root=None, *, allow_synthetic=True) -> dict:
+    checks = registry.registry_checks(
+        root, artifacts_root=artifacts_root, now=lambda: NOW, allow_synthetic=allow_synthetic
+    )
     return by_id(checks)
+
+
+def test_a_registry_of_synthetic_versions_only_is_never_healthy_in_private_scope(tmp_path):
+    root = fixtures.build_registry(tmp_path)
+    capped = registry_states(root, allow_synthetic=False)
+    assert {(c.state, c.reason) for c in capped.values()} == {
+        (HealthState.INSUFFICIENT_EVIDENCE, "synthetic_input")
+    }
+    record = max((root.parent / "runs").iterdir()) / "record.json"
+    record.write_text(record.read_text(encoding="utf-8") + " ", encoding="utf-8")
+    broken = registry_states(root, allow_synthetic=False)
+    assert broken["registry.entries"].state is HealthState.FAILED  # a failure still shows
 
 
 def test_a_clean_registry_is_healthy(tmp_path):
@@ -446,7 +467,7 @@ def test_the_registry_reader_writes_nothing(tmp_path):
 
 
 def backtest_checks(tmp_path, change=None, *, transition=APPROVED) -> dict:
-    document = fixtures.backtest_summary()
+    document = real(fixtures.backtest_summary())
     document["transition_status"] = transition
     if change:
         change(document)
@@ -520,3 +541,41 @@ def test_unreported_measures_and_undeclared_limits_are_not_judged(tmp_path):
 def test_a_malformed_backtest_is_unavailable(tmp_path, change):
     checks = backtest_checks(tmp_path, change)
     assert {check.state for check in checks.values()} == {HealthState.UNAVAILABLE}
+
+
+# --- synthetic inputs in the private scope -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("reader", "document"),
+    [
+        (training.training_checks, approved(fixtures.training_health())),
+        (forecast.forecast_checks, real(fixtures.registry_export())),
+        (backtest.backtest_checks, approved(fixtures.backtest_summary())),
+    ],
+)
+def test_a_synthetic_input_is_capped_unless_synthetic_is_allowed(tmp_path, reader, document):
+    document["synthetic"] = True
+    directory = inputs(tmp_path, document) / document["artifact"]
+    capped = [item for item in reader(directory) if not isinstance(item, NotApplicable)]
+    assert {(c.state, c.reason) for c in capped} == {
+        (HealthState.INSUFFICIENT_EVIDENCE, "synthetic_input")
+    }
+    allowed = reader(directory, allow_synthetic=True)
+    assert {c.state for c in allowed if not isinstance(c, NotApplicable)} == {HealthState.HEALTHY}
+
+
+def test_a_synthetic_failure_still_shows_as_failed(tmp_path):
+    document = approved(fixtures.backtest_summary())
+    document["synthetic"] = True
+    document["measures"]["max_weight"] = 0.9
+    checks = by_id(backtest.backtest_checks(inputs(tmp_path, document) / backtest.ARTIFACT))
+    assert checks["portfolio.concentration"].state is HealthState.FAILED
+    assert checks["portfolio.turnover"].reason == "synthetic_input"
+
+
+def test_a_negative_drawdown_is_refused_not_judged(tmp_path):
+    checks = backtest_checks(tmp_path, lambda d: d["measures"].update(max_drawdown=-0.45))
+    assert {(c.state, c.reason) for c in checks.values()} == {
+        (HealthState.UNAVAILABLE, "unrecognized_format")
+    }

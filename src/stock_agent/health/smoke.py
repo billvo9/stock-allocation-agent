@@ -161,7 +161,7 @@ def input_reader_results(directory: Path) -> list[tuple[str, bool, str]]:
         if edit:
             record = next((root.parent / "runs").iterdir()) / "record.json"
             record.write_text(record.read_text(encoding="utf-8") + " ", encoding="utf-8")
-        return registry.registry_checks(root, now=SMOKE_AS_OF.to_pydatetime)
+        return registry.registry_checks(root, now=SMOKE_AS_OF.to_pydatetime, allow_synthetic=True)
 
     approved = fixtures.training_health()
     approved["transition_status"] = "approved"
@@ -176,13 +176,15 @@ def input_reader_results(directory: Path) -> list[tuple[str, bool, str]]:
         (
             "training, unapproved transition",
             lambda: training.training_checks(
-                inputs("t1", fixtures.training_health()) / training.ARTIFACT
+                inputs("t1", fixtures.training_health()) / training.ARTIFACT, allow_synthetic=True
             ),
             {"training.health": unapproved},
         ),
         (
             "training, approved transition",
-            lambda: training.training_checks(inputs("t2", approved) / training.ARTIFACT),
+            lambda: training.training_checks(
+                inputs("t2", approved) / training.ARTIFACT, allow_synthetic=True
+            ),
             {"training.health": healthy},
         ),
         (
@@ -203,18 +205,22 @@ def input_reader_results(directory: Path) -> list[tuple[str, bool, str]]:
         (
             "registry export",
             lambda: forecast.forecast_checks(
-                inputs("f1", fixtures.registry_export()) / forecast.ARTIFACT
+                inputs("f1", fixtures.registry_export()) / forecast.ARTIFACT, allow_synthetic=True
             ),
             {check_id: healthy for check_id in forecast.CHECKS},
         ),
         (
             "point-only registry export",
-            lambda: forecast.forecast_checks(inputs("f2", point_only) / forecast.ARTIFACT),
+            lambda: forecast.forecast_checks(
+                inputs("f2", point_only) / forecast.ARTIFACT, allow_synthetic=True
+            ),
             {check_id: ("not_applicable", "point_forecast") for check_id in forecast.CHECKS},
         ),
         (
             "backtest with a cap breach",
-            lambda: backtest.backtest_checks(inputs("b1", breach) / backtest.ARTIFACT),
+            lambda: backtest.backtest_checks(
+                inputs("b1", breach) / backtest.ARTIFACT, allow_synthetic=True
+            ),
             {
                 **{check_id: unapproved for check_id in backtest.MEASURES},
                 "portfolio.concentration": ("failed", CONSTRAINT_BREACHED),

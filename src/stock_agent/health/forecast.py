@@ -28,7 +28,9 @@ forecast.coverage     the largest |observed_coverage - interval_level| over
                       a binomial standard error would be too small
 forecast.calibration  the producer's own calibration status per row
 
-Health computes no statistic beyond comparing these stored values.
+Health computes no statistic beyond comparing these stored values. In the
+private scope a synthetic export is at most insufficient_evidence
+(`synthetic_input`).
 """
 
 from __future__ import annotations
@@ -89,7 +91,9 @@ def _label(row: dict) -> str:
     return f"{row['model_id']}@v{row['version']} h{row['horizon']}"
 
 
-def _coverage(rows: list[dict], points: int, artifact: Artifact, common: dict) -> Check:
+def _coverage(
+    rows: list[dict], points: int, artifact: Artifact, common: dict, allow_synthetic: bool
+) -> Check:
     threshold = (
         f"|observed - nominal| <= {COVERAGE_DEGRADED} healthy, > {COVERAGE_FAILED} failed; "
         f"rows with n < {MIN_COVERAGE_N} or no reported coverage are not judged"
@@ -106,7 +110,7 @@ def _coverage(rows: list[dict], points: int, artifact: Artifact, common: dict) -
     if not eligible:
         finding = worst_finding(
             [
-                *common_findings(artifact),
+                *common_findings(artifact, allow_synthetic=allow_synthetic),
                 Finding(
                     HealthState.INSUFFICIENT_EVIDENCE,
                     "too_few_observations",
@@ -148,7 +152,7 @@ def _coverage(rows: list[dict], points: int, artifact: Artifact, common: dict) -
             None,
             f"Forecast intervals cover close to their stated level (widest gap {gap:.1%}).",
         )
-    finding = worst_finding([band, *common_findings(artifact)])
+    finding = worst_finding([band, *common_findings(artifact, allow_synthetic=allow_synthetic)])
     return Check(
         state=finding.state,
         reason=finding.reason,
@@ -168,7 +172,9 @@ def _coverage(rows: list[dict], points: int, artifact: Artifact, common: dict) -
     )
 
 
-def _calibration(rows: list[dict], points: int, artifact: Artifact, common: dict) -> Check:
+def _calibration(
+    rows: list[dict], points: int, artifact: Artifact, common: dict, allow_synthetic: bool
+) -> Check:
     statuses = Counter(row["calibration_status"] for row in rows)
     flagged = [
         f"{_label(row)}: {row['calibration_detail'] or row['calibration_status']}"
@@ -199,7 +205,7 @@ def _calibration(rows: list[dict], points: int, artifact: Artifact, common: dict
             None,
             f"All {statuses['pass']} evaluated interval forecasts pass their calibration check.",
         )
-    finding = worst_finding([band, *common_findings(artifact)])
+    finding = worst_finding([band, *common_findings(artifact, allow_synthetic=allow_synthetic)])
     detail = ", ".join(f"{status} {count}" for status, count in sorted(statuses.items()))
     if flagged:
         detail += "; " + "; ".join(flagged[:5])
@@ -220,7 +226,9 @@ def _calibration(rows: list[dict], points: int, artifact: Artifact, common: dict
     )
 
 
-def forecast_checks(directory: Path | None) -> list[Check | NotApplicable]:
+def forecast_checks(
+    directory: Path | None, *, allow_synthetic: bool = False
+) -> list[Check | NotApplicable]:
     evidence = None if directory is None else str(directory)
     loaded = load_latest(directory, ARTIFACT)
     rows = None
@@ -290,6 +298,7 @@ def forecast_checks(directory: Path | None) -> list[Check | NotApplicable]:
             points,
             loaded,
             {**common, "check_id": "forecast.coverage", "title": CHECKS["forecast.coverage"]},
+            allow_synthetic,
         ),
         _calibration(
             applicable,
@@ -300,5 +309,6 @@ def forecast_checks(directory: Path | None) -> list[Check | NotApplicable]:
                 "check_id": "forecast.calibration",
                 "title": CHECKS["forecast.calibration"],
             },
+            allow_synthetic,
         ),
     ]

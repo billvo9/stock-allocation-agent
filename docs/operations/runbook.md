@@ -39,7 +39,10 @@ monitor reads the newest file per artifact.
 | healthy | Measured, within its threshold | none |
 
 A check that does not apply (coverage of a point forecast) is listed as
-**not applicable**: shown, without a state, never counted.
+**not applicable**: shown, without a state, never counted. In the local
+monitor a producer input marked `synthetic: true` (or a registry whose
+versions are all synthetic) is at most insufficient evidence
+(`synthetic_input`): fixture data says nothing about the real system.
 
 The overall state is the worst state of any check, in the order of the
 table. A check that was never measured is never healthy. A numeric value
@@ -76,7 +79,9 @@ workflow summary; the last opens the Model Health page.
 **What it means.** The result of `scripts/verify.py`: the two pytest passes,
 the format check and the lint check. Healthy when every gate passed within
 the last 7 days; degraded when the result is older; failed when any gate
-failed; unavailable when verify could not run or its output is unreadable.
+failed; unavailable when verify could not run, its output is unreadable, or
+a `--verify-log` has no `health_check: verify.py finished at` first line
+(`verify_time_unknown`: a log's age is never taken from its file time).
 
 **Likely causes.** A code change broke a test or the formatting; an
 unpinned dependency (pandas, numpy, pyarrow, ...) released a version that
@@ -147,9 +152,10 @@ approval gate.
 <a id="ci-main-runs"></a>
 ### Latest CI run on main (`ci.main_runs`)
 
-**What it means.** The conclusion of the latest completed `ci.yml` run on
-`main`, from a run list the owner writes with the GitHub CLI (local monitor
-only; nothing in this package contacts GitHub). Healthy on `success`;
+**What it means.** The conclusion of the latest completed run of the `CI`
+workflow on `main`, from a run list the owner writes with the GitHub CLI
+(local monitor only; nothing in this package contacts GitHub). Runs of other
+workflows or branches in the list are ignored and counted in the detail. Healthy on `success`;
 failed on `failure` or `startup_failure`; degraded on any other conclusion
 (`cancelled`, `timed_out`, ...) or when the list is older than 7 days.
 
@@ -159,7 +165,7 @@ failure; GitHub Actions disabled or out of minutes.
 **Diagnose.**
 
 ```bash
-gh run list --repo billvo9/stock-allocation-agent --workflow ci.yml --branch main --limit 20 --json databaseId,status,conclusion,headSha,createdAt,url,event > ~/stock-agent-private/health/ci_runs.json
+gh run list --repo billvo9/stock-allocation-agent --workflow ci.yml --branch main --limit 20 --json databaseId,status,conclusion,headSha,headBranch,workflowName,createdAt,url,event > ~/stock-agent-private/health/ci_runs.json
 ```
 
 ```bash
@@ -660,7 +666,9 @@ never recompute turnover, cost or drawdown (owner-gated, OD8). Each takes its
 worst finding: a measure above its limit fails with `constraint_breached` and
 raises an informational constraint-violation alert; an engineering-only
 transition that is not yet approved is degraded (`unapproved_transition`);
-a measure or limit that is not reported is insufficient evidence.
+a measure or limit that is not reported is insufficient evidence. Measures
+and limits are non-negative: a negative value (for example a drawdown
+written as -0.45) makes the file unreadable rather than judged.
 
 <a id="portfolio-turnover"></a>
 ### Portfolio turnover (`portfolio.turnover`)

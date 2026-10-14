@@ -8,8 +8,11 @@ Fields besides the envelope (`inputs`):
     evidence_status    text (for example "rules_illustration")
     policy             text: the allocation policy simulated
     transition_status  "approved" | "engineering_only_unapproved_transition"
-    constraints        {max_turnover, max_cost_bps, max_weight, max_drawdown}, number or null
-    measures           {turnover, costs_bps, max_weight, max_drawdown}, number or null
+    constraints        {max_turnover, max_cost_bps, max_weight, max_drawdown}, >= 0 or null
+    measures           {turnover, costs_bps, max_weight, max_drawdown}, >= 0 or null
+                       (a negative value, for example a drawdown written as -0.45,
+                       is refused as unrecognized_format: the approved F6.5
+                       drawdown is non-negative)
     units              optional {measure: unit text}
 
 Each check compares one stored measure with its stored limit and takes its
@@ -19,7 +22,8 @@ unapproved transition or unreadable input files are degraded; a measure the
 producer did not report, or a limit it did not declare, is
 insufficient_evidence; within the limit is healthy. Measures come from the
 approved T5a formulas only and are never recomputed here (OD8). A backtest is
-simulated, never a track record, and every check says so.
+simulated, never a track record, and every check says so. In the private
+scope a synthetic input is at most insufficient_evidence (`synthetic_input`).
 """
 
 from __future__ import annotations
@@ -70,8 +74,8 @@ def _parse(artifact: Artifact) -> tuple[str, dict, dict, dict]:
     if not isinstance(units, dict):
         raise FormatError("units must be an object")
     for _, measure, limit, _ in MEASURES.values():
-        require(measures, measure, "number", optional=True)
-        require(constraints, limit, "number", optional=True)
+        require(measures, measure, "nonnegative", optional=True)
+        require(constraints, limit, "nonnegative", optional=True)
         if measure in units:
             require(units, measure, "text")
     return label, constraints, measures, units
@@ -103,7 +107,7 @@ def _measure_finding(name: str, value, bound) -> Finding:
     )
 
 
-def backtest_checks(directory: Path | None) -> list[Check]:
+def backtest_checks(directory: Path | None, *, allow_synthetic: bool = False) -> list[Check]:
     loaded = load_latest(directory, ARTIFACT)
     parsed = None
     if isinstance(loaded, Artifact):
@@ -141,7 +145,12 @@ def backtest_checks(directory: Path | None) -> list[Check]:
             continue
         label, constraints, measures, units = parsed
         value, bound = measures[measure], constraints[limit]
-        finding = worst_finding([_measure_finding(name, value, bound), *common_findings(loaded)])
+        finding = worst_finding(
+            [
+                _measure_finding(name, value, bound),
+                *common_findings(loaded, allow_synthetic=allow_synthetic),
+            ]
+        )
         checks.append(
             Check(
                 state=finding.state,

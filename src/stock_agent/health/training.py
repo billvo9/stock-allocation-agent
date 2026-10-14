@@ -19,7 +19,8 @@ statuses and recomputes no training metric. The check takes its worst
 finding: a failed run or any failed check is failed; any warning, an
 unapproved transition or unreadable input files are degraded; a run in
 progress or a listed check that did not run is insufficient_evidence; only a
-completed run whose every listed check passed is healthy.
+completed run whose every listed check passed is healthy. In the private
+scope a synthetic input is at most insufficient_evidence (`synthetic_input`).
 """
 
 from __future__ import annotations
@@ -90,7 +91,9 @@ def _describe(item: dict) -> str:
     return text
 
 
-def _findings(parsed: dict, statuses: dict[str, str], artifact: Artifact) -> list[Finding]:
+def _findings(
+    parsed: dict, statuses: dict[str, str], artifact: Artifact, *, allow_synthetic: bool
+) -> list[Finding]:
     def named(status: str) -> list[str]:
         return [check_id for check_id, value in statuses.items() if value == status]
 
@@ -113,7 +116,7 @@ def _findings(parsed: dict, statuses: dict[str, str], artifact: Artifact) -> lis
                 f"{len(named('warn'))} training checks warn: {', '.join(named('warn'))}.",
             )
         )
-    findings += common_findings(artifact)
+    findings += common_findings(artifact, allow_synthetic=allow_synthetic)
     if parsed["status"] == "running":
         findings.append(
             Finding(
@@ -142,7 +145,7 @@ def _findings(parsed: dict, statuses: dict[str, str], artifact: Artifact) -> lis
     return findings
 
 
-def training_checks(directory: Path | None) -> list[Check]:
+def training_checks(directory: Path | None, *, allow_synthetic: bool = False) -> list[Check]:
     common = {
         "check_id": "training.health",
         "area": Area.TRAINING,
@@ -177,7 +180,7 @@ def training_checks(directory: Path | None) -> list[Check]:
 
     statuses = {check_id: "not_run" for check_id in LISTED_CHECKS}
     statuses.update({item["check_id"]: item["status"] for item in parsed["checks"]})
-    finding = worst_finding(_findings(parsed, statuses, loaded))
+    finding = worst_finding(_findings(parsed, statuses, loaded, allow_synthetic=allow_synthetic))
     extra = [item for item in parsed["checks"] if item["check_id"] not in LISTED_CHECKS]
     listed = {item["check_id"]: item for item in parsed["checks"]}
     shown = [

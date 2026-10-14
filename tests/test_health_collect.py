@@ -197,7 +197,7 @@ def test_untracked_files_other_than_the_venv_make_the_tree_dirty(root, status, d
 def test_the_ci_run_writes_a_public_safe_summary(root, tmp_path):
     output = tmp_path / "out"
     env = environment(root, env=ACTIONS)
-    verify = collect.run_verify(env, output / "evidence" / "verify.log")
+    verify = collect.run_verify(env, public=True)
     summary, path = collect.run_ci(env, output, verify=verify)
 
     assert path == output / "health_summary.json"
@@ -209,7 +209,11 @@ def test_the_ci_run_writes_a_public_safe_summary(root, tmp_path):
     assert summary.check("ci.tests").value == 1958
     assert summary.check("ci.verify").evidence == "evidence/verify.log"
     assert summary.check("deps.pip_check").evidence == "evidence/pip_check.txt"
-    assert (output / "evidence" / "verify.log").read_text() == VERIFY_OK
+    log = (output / "evidence" / "verify.log").read_text()
+    assert log.startswith(collect.VERIFY_STAMP) and log.endswith(VERIFY_OK)
+    for check in summary.checks:  # every evidence pointer names a file that exists
+        if check.evidence and check.evidence.startswith("evidence/"):
+            assert (output / check.evidence).is_file(), check.check_id
     text = path.read_text(encoding="utf-8")
     assert "secret" not in text and "ghs_" not in text
     assert str(tmp_path) not in text  # no absolute local paths in a public summary
@@ -229,7 +233,7 @@ def test_verify_that_cannot_start_is_recorded_as_unavailable(root, tmp_path):
             return super().__call__(argv, **kwargs)
 
     env = environment(root, NoVerify())
-    verify = collect.run_verify(env, tmp_path / "out" / "evidence" / "verify.log")
+    verify = collect.run_verify(env, public=True)
     summary, _ = collect.run_ci(env, tmp_path / "out", verify=verify)
     assert summary.check("ci.verify").state is HealthState.UNAVAILABLE
 
@@ -309,6 +313,8 @@ def _inputs(tmp_path) -> collect.PrivateInputs:
                     "status": "completed",
                     "conclusion": "success",
                     "headSha": SHA,
+                    "headBranch": "main",
+                    "workflowName": "CI",
                     "createdAt": "2026-10-14T12:00:00Z",
                     "url": "https://github.com/o/r/actions/runs/7",
                     "event": "push",
@@ -338,11 +344,18 @@ def test_a_local_run_reads_every_private_input(root, tmp_path, monkeypatch):
     unapproved = (HealthState.DEGRADED, "unapproved_transition")
     economics = ["training.health", *(c for c in states if c.startswith("portfolio."))]
     assert {states[check_id] for check_id in economics} == {unapproved}
-    others = {state for check_id, (state, _) in states.items() if check_id not in economics}
+    synthetic = [c for c in states if c.startswith(("registry.", "forecast."))]
+    assert {states[check_id] for check_id in synthetic} == {
+        (HealthState.INSUFFICIENT_EVIDENCE, "synthetic_input")  # private scope: never healthy
+    }
+    others = {
+        state for check_id, (state, _) in states.items() if check_id not in economics + synthetic
+    }
     assert others == {HealthState.HEALTHY, HealthState.INSUFFICIENT_EVIDENCE}
-    assert states["registry.selection_history"][0] is HealthState.HEALTHY
-    assert states["forecast.coverage"][0] is HealthState.HEALTHY
     assert summary.overall_state is HealthState.DEGRADED  # shown, never acted on
+    for check in summary.checks:  # every evidence file pointer exists
+        if check.evidence and "/evidence/" in check.evidence:
+            assert Path(check.evidence).is_file(), check.check_id
     states = {check_id: state for check_id, (state, _) in states.items()}
     assert states["data.vendor_discrepancy"] is HealthState.INSUFFICIENT_EVIDENCE  # one source
     assert summary.check("data.coverage").value == 1.0
@@ -420,16 +433,31 @@ def test_the_script_exit_codes(root, tmp_path, capsys):
     assert "refused" in capsys.readouterr().err
 
 
-def test_the_script_reads_an_existing_verify_log(root, tmp_path):
+def test_the_script_reads_a_recorded_verify_log_dated_by_its_stamp(root, tmp_path):
     log = tmp_path / "verify.log"
-    log.write_text(VERIFY_OK, encoding="utf-8")
+    log.write_text(f"{collect.VERIFY_STAMP}2026-10-14T17:00:00.000000Z\n{VERIFY_OK}", "utf-8")
     script = _script()
     out = tmp_path / "out"
-    env = environment(root, now=datetime.now(UTC))
-    assert script.main(["ci", "--output-dir", str(out), "--verify-log", str(log)], env) == 0
-    assert read_summary(out / "health_summary.json").check("ci.tests").value == 1958
+    assert (
+        script.main(["ci", "--output-dir", str(out), "--verify-log", str(log)], environment(root))
+        == 0
+    )
+    summary = read_summary(out / "health_summary.json")
+    assert summary.check("ci.tests").value == 1958
+    assert summary.check("ci.tests").measured_at == datetime(2026, 10, 14, 17, tzinfo=UTC)
+    assert (out / summary.check("ci.verify").evidence).is_file()  # the pointer exists
     missing = ["ci", "--output-dir", str(out), "--verify-log", str(tmp_path / "absent.log")]
-    assert script.main(missing, env) == 2
+    assert script.main(missing, environment(root)) == 2
+
+
+def test_a_copied_log_without_a_stamp_is_not_dated_by_its_file_time(root, tmp_path):
+    log = tmp_path / "verify.log"
+    log.write_text(VERIFY_OK, encoding="utf-8")  # fresh mtime, no recorded run time
+    assert collect.read_verify_log(log).measured_at is None
+    summary, _ = collect.run_ci(
+        environment(root), tmp_path / "out", verify=collect.read_verify_log(log)
+    )
+    assert summary.check("ci.tests").reason == "verify_time_unknown"
 
 
 def test_an_empty_ci_run_list_is_unavailable_not_missing(root, tmp_path):
@@ -462,9 +490,7 @@ def test_ci_evidence_and_summary_show_local_paths_redacted(root, tmp_path):
         home=HOME,
     )
     output = tmp_path / "out"
-    summary, path = collect.run_ci(
-        env, output, verify=collect.run_verify(env, output / "evidence" / "verify.log", public=True)
-    )
+    summary, path = collect.run_ci(env, output, verify=collect.run_verify(env, public=True))
     log = (output / "evidence" / "verify.log").read_text(encoding="utf-8")
     assert "verify: repo ." in log and "interpreter ~/x/bin/python" in log
     assert str(root) not in log and str(HOME) not in log
@@ -483,9 +509,18 @@ def test_a_ci_summary_that_would_publish_an_email_is_refused(root, tmp_path):
 
     with pytest.raises(collect.PublicSummaryRefused, match="an email address"):
         collect.run_ci(environment(root, Leaky()), tmp_path / "out", verify=None)
-    assert not (tmp_path / "out" / "health_summary.json").exists()
+    assert not (tmp_path / "out").exists()  # nothing at all for the workflow to upload
     script = _script()
     assert script.main(["ci", "--output-dir", str(tmp_path / "b")], environment(root, Leaky())) == 2
+
+
+def test_a_refused_verify_log_leaves_no_evidence_to_upload(root, tmp_path):
+    leaky = VERIFY_OK.replace("verify: repo /repo", "verify: run by someone@example.com")
+    env = environment(root, FakeMachine(verify=leaky))
+    output = tmp_path / "upload"
+    with pytest.raises(collect.PublicSummaryRefused, match="evidence/verify.log"):
+        collect.run_ci(env, output, verify=collect.run_verify(env, public=True))
+    assert not output.exists() or not any(output.rglob("*"))
 
 
 def test_a_local_run_keeps_its_private_paths(root, tmp_path):

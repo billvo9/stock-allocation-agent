@@ -2,7 +2,10 @@
 CI and test health: the latest `scripts/verify.py` result and the latest CI
 runs on `main`.
 
-`verify.py` prints a fixed summary block (`verify summary:` then one
+A verify log's age comes from its first line, written by the health script
+when it runs verify (`health_check: verify.py finished at <UTC>`); a log
+without it is unavailable (`verify_time_unknown`), never dated by its file
+time. `verify.py` prints a fixed summary block (`verify summary:` then one
 `PASS|FAIL  <gate>  (exit N)` line per gate) and pytest prints one result
 line per pass (`1845 passed in 70.12s`). This module parses that text; it
 never runs anything itself (the health script runs verify and passes the
@@ -113,6 +116,35 @@ def verify_checks(
 ) -> tuple[Check, Check]:
     """`ci.verify` (gates) and `ci.tests` (pytest counts) from one verify output."""
 
+    if text is not None and measured_at is None:
+        undated = {
+            "state": HealthState.UNAVAILABLE,
+            "reason": "verify_time_unknown",
+            "measured_at": None,
+            "value": None,
+            "detail": "The verify log has no 'health_check: verify.py finished at' first line, "
+            "so its age is unknown; a file's modification time is not used (a copied old log "
+            "would look fresh).",
+            "evidence": evidence,
+        }
+        return (
+            _check(
+                "ci.verify",
+                VERIFY_TITLE,
+                unit=None,
+                threshold="every gate passes",
+                summary="The quality-gate log records no run time, so it cannot be judged.",
+                **undated,
+            ),
+            _check(
+                "ci.tests",
+                TESTS_TITLE,
+                unit="tests passed",
+                threshold="0 failed and 0 errors in both pytest passes",
+                summary="The test log records no run time, so it cannot be judged.",
+                **undated,
+            ),
+        )
     if text is None or measured_at is None:
         missing = {
             "state": HealthState.INSUFFICIENT_EVIDENCE,
@@ -247,7 +279,19 @@ def verify_checks(
 
 # --- CI runs on main (from `gh run list --json ...`) ---------------------------
 
-RUN_FIELDS = ("databaseId", "status", "conclusion", "headSha", "createdAt", "url", "event")
+RUN_FIELDS = (
+    "databaseId",
+    "status",
+    "conclusion",
+    "headSha",
+    "headBranch",
+    "workflowName",
+    "createdAt",
+    "url",
+    "event",
+)
+MAIN_BRANCH = "main"
+CI_WORKFLOW = "CI"  # the `name:` of .github/workflows/ci.yml
 _FAILED = {"failure", "startup_failure"}
 _GITHUB_TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 
@@ -258,6 +302,8 @@ class CiRun:
     conclusion: str | None
     status: str
     head_sha: str
+    head_branch: str
+    workflow: str
     created_at: datetime
 
 
@@ -277,7 +323,9 @@ def parse_ci_runs(text: str) -> tuple[CiRun, ...] | None:
         created = item["createdAt"]
         if not isinstance(created, str) or not _GITHUB_TIME.fullmatch(created):
             return None
-        if not isinstance(item["databaseId"], int) or not isinstance(item["status"], str):
+        if not isinstance(item["databaseId"], int) or not all(
+            isinstance(item[key], str) for key in ("status", "headBranch", "workflowName")
+        ):
             return None
         runs.append(
             CiRun(
@@ -285,6 +333,8 @@ def parse_ci_runs(text: str) -> tuple[CiRun, ...] | None:
                 conclusion=item["conclusion"] or None,
                 status=item["status"],
                 head_sha=str(item["headSha"]),
+                head_branch=item["headBranch"],
+                workflow=item["workflowName"],
                 created_at=parse_timestamp("createdAt", created.replace("Z", ".000000Z")),
             )
         )
@@ -295,9 +345,19 @@ MAIN_RUNS_TITLE = "Latest CI run on main"
 
 
 def main_runs_check(
-    text: str | None, *, measured_at: datetime | None, now: datetime, evidence: str | None
+    text: str | None,
+    *,
+    measured_at: datetime | None,
+    now: datetime,
+    evidence: str | None,
+    branch: str = MAIN_BRANCH,
+    workflow: str = CI_WORKFLOW,
 ) -> Check:
-    """`ci.main_runs`: the conclusion of the latest completed CI run on main."""
+    """
+    `ci.main_runs`: the conclusion of the latest completed run of `workflow` on
+    `branch`. Runs of other workflows or branches in the list are ignored here,
+    whatever command wrote it.
+    """
 
     common = {
         "check_id": "ci.main_runs",
@@ -328,15 +388,18 @@ def main_runs_check(
             detail=f"Expected a JSON list of objects with {', '.join(RUN_FIELDS)}.",
             **common,
         )
-    completed = [run for run in runs if run.status == "completed"]
+    relevant = [run for run in runs if run.head_branch == branch and run.workflow == workflow]
+    ignored = len(runs) - len(relevant)
+    completed = [run for run in relevant if run.status == "completed"]
     if not completed:
         return Check(
             state=HealthState.INSUFFICIENT_EVIDENCE,
             reason="no_completed_runs",
             measured_at=measured_at,
             value=None,
-            summary="The CI run list holds no completed run.",
-            detail=f"{len(runs)} runs listed, none completed.",
+            summary=f"The CI run list holds no completed {workflow} run on {branch}.",
+            detail=f"{len(runs)} runs listed; {len(relevant)} of {workflow} on {branch}, "
+            "none completed.",
             **common,
         )
     latest = completed[0]
@@ -344,7 +407,8 @@ def main_runs_check(
     stamp = latest.created_at.strftime("%Y-%m-%d %H:%M UTC")
     detail = (
         f"run {latest.run_id} on {latest.head_sha[:12]} created {stamp}: "
-        f"{latest.conclusion}; {failures} of the last {len(completed)} completed runs failed; "
+        f"{latest.conclusion}; {failures} of the last {len(completed)} completed {workflow} "
+        f"runs on {branch} failed; {ignored} runs of other workflows or branches ignored; "
         f"list written {(now - measured_at).days} days before this summary."
     )
     if latest.conclusion in _FAILED:

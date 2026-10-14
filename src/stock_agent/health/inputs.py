@@ -30,6 +30,12 @@ Transition status. An artifact that depends on portfolio economics carries
 `transition_status`: "approved" or "engineering_only_unapproved_transition".
 The second is a visible limitation, shown as degraded (`unapproved_transition`),
 never as a failure of the run itself.
+
+Synthetic inputs. In the private (real) scope a `synthetic: true` input says
+nothing about real training, forecasts or portfolios, so it is capped at
+insufficient_evidence (`synthetic_input`): never healthy, while a worse
+finding still shows. The CI smoke checks read the synthetic fixtures with
+`allow_synthetic=True`.
 """
 
 from __future__ import annotations
@@ -150,7 +156,7 @@ def load_latest(directory: Path | None, artifact: str) -> Artifact | NotRead:
 
 
 def require(document: dict[str, Any], key: str, kind: str, *, optional: bool = False) -> Any:
-    """A typed field: kind is one of text, int, positive, number, fraction, list, object."""
+    """A typed field: text, int, positive, number, nonnegative, fraction, list or object."""
 
     if key not in document:
         raise FormatError(f"missing field {key!r}")
@@ -164,6 +170,7 @@ def require(document: dict[str, Any], key: str, kind: str, *, optional: bool = F
         "int": integer and value >= 0,
         "positive": integer and value >= 1,
         "number": number and math.isfinite(value),
+        "nonnegative": number and math.isfinite(value) and value >= 0,
         "fraction": number and 0 <= value <= 1,
         "list": isinstance(value, list),
         "object": isinstance(value, dict),
@@ -195,10 +202,19 @@ def worst_finding(findings: Sequence[Finding]) -> Finding:
     return min(findings, key=lambda finding: PRECEDENCE.index(finding.state))
 
 
-def common_findings(artifact: Artifact) -> list[Finding]:
-    """Findings every economics-dependent input shares: transition and unreadable files."""
+SYNTHETIC_FINDING = Finding(
+    HealthState.INSUFFICIENT_EVIDENCE,
+    "synthetic_input",
+    "The input is synthetic fixture data, so it says nothing about the real system.",
+)
+
+
+def common_findings(artifact: Artifact, *, allow_synthetic: bool) -> list[Finding]:
+    """Findings every input shares: synthetic data, transition and unreadable files."""
 
     findings = []
+    if artifact.synthetic and not allow_synthetic:
+        findings.append(SYNTHETIC_FINDING)
     if artifact.document.get("transition_status") == TRANSITION_UNAPPROVED:
         findings.append(
             Finding(
