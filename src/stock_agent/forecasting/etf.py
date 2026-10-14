@@ -569,10 +569,7 @@ def run_etf(
         f"{config.universe.id}"
         for target in etf_data.TARGETS
     }
-    prior = sum(
-        len({e.evidence.get("variant_id") for e in registry.entries(scope)} - {None})
-        for scope in scopes.values()
-    )
+    prior = em.prior_trials(registry, scopes.values())
     keys = {
         (target, name): f"{etf_data.TARGET_SHORT[target]}.{name}" for target, name in registered
     }

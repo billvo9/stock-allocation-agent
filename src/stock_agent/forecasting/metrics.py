@@ -14,6 +14,8 @@ comparison is against.
                                 undefined dates counted as zero for both
     oos_r2_vs_reference         1 - SSE_model / SSE_reference on identical rows
     mse_improvement_vs_reference  per-date MSE(reference) - MSE(model)
+    prior_trials                earlier registrations in the run's research scopes
+                                (the multiple-testing count recorded per run)
     holm_adjusted_p             Holm step-down adjustment of the candidates'
                                 one-sided fold-block p-values for
                                 coverage_weighted_rank_ic > 0 (information)
@@ -151,6 +153,17 @@ def holm_rows(candidate_rows: Mapping[str, Mapping[str, object]], roles: Mapping
         )
         result += rows(name, roles[name], "holm_adjusted_p", [item])
     return result
+
+
+def prior_trials(registry, scopes) -> int:
+    """
+    Earlier registrations in the given research scopes. Every registration is a
+    prior trial, even of the same variant: a rerun on new data or with a new
+    seed is another look at the same question, so distinct variant ids would
+    undercount it.
+    """
+
+    return sum(len(registry.entries(scope)) for scope in scopes)
 
 
 def interval_coverage(

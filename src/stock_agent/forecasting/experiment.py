@@ -500,7 +500,7 @@ def _run(config, root, provenance, started_at, clock) -> ExperimentResult:
         **({"clock": clock} if clock is not None else {}),
     )
     scope = research_scope(config, dataset.label_spec)
-    prior = {e.evidence.get("variant_id") for e in registry.entries(scope)}
+    prior = em.prior_trials(registry, [scope])
     model_ids = _model_ids(config, models)
     versions = {name: registry.next_version(model_id) for name, model_id in model_ids.items()}
 
@@ -622,7 +622,7 @@ def _run(config, root, provenance, started_at, clock) -> ExperimentResult:
         "multiple_testing": {
             "candidates_in_run": len(model_ids),
             "grid_points_in_run": sum(len(s.params["selection"]["grid"]) for s in nested_specs),
-            "prior_variants_in_scope": len(prior - {None}),
+            "prior_variants_in_scope": prior,
         },
         "models": {
             spec.name: {"role": spec.role, "variant_id": spec.describe()["variant_id"]}
