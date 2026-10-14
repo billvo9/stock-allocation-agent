@@ -207,7 +207,7 @@ Each state has its own component, reason code and copy. A state is never an empt
 - Show ranges before points, and translate them into dollars on the user's reference amount.
 - Frame by frequency with honest denominators over non-overlapping periods ("3 of 17 calendar years").
 - Draw fan bands (50% and 80%) only for calibrated distributions.
-- Use whole percents in Explore and keep decimals in Research.
+- Show percentages with one decimal in Explore (for example −5.0%), never rounding away the sign of a loss, and keep more precision in Research.
 - Keep "What this cannot tell you" visible on every page that shows a number about the future or a simulation.
 
 **Avoid:**
