@@ -27,8 +27,9 @@ Recommended rules implemented:
   recommended interim).
 - D5: long only and summing to 1, else `InvalidTarget`; a per-asset cap
   whose excess goes to cash; then a turnover limit trading part way.
-- D6: a rebalance waits for the next session at which every involved asset
-  (held, or in the target) has a close. Share counts are held through gaps;
+- D6: a rebalance waits for the next session at which every held or
+  targeted asset has a close. A new decision arriving while one is deferred
+  is an open sub-question, so the oracle refuses it (`ScenarioNotCovered`). Share counts are held through gaps;
   wealth is unavailable (None) at a close where a held asset has none. A
   held asset with a close but no available return (a distribution inside
   the gap) stops the run.
@@ -332,7 +333,7 @@ def run(
 
         if t in planned:
             if waiting is not None:
-                raise ScenarioNotCovered("a new decision is due while an earlier one waits (D6)")
+                raise ScenarioNotCovered("a new decision is due while one is deferred (D6 open)")
             waiting = (planned[t], t)
         if waiting is None:
             continue

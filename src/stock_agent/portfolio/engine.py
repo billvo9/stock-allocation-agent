@@ -26,6 +26,11 @@ Inputs (sessions are integer positions 0..T):
 Wealth is the pre-trade mark-to-market value at each close from the build's
 execution close onward, None where a held asset has no close (never carried
 flat).
+
+Causality: `simulate` trusts the targets it is given. Only `collect_targets`
+enforces that a decision at d sees nothing after close d, so targets built
+any other way (an optimizer, an RL policy) must be checked at their own
+source, for example with the detectors in `tests/reference/timing.py`.
 """
 
 from __future__ import annotations
@@ -115,6 +120,10 @@ def simulate(
     execute each decision d at close d + lag (deferred past missing closes),
     pass every target through `feasible_target`, and value the holdings
     through `transition`.
+
+    Every step goes through `transition` and the engine uses its result: no
+    cost, return or drift formula is computed here (F8.1, one function).
+    The targets are trusted as given; causality is `collect_targets`' job.
     """
 
     raise NotImplementedError(PENDING_APPROVAL)

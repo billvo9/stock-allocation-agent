@@ -20,9 +20,10 @@ Proposed semantics, PENDING approval:
 - Later rebalance decisions are the sessions d > first_decision with
   (d - first_decision) mod every == offset, with one registered offset
   shared by every compared portfolio (D7).
-- If an asset the trade involves has no close at the execution session,
-  the whole rebalance waits for the next session where all of them have
-  one (D6).
+- If a held or targeted asset has no close at the execution session, the
+  whole rebalance waits for the next session where all of them have one
+  (D6). Open sub-question: a newer decision arriving meanwhile is
+  recommended to supersede the deferred target.
 """
 
 from __future__ import annotations
@@ -40,7 +41,16 @@ EXECUTION_KINDS = frozenset({BUILD, REBALANCE})
 # Schedule and engine reasons (machine-readable).
 UNEXECUTABLE_MISSING_CLOSE = "unexecutable_missing_close"  # deferred (D6)
 NO_EXECUTION_SESSION = "no_execution_session"  # no close with a following session (F1 edge)
-REASONS = frozenset({UNEXECUTABLE_MISSING_CLOSE, NO_EXECUTION_SESSION, DISTRIBUTION_IN_GAP})
+# D6 open sub-question: the recommended answer, pending like the rest of D6.
+SUPERSEDED_DEFERRED_TARGET = "superseded_deferred_target"  # a newer target replaced it
+REASONS = frozenset(
+    {
+        UNEXECUTABLE_MISSING_CLOSE,
+        NO_EXECUTION_SESSION,
+        SUPERSEDED_DEFERRED_TARGET,
+        DISTRIBUTION_IN_GAP,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -132,8 +142,9 @@ def next_executable_session(
     n_sessions: int,
 ) -> int | None:
     """
-    The first session at or after `planned` where every involved asset has a
-    close and a following session exists, or None (D6 deferral).
+    The first session at or after `planned` where every involved (held or
+    targeted) asset has a close and a following session exists, or None (D6
+    deferral).
     `has_close(session, asset)` reports whether the asset closed then.
     """
 

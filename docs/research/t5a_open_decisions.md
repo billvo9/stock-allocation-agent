@@ -6,6 +6,7 @@
 - Formula ids and option names refer to `docs/research/t5_portfolio_formulas.md` (sections 1, 2, 7 and 8).
 - The T5a engine interface (`src/stock_agent/portfolio/transition.py`, `schedule.py`, `engine.py`, and `log_growth_reward` in `src/stock_agent/environment/reward.py`) raises `NotImplementedError` until the owner approves D1–D8.
 - `tests/reference/t5a_reference.py`, a test-only shares-and-cash ledger of the recommended options, reproduces every number below (`tests/test_t5a_reference.py`). D4 (b) is group C and is not reproduced.
+- D6 was corrected on 2026-10-14 after independent review: a rebalance now waits for every **held or targeted** asset, and the packet adds an open sub-question about a decision that arrives while a rebalance is deferred. Until the owner answers it, the oracle refuses that case (`ScenarioNotCovered`). The recommended rule (the newer target supersedes) is held as a strict xfail on both the oracle and the engine.
 - The approval, with its date and the owner's exact words, is recorded here and in `docs/PROJECT_STATE.md` before any formula is implemented.
 
 None of these is approved. The packet asks only what needs your judgment; everything else follows mechanically once these are decided (listed at the end). Every number below was computed by script (`t5a_v2_numbers.py`).
@@ -83,7 +84,10 @@ Notation:
 ## D6. Missing prices and unexecutable actions
 
 **Rules (recommended):**
-- **Execution.** If any asset whose weight the target changes has no close at the execution session, the whole rebalance is deferred to the next session where all of them have one. The reason `unexecutable_missing_close` is recorded, the drifted weights are held meanwhile, and nothing is filled.
+- **Execution.** If any **held or targeted** asset has no close at the execution session, the whole rebalance is deferred to the next session where all of them have one. Without every held asset's price, wealth, and so the trade sizes, cannot be computed. The reason `unexecutable_missing_close` is recorded, the drifted weights are held meanwhile, and nothing is filled. *(Corrected 2026-10-14 after independent review. The earlier wording, "any asset whose weight the target changes", could not be executed.)*
+- **A new decision while a rebalance is deferred (open sub-question).**
+  - **Recommended:** the newer target replaces the deferred one. The latest information wins, at most one target is ever pending, and the reason `superseded_deferred_target` is recorded.
+  - Alternatives: execute the older target first, or drop the newer one.
 - **Valuation across a gap.** Hold the share counts (no trading inside a gap) and value at the next session where every held asset has a close: W_end = W_start · Σ_i w_i·G_i, where G_i is asset i's growth over the span (the approved multi-session total return). This is exact at the span end. Intermediate wealth is reported as unavailable, never carried flat.
   - Example: W = 100 split 50/50 between A and B. A has no close on t1 and t2, and its t0→t3 return is +3%. B returns +1% per session. Then W_t3 = 50 × 1.03 + 50 × 1.01³ = **103.01505**, and W_t1 and W_t2 are unavailable.
 - **Distribution in a gap (R5b).** A held fund's span return is unavailable, so the backtest or episode stops with the reason code `distribution_in_gap` rather than guessing.

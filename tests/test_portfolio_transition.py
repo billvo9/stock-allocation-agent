@@ -357,7 +357,9 @@ def test_d5_a_target_inside_the_set_passes_unchanged():
 
 
 @PENDING
-@pytest.mark.parametrize("requested", [[0.6, 0.6, -0.2], [0.5, 0.5, 0.1], [NAN, 0.5, 0.5]])
+@pytest.mark.parametrize(
+    "requested", [[0.6, 0.6, -0.2], [0.5, 0.5, 0.1], [NAN, 0.5, 0.5], [0.5, 0.5]]
+)
 def test_d5_a_rule_breaking_target_is_an_error(requested):
     with pytest.raises(InvalidTarget):
         feasible_target(np.array(requested), np.array([0.0, 0.0, 1.0]), Constraints(2))
@@ -429,6 +431,26 @@ def test_a_missing_return_on_a_held_asset_raises_and_on_an_unheld_one_does_not()
         portfolio_step(np.array([0.5, 0.5, 0.0]), None, r_next, np.zeros(3), 2)
     step = portfolio_step(np.array([0.0, 0.5, 0.5]), None, r_next, np.zeros(3), 2)
     assert step.w_next[0] == 0.0 and np.isfinite(step.w_next).all()
+
+
+@PENDING
+def test_a_cost_of_one_or_more_raises():
+    # Spec 2(f): C >= 1 would wipe out (or overdraw) wealth, so it is an error.
+    with pytest.raises(ValueError):
+        portfolio_step(
+            np.array([1.0, 0.0]), np.array([0.0, 1.0]), np.zeros(2), np.array([1.0, 0.0]), 1
+        )
+
+
+@PENDING
+def test_a_dust_trade_is_no_trade():
+    # Spec 2(f): a target within 1e-12 of the drifted weights in every component is no trade.
+    w_pre = np.array([0.3, 0.5, 0.2])
+    target = w_pre + np.array([4e-14, -4e-14, 0.0])
+    step = portfolio_step(w_pre, target, np.array([0.01, -0.02, 0.0]), np.full(3, 0.001), 2)
+    assert step.cost == 0.0 and step.turnover_one_way == 0.0 and step.traded_notional == 0.0
+    assert step.reason == NO_TRADE
+    np.testing.assert_array_equal(step.w_post_trade, w_pre)
 
 
 # --- conservation: weights-based steps equal the shares ledger (T8.3) ---
@@ -648,6 +670,80 @@ def test_d6_a_trade_waits_for_the_close_of_an_asset_it_buys():
 
 
 @PENDING
+def test_the_engine_computes_every_step_through_the_injected_transition():
+    """
+    F8.1, one function: the engine calls `transition` for every valued span
+    and uses its result as given. The marked transition below is
+    deliberately non-economic (its drift rotates the weights and its return
+    counts the calls), so an engine computing its own formulas cannot pass.
+    """
+
+    returns = np.array(
+        [[NAN] * 3, [0.01, 0.02, 0.0], [0.03, -0.01, 0.0], [0.0, 0.01, 0.0], [0.02, 0.0, 0.0]]
+    )
+    calls, results = [], []
+
+    def marked(w_pre, target, r_next, cost_rate, cash_index):
+        calls.append((w_pre.copy(), None if target is None else target.copy(), r_next.copy()))
+        post = w_pre if target is None else target
+        step = StepResult(
+            post,
+            np.roll(post, 1),
+            0.0,
+            0.0,
+            0.01 * len(calls),
+            0.0,
+            0.0,
+            NO_TARGET if target is None else TRADED,
+        )
+        results.append(step)
+        return step
+
+    result = engine.simulate(
+        returns,
+        {0: np.array([0.5, 0.5, 0.0]), 2: np.array([0.2, 0.6, 0.2])},
+        lag=1,
+        cost_rate=np.zeros(3),
+        constraints=Constraints(2),
+        initial_wealth=1.0,
+        transition=marked,
+    )
+    assert len(result.steps) == len(calls) == 3
+    assert all(a is b for a, b in zip(result.steps, results, strict=True))
+    assert result.sessions == (1, 2, 3, 4)
+    assert result.wealth == pytest.approx((1.0, 1.01, 1.01 * 1.02, 1.01 * 1.02 * 1.03))
+    np.testing.assert_array_equal(calls[0][0], [0.0, 0.0, 1.0])  # the build starts in cash
+    np.testing.assert_array_equal(calls[0][1], [0.5, 0.5, 0.0])
+    assert calls[1][1] is None
+    np.testing.assert_array_equal(calls[2][1], [0.2, 0.6, 0.2])
+    for k in (1, 2):  # each step starts from the previous step's w_next
+        np.testing.assert_array_equal(calls[k][0], results[k - 1].w_next)
+    for k, (_, _, r_next) in enumerate(calls):
+        np.testing.assert_allclose(r_next, returns[k + 2], rtol=0, atol=1e-15)
+
+
+@PENDING
+def test_d6_a_newer_decision_supersedes_a_deferred_target():
+    # Open D6 sub-question, recommended answer: the newer target replaces the deferred one.
+    returns = _gap_returns()
+    returns[5] = [0.02, -0.01, 0.0]
+    result = engine.simulate(
+        returns,
+        {0: np.array([0.5, 0.5, 0.0]), 1: np.array([0.2, 0.8, 0.0]), 2: np.array([0.4, 0.6, 0.0])},
+        lag=1,
+        cost_rate=np.zeros(3),
+        constraints=Constraints(2),
+        initial_wealth=1.0,
+    )
+    assert result.executions[1:] == (
+        schedule.ScheduledExecution(1, None, schedule.REBALANCE, "superseded_deferred_target"),
+        schedule.ScheduledExecution(2, 4, schedule.REBALANCE, schedule.UNEXECUTABLE_MISSING_CLOSE),
+    )
+    at_t3 = 0.5 * 1.03 + 0.5 * 1.01**3
+    assert result.wealth[-1] == pytest.approx(at_t3 * (1 + 0.4 * 0.02 - 0.6 * 0.01), abs=TOLERANCE)
+
+
+@PENDING
 def test_t7_3_the_offset_example():
     returns = np.array([[NAN] * 3, [0.0] * 3] + [[r, 0.0, 0.0] for r in [0.10, -0.10] * 3])
     ends = {}
@@ -749,4 +845,6 @@ def test_d8_the_reward_is_log_growth_and_counts_costs_once():
     reward = log_growth_reward(step)
     assert reward == pytest.approx(0.0037118964, abs=1e-10)
     assert reward == pytest.approx(math.log(1 + step.net_return), abs=1e-15)
-    assert abs(reward - (math.log(1 + step.net_return) - step.cost)) > 1e-4
+    # Nothing but net_return enters: the same R_net with any cost or turnover gives the same reward.
+    heavier = dataclasses.replace(step, cost=0.5, turnover_one_way=0.9, traded_notional=1.8)
+    assert log_growth_reward(heavier) == reward
