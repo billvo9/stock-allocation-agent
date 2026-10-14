@@ -87,8 +87,8 @@ def derive_evidence(record: Mapping[str, object], model: str) -> dict[str, objec
         "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
         "run_id": str(_get(record, "run_id")),
         "model": model,
-        "role": str(_get(record, f"models.{model}.role")),
-        "variant_id": str(_get(record, f"models.{model}.variant_id")),
+        "role": str(_get(models[model], "role")),  # model names may contain dots
+        "variant_id": str(_get(models[model], "variant_id")),
         "data_class": data_class,
         "mode": str(_get(record, "lockbox_evidence.mode")),
         "lockbox": {

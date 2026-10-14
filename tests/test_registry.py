@@ -285,6 +285,15 @@ def test_evidence_claims_beyond_the_rules_are_ignored(registry):
     assert registry.stage(entry.ref) == "development_evaluated"
 
 
+def test_evidence_is_derived_for_model_names_that_contain_dots():
+    record = passing_record()
+    record["models"] = {"vol.ridge": {"role": "candidate", "variant_id": "v-vol"}}
+    evidence = derive_evidence(record, "vol.ridge")
+    assert evidence["model"] == "vol.ridge" and evidence["variant_id"] == "v-vol"
+    with pytest.raises(RegistryError, match="not part of run"):
+        derive_evidence(record, "vol")
+
+
 # --- activation and rollback ---
 
 
