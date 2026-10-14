@@ -3,21 +3,28 @@
 Changing project state only. Permanent policy lives in `AGENTS.md`.
 Git is authoritative: verify everything here before relying on it.
 
-Last reviewed: 2026-10-13
+Last reviewed: 2026-10-14
 
 
 ## Last checkpoint
 
-2026-10-13, milestone "RES-1 strategy: ETF-first and cost-conscious"
-(roadmap and next steps changed by owner direction), verified on branch
-`docs/res1-etf-first` at `47c3d88` (documentation only) plus this
-checkpoint's docs commit, based on `1df3783` (merge pending).
+2026-10-14, milestone "T5-A: the approved descriptive calculations and
+the first working Explore page", verified on branch
+`feature/t5a-descriptive-metrics` at `58be124` plus this checkpoint's docs
+commit, based on `0df3a0c` (merge pending).
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `1df3783` as of last fetch,
-verified 2026-10-13 with `git fetch` and the GitHub API; CI on `1df3783`
+Recently merged to `main` (`origin/main` = `0df3a0c` as of last fetch,
+verified 2026-10-14 with `git fetch` and the GitHub API; CI on `0df3a0c`
 succeeded):
+
+- PR #56 (`0df3a0c`, 2026-10-14): the Explore page on synthetic data and
+  the neutral `ui/` package.
+- PR #55 (`ace2e66`, 2026-10-14): F1 fund-data foundations (frozen NYSE
+  calendar 2003-2024, fund-data contract, write-once private store).
+- PR #54 (`c2ba633`, 2026-10-13): RES-1 cost-conscious and non-blocking
+  for the ETF Portfolio Lab; checkpoint `267d421`.
 
 - PR #53 (`1df3783`, 2026-10-13): `f238374` feat: publication contract
   v1 with a fail-closed reader (P1-1a); `e589f39` docs: checkpoint.
@@ -92,6 +99,8 @@ the publication contract (P1-1a, this milestone), the T5 formula
 specification, and preparatory research work. Each ticket is scoped and
 approved by the owner before it starts.
 
+- **F1 foundations** (merged in PR #55) and the **Explore page** (merged in
+  PR #56).
 - **P1-1a, publication contract v1** (merged in PR #53, `src/stock_agent/publication/`):
   - a data-agnostic envelope, write-once writer and fail-closed reader
     sharing one `policy.validate`; every refusal carries a
@@ -106,7 +115,20 @@ approved by the owner before it starts.
     knowledge rule d 23:59:59.999999Z;
   - hash integrity is documented as distinct from provenance; `code_sha`,
     `code_dirty` and `created_at` are unauthenticated producer claims.
-- **RES-1 strategy** (this branch; owner direction 2026-10-13): ETF-first
+- **T5-A** (this branch, `src/stock_agent/portfolio/descriptive.py`): the
+  approved OD8 group A calculations, connected to the Explore page:
+  total returns from raw closes, as-paid distributions and share-count
+  splits (adjusted inputs refused); labelled multi-session returns across
+  sessions without a close; no reinvestment through gaps; growth of
+  $10,000 from the shared start; maximum drawdown only for a complete
+  history, otherwise the largest observed decline labelled incomplete;
+  calendar-year returns with unavailable years where a year-end value is
+  missing. Run with `.venv/bin/python scripts/run_portfolio_lab.py`
+  (synthetic demo data).
+- **Tiingo adapter** (separate branch and PR, offline only): allowlisted
+  fields, verified splits, no adjusted levels or post-2024 metadata stored.
+  No live request has been made.
+- **RES-1 strategy** (merged in PR #54; owner direction 2026-10-13): ETF-first
   and cost-conscious. RES-1 does not block F1, P1-1b, the Portfolio
   Builder or fund-level allocation research; it remains the research
   dependency for individual-stock forecasting. A zero-purchase feasibility
@@ -347,9 +369,32 @@ the owner's answers and messages in session:
   initial ETF allocation research". "Do not purchase data, implement a
   vendor adapter, run new real-stock scoring experiments or change the
   historical universe yet."
-- Pending: the rest of OD3; OD8 (group A first); OD9's `signal_cutoff_at`
-  and production availability rule; OD10-OD15 (OD13's sub-decisions are
-  proposed); OD16's activation, H_end and transition rules; OD17.
+- 2026-10-14: "I approve VTI, AGG and SHV as the first three reference
+  funds." "I approve the frozen 2003-2024 NYSE calendar for the initial US
+  equity-ETF prototype, with exceptional closures tested. This does not
+  establish a complete bond-market, international or future-date
+  calendar." "I approve evaluating the Tiingo Starter API for private,
+  local research, subject to its terms and a successful coverage audit."
+  An upgrade to Power ($30/month) only with a demonstrated benefit, never
+  automatically; the owner configures the key locally; no live vendor
+  audit until the owner confirms the token and authorizes the restricted
+  pre-2025 queries.
+- 2026-10-14, OD9 (descriptive display only): "use 18:00
+  America/New_York as an explicitly assumed close-availability
+  convention. This is not proof of final vendor publication time and must
+  not be used as evidence of historical trading executability or
+  forecasting validity." OD9a (dates after the lockbox on earlier
+  ex-dates) is not approved; the store stays fail-closed.
+- 2026-10-14, OD8 group A: A1-A8, R1, R2, R4 and R5d approved; R3 wording,
+  R5a approved (labelled multi-session returns); R5b not approved (no
+  reinvestment through gaps); R5c thresholds not approved (conservative
+  incompleteness). The record is in `docs/research/t5_portfolio_formulas.md`,
+  section 9. T5a-T5c and PPO stay unauthorized.
+- Pending: the rest of OD3; OD8 groups B-D (the T5a packet B1-B9 is
+  prepared); OD9's `signal_cutoff_at` for decisions and the production
+  availability rule beyond descriptive display; OD10-OD15 (OD13's
+  sub-decisions are proposed); OD16's activation, H_end and transition
+  rules; OD17.
 
 Owner decision (2026-10-11, T4 phase B/C): "I explicitly authorize you to
 implement the remaining `linear.py` estimator core, including
@@ -582,21 +627,26 @@ Coverage limitations found are tracked as open item 2.
 
 ## Last verified quality baseline
 
-Measured 2026-10-13 with `python3 scripts/verify.py` on
-`docs/res1-etf-first` (base `1df3783`, which includes P1-1a and the T5
-specification; the working tree then held exactly the content of this
-checkpoint commit). The same counts were measured on
-`feature/p1-1a-publication-contract` at `f238374`. Gates
-ran with `.venv` tools (Python 3.12.2, pytest 9.1.1, ruff 0.16.2, pandas
-3.0.5, numpy 2.5.1, pyarrow 25.0.1, streamlit 1.64.0, plotly 7.1.0,
-scikit-learn 1.9.1). Exit 0.
+Measured 2026-10-14 with `python3 scripts/verify.py` on
+`feature/t5a-descriptive-metrics` (base `0df3a0c`; the working tree then
+held exactly the content of `58be124`); gates ran with `.venv` tools
+(Python 3.12.2, pytest 9.1.1, ruff 0.16.2, pandas 3.0.5, numpy 2.5.1,
+pyarrow 25.0.1, streamlit 1.64.0, plotly 7.1.0, scikit-learn 1.9.1).
+Exit 0.
 
-- `pytest -q`: 1531 passed (227 of them in `tests/test_publication_*.py`)
-- `python -m pytest -q`: 1531 passed
-- `ruff format --check src tests scripts .claude/hooks`: 204 files
+- `pytest -q`: 1845 passed
+- `python -m pytest -q`: 1845 passed
+- `ruff format --check src tests scripts .claude/hooks`: 232 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- Suite runtime about 59-60 s per pass.
+- Suite runtime about 70 s per pass.
+- Mutation checks (T5-A): 11 of 11 probes killed (dropped distribution,
+  ignored split ratio, span chained from the previous session,
+  reinvestment through a gap, t0's own return applied, history always
+  complete, year-start base, losing on a rounded value, last value instead
+  of the year-end value, start without the common-close check, adjusted
+  closes accepted). An independent statistical review recomputed every
+  hand example; its findings were fixed before commit.
 - Mutation checks (P1-1a): 18 of 18 probes killed, each run on the
   sources and restored. Probes: lockbox comparison and calls; `validate`
   removed from the writer or the reader; knowledge time at 00:00Z or
@@ -798,7 +848,17 @@ scikit-learn 1.9.1). Exit 0.
      copies about 20 lines of the T2 pattern);
    - published directories have mode 0o700 and files are not fsynced; a
      torn write fails the reader's hash checks.
-9. Smaller items: lineage lacks current-side tie lists; as-of change log
+9. Tiingo and F1 follow-ups (owner decisions where marked):
+   - F1's `AmountBasis` has no "unknown" value, so an unverified
+     distribution basis cannot be stored honestly; the adapter stores
+     distributions only after verification (adding "unknown" is a contract
+     change, owner-gated);
+   - `VERIFIED_DISTRIBUTIONS` (primary-source amounts) are needed to admit
+     AGG and SHV distributions; each entry is owner-reviewed, like
+     `VERIFIED_SPLITS`;
+   - vendor-adjusted reconciliation needs an isolated, owner-approved
+     procedure (proposed in `docs/research/f1_fund_data.md`).
+10. Smaller items: lineage lacks current-side tie lists; as-of change log
    trusts `period_end`; mixed availability rules at one trigger instant;
    FY consistency checks (Q1+Q2+Q3+Q4 = FY); duplicate flow logic in
    `build_edgar_quarter`; unused `edgar_history._infer_fiscal_quarter`;
@@ -807,35 +867,21 @@ scikit-learn 1.9.1). Exit 0.
 
 ## Next steps
 
-1. Owner (merging is owner-only): review and merge the RES-1 strategy
-   documentation pull request.
-2. Toward P1-1b, the first real Explore page (owner decisions first; a
-   decision sheet was delivered on 2026-10-13):
-   - OD8 group A, OD9's production availability rule, OD7's fund list,
-     OD14's calendar and the F1 data source;
-   - the smallest next implementation ticket needs only group A: T5-A, the
-     descriptive formulas as pure functions tested on the specification's
-     hand examples;
-   - then an F1 slice (three funds to 2024-12-31), then P1-1b (contract
-     1.1 with the first real-data kind, the `ui/` extraction, one Explore
-     page).
-
-   Then OD8 groups B-D, T5a-T5c, G1 (the registry; needs OD12) and P2-1.
-   No G2 activation, H_end choice, formula change, real-market feature
-   experiment or RL/PPO training without explicit approval. Decide the T4
-   follow-ups before the next modelling round.
-3. FE-0 and FE-1 (approved 2026-10-13 as preparatory work only): feature
-   and label contracts, synthetic tests and outcome-blind feature-build
-   designs; no scoring of E1-E3 on the four-stock universe or on U1 before
-   registration.
-4. RES-1 (OD13), cost-conscious and non-blocking: the 2026-10-13 vendor
-   feasibility report (Sharadar Direct, Norgate Platinum, EODHD,
-   QuantRocket's free sample) recommends a zero-purchase proof of concept
-   first (RES-1a: synthetic fixtures for schema mapping, identifier
-   stability, adjustment lookahead, delisting handling and the 2024-12-31
-   cap), then, only by owner decision, Sharadar Prices Full History. No
-   purchase, vendor adapter, real-stock scoring or universe change without
-   explicit approval.
+1. Owner (merging is owner-only): review and merge the T5-A pull request
+   and the Tiingo adapter pull request.
+2. The real-data Explore page, after the Tiingo PR merges:
+   - the owner configures `TIINGO_API_KEY` locally and authorizes the
+     restricted pre-2025 coverage audit (VTI, AGG, SHV);
+   - sourced `VERIFIED_DISTRIBUTIONS` entries for AGG and SHV (owner
+     review);
+   - then the first real-data publication kind (contract 1.1, the OD9
+     descriptive convention) and the page reading it.
+3. T5a: the owner decides B1-B9 (packet prepared 2026-10-14); then the
+   corrected simulator on its own branch. No PPO training before it is
+   validated.
+4. FE-0 and FE-1 (approved 2026-10-13 as preparatory work only), and
+   RES-1a (the zero-purchase proof of concept) when the owner approves it;
+   RES-1 stays cost-conscious and never blocks the ETF Portfolio Lab.
 5. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
    `docs/research/diagnostics_and_visualization_plan.md`:

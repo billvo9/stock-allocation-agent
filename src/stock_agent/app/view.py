@@ -1,8 +1,9 @@
 """
 Pure view logic for the Explore page: periods and their clamping to
-coverage, data gaps, the calls to the metrics provider, and display
-formatting. No Streamlit, no Plotly, and no financial formula: every metric
-comes from the provider (`provider.DescriptiveMetrics`).
+coverage, data gaps, multi-session returns and breaks, the calls to the
+metrics provider, and display formatting. No Streamlit, no Plotly, and no
+financial formula: every metric comes from the provider
+(`provider.DescriptiveMetrics`).
 
 Point in time. A view is built only from records inside the selected
 period, so nothing after the period's end reaches the provider or the page.
@@ -18,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from stock_agent.app import labels
-from stock_agent.app.history import UNAVAILABLE, FundHistory
+from stock_agent.app.history import OK, UNAVAILABLE, FundHistory
 from stock_agent.app.provider import DescriptiveMetrics
 from stock_agent.portfolio.descriptive import (
     CALENDAR_COLUMNS,
@@ -133,12 +134,14 @@ def preset_period(preset: str, coverage: tuple[pd.Timestamp, pd.Timestamp]) -> P
     return clamp_period(start_year, end_year, coverage, PRESET_LABELS[preset])
 
 
-# --- gaps ---
+# --- gaps, multi-session returns and breaks ---
+
+NO_PRIOR_CLOSE = "no_prior_close"
 
 
 @dataclass(frozen=True)
 class Gap:
-    """A run of consecutive unavailable records with one reason."""
+    """A run of consecutive sessions without a close."""
 
     first: pd.Timestamp
     last: pd.Timestamp
@@ -146,19 +149,57 @@ class Gap:
     reason: str
 
 
+@dataclass(frozen=True)
+class Span:
+    """A labelled multi-session return (R5a): one return over several sessions."""
+
+    date: pd.Timestamp
+    total_return: float
+    sessions: int
+
+
+@dataclass(frozen=True)
+class Break:
+    """A session with a close whose return is unavailable, so growth cannot continue past it."""
+
+    date: pd.Timestamp
+    reason: str
+
+
 def gaps(history: FundHistory) -> tuple[Gap, ...]:
     records = history.records
-    unavailable = records["status"].eq(UNAVAILABLE)
-    if not unavailable.any():
+    missing = ~records["close_observed"]
+    if not missing.any():
         return ()
-    key = records["status"].astype(str) + "|" + records["reason"].fillna("").astype(str)
-    runs = key.ne(key.shift()).cumsum()
+    runs = missing.ne(missing.shift()).cumsum()
     found = []
-    for _, run in records[unavailable].groupby(runs[unavailable], sort=True):
+    for _, run in records[missing].groupby(runs[missing], sort=True):
         found.append(
             Gap(run["date"].iloc[0], run["date"].iloc[-1], len(run), str(run["reason"].iloc[0]))
         )
     return tuple(found)
+
+
+def spans(history: FundHistory) -> tuple[Span, ...]:
+    records = history.records
+    rows = records[records["status"].eq(OK) & records["sessions_spanned"].gt(1)]
+    return tuple(
+        Span(row.date, float(row.total_return), int(row.sessions_spanned))
+        for row in rows.itertuples()
+    )
+
+
+def breaks(history: FundHistory) -> tuple[Break, ...]:
+    """Unavailable returns at sessions with a close, other than a fund's first close."""
+
+    records = history.records
+    first = history.coverage_start
+    rows = records[
+        records["status"].eq(UNAVAILABLE)
+        & records["close_observed"]
+        & ~(records["reason"].eq(NO_PRIOR_CLOSE) & records["date"].eq(first))
+    ]
+    return tuple(Break(row.date, str(row.reason)) for row in rows.itertuples())
 
 
 def unavailable_reasons(history: FundHistory) -> tuple[str, ...]:
@@ -181,6 +222,8 @@ class Unavailable:
 class FundView:
     history: FundHistory  # restricted to the period
     gaps: tuple[Gap, ...]
+    spans: tuple[Span, ...]
+    breaks: tuple[Break, ...]
     growth: pd.Series | Unavailable
     drawdown: DrawdownSummary | Unavailable
     calendar: pd.DataFrame | Unavailable
@@ -200,15 +243,16 @@ def _attempt(call: Callable[..., Any], *args: Any) -> Any:
         return Unavailable(missing.reason, missing.detail)
 
 
-def returns_from(history: FundHistory, start: pd.Timestamp) -> pd.Series:
-    """Daily total returns from `start` on, indexed by session date; gaps stay NaN."""
+def returns_from(history: FundHistory, start: pd.Timestamp) -> tuple[pd.Series, pd.Series]:
+    """Total returns and the sessions each spans, from `start` on; gaps stay NaN."""
 
     records = history.records[history.records["date"].ge(start)]
-    return pd.Series(
-        records["daily_total_return"].to_numpy(dtype="float64"),
-        index=pd.DatetimeIndex(records["date"]),
-        name=history.fund_id,
+    index = pd.DatetimeIndex(records["date"])
+    returns = pd.Series(
+        records["total_return"].to_numpy(dtype="float64"), index=index, name=history.fund_id
     )
+    spanned = pd.Series(records["sessions_spanned"].to_numpy(dtype="int64"), index=index)
+    return returns, spanned
 
 
 # Contract checks on provider results (`provider.DescriptiveMetrics`). A
@@ -241,7 +285,8 @@ def _checked_growth(growth: Any, returns: pd.Series) -> pd.Series | Unavailable:
     present = growth.dropna().to_numpy(dtype="float64")
     if not (np.isfinite(present).all() and (present > 0).all()):
         raise ValueError("growth values must be finite and positive (the axis is logarithmic)")
-    if growth[returns.isna()].notna().any():
+    after_start = returns.iloc[1:]  # t0's own return is never applied
+    if growth.iloc[1:][after_start.isna()].notna().any():
         raise ValueError("growth_index filled a gap: growth must be NaN where the return is NaN")
     return growth
 
@@ -266,10 +311,14 @@ def _checked_calendar(table: Any, growth: pd.Series) -> pd.DataFrame | Unavailab
     years = table["year"].astype(int)
     if years.duplicated().any():
         raise ValueError("calendar_year_returns must return one row per year")
-    if not set(years) <= set(growth.dropna().index.year):
+    if not set(years) <= set(growth.index.year):
         raise ValueError("calendar_year_returns has a year outside the growth series")
+    ok = table["status"].eq(OK).to_numpy()
+    values = table["total_return"].to_numpy(dtype="float64")
     losing = table["losing"].astype(bool).to_numpy()
-    if not np.array_equal(losing, (table["total_return"] < 0).to_numpy()):
+    if not np.isfinite(values[ok]).all() or not np.isnan(values[~ok]).all():
+        raise ValueError("calendar_year_returns: a return is finite exactly when available")
+    if not np.array_equal(losing[ok], values[ok] < 0) or losing[~ok].any():
         raise ValueError("calendar_year_returns: losing must equal total_return < 0")
     return table
 
@@ -295,16 +344,27 @@ def build_view(
         if isinstance(start, Unavailable):
             growth = start
         else:
-            returns = returns_from(history, start)
+            returns, spanned = returns_from(history, start)
             growth = _checked_growth(
-                _attempt(metrics.growth_index, returns, GROWTH_START_VALUE), returns
+                _attempt(metrics.growth_index, returns, spanned, GROWTH_START_VALUE), returns
             )
         if isinstance(growth, Unavailable):
             drawdown, calendar = growth, growth
         else:
             drawdown = _checked_drawdown(_attempt(metrics.drawdown_summary, growth), growth)
-            calendar = _checked_calendar(_attempt(metrics.calendar_year_returns, growth), growth)
-        funds.append(FundView(history, gaps(history), growth, drawdown, calendar))
+            calendar = _checked_calendar(
+                _attempt(metrics.calendar_year_returns, growth, history.year_end_sessions), growth
+            )
+        after_start = (
+            breaks(history)
+            if isinstance(start, Unavailable)
+            else tuple(b for b in breaks(history) if b.date > start)
+        )
+        funds.append(
+            FundView(
+                history, gaps(history), spans(history), after_start, growth, drawdown, calendar
+            )
+        )
     return ExploreView(period=period, start=start, funds=tuple(funds))
 
 
@@ -356,6 +416,9 @@ def calendar_table(funds: Sequence[tuple[str, pd.DataFrame]]) -> pd.DataFrame:
                 cells.append("—")
                 continue
             row = by_year.loc[year]
+            if row["status"] != OK:
+                cells.append("unavailable")
+                continue
             parts = [percent(float(row["total_return"]), signed=True)]
             if bool(row["losing"]):
                 parts.append("lost money")
@@ -369,12 +432,18 @@ def calendar_table(funds: Sequence[tuple[str, pd.DataFrame]]) -> pd.DataFrame:
 def losing_summary(name: str, table: pd.DataFrame) -> str:
     """'Lost money in 2008 and 2022: 2 of 18 calendar years shown (1 partial).'"""
 
-    losing = sorted(int(year) for year in table.loc[table["losing"].astype(bool), "year"])
-    shown = len(table)
-    partial = int(table["partial"].astype(bool).sum())
-    partial_text = f" ({partial} partial)" if partial else ""
+    available = table[table["status"].eq(OK)]
+    losing = sorted(int(year) for year in available.loc[available["losing"].astype(bool), "year"])
+    shown = len(available)
+    partial = int(available["partial"].astype(bool).sum())
+    unavailable = len(table) - shown
+    notes = [f"{partial} partial"] if partial else []
+    if unavailable:
+        notes.append(f"{unavailable} unavailable")
+    partial_text = f" ({'; '.join(notes)})" if notes else ""
     if not losing:
-        return f"{name}: no calendar year shown lost money (0 of {shown}{partial_text})."
+        extra = "".join(f"; {note}" for note in notes)
+        return f"{name}: no calendar year shown lost money (0 of {shown}{extra})."
     years = ", ".join(str(year) for year in losing)
     return (
         f"{name}: lost money in {years}: {len(losing)} of {shown} calendar years shown"

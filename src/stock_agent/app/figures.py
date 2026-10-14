@@ -28,8 +28,9 @@ from stock_agent.ui import style, theme
 # Okabe-Ito blue, vermillion, bluish green, reddish purple and black: the
 # members of the shared palette with at least 3:1 contrast on the chart surface.
 FUND_COLOURS = tuple(style.OKABE_ITO[index] for index in (0, 5, 2, 3, 6))
-FUND_MARKERS = ("circle", "square", "diamond", "triangle-up", "x")
-FUND_DASHES = ("solid", "dash", "dot", "dashdot", "longdash")
+# Five colours pass 3:1 contrast; markers and dashes keep every identity distinct beyond five.
+FUND_MARKERS = ("circle", "square", "diamond", "triangle-up", "x", "star")
+FUND_DASHES = ("solid", "dash", "dot", "dashdot", "longdash", "longdashdot")
 MARKERS_SHOWN = 24  # markers per line: enough to identify it, few enough to stay calm
 
 

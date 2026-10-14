@@ -16,6 +16,7 @@ PAGE_PURPOSE = (
 )
 
 EVIDENCE_BADGE = "Descriptive: facts about the past"
+HISTORICAL_BADGE = "Historical market data"
 SYNTHETIC_BADGE = "Synthetic demo data"
 STALE_BADGE = "Stale data"
 SYNTHETIC_NOTICE = (
@@ -23,7 +24,7 @@ SYNTHETIC_NOTICE = (
     "seeded random generator and exists only to demonstrate the page."
 )
 
-GROWTH_TITLE = "Hypothetical growth of $10,000"
+GROWTH_TITLE = "Hypothetical growth of $10,000 — distributions reinvested"
 REINVESTMENT = (
     "Distributions reinvested on the ex-date: a modeling convention, not actual investor "
     "cash flows."
@@ -34,17 +35,33 @@ HONEST_LABELS = (REINVESTMENT, BEFORE_COSTS, EXPENSES)
 FRACTIONAL_SHARES = "Fractional shares assumed."
 LOG_SCALE = "Logarithmic scale: equal vertical distances are equal percentage changes."
 
-DECLINE_TITLE = "Worst decline"
+DECLINE_TITLE = "Maximum drawdown and recovery"
 DECLINE_SCOPE = (
     "The largest percentage decline from a previous high within the period shown. A later "
     "decline can be larger in dollars, because later highs are higher."
+)
+MAX_DRAWDOWN = "Maximum drawdown"
+OBSERVED_DECLINE = "Largest observed decline"
+INCOMPLETE_HISTORY = (
+    "Incomplete history: {missing} in this period have no value, so the full-period maximum "
+    "drawdown is unavailable. This is the largest decline seen at the closes that exist; the "
+    "true worst decline may be deeper, and the dates shown are only those observed."
+)
+SPAN_NOTE = (
+    "{date}: {value} over {sessions} ({missing} without a close). One multi-session return, "
+    "not a one-session move; the sessions between have no value and are not filled."
+)
+BREAK_NOTE = (
+    "From {date}, the hypothetical growth cannot be continued: {reason}. Later growth, "
+    "declines and calendar years are unavailable rather than estimated."
 )
 DAILY_CLOSES = "Measured on daily closes; declines within a day may have been deeper."
 
 CALENDAR_TITLE = "Calendar-year returns"
 CALENDAR_SCOPE = (
-    "Each calendar year's total return within the period shown. Partial years are labelled "
-    "and never annualized. Whether a year lost money is decided on the unrounded return."
+    "Each calendar year's total return within the period shown, from one year-end close to "
+    "the next. Partial years are labelled and never annualized. Whether a year lost money is "
+    "decided on the unrounded return. A year without a value at either end is unavailable."
 )
 
 ABOUT_TITLE = "About these numbers"
@@ -70,19 +87,29 @@ NO_COMMON_START = (
     "a start date."
 )
 NO_COMMON_START_REASON = "no_common_start"
-PENDING_BADGE = "Pending approval"
 UNAVAILABLE_BADGE = "Unavailable"
-PENDING_EXPLAINER = (
-    "The formulas behind these figures (growth of $10,000, worst decline and calendar-year "
-    "returns) are awaiting the project owner's approval. Nothing is estimated or filled in "
-    "meanwhile."
-)
 
 # Machine reason codes shown on the page, in plain words. An unknown code is
 # shown with its underscores as spaces, never hidden.
 REASON_TEXT = {
-    "missing_input": "no value from the source",
+    "missing_input": "no close from the source",
     "no_records": "no records from the source",
+    "no_prior_close": "no earlier close to measure from",
+    "distribution_in_gap": (
+        "a distribution went ex on a session without a close, so its reinvestment cannot be "
+        "reconstructed"
+    ),
+    "split_and_distribution_in_gap": (
+        "a split and a distribution fell inside sessions without a close, so the return cannot "
+        "be reconstructed"
+    ),
+    "share_basis_unknown_with_split": (
+        "a distribution near a split does not say which share count it is paid on"
+    ),
+    "year_end_value_unavailable": "no value at a year end",
+    "period_edge_value_unavailable": "no value at the start or end of the period shown",
+    "insufficient_history": "fewer than two sessions with a value",
+    "no_common_start": "no session has a close for every selected fund",
 }
 
 
