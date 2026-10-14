@@ -9,7 +9,8 @@ Equity panel (`synthetic_equity_panel`)
     m_t ~ N(market_drift, market_vol), e_it ~ N(0, 1), beta_i ~ U(0.8, 1.2),
     sigma_i ~ U(idio_vol range); close = 100 exp(cumulative r) from listing.
 
-    A quarterly quality characteristic q_ik (AR(1), phi = 0.9) is reported
+    A quarterly quality characteristic q_ik (AR(1), phi = quality_persistence,
+    default 0.9) is reported
     in filings: gross profit / total assets = 0.30 + 0.10 q. Each filing
     becomes available `filing_lag` days after its quarter end at 21:30 UTC
     (after the close, so usable from the next session under the 00:00 UTC
@@ -63,6 +64,7 @@ class SyntheticEquitySpec:
     filing_lag_min_days: int = 30
     filing_lag_max_days: int = 55
     amendment_share: float = 0.1
+    quality_persistence: float = 0.9
     seed: int = 0
 
     def __post_init__(self) -> None:
@@ -72,6 +74,8 @@ class SyntheticEquitySpec:
             raise ValueError("A synthetic panel needs at least 4 assets and 300 sessions.")
         if self.late_listings + self.delistings > self.n_assets // 2:
             raise ValueError("At most half the assets may list late or delist.")
+        if not 0.0 <= self.quality_persistence < 1.0:
+            raise ValueError("quality_persistence must lie in [0, 1).")
 
     def describe(self) -> dict[str, object]:
         return asdict(self)
@@ -109,7 +113,8 @@ def _filings(
         q = rng.randn()
         assets = float(np.exp(rng.normal(9.0, 1.0)))
         for period_end in quarter_ends:
-            q = 0.9 * q + np.sqrt(1 - 0.9**2) * rng.randn()
+            phi = spec.quality_persistence
+            q = phi * q + np.sqrt(1 - phi**2) * rng.randn()
             lag = rng.randint(spec.filing_lag_min_days, spec.filing_lag_max_days + 1)
             available = period_end.normalize() + pd.Timedelta(days=int(lag)) + FILING_HOUR_UTC
             leverage = float(np.clip(0.5 + 0.1 * rng.randn(), 0.05, 0.95))
