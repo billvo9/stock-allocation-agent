@@ -25,6 +25,7 @@ Code: `forecasting/etf_data.py` (series, features, targets) and `forecasting/etf
 - **Volatility.** h_t follows GARCH(1,1) with the unconditional variance above (`volatility: garch`), or is constant (`constant`).
 - **Trend.** For trend assets, μ_t = drift + s·σ·tanh(m_{t−1}), where m is the 60-session return to t−1 over σ√60: known before day t.
 - **Generation.** Deterministic (legacy `RandomState`). Calendars end before 2025-01-01.
+- **GARCH(1,1) only generates the series.** No model in this track is a GARCH model. The forecasters are per-asset ridge and the gradient-boosting challenger, on the HAR-style log-realized-volatility and trend features below.
 
 ## Features and targets
 
@@ -68,7 +69,7 @@ One value per date before inference. Pooled rows use the date's mean over assets
 | `qlike_improvement_vs_<null>` | Volatility target | QLIKE(σ², σ̂²) = σ²/σ̂² − log(σ²/σ̂²) − 1, robust to noise in the volatility proxy (Patton 2011) |
 | `clark_west_vs_historical_mean` | **Only** `ols`, returns | The one truly nested pair |
 | `oos_r2_vs_reference`, `mse_improvement_vs_reference` | The challenger against ridge and OLS | Its increment |
-| `interval_coverage_<50/80/90>` | Returns, ridge | The interval is μ̂ ± z·σ̂·√h, with σ̂ = exp(volatility forecast). The share of realized returns inside is tested against the nominal level |
+| `interval_coverage_<50/80/90>` | Returns, ridge | The interval is μ̂ ± z·σ̂·√h, with σ̂ = exp(volatility forecast). Its coverage is the **fold-block estimate**: the mean over outer folds of each fold's share of realized returns inside. The fold-block t tests it against the nominal level (Learning Notes). Every coverage number in this document is that estimate |
 
 Calibration is computed only here, because only here is the forecast an interval. Rank IC is not used: ranking six heterogeneous assets is not this track's question.
 
@@ -109,10 +110,15 @@ OOS R² of per-asset ridge against the historical mean (bootstrap 95% interval),
 - **Returns are not forecastable here.**
   - The planted trend (s = 0.1) is too weak for 20-session returns over these samples. Ridge chose its strongest shrinkage (c = 100) for every asset, and no OOS R² interval excludes 0.
   - This matches the empirical literature: return predictability rarely survives out of sample.
-- **Intervals.**
-  - On the null panel the normal intervals are close to nominal (80% → 78.3%).
-  - Under GARCH they under-cover on the volatile assets (80% → 72-74% for EQ_US, EQ_INTL, COMMODITY and REIT; about 80% for the bonds). Volatility of volatility makes h-day returns fat-tailed, and the normal interval ignores it.
-  - **A risk input from this track needs a wider-tailed interval** (a t or empirical quantile multiplier), calibrated per asset.
+- **Intervals** (fold-block coverage estimates).
+  - On the null panel the plug-in intervals are close to nominal: 80% → 78.3%.
+  - On the GARCH panel they under-cover: pooled 45.7% / 75.3% / 85.8% at 50 / 80 / 90%. The volatile assets cover 72-74% at 80%; the bonds about 80%.
+  - **The under-coverage is expected from the method, not a surprise about the data.** The interval is a *plug-in*: it treats ridge's forecasts μ̂ and v̂ (log volatility) as if they were the truth.
+    1. **Volatility-forecast error.** Where volatility moves (GARCH), v̂ misses log σ by an error e. The realized coverage is E[2Φ(z·e^{e}) − 1], which is below nominal for wide intervals: with sd(e) = 0.3 → 78.7%, and 0.5 → 76.8%, for a nominal 80%. The same error *raises* coverage at 50% (52.0% at sd 0.5).
+    2. **Jensen bias.** exp(v̂) estimates the geometric centre of σ, which is smaller than the RMS volatility the interval needs: by a factor exp(sd²/2), so 13% too narrow at sd 0.5. This narrows every level, including 50%.
+    3. **Return-forecast error.** μ̂ has no skill here (OOS R² < 0), so its error adds variance the interval omits.
+  - Together these explain under-coverage at every level, and most where volatility clusters. On the null panel volatility is constant, so v̂ is nearly exact and coverage is close to nominal.
+  - **A risk input from this track needs a predictive interval**: one that carries forecast uncertainty (a wider-tailed multiplier, or split-conformal calibration on development folds), calibrated per asset. It also explains the export's `warn` statuses for this run (`ml_registry.md`, "Health export").
 - **Nulls matter.**
   - On the null panel ridge "beats" persistence by 50% R² (t 10.7), simply by shrinking a noisy trailing volatility toward the mean.
   - Against the historical mean, the right null under constant volatility, it is slightly *worse* (−2.2%, t −2.29): the estimation cost of fitting nothing.
@@ -124,10 +130,16 @@ OOS R² of per-asset ridge against the historical mean (bootstrap 95% interval),
 ## Limitations
 
 - Synthetic series only. GARCH and a tanh trend are convenient, not realistic; real fund returns have fat tails, jumps, regime changes and correlated shocks.
-- The interval assumes normal h-day returns with variance h·σ̂². It ignores fat tails and drift uncertainty. Coverage is measured, not assumed.
+- The interval is a plug-in normal interval with variance h·σ̂². It ignores the error in σ̂ and μ̂, the Jensen gap between exp(v̂) and the RMS volatility, and fat tails, so under-coverage is built in wherever volatility is forecast with error (see Results). Coverage is measured, not assumed.
 - `persistence` is a deliberately naive null. Beating it is necessary, not sufficient: under constant volatility, ridge beats persistence simply by shrinking toward the mean (null config). The historical mean is the null that matters for "is there predictable risk?".
 - No permutation nulls yet (`permutation_draws: 0` is recorded). The null config is the null evidence.
 - Fund-level evidence rules are still to be set "with the first fund-level forecast ticket" (PRD section 6). Until then, the registry's universe criterion keeps fund scopes at `engineering_only`.
+
+## Follow-ups
+
+- **A predictive interval that carries parameter and forecast uncertainty.** For example, split-conformal calibration of the standardized residual |y − μ̂| / (σ̂√h) on development folds, applied per asset, or a t multiplier fitted on training residuals. Then Kupiec and Christoffersen coverage tests per asset.
+- **Permutation nulls** per asset, with tuning inside every draw.
+- **Fund-level evidence rules** (owner decision).
 
 ## Learning Notes
 
@@ -144,6 +156,11 @@ OOS R² of per-asset ridge against the historical mean (bootstrap 95% interval),
    - Clark-West f = 2(y − b)(ŷ − b) for the nested pair.
    - QLIKE as above.
    - Interval: μ̂ ± Φ⁻¹(0.5 + c/2)·exp(v̂)·√h.
+   - Plug-in coverage when log σ is forecast with error e ~ N(0, s²): E_e[2Φ(z·e^{e}) − 1]. For z = 1.2816 (80%): s = 0.3 gives 78.7%, s = 0.5 gives 76.8%.
+   - Fold-block t test of coverage = c:
+     - p_b is fold b's share inside, and B the number of folds;
+     - t = (mean_b p_b − c) / (sd_b(p_b)/√B), with df = B − 1.
+     - Adjacent folds share overlapping 20-day labels at their edges, so the blocks are not fully independent and p is slightly optimistic. T2's simulation found the fold-block t closest to nominal size among the three methods.
 5. **Example.**
    - Daily σ̂ = 1%, h = 20 and c = 80% give a half-width of 1.2816 × 1% × √20 = 5.7%.
    - Around a forecast of +0.5%, the interval is [−5.2%, +6.2%].
@@ -156,6 +173,7 @@ OOS R² of per-asset ridge against the historical mean (bootstrap 95% interval),
    - Pooled R² dominated by the most volatile assets.
    - Beating a naive persistence null.
    - Interval coverage that is right on average but wrong in high-volatility regimes; check coverage per asset.
+   - A plug-in interval read as a predictive one: it under-covers by construction wherever its inputs are forecast with error.
    - Synthetic GARCH flatters every volatility model.
 8. **Practitioner validation.**
    - Diebold-Mariano on QLIKE (Patton 2011).
