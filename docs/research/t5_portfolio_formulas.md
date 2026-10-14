@@ -408,7 +408,7 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 - `environment/reward.py:40-45` computes log(W_t/W_{t−1}) − rate·turnover, while `update_wealth` already nets out costs (`portfolio_math.py:94-95`). **Costs would count twice.** This is out of scope (a reward is an approval-gated formula) and flagged.
 
 **(b) Proposed.**
-- **F8.1** A pure function, with no dates and no I/O, in `environment/portfolio_math.py`:
+- **F8.1** A pure function, with no dates and no I/O, in `portfolio/transition.py` (the interface is in place; it raises until approval). The schedule is in `portfolio/schedule.py` and the caller in `portfolio/engine.py`. The cost, turnover and wealth helpers in `environment/portfolio_math.py` are retired when `run_rebalanced_backtest` migrates onto `portfolio_step`:
 
   ```
   portfolio_step(w_pre, target | None, r_next, cost_rate, cash_index)
@@ -578,3 +578,4 @@ Each group can be approved, amended or rejected on its own. An approval is recor
     - incomplete distribution coverage is flagged;
     - drawdown is close-to-close;
     - losing years are classified on unrounded returns (T6.9).
+- **2026-10-14, T5a scaffolding.** F8.1's location corrected from `environment/portfolio_math.py` to `portfolio/transition.py`, where the interface now lives (no formula changed). The open decisions D1–D8 are in `docs/research/t5a_open_decisions.md`.
