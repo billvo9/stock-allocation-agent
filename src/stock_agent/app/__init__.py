@@ -22,7 +22,9 @@ Modules:
     explore       the Explore page "Fund history" (Streamlit)
     overview      the Overview page (Streamlit)
     builder       the Portfolio Builder page: weights and concentration (Streamlit)
-    experiments   the Experiments page: an honest empty state (Streamlit)
+    forecast_records  the prospective forecast ledger, re-verified and laid out (pure)
+    experiments   the Experiments page: recorded prospective forecasts, else an
+                  honest empty state (Streamlit)
     model_health  the Model Health page and its report contract (Streamlit)
     evidence      the Evidence page: provenance and assumptions (Streamlit)
     navigation    the destinations' page scripts

@@ -49,6 +49,29 @@ def build_labeled_panel(
     return labeled.sort_values(["date", "symbol"]).reset_index(drop=True)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _hermetic_forecast_ledger(tmp_path_factory):
+    """
+    No test reads the owner's private forecast ledger: the Lab's Experiments
+    page reads the ledger named by this variable, which points at a file that
+    does not exist unless a test writes it.
+    """
+
+    with pytest.MonkeyPatch.context() as patch:
+        missing = tmp_path_factory.mktemp("no-forecast-ledger") / "ledger.jsonl"
+        patch.setenv("STOCK_AGENT_PROSPECTIVE_LEDGER", str(missing))
+        yield
+
+
+@pytest.fixture(scope="session")
+def prospective_frozen(tmp_path_factory):
+    """One synthetic F1 store, frozen bundle and registry (prospective_helpers)."""
+
+    from prospective_helpers import freeze_fixture
+
+    return freeze_fixture(tmp_path_factory.mktemp("prospective"))
+
+
 @pytest.fixture
 def labeled_panel() -> Callable[..., pd.DataFrame]:
     return build_labeled_panel

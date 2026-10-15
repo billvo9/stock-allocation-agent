@@ -1,0 +1,57 @@
+# Prospective ETF forecasts, variant 1 (owner decisions of 2026-10-14,
+# docs/PROJECT_STATE.md, "prospective forecasting track").
+#
+# Pre-registered before any real data: every value below enters the config
+# hash, and changing any of them is a new variant (new registry versions,
+# counted for multiple testing). Training, tuning and band calibration use
+# only F1 research-store sessions up to data.training_end; the sealed
+# 2025-01-01..H_end period is never trained, tuned or evaluated on. The last
+# `lookback_sessions` before a forecast date are inputs to the frozen models
+# only. Forecasts are research records, never recommendations.
+schema_version: "1.0"
+experiment: etf_prospective_v1
+track: etf_prospective
+description: >-
+  Per-asset ridge on HAR-style log realized-volatility and trend features, for the
+  total log return and the log realized volatility of VTI, AGG and SHV over the next
+  5, 20 and 30 sessions, beside the historical-mean null, with split-conformal 80% bands.
+universe_id: reference_funds_vti_agg_shv
+assets: [VTI, AGG, SHV]
+horizons: [5, 20, 30]
+entry_lag: 1
+targets: [total_log_return, log_realized_volatility]
+features: [tsmom_20d, tsmom_60d, log_rv_5d, log_rv_20d, log_rv_60d]
+data:
+  source: f1_research_store
+  training_end: "2024-12-31"
+  min_history_sessions: 61
+folds:
+  start: "2010-01-04"
+  block_sessions: 63
+  inner_block_sessions: 63
+  inner_windows: 4
+  inner_min_train_sessions: 252
+models:
+  candidate: ridge
+  null_model: historical_mean
+  ridge_grid: [0.001, 0.01, 0.1, 1.0, 10.0, 100.0]
+band:
+  method: split_conformal_signed_v1
+  level: 0.8
+  lower_quantile: 0.1
+  upper_quantile: 0.9
+  min_calibration: 100
+evaluation:
+  bootstrap_reps: 199
+  seed: 0
+prospective:
+  h_end: "2026-10-14"
+  lookback_sessions: 63
+  close_available_local: "18:00"
+  record_deadline_local: "09:30"
+  timezone: America/New_York
+labels:
+  - "unvalidated, no demonstrated skill"
+  - "research record, not investment advice"
+  - "bands calibrated on development data to 2024 only; prospective coverage unknown"
+registry_prefix: etf_prospective_v1

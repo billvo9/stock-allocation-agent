@@ -5,7 +5,10 @@ Evidence. One data module, so tests assert the exact wording and scan it.
 
 Wording rules (as for `labels`): describe the past only; no forecast, no
 advice, no trading verbs; nothing is ranked or preferred; every pending
-capability is named as pending, with the date it was recorded.
+capability is named as pending, with the date it was recorded. The one
+exception is the Experiments page's prospective forecasts, shown only as
+recorded research records, each labelled unvalidated with no demonstrated
+skill, beside the historical average; still no advice and no trading verbs.
 """
 
 from __future__ import annotations
@@ -24,7 +27,8 @@ NAV = {
 
 CANNOT_TELL_TITLE = "What this lab cannot tell you"
 CANNOT_TELL = (
-    "The lab describes the past. It makes no forecast and does not tell anyone what to hold. "
+    "The lab describes the past. Its only forecasts are the unvalidated research records on the "
+    "Experiments page, which have no demonstrated skill. It does not tell anyone what to hold. "
     "Past returns, real or synthetic, do not predict future returns."
 )
 DETAILS = "Exact measurements"
@@ -172,6 +176,69 @@ EXPERIMENTS_LATER = (
     "When runs exist, each will show its data window, validation status and limitations, as "
     "research evidence only: never as a portfolio to hold."
 )
+PROSPECTIVE_TITLE = "Prospective forecasts (unvalidated)"
+PROSPECTIVE_INTRO = (
+    "Each forecast was recorded once, before its outcome existed, by models frozen on data up to "
+    "2024. It is a research record with no demonstrated skill, shown beside the historical "
+    "average, the simple forecast it is compared with, and it is scored only when the real "
+    "outcome arrives."
+)
+PROSPECTIVE_EMPTY_BADGE = "No forecast recorded yet"
+PROSPECTIVE_EMPTY_TITLE = "No forecast recorded yet"
+PROSPECTIVE_EMPTY = (
+    "The forecast ledger is empty or not created yet. Nothing is estimated or filled in while "
+    "that is so."
+)
+PROSPECTIVE_LATER = (
+    "When a forecast is recorded, it will show its forecast, its 80% band and the historical "
+    "average beside it, and its outcome once that is known."
+)
+PROSPECTIVE_BROKEN = (
+    "The forecast ledger failed its integrity check ({reason}), so none of its records is shown."
+)
+PROSPECTIVE_BADGE = "Unvalidated"
+PROSPECTIVE_SYNTHETIC = "Synthetic test data"
+PROSPECTIVE_RECORDED = (
+    "As of the {as_of} close; recorded {created_at}. Each horizon starts {lag} session after "
+    "that close."
+)
+PROSPECTIVE_UNITS = (
+    "Total return is the log return over the horizon in percent, distributions reinvested. "
+    "Volatility is the daily realized volatility over the horizon in percent."
+)
+PROSPECTIVE_BAND = (
+    "The 10% and 90% columns are the ends of an 80% band calibrated on development data to 2024 "
+    "only. Development coverage is the share of development outcomes inside it, measured out of "
+    "sample; how often real outcomes fall inside is unknown until many are scored."
+)
+PROSPECTIVE_SCORES_TITLE = "Scored so far"
+PROSPECTIVE_NO_SCORES = (
+    "No forecast has matured yet: an outcome is shown only once the last session of its horizon "
+    "has closed."
+)
+PROSPECTIVE_PENDING = "Not yet known"
+PROSPECTIVE_NO_CLOSE = "No close on the as-of session"
+PROSPECTIVE_MEASURES = {
+    "total_log_return": "Total return (log)",
+    "log_realized_volatility": "Daily volatility",
+}
+PROSPECTIVE_STAGES = {
+    "engineering_only": "Engineering only",
+    "development_evaluated": "Development evaluated",
+}
+PROSPECTIVE_COLUMNS = {
+    "fund": "Fund",
+    "horizon": "Horizon",
+    "measure": "Measure",
+    "forecast": "Forecast",
+    "low": "10%",
+    "high": "90%",
+    "null": "Historical average",
+    "development": "Development coverage",
+    "stage": "Evidence stage",
+    "outcome": "Outcome",
+    "inside": "Inside the band",
+}
 DASHBOARD_TITLE = "Research diagnostics dashboard"
 DASHBOARD_TEXT = (
     "Saved model-diagnostics runs are read by a separate local research dashboard. Start it "
@@ -215,8 +282,8 @@ NOT_READY = (
         "Descriptive",
         "Facts about the past only",
         (
-            "Every number describes the past. Nothing is a forecast, an expected return or a "
-            "confidence level."
+            "Every number outside the Experiments page describes the past. The forecasts there are "
+            "unvalidated research records with no demonstrated skill."
         ),
     ),
     (
@@ -233,7 +300,7 @@ NOT_READY = (
         "None",
         "No validated model",
         (
-            "No model or rule has been checked on data it has not seen, so nothing here has "
+            "No model or rule has passed a check on data it has not seen, so nothing here has "
             "evidence that it would hold up later."
         ),
     ),
@@ -265,7 +332,10 @@ BUILDER_STEP = (
     "have grown awaits approval of one more formula."
 )
 MODELS_TITLE = "Models"
-MODELS = "No model is registered, and no model output appears anywhere in the lab."
+MODELS = (
+    "No model is validated. The only model outputs in the lab are the unvalidated research "
+    "forecasts on the Experiments page."
+)
 PUBLICATION_TITLE = "Publication provenance"
 PUBLICATION = (
     "No publication is read yet. The funds are generated in memory by the synthetic demo "
