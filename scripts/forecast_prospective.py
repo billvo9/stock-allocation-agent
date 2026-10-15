@@ -135,6 +135,9 @@ def _score(args) -> int:
 
 def _report(args) -> int:
     entries = ledger.read_ledger(args.ledger)
+    if getattr(args, "expect_head", None):
+        ledger.check_head(entries, args.expect_head)
+        print(f"kept head {args.expect_head[:12]} is in the ledger")
     report = forecast.coverage_report(entries)
     print(f"{sum(e.kind == 'forecast' for e in entries)} forecasts; head {ledger.head(entries)}")
     pd.set_option("display.width", 200)
@@ -159,7 +162,10 @@ def main(argv: list[str] | None = None) -> int:
     scoring = commands.add_parser("score")
     scoring.add_argument("--store-root", type=Path, required=True)
     scoring.add_argument("--score-close", required=True)
-    commands.add_parser("report")
+    reporting = commands.add_parser("report")
+    reporting.add_argument(
+        "--expect-head", help="a head hash kept outside the ledger; refused if it is missing"
+    )
     args = parser.parse_args(argv)
     handlers = {"freeze": _freeze, "forecast": _forecast, "score": _score, "report": _report}
     return handlers[args.command](args)

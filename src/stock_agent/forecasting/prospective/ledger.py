@@ -21,9 +21,12 @@ cannot race), then writes one line and fsyncs it.
 
 Integrity, not provenance. The chain detects an edit inside the ledger. It
 cannot detect a truncated tail (dropping the last lines leaves a valid
-chain) or a consistent rewrite of the whole file. `head()` returns the last
-entry's hash; noting it outside the ledger after each run (the job prints
-it) is what makes a later truncation or rewrite detectable.
+chain) or a consistent rewrite of the whole file: removing the last line is
+undetectable from the file alone. `head()` returns the last entry's hash.
+The job prints it after every append, and the owner keeps a copy outside
+the ledger; `check_head` (the job's `report --expect-head`) then refuses a
+ledger that no longer holds that hash, so a later truncation or rewrite is
+detected.
 """
 
 from __future__ import annotations
@@ -130,6 +133,16 @@ def head(entries: Sequence[LedgerEntry]) -> str:
     """The last entry's hash (GENESIS for an empty ledger)."""
 
     return entries[-1].entry_sha256 if entries else GENESIS
+
+
+def check_head(entries: Sequence[LedgerEntry], expected: str) -> None:
+    """Refuse a ledger that no longer holds a head hash kept outside it."""
+
+    if expected not in {entry.entry_sha256 for entry in entries}:
+        raise LedgerError(
+            f"The kept head {expected[:12]}... is not in the ledger: lines were removed or the "
+            "file was rewritten."
+        )
 
 
 def append_entry(

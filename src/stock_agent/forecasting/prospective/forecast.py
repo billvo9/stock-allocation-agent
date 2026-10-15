@@ -429,6 +429,9 @@ def score_matured(
         key = {
             "forecast_entry_sha256": entry.entry_sha256,
             "forecast_id": entry.payload["forecast_id"],
+            **{k: entry.payload["bundle"][k] for k in ("bundle_id", "config_sha256")},
+            "model_id": row["model_id"],
+            "model_version": int(row["model_version"]),
             "as_of_session": entry.payload["as_of_session"],
             "asset": row["asset"],
             "horizon": int(row["horizon"]),
@@ -523,7 +526,10 @@ def score_matured(
 
 # --- the cumulative report ---
 
+# One variant: a re-freeze (new config hash, bundle or model version) is never pooled.
+VARIANT_COLUMNS = ("bundle_id", "config_sha256", "model_id", "model_version")
 REPORT_COLUMNS = (
+    *VARIANT_COLUMNS,
     "asset",
     "horizon",
     "target",
@@ -566,7 +572,7 @@ def caveat(n: int, horizon: int) -> str:
 
 
 def coverage_report(entries: Sequence[ledger.LedgerEntry]) -> pd.DataFrame:
-    """Cumulative band coverage and errors per asset, horizon and target."""
+    """Cumulative band coverage and errors per variant, asset, horizon and target."""
 
     return coverage_table([s for e in entries if e.kind == "score" for s in e.payload["scores"]])
 
@@ -580,13 +586,16 @@ def coverage_table(scores: Sequence[Mapping[str, object]]) -> pd.DataFrame:
     frame = pd.DataFrame(list(scores))
     rows = []
     if not frame.empty:
-        for (asset, horizon, target), part in frame.groupby(
-            ["asset", "horizon", "target"], sort=True
-        ):
+        keys = [*VARIANT_COLUMNS, "asset", "horizon", "target"]
+        for values, part in frame.groupby(keys, sort=True):
+            variant = dict(zip(keys, values, strict=True))
+            asset, horizon, target = variant["asset"], variant["horizon"], variant["target"]
             n, hits = len(part), int(part["inside_band"].sum())
             low, high = wilson_interval(hits, n)
             rows.append(
                 {
+                    **{k: variant[k] for k in VARIANT_COLUMNS},
+                    "model_version": int(variant["model_version"]),
                     "asset": asset,
                     "horizon": int(horizon),
                     "target": target,

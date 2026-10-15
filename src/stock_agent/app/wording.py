@@ -204,12 +204,14 @@ PROSPECTIVE_RECORDED = (
 )
 PROSPECTIVE_UNITS = (
     "Total return is the log return over the horizon in percent, distributions reinvested. "
-    "Volatility is the daily realized volatility over the horizon in percent."
+    "Volatility is the daily realized volatility over the horizon in percent. For volatility, "
+    "the historical average is a geometric mean: the exponential of the mean log volatility."
 )
 PROSPECTIVE_BAND = (
     "The 10% and 90% columns are the ends of an 80% band calibrated on development data to 2024 "
-    "only. Development coverage is the share of development outcomes inside it, measured out of "
-    "sample; how often real outcomes fall inside is unknown until many are scored."
+    "only. Development coverage was measured out of sample on bands built fold by fold, each "
+    "from earlier folds only, not on this frozen band; how often real outcomes fall inside "
+    "this band is unknown until many are scored."
 )
 PROSPECTIVE_SCORES_TITLE = "Scored so far"
 PROSPECTIVE_NO_SCORES = (

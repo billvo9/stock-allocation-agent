@@ -28,7 +28,7 @@ Recorded verbatim in `docs/PROJECT_STATE.md`, "prospective forecasting track":
 1. Store the approved pre-2025 batch in the F1 research store.
 2. Freeze once: `freeze --research-store <root>`. Expect six entries at `engineering_only`.
 3. Once the prospective store holds the latest complete session, record the forecast as of that session. Run it between 18:00 New York that day and 09:30 New York the next weekday.
-4. Note the printed ledger head hash somewhere outside the ledger.
+4. Keep a copy of the printed ledger head hash outside the ledger (removing the last line is undetectable otherwise). `report --expect-head <hash>` refuses a ledger that no longer holds it.
 5. Later, `score --score-close <latest session>` and `report`.
 
 The ledger defaults to `data/raw/prospective_forecasts/ledger.jsonl`. It is private and ignored by Git, and it is a sibling of any `data/raw/prospective/` store root, so a fail-closed store reader never sees it.
@@ -66,7 +66,7 @@ Daily log total return, from the approved F5.1 total returns (`portfolio.descrip
 - The scored outcome uses the training labels' own arithmetic.
 - **Models, per asset, horizon and target:**
   - ridge with T4's grid (c ∈ {0.001, …, 100}, α = c·n), with nested purged selection inside every outer fold;
-  - the historical-mean null, the asset's expanding training-label mean.
+  - the historical-mean null, the asset's expanding training-label mean. For volatility the label is log volatility, so the null shown in volatility units is a geometric mean, exp(mean log volatility), below the arithmetic mean of volatility.
 - **Folds.** Purged expanding folds, the same 63-session outer windows for every asset, from 2010-01-04; inner design 4 × 63 sessions after 252.
 - **The frozen refit.** One ridge fit per asset, horizon and target on every training row. Its penalty is chosen by the same nested selection on the last four inner windows before the lockbox. The null's frozen value is the mean of all training labels.
 - **No pickle.** A bundle stores the fitted numbers (medians, means, scales, coefficients, intercept). A reloaded fit predicts with exactly `LinearForecast.predict`'s arithmetic (tested bit-equal).
@@ -90,7 +90,7 @@ Here u_lo = u_(⌊(n+1)·0.1⌋) and u_hi = u_(⌈(n+1)·0.9⌉) are the finite-
 - Fold b is scored with quantiles from the scores of earlier folds whose labels ended before fold b's test start (a purge). Folds with fewer than 100 earlier scores are not scored.
 - Coverage is reported per asset, horizon and target as the fold-block estimate, with its fold-block standard error.
 - The plug-in's coverage on the same rows is reported beside it, for the return target.
-- Each forecast row records its development coverage.
+- Each forecast row records its development coverage. That is the coverage of these fold-by-fold bands, each built from earlier folds only, not of the frozen band, which uses every development score.
 
 **Assumptions.** Split conformal's finite-sample guarantee needs exchangeable scores from a model fitted without the calibration rows. Neither holds exactly here:
 - overlapping h-session labels and volatility regimes break exchangeability;
@@ -123,7 +123,9 @@ So 80% is a target, not a guarantee. The sequential development estimate has the
   - A second forecast for the same as-of session and bundle is refused (`duplicate_forecast`).
   - A row is scored once.
   - Forecast entries are never edited; a correction would be a new entry.
-- **Integrity, not provenance.** The chain cannot detect a truncated tail or a consistent rewrite of the whole file. The job prints the head hash after every append; noting it outside the ledger is what makes truncation detectable.
+- **Integrity, not provenance.** The chain cannot detect a truncated tail or a consistent rewrite of the whole file: removing the last line leaves a valid chain.
+  - The job prints the head hash after every append, and the owner keeps a copy outside the ledger.
+  - `report --expect-head <hash>` (`ledger.check_head`) refuses a ledger that no longer holds the kept hash. That is what makes truncation detectable.
 
 ## A forecast record
 
@@ -144,7 +146,7 @@ Per record:
 - **When a row waits.** A row whose inputs are incomplete (a missing close in its window) is left pending with its reason, never scored as missing.
 - **Zero realized volatility.** If every return in a volatility outcome's window is 0 (possible for SHV, whose close moves in $0.01 steps), the log volatility is minus infinity, below every band. It is scored as outside the band, with no error, and never left pending: leaving such outcomes out would bias coverage upward.
 - **The cumulative report.** Each scoring run stores it:
-  - per asset, horizon and target: n, hits, coverage and a Wilson 95% interval;
+  - per variant (bundle, config hash, model id and version), asset, horizon and target: n, hits, coverage and a Wilson 95% interval. A re-freeze is never pooled with earlier forecasts;
   - mean absolute errors of the model and the null;
   - a caveat in words.
 - **Caveats.**

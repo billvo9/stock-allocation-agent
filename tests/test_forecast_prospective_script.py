@@ -23,6 +23,14 @@ def test_the_report_on_an_empty_ledger_says_so(tmp_path, capsys):
     assert "0 forecasts" in out and "no scores yet" in out
 
 
+def test_the_report_refuses_a_ledger_without_the_kept_head(tmp_path):
+    from stock_agent.forecasting.prospective import ledger
+
+    path = tmp_path / "ledger.jsonl"
+    with pytest.raises(ledger.LedgerError, match="not in the ledger"):
+        _script().main(["--ledger", str(path), "report", "--expect-head", "a" * 64])
+
+
 def test_without_the_store_loader_nothing_is_read_or_written(
     prospective_frozen, tmp_path, monkeypatch
 ):

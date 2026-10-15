@@ -9,6 +9,7 @@ unchanged by any data after its close, training refuses any session after
 from __future__ import annotations
 
 import ast
+import dataclasses
 import json
 
 import numpy as np
@@ -37,7 +38,7 @@ from stock_agent.forecasting.prospective import (
 )
 from stock_agent.model_diagnostics.linear import LinearForecast
 from stock_agent.model_validation.audit import LeakageError
-from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
+from stock_agent.model_validation.folds import MODEL_HOLDOUT_START, is_labeled
 from stock_agent.registry.stages import STAGES
 
 PACKAGE = REPO / "src" / "stock_agent" / "forecasting" / "prospective"
@@ -122,6 +123,23 @@ def test_band_quantiles_come_only_from_development_scores_before_the_lockbox(pro
         assert band["n_calibration"] == len(rows)
 
 
+def test_the_frozen_null_is_the_mean_of_every_training_label(prospective_frozen):
+    data = training.load_training_data(prospective_frozen.store, prospective_frozen.config)
+    for asset, horizon, target in (
+        ("VTI", 5, "total_log_return"),
+        ("SHV", 30, "log_realized_volatility"),
+    ):
+        frame = training.target_frame(data.frames[(asset, horizon)], target)
+        ends = pd.to_datetime(frame["target_end_date"], utc=True)
+        labels = frame.loc[
+            is_labeled(frame) & (ends < MODEL_HOLDOUT_START).to_numpy(), "target_return"
+        ]
+        null = prospective_frozen.result.bundle.fit(asset, horizon, target)["null"]
+        assert null["n_train"] == len(labels) > 252
+        assert null["value"] == pytest.approx(labels.mean(), rel=1e-12)
+        assert null["value"] != pytest.approx(labels.iloc[-252:].mean(), rel=1e-6)  # not a window
+
+
 def test_a_frozen_ridge_predicts_exactly_as_the_fitted_model():
     rng = np.random.RandomState(0)
     X = rng.randn(300, 5)
@@ -142,6 +160,31 @@ def test_the_bundle_refuses_an_edited_file(prospective_frozen, tmp_path):
     models.write_text(models.read_text().replace('"intercept": ', '"intercept": 1'), "utf-8")
     with pytest.raises(frozen.BundleError, match="edited"):
         frozen.read_bundle(copy)
+
+
+class _StageAs:
+    """A registry whose computed stage is replaced (the rules themselves are untouched)."""
+
+    def __init__(self, registry, stage):
+        self._registry, self._stage = registry, stage
+
+    def __getattr__(self, name):
+        return getattr(self._registry, name)
+
+    def assessment(self, ref):
+        return dataclasses.replace(self._registry.assessment(ref), stage=self._stage)
+
+
+def test_models_are_refused_above_development_evaluated(prospective_frozen):
+    bundle = prospective_frozen.result.bundle.path
+    for stage in STAGES[2:]:
+        with pytest.raises(forecast.ForecastRefused) as refused:
+            forecast.load_models(bundle, _StageAs(prospective_frozen.registry, stage))
+        assert refused.value.reason == "stage"
+    allowed = forecast.load_models(
+        bundle, _StageAs(prospective_frozen.registry, "development_evaluated")
+    )
+    assert {e["stage"] for e in allowed.entries.values()} == {"development_evaluated"}
 
 
 def test_training_and_freezing_never_read_the_prospective_store():
@@ -500,6 +543,12 @@ def test_a_matured_forecast_is_scored_once_and_never_edited(prospective_frozen, 
     assert len(scored) == 6 and {row["reason"] for row in left} == {"not_matured"}
     assert (scored["exit_session"] == "2026-10-22").all()
     assert (scored["entry_session"] == "2026-10-15").all()
+    variant = forecast_entry.payload["bundle"]
+    assert (scored["bundle_id"] == variant["bundle_id"]).all()
+    assert (scored["config_sha256"] == variant["config_sha256"]).all()
+    assert {
+        f"{m}@v{v}" for m, v in zip(scored["model_id"], scored["model_version"], strict=True)
+    } <= {str(e.ref) for e in prospective_frozen.result.entries}
     row = scored.iloc[0]
     assert row["inside_band"] == (row["band_low"] <= row["outcome"] <= row["band_high"])
     assert row["error"] == pytest.approx(row["outcome"] - row["point"])
@@ -614,6 +663,38 @@ def test_models_registered_after_the_forecast_are_refused(prospective_frozen, le
 def test_freezing_counts_rows_dropped_for_zero_volatility(prospective_frozen):
     fit = prospective_frozen.result.bundle.fit("SHV", 5, "log_realized_volatility")
     assert fit["development"]["zero_volatility_rows_dropped"] == 0  # GARCH fixture: never flat
+
+
+def test_a_re_freeze_is_never_pooled_with_earlier_forecasts():
+    def one(bundle, version, inside):
+        return {
+            "bundle_id": bundle,
+            "config_sha256": bundle * 4,
+            "model_id": "m.ret.h5.ridge",
+            "model_version": version,
+            "asset": "VTI",
+            "horizon": 5,
+            "target": "total_log_return",
+            "inside_band": inside,
+            "error": 0.1,
+            "null_error": 0.2,
+        }
+
+    table = forecast.coverage_table([one("a", 1, True), one("a", 1, True), one("b", 2, False)])
+    assert len(table) == 2
+    assert table.set_index("bundle_id")["n_scored"].to_dict() == {"a": 2, "b": 1}
+    assert table.set_index("bundle_id")["coverage"].to_dict() == {"a": 1.0, "b": 0.0}
+
+
+def test_a_kept_head_detects_a_removed_last_line(two_entry_ledger):
+    entries = ledger.read_ledger(two_entry_ledger)
+    kept = ledger.head(entries)
+    ledger.check_head(entries, kept)
+    two_entry_ledger.write_text("".join(_lines(two_entry_ledger)[:-1]), encoding="utf-8")
+    truncated = ledger.read_ledger(two_entry_ledger)  # the chain alone cannot see it
+    assert len(truncated) == 1
+    with pytest.raises(ledger.LedgerError, match="not in the ledger"):
+        ledger.check_head(truncated, kept)
 
 
 def test_freezing_requires_complete_provenance(prospective_frozen, tmp_path):

@@ -185,10 +185,11 @@ def forecast_table(forecast: Mapping[str, object], scores: Mapping[tuple, Mappin
 
 
 def cumulative_table(rows) -> pd.DataFrame:
-    """The latest recorded cumulative coverage, one row per fund, horizon and measure."""
+    """The latest recorded cumulative coverage, one row per model version, fund, horizon and measure."""
 
     shown = [
         {
+            "Model": f"{row['model_id']} v{row['model_version']}",
             "Fund": row["asset"],
             "Horizon": f"{row['horizon']} sessions",
             "Measure": wording.PROSPECTIVE_MEASURES[row["target"]],
