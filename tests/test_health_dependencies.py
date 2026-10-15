@@ -10,7 +10,12 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
-from stock_agent.health.dependencies import parse_requirements, pins_check, pip_check
+from stock_agent.health.dependencies import (
+    marker_applies,
+    parse_requirements,
+    pins_check,
+    pip_check,
+)
 from stock_agent.health.model import HealthState
 
 NOW = datetime(2026, 10, 14, 18, tzinfo=UTC)
@@ -108,3 +113,105 @@ def test_pip_that_cannot_run_is_unavailable():
     check, output = pip_check(python="py", runner=failing, measured_at=NOW, evidence="e")
     assert (check.state, check.reason) == (HealthState.UNAVAILABLE, "pip_unavailable")
     assert "FileNotFoundError" in output
+
+
+LINUX = {
+    "sys_platform": "linux",
+    "platform_machine": "x86_64",
+    "os_name": "posix",
+    "platform_system": "Linux",
+    "python_version": "3.12",
+}
+MAC = LINUX | {"sys_platform": "darwin", "platform_machine": "arm64", "platform_system": "Darwin"}
+
+
+def repository_pins(environment):
+    text = REQUIREMENTS.read_text(encoding="utf-8")
+    parsed = parse_requirements(text, environment)
+    return text, {item.name: item.pin for item in parsed if item.applies and item.pin}
+
+
+def test_the_repository_torch_pin_follows_the_platform():
+    # The scheduled health run of 2026-10-15 failed on Linux CI: the macOS line
+    # torch==2.14.0 was applied there, while CI installs 2.14.0+cpu by URL.
+    _, linux = repository_pins(LINUX)
+    _, mac = repository_pins(MAC)
+    assert linux["torch"] == "2.14.0+cpu" and mac["torch"] == "2.14.0"
+
+
+def test_the_repository_pins_are_healthy_on_each_supported_platform():
+    for environment in (LINUX, MAC):
+        text, pinned = repository_pins(environment)
+        check = pins_check(
+            text,
+            installed=pinned.get,
+            interpreter="/repo/.venv/bin/python",
+            measured_at=NOW,
+            evidence="requirements.txt",
+            environment=environment,
+        )
+        assert check.state is HealthState.HEALTHY, (environment["sys_platform"], check.summary)
+
+
+def test_a_cuda_or_plain_torch_on_linux_still_fails_its_url_pin():
+    text, pinned = repository_pins(LINUX)
+    check = pins_check(
+        text,
+        installed=(pinned | {"torch": "2.14.0"}).get,
+        interpreter="/repo/.venv/bin/python",
+        measured_at=NOW,
+        evidence="requirements.txt",
+        environment=LINUX,
+    )
+    assert (check.state, check.reason) == (HealthState.FAILED, "pin_mismatch")
+    assert "torch==2.14.0+cpu (installed 2.14.0)" in check.detail
+
+
+def test_markers_in_the_supported_subset_are_evaluated():
+    assert marker_applies('python_version >= "3.12"', LINUX) is True
+    assert marker_applies('python_version >= "3.12"', LINUX | {"python_version": "3.11"}) is False
+    linux_x86 = 'sys_platform == "linux" and platform_machine == "x86_64"'
+    assert marker_applies(linux_x86, LINUX) is True
+    assert marker_applies(linux_x86, LINUX | {"platform_machine": "aarch64"}) is False
+    assert marker_applies('sys_platform == "darwin" or sys_platform == "linux"', LINUX) is True
+    # `and` binds tighter than `or`.
+    mixed = 'sys_platform == "win32" and os_name == "nt" or sys_platform == "linux"'
+    assert marker_applies(mixed, LINUX) is True
+
+
+def test_markers_outside_the_subset_are_unjudged_never_passed_or_failed():
+    assert marker_applies('(sys_platform == "linux")', LINUX) is None
+    assert marker_applies('implementation_name == "cpython"', LINUX) is None
+    assert marker_applies('sys_platform > "linux"', LINUX) is None
+    text = 'odd==1.0 ; implementation_name == "cpython"\nplain==2.0\n'
+    check = pins_check(
+        text,
+        installed={"plain": "2.0"}.get,
+        interpreter="/repo/.venv/bin/python",
+        measured_at=NOW,
+        evidence="requirements.txt",
+        environment=LINUX,
+    )
+    assert (check.state, check.value) == (HealthState.HEALTHY, 1)
+    assert "marker not evaluated (not judged): odd" in check.detail
+
+
+def test_a_url_that_is_not_a_matching_wheel_is_unpinned():
+    text = (
+        "torch @ https://example.org/other-1.0-py3-none-any.whl\n"
+        "torch2 @ https://example.org/archive.tar.gz\n"
+    )
+    assert {item.name: item.pin for item in parse_requirements(text, LINUX)} == {
+        "torch": None,
+        "torch2": None,
+    }
+
+
+def test_a_url_fragment_is_not_a_comment_but_a_spaced_hash_is():
+    text = (
+        'pkg @ https://example.org/pkg-1.0-py3-none-any.whl#sha256=abc ; sys_platform == "darwin"\n'
+        "other==2.0 # a trailing comment\n"
+        "#whole-line comment==9\n"
+    )
+    parsed = {item.name: (item.pin, item.applies) for item in parse_requirements(text, LINUX)}
+    assert parsed == {"pkg": ("1.0", False), "other": ("2.0", True)}
