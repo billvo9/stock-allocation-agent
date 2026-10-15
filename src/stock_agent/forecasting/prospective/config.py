@@ -177,7 +177,9 @@ class ProspectiveSection:
     def __post_init__(self) -> None:
         if _date(self.h_end, "prospective.h_end") < MODEL_HOLDOUT_START:
             raise ConfigError("prospective.h_end must be on or after the lockbox start.")
-        _int(self.lookback_sessions, "prospective.lookback_sessions", 61)
+        # Registered meaning: daily returns into the frozen models (lookback + 1 closes,
+        # the prospective loader's contract); 60 returns feed the longest feature.
+        _int(self.lookback_sessions, "prospective.lookback_sessions", 60)
         for name in ("close_available_local", "record_deadline_local"):
             value = getattr(self, name)
             try:

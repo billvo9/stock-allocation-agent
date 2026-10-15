@@ -46,7 +46,7 @@ evaluation:
   seed: 0
 prospective:
   h_end: "2026-10-14"
-  lookback_sessions: 63
+  lookback_sessions: 63  # daily returns into the frozen models: 64 closes
   close_available_local: "18:00"
   record_deadline_local: "09:30"
   timezone: America/New_York

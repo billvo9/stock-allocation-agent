@@ -1,9 +1,12 @@
 """
 The prospective pipeline end to end on synthetic fixtures: an F1 research
-store, training and freezing, a fixture prospective window, the forecast
-record, a matured outcome and its score. Leakage tests: the forecast is
-unchanged by any data after its close, training refuses any session after
-2024-12-31, and the ledger refuses edits.
+store, training and freezing, a synthetic prospective store written by the
+real prospective writer, the forecast record read through the real
+`load_inference_window`, a matured outcome and its score through the same
+loader. Leakage tests: the forecast is unchanged by any data after its close
+or retrieved after its decision time, training refuses any session after
+2024-12-31, an incomplete window is refused rather than median-filled, and
+the ledger refuses edits.
 """
 
 from __future__ import annotations
@@ -17,16 +20,23 @@ import pandas as pd
 import pytest
 from forecast_prospective_helpers import (
     AS_OF,
+    ASSETS,
     CREATED,
     PROVENANCE,
     REPO,
+    exchange_calendar,
     prospective_store,
+    prospective_tables,
     record,
     research_batch,
     score,
     small_config,
+    without_close,
 )
 
+from stock_agent.calendars import nyse_rules
+from stock_agent.data.prospective.inference import load_inference_window
+from stock_agent.data.prospective.window import WINDOW_START
 from stock_agent.forecasting.prospective import (
     forecast,
     freeze,
@@ -267,7 +277,9 @@ def test_unknown_or_mixed_data_sources_are_refused():
     )
 
 
-# --- the forecast record ---
+# --- the forecast record: the real loader on a synthetic prospective store ---
+
+PARTS = ("sessions", "prices", "distributions", "splits", "missing", "batches", "revisions")
 
 
 @pytest.fixture
@@ -275,8 +287,31 @@ def ledger_path(tmp_path):
     return tmp_path / "private" / "ledger.jsonl"
 
 
-def test_a_forecast_records_every_field_once(prospective_frozen, ledger_path):
-    entry = record(prospective_frozen, ledger_path)
+@pytest.fixture
+def store(prospective_store_root):
+    return prospective_store_root
+
+
+def _parts(store_root, as_of=AS_OF, lookback=63, retrieved_by=CREATED, assets=ASSETS):
+    result = load_inference_window(
+        store_root, list(assets), as_of, lookback, retrieved_by=retrieved_by
+    )
+    return {name: getattr(result, name) for name in PARTS}
+
+
+def _coerce(parts, as_of=AS_OF, lookback=63, retrieved_by=CREATED, assets=ASSETS):
+    return window.coerce_window(
+        parts,
+        assets=list(assets),
+        forecast_close=as_of,
+        lookback=lookback,
+        calendar=exchange_calendar,
+        retrieved_by=retrieved_by,
+    )
+
+
+def test_a_forecast_records_every_field_once(prospective_frozen, ledger_path, store):
+    entry = record(prospective_frozen, ledger_path, store)
     payload = entry.payload
     config = prospective_frozen.config
     assert payload["as_of_session"] == AS_OF
@@ -287,8 +322,17 @@ def test_a_forecast_records_every_field_once(prospective_frozen, ledger_path):
     assert payload["bundle"]["manifest_sha256"] == prospective_frozen.result.bundle.manifest_sha256
     assert payload["bundle"]["config_sha256"] == config.sha256
     assert payload["bundle"]["status"] == "prospective record pending"
-    assert len(payload["data"]["window_fingerprint"]) == 64
-    assert payload["data"]["data_class"] == "synthetic"
+    data = payload["data"]
+    assert len(data["window_fingerprint"]) == 64
+    assert data["data_class"] == "synthetic"
+    # 63 daily returns from 64 closes, read as known at the decision time
+    assert (data["lookback_returns"], data["closes"]) == (63, 64)
+    assert data["first_session"] == str(WINDOW_START.date())
+    assert data["calendar"] == data["checked_against"] == nyse_rules.CALENDAR_ID
+    assert data["retrieved_by"] == CREATED.isoformat()
+    assert data["complete"] is True and data["missing"] == [] and data["revisions"] == []
+    assert [b["retrieved_at"] for b in data["batches"]] == ["2026-10-14T22:30:00+00:00"]
+    assert payload["refusals"] == []
     rows = pd.DataFrame(payload["rows"])
     assert len(rows) == len(config.assets) * len(config.horizons) * len(config.targets)
     assert (rows["status"] == "ok").all()
@@ -303,11 +347,11 @@ def test_a_forecast_records_every_field_once(prospective_frozen, ledger_path):
 
 
 def test_a_second_forecast_for_the_same_session_and_version_is_refused(
-    prospective_frozen, ledger_path
+    prospective_frozen, ledger_path, store
 ):
-    record(prospective_frozen, ledger_path)
+    record(prospective_frozen, ledger_path, store)
     with pytest.raises(forecast.ForecastRefused) as refused:
-        record(prospective_frozen, ledger_path, created=CREATED + pd.Timedelta(hours=1))
+        record(prospective_frozen, ledger_path, store, created=CREATED + pd.Timedelta(hours=1))
     assert refused.value.reason == "duplicate_forecast"
     assert len(ledger.read_ledger(ledger_path)) == 1
 
@@ -321,35 +365,38 @@ def test_a_second_forecast_for_the_same_session_and_version_is_refused(
     ],
 )
 def test_timing_rules_refuse_backdated_early_or_late_records(
-    prospective_frozen, ledger_path, as_of, created, reason
+    prospective_frozen, ledger_path, store, as_of, created, reason
 ):
     with pytest.raises(forecast.ForecastRefused) as refused:
-        record(prospective_frozen, ledger_path, as_of=as_of, created=pd.Timestamp(created))
+        record(prospective_frozen, ledger_path, store, as_of=as_of, created=pd.Timestamp(created))
     assert refused.value.reason == reason
     assert not ledger_path.exists()
 
 
-def test_a_friday_forecast_may_be_recorded_until_monday_morning(prospective_frozen, ledger_path):
+def test_a_friday_forecast_may_be_recorded_until_monday_morning(
+    prospective_frozen, ledger_path, store
+):
     entry = record(
         prospective_frozen,
         ledger_path,
+        store,
         as_of="2026-10-16",
         created=pd.Timestamp("2026-10-19T13:29:00Z"),
     )
     assert entry.payload["record_deadline"] == "2026-10-19T13:30:00+00:00"
 
 
-# --- leakage: nothing after the forecast close ---
+# --- leakage: nothing after the forecast close, nothing retrieved after the decision ---
 
 
 def _leaky(extra: str):
-    """A loader that also returns rows dated after the close (prices, cash or splits)."""
+    """The real loader, plus a row dated after the close (prices, cash or splits)."""
 
-    def load(store_root, assets, forecast_close, lookback=63):
-        result = synthetic.load_fixture_window(store_root, assets, forecast_close, lookback)
+    def load(store_root, assets, forecast_close, lookback=63, *, retrieved_by):
+        parts = _parts(store_root, forecast_close, lookback, retrieved_by, assets)
         late = window.session_stamp(forecast_close) + pd.Timedelta(days=1)
         if extra == "prices":
-            row = result["prices"].iloc[[-1]].assign(session_date=late)
+            row = parts["prices"].iloc[[-1]].assign(session_date=late)
         elif extra == "distributions":
             row = pd.DataFrame(
                 {
@@ -363,108 +410,166 @@ def _leaky(extra: str):
             row = pd.DataFrame(
                 {"fund_id": ["VTI"], "effective_date": [late], "ratio_new_per_old": [2.0]}
             )
-        return {**result, extra: pd.concat([result[extra], row], ignore_index=True)}
+        return {**parts, extra: pd.concat([parts[extra], row], ignore_index=True)}
 
     return load
 
 
 @pytest.mark.parametrize("extra", ["prices", "distributions", "splits"])
 def test_a_loader_returning_any_row_after_the_close_is_refused(
-    prospective_frozen, ledger_path, extra
+    prospective_frozen, ledger_path, store, extra
 ):
     with pytest.raises(LeakageError, match="after the forecast close"):
-        record(prospective_frozen, ledger_path, loader=_leaky(extra))
+        record(prospective_frozen, ledger_path, store, loader=_leaky(extra))
     assert not ledger_path.exists()
 
 
-def test_the_forecast_ignores_rows_before_its_window(prospective_frozen, tmp_path):
-    store = prospective_store()
-    early = store.prices["session_date"] < pd.Timestamp("2026-07-01", tz="UTC")
-    changed = synthetic.FixtureStore(
-        store.sessions,
-        store.prices.assign(
-            close=np.where(early, store.prices["close"] * 3, store.prices["close"])
-        ),
-        store.distributions,
-        store.splits,
-    )
-    first = record(prospective_frozen, tmp_path / "a.jsonl", store=store)
-    second = record(prospective_frozen, tmp_path / "b.jsonl", store=changed)
-    assert first.payload["rows"] == second.payload["rows"]
-
-
-def test_a_window_missing_an_exchange_session_is_refused():
-    store = prospective_store()
-    result = synthetic.load_fixture_window(store, ["VTI"], AS_OF, lookback=64)
-    dropped = {**result, "sessions": result["sessions"].delete(30)}  # 63 sessions, one gap
-    with pytest.raises(window.WindowRefused, match="differ from the exchange calendar"):
-        window.coerce_window(
-            dropped,
-            assets=["VTI"],
-            forecast_close=AS_OF,
-            lookback=63,
-            calendar=synthetic.weekday_sessions,
+def test_a_loader_reading_batches_retrieved_after_the_decision_is_refused(
+    prospective_frozen, ledger_path, store
+):
+    def late(store_root, assets, forecast_close, lookback=63, *, retrieved_by):
+        return load_inference_window(
+            store_root,
+            assets,
+            forecast_close,
+            lookback,
+            retrieved_by=pd.Timestamp("2027-01-02T00:00:00Z"),
         )
+
+    with pytest.raises(LeakageError, match="retrieved after the decision time"):
+        record(prospective_frozen, ledger_path, store, loader=late)
+    assert not ledger_path.exists()
+
+
+def _revising(factor: float, after: str):
+    """An edit: every batch retrieved after `after` revises every close by `factor`."""
+
+    def edit(retrieval, tables):
+        prices, distributions, splits = tables
+        if retrieval > after:
+            prices = prices.assign(close=prices["close"] * factor)
+        return prices, distributions, splits
+
+    return edit
 
 
 def test_the_forecast_is_unchanged_by_any_data_after_its_close(prospective_frozen, tmp_path):
-    known_then = prospective_store(last=AS_OF)
-    full = prospective_store()
-    assert full.sessions[-1] > known_then.sessions[-1]
-    later = full.prices["session_date"] > pd.Timestamp(AS_OF, tz="UTC")
-    changed = synthetic.FixtureStore(
-        full.sessions,
-        full.prices.assign(close=np.where(later, full.prices["close"] * 1.5, full.prices["close"])),
-        full.distributions,
-        full.splits,
-    )
-    first = record(prospective_frozen, tmp_path / "a.jsonl", store=known_then)
-    second = record(prospective_frozen, tmp_path / "b.jsonl", store=changed)
+    known_then = prospective_store(tmp_path / "then", retrievals=(AS_OF,))
+    # later batches revise every close, the as-of session's included: retrieved_by excludes them
+    revised = prospective_store(tmp_path / "revised", edit=_revising(1.5, AS_OF))
+    first = record(prospective_frozen, tmp_path / "a.jsonl", known_then)
+    second = record(prospective_frozen, tmp_path / "b.jsonl", revised)
     assert first.payload["rows"] == second.payload["rows"]
     assert first.payload["data"] == second.payload["data"]
-
-
-def test_a_window_holding_data_after_the_close_is_refused():
-    store = prospective_store()
-    result = synthetic.load_fixture_window(store, ["VTI", "AGG", "SHV"], AS_OF, lookback=63)
-    leaked = dict(result)
-    late = store.prices.loc[store.prices["session_date"] > pd.Timestamp(AS_OF, tz="UTC")]
-    leaked["prices"] = pd.concat([result["prices"], late.iloc[:1]])
-    with pytest.raises(LeakageError, match="after the forecast close"):
-        window.coerce_window(
-            leaked,
-            assets=["VTI", "AGG", "SHV"],
-            forecast_close=AS_OF,
-            lookback=63,
-            calendar=synthetic.weekday_sessions,
-        )
-    short = {**result, "sessions": result["sessions"][1:]}
-    with pytest.raises(window.WindowRefused, match="62 sessions"):
-        window.coerce_window(
-            short,
-            assets=["VTI"],
-            forecast_close=AS_OF,
-            lookback=63,
-            calendar=synthetic.weekday_sessions,
-        )
-
-
-def test_window_features_equal_the_features_of_the_full_history(prospective_frozen):
-    store = prospective_store()
-    win = window.coerce_window(
-        synthetic.load_fixture_window(store, ["VTI"], AS_OF, lookback=63),
-        assets=["VTI"],
-        forecast_close=AS_OF,
-        lookback=63,
-        calendar=synthetic.weekday_sessions,
+    later = _coerce(
+        _parts(revised, retrieved_by=pd.Timestamp("2027-01-01T00:00:00Z")),
+        retrieved_by=pd.Timestamp("2027-01-01T00:00:00Z"),
     )
+    assert not later.revisions.empty  # the revision exists; the forecast never saw it
+
+
+def test_the_forecast_ignores_rows_before_its_window(prospective_frozen, tmp_path, store):
+    early = nyse_rules.sessions(WINDOW_START, "2026-12-31")[:2]
+
+    def edit(retrieval, tables):
+        prices, distributions, splits = tables
+        first_two = prices["session_date"].isin(early)
+        return (
+            prices.assign(close=prices["close"].where(~first_two, prices["close"] * 3)),
+            distributions,
+            splits,
+        )
+
+    changed = prospective_store(tmp_path / "early", edit=edit)
+    as_of, created = "2026-10-16", pd.Timestamp("2026-10-16T23:00:00Z")
+    first = record(prospective_frozen, tmp_path / "a.jsonl", store, as_of=as_of, created=created)
+    second = record(prospective_frozen, tmp_path / "b.jsonl", changed, as_of=as_of, created=created)
+    assert first.payload["data"]["first_session"] > str(early[-1].date())
+    assert first.payload["rows"] == second.payload["rows"]
+
+
+def test_a_window_missing_an_exchange_session_is_refused(store):
+    parts = _parts(store)
+    dropped = {**parts, "sessions": parts["sessions"].delete(30)}  # 63 sessions, one gap
+    with pytest.raises(window.WindowRefused, match="differ from the exchange calendar"):
+        _coerce(dropped, lookback=62)
+
+
+def test_a_window_holding_data_after_the_close_or_too_short_is_refused(store):
+    parts = _parts(store)
+    late = (
+        parts["prices"]
+        .iloc[[-1]]
+        .assign(session_date=pd.Timestamp("2026-10-15", tz="UTC").as_unit("us"))
+    )
+    with pytest.raises(LeakageError, match="after the forecast close"):
+        _coerce({**parts, "prices": pd.concat([parts["prices"], late])})
+    with pytest.raises(window.WindowRefused, match="63 sessions, not 64"):
+        _coerce({**parts, "sessions": parts["sessions"][1:]})
+
+
+def test_window_features_equal_the_features_of_the_full_history(store):
+    as_of, created = "2026-10-16", pd.Timestamp("2026-10-16T23:00:00Z")
+    win = _coerce(_parts(store, as_of, retrieved_by=created), as_of, retrieved_by=created)
     _, from_window = forecast._features_at_close(win, "VTI")
-    history = synthetic.truncated(store, AS_OF)  # every session from the store's start
+    prices, distributions, splits = prospective_tables()
+    sessions = nyse_rules.sessions(WINDOW_START, as_of)  # two sessions longer than the window
+    last = sessions[-1]
     returns = training.series.daily_log_returns(
-        history.sessions, history.prices, history.distributions, history.splits, "VTI"
+        sessions,
+        prices.loc[prices["session_date"] <= last],
+        distributions.loc[distributions["ex_date"] <= last],
+        splits.loc[splits["effective_date"] <= last],
+        "VTI",
     )
     full = training.series.asset_frame(returns, "VTI").iloc[-1]
+    assert len(sessions) == len(win.sessions) + 2
     assert np.array_equal(from_window, full[list(training.FEATURES)].to_numpy(np.float64))
+
+
+# --- an incomplete window is refused, never median-filled ---
+
+
+@pytest.mark.parametrize("missing", [["2026-09-15"], [AS_OF]])
+def test_an_asset_with_a_missing_close_is_refused_not_filled(
+    prospective_frozen, ledger_path, tmp_path, missing
+):
+    gap = prospective_store(tmp_path / "gap", edit=without_close("VTI", missing))
+    entry = record(prospective_frozen, ledger_path, gap)
+    assert entry.kind == "forecast"
+    rows = pd.DataFrame(entry.payload["rows"])
+    assert set(rows["asset"]) == {"AGG", "SHV"}  # no VTI row, filled or otherwise
+    assert entry.payload["refusals"] == [
+        {
+            "asset": "VTI",
+            "reason": "incomplete_inference_window",
+            "sessions_without_close": missing,
+        }
+    ]
+    data = entry.payload["data"]
+    assert data["complete"] is False
+    assert [(m["fund_id"], m["session_date"][:10]) for m in data["missing"]] == [
+        ("VTI", day) for day in missing
+    ]
+    written, _ = score(ledger_path, "2026-12-31", "2027-01-01T00:00:00Z", gap)
+    assert set(pd.DataFrame(written.payload["scores"])["asset"]) == {"AGG", "SHV"}
+
+
+def test_when_every_asset_is_incomplete_a_refusal_is_recorded_never_a_forecast(
+    prospective_frozen, ledger_path, tmp_path
+):
+    def edit(retrieval, tables):
+        for fund in ASSETS:
+            tables = without_close(fund, ["2026-09-15"])(retrieval, tables)
+        return tables
+
+    gap = prospective_store(tmp_path / "gaps", edit=edit)
+    entry = record(prospective_frozen, ledger_path, gap)
+    assert entry.kind == "refusal"
+    assert "rows" not in entry.payload
+    assert {r["asset"] for r in entry.payload["refusals"]} == set(ASSETS)
+    assert [e.kind for e in ledger.read_ledger(ledger_path)] == ["refusal"]
+    assert forecast.pending_rows(ledger.read_ledger(ledger_path)) == []
 
 
 # --- the ledger refuses edits ---
@@ -475,11 +580,12 @@ def _lines(path):
 
 
 @pytest.fixture
-def two_entry_ledger(prospective_frozen, ledger_path):
-    record(prospective_frozen, ledger_path)
+def two_entry_ledger(prospective_frozen, ledger_path, store):
+    record(prospective_frozen, ledger_path, store)
     record(
         prospective_frozen,
         ledger_path,
+        store,
         as_of="2026-10-15",
         created=pd.Timestamp("2026-10-15T23:00:00Z"),
     )
@@ -487,7 +593,7 @@ def two_entry_ledger(prospective_frozen, ledger_path):
 
 
 @pytest.mark.parametrize("edit", ["value", "reorder", "remove_first", "partial"])
-def test_the_ledger_refuses_edits(prospective_frozen, two_entry_ledger, edit):
+def test_the_ledger_refuses_edits(prospective_frozen, two_entry_ledger, store, edit):
     lines = _lines(two_entry_ledger)
     if edit == "value":
         lines[0] = lines[0].replace('"as_of_session":"2026-10-14"', '"as_of_session":"2026-10-13"')
@@ -504,6 +610,7 @@ def test_the_ledger_refuses_edits(prospective_frozen, two_entry_ledger, edit):
         record(
             prospective_frozen,
             two_entry_ledger,
+            store,
             as_of="2026-10-16",
             created=pd.Timestamp("2026-10-16T23:00:00Z"),
         )
@@ -530,19 +637,33 @@ def test_the_ledger_head_is_the_last_hash(two_entry_ledger):
     assert ledger.head(()) == ledger.GENESIS
 
 
-# --- scoring ---
+def test_a_kept_head_detects_a_removed_last_line(two_entry_ledger):
+    entries = ledger.read_ledger(two_entry_ledger)
+    kept = ledger.head(entries)
+    ledger.check_head(entries, kept)
+    two_entry_ledger.write_text("".join(_lines(two_entry_ledger)[:-1]), encoding="utf-8")
+    truncated = ledger.read_ledger(two_entry_ledger)  # the chain alone cannot see it
+    assert len(truncated) == 1
+    with pytest.raises(ledger.LedgerError, match="not in the ledger"):
+        ledger.check_head(truncated, kept)
 
 
-def test_a_matured_forecast_is_scored_once_and_never_edited(prospective_frozen, ledger_path):
-    forecast_entry = record(prospective_frozen, ledger_path)
+# --- scoring, through the same real loader ---
+
+
+def test_a_matured_forecast_is_scored_once_and_never_edited(prospective_frozen, ledger_path, store):
+    forecast_entry = record(prospective_frozen, ledger_path, store)
     # 2026-10-23: as_of + 1 entry session + 5 sessions = 2026-10-22 exits; 20 and 30 do not
-    written, left = score(ledger_path, "2026-10-23", "2026-10-23T23:00:00Z")
+    written, left = score(ledger_path, "2026-10-23", "2026-10-23T23:00:00Z", store)
     assert written is not None
     scored = pd.DataFrame(written.payload["scores"])
     assert set(scored["horizon"]) == {5}
     assert len(scored) == 6 and {row["reason"] for row in left} == {"not_matured"}
     assert (scored["exit_session"] == "2026-10-22").all()
     assert (scored["entry_session"] == "2026-10-15").all()
+    assert written.payload["retrieved_by"] == "2026-10-23T23:00:00+00:00"
+    assert written.payload["outcome_data"]["complete"] is True
+    assert written.payload["outcome_data"]["batches"]
     variant = forecast_entry.payload["bundle"]
     assert (scored["bundle_id"] == variant["bundle_id"]).all()
     assert (scored["config_sha256"] == variant["config_sha256"]).all()
@@ -553,10 +674,11 @@ def test_a_matured_forecast_is_scored_once_and_never_edited(prospective_frozen, 
     assert row["inside_band"] == (row["band_low"] <= row["outcome"] <= row["band_high"])
     assert row["error"] == pytest.approx(row["outcome"] - row["point"])
     assert row["null_error"] == pytest.approx(row["outcome"] - row["null"])
-    # the outcome is the F5.1 log total return over (entry, exit] from the store
-    store = prospective_store()
+    # the outcome is the F5.1 log total return over (entry, exit] of the stored rows
+    prices, distributions, splits = prospective_tables()
+    sessions = nyse_rules.sessions(WINDOW_START, "2026-12-31")
     returns = training.series.daily_log_returns(
-        store.sessions, store.prices, store.distributions, store.splits, row["asset"]
+        sessions, prices, distributions, splits, row["asset"]
     )
     dates = returns["date"].dt.strftime("%Y-%m-%d")
     inside = (dates > "2026-10-15") & (dates <= "2026-10-22")
@@ -566,27 +688,29 @@ def test_a_matured_forecast_is_scored_once_and_never_edited(prospective_frozen, 
     else:
         assert row["outcome"] == pytest.approx(0.5 * np.log(np.mean(expected**2)))
     # nothing is scored twice, and the forecast entry is untouched
-    again, _ = score(ledger_path, "2026-10-23", "2026-10-24T00:00:00Z")
+    again, _ = score(ledger_path, "2026-10-23", "2026-10-24T00:00:00Z", store)
     assert again is None
     entries = ledger.read_ledger(ledger_path)
     assert entries[0] == forecast_entry
-    final, left = score(ledger_path, "2026-12-31", "2027-01-01T00:00:00Z")
+    final, left = score(ledger_path, "2026-12-31", "2027-01-01T00:00:00Z", store)
     assert len(final.payload["scores"]) == 12 and not left
     assert len(forecast.scored_keys(ledger.read_ledger(ledger_path))) == 18
 
 
-def test_an_outcome_is_not_scored_before_its_exit_close_is_available(
-    prospective_frozen, ledger_path
-):
-    record(prospective_frozen, ledger_path)
-    written, left = score(ledger_path, "2026-10-22", "2026-10-22T21:00:00Z")  # 17:00 New York
+def test_nothing_is_scored_before_its_exit_close_is_known(prospective_frozen, ledger_path, store):
+    record(prospective_frozen, ledger_path, store)
+    written, left = score(ledger_path, "2026-10-22", "2026-10-22T21:00:00Z", store)  # 17:00 NY
     assert written is None
-    assert {row["reason"] for row in left} == {"close_not_available", "not_matured"}
+    assert {row["reason"] for row in left} <= {
+        "close_not_available",
+        "outcome_inputs_unavailable",
+        "not_matured",
+    }
 
 
-def test_the_cumulative_report_states_its_small_sample(prospective_frozen, ledger_path):
-    record(prospective_frozen, ledger_path)
-    written, _ = score(ledger_path, "2026-12-31", "2027-01-01T00:00:00Z")
+def test_the_cumulative_report_states_its_small_sample(prospective_frozen, ledger_path, store):
+    record(prospective_frozen, ledger_path, store)
+    written, _ = score(ledger_path, "2026-12-31", "2027-01-01T00:00:00Z", store)
     report = forecast.coverage_report(ledger.read_ledger(ledger_path))
     assert len(report) == 18 and (report["n_scored"] == 1).all()
     assert report["caveat"].str.contains("far too few").all()
@@ -595,48 +719,35 @@ def test_the_cumulative_report_states_its_small_sample(prospective_frozen, ledge
     assert 0.0 < low < 0.8 < high < 1.0
 
 
-def _without(store, asset: str, sessions: list[str]):
-    drop = (store.prices["fund_id"] == asset) & store.prices["session_date"].isin(
-        [pd.Timestamp(day, tz="UTC") for day in sessions]
+def test_an_outcome_with_a_missing_close_stays_pending(prospective_frozen, ledger_path, tmp_path):
+    gap = prospective_store(
+        tmp_path / "gap", edit=without_close("VTI", ["2026-10-20"], from_retrieval="2026-10-22")
     )
-    return synthetic.FixtureStore(
-        store.sessions, store.prices.loc[~drop], store.distributions, store.splits
-    )
-
-
-def test_no_close_on_the_as_of_session_is_recorded_as_unavailable(prospective_frozen, ledger_path):
-    entry = record(
-        prospective_frozen, ledger_path, store=_without(prospective_store(), "VTI", [AS_OF])
-    )
-    rows = pd.DataFrame(entry.payload["rows"])
-    vti = rows["asset"] == "VTI"
-    assert (rows.loc[vti, "status"] == "unavailable").all()
-    assert set(rows.loc[vti, "reason"]) == {"no_close_at_forecast_close"}
-    assert (rows.loc[~vti, "status"] == "ok").all()
-    written, _ = score(ledger_path, "2026-12-31", "2027-01-01T00:00:00Z")
-    assert set(pd.DataFrame(written.payload["scores"])["asset"]) == {"AGG", "SHV"}
-
-
-def test_an_outcome_with_a_missing_close_stays_pending(prospective_frozen, ledger_path):
-    record(prospective_frozen, ledger_path)
-    gap = _without(prospective_store(), "VTI", ["2026-10-20"])
-    written, left = score(ledger_path, "2026-10-23", "2026-10-23T23:00:00Z", store=gap)
+    record(prospective_frozen, ledger_path, gap)
+    written, left = score(ledger_path, "2026-10-23", "2026-10-23T23:00:00Z", gap)
     reasons = {(row["asset"], row["horizon"]): row["reason"] for row in left}
     assert reasons[("VTI", 5)] == "outcome_inputs_unavailable"
     assert {s["asset"] for s in written.payload["scores"]} == {"AGG", "SHV"}
+    assert written.payload["outcome_data"]["complete"] is False
 
 
-def test_a_zero_volatility_outcome_is_scored_outside_the_band(prospective_frozen, ledger_path):
-    record(prospective_frozen, ledger_path)
-    store = prospective_store()
-    days = pd.bdate_range("2026-10-15", "2026-10-22", tz="UTC")
-    shv = store.prices["fund_id"] == "SHV"
-    entry_close = store.prices.loc[shv & (store.prices["session_date"] == days[0]), "close"]
-    flat = shv & store.prices["session_date"].isin(days)
-    prices = store.prices.copy()
-    prices.loc[flat, "close"] = float(entry_close.iloc[0])
-    flat_store = synthetic.FixtureStore(store.sessions, prices, store.distributions, store.splits)
-    written, _ = score(ledger_path, "2026-10-23", "2026-10-23T23:00:00Z", store=flat_store)
+def test_a_zero_volatility_outcome_is_scored_outside_the_band(
+    prospective_frozen, ledger_path, tmp_path
+):
+    days = nyse_rules.sessions("2026-10-15", "2026-10-22")
+
+    def flat(retrieval, tables):
+        prices, distributions, splits = tables
+        if retrieval >= "2026-10-22":
+            shv = prices["fund_id"] == "SHV"
+            entry_close = prices.loc[shv & (prices["session_date"] == days[0]), "close"].iloc[0]
+            prices = prices.copy()
+            prices.loc[shv & prices["session_date"].isin(days), "close"] = float(entry_close)
+        return prices, distributions, splits
+
+    flat_store = prospective_store(tmp_path / "flat", edit=flat)
+    record(prospective_frozen, ledger_path, flat_store)
+    written, _ = score(ledger_path, "2026-10-23", "2026-10-23T23:00:00Z", flat_store)
     scores = pd.DataFrame(written.payload["scores"]).set_index(["asset", "target"])
     flat_vol = scores.loc[("SHV", "log_realized_volatility")]
     assert flat_vol["inside_band"] == False
@@ -645,18 +756,14 @@ def test_a_zero_volatility_outcome_is_scored_outside_the_band(prospective_frozen
     assert scores.loc[("SHV", "total_log_return"), "outcome"] == 0.0
 
 
-def test_models_registered_after_the_forecast_are_refused(prospective_frozen, ledger_path):
+def test_models_registered_after_the_forecast_are_refused(prospective_frozen, ledger_path, store):
     models = prospective_frozen.models()
     later = {
         key: {**value, "registered_at": "2026-10-15T00:00:00+00:00"}
         for key, value in models.entries.items()
     }
     with pytest.raises(forecast.ForecastRefused) as refused:
-        record(
-            prospective_frozen,
-            ledger_path,
-            models=forecast.Models(models.bundle, later),
-        )
+        record(prospective_frozen, ledger_path, store, models=forecast.Models(models.bundle, later))
     assert refused.value.reason == "not_frozen"
 
 
@@ -684,17 +791,6 @@ def test_a_re_freeze_is_never_pooled_with_earlier_forecasts():
     assert len(table) == 2
     assert table.set_index("bundle_id")["n_scored"].to_dict() == {"a": 2, "b": 1}
     assert table.set_index("bundle_id")["coverage"].to_dict() == {"a": 1.0, "b": 0.0}
-
-
-def test_a_kept_head_detects_a_removed_last_line(two_entry_ledger):
-    entries = ledger.read_ledger(two_entry_ledger)
-    kept = ledger.head(entries)
-    ledger.check_head(entries, kept)
-    two_entry_ledger.write_text("".join(_lines(two_entry_ledger)[:-1]), encoding="utf-8")
-    truncated = ledger.read_ledger(two_entry_ledger)  # the chain alone cannot see it
-    assert len(truncated) == 1
-    with pytest.raises(ledger.LedgerError, match="not in the ledger"):
-        ledger.check_head(truncated, kept)
 
 
 def test_freezing_requires_complete_provenance(prospective_frozen, tmp_path):

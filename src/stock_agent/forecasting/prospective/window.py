@@ -2,25 +2,37 @@
 The inference window: what a frozen model may see at a forecast close, and
 the timing conventions of a prospective record.
 
-The prospective store is read only through the `real-etf-data` loader
+The prospective store is read only through its loader (PR #73), which the
+forecast job passes in:
 
-    load_inference_window(store_root, assets, forecast_close, lookback=63)
+    load_inference_window(store_root, assets, forecast_close, lookback=63,
+                          *, retrieved_by)
 
-whose result `coerce_window` turns into an `InferenceWindow` and checks:
+`retrieved_by` is the record's decision time: only batches retrieved by then
+are read. `coerce_window` checks the result and refuses, never repairs:
 
-    sessions        exactly `lookback` sessions (00:00 UTC), strictly
-                    increasing, the last one equal to forecast_close
+    sessions        lookback + 1 sessions (00:00 UTC) ending at
+                    forecast_close, so `lookback` daily returns (64 closes
+                    and 63 returns by default), equal to an independent
+                    exchange calendar
     prices          fund_id, session_date, close, adjustment_basis
                     (unadjusted rows are used, other bases ignored)
     distributions   fund_id, ex_date, amount, amount_basis
     splits          fund_id, effective_date, ratio_new_per_old
-    fingerprint     SHA-256 of what was read (computed here if absent)
+    missing         fund_id, session_date (and reason): closes the selected
+                    batch lacks; the loader never fills them
+    batches         batch_id, retrieved_at (and request range, payload and
+                    anchors hashes): the lineage of every row
+    revisions       fund_id, session_date, table, change: disagreements with
+                    older batches (values never shown)
 
-The sessions must equal an independent exchange calendar (a `calendar`
-callable; the record names it). Any row dated after forecast_close is
-refused (LeakageError): the forecast
-can then depend only on sessions up to its close. Rows dated before the
-first session are outside the window and dropped.
+- Any row dated after forecast_close is refused (LeakageError), and so is a
+  batch retrieved after `retrieved_by`. The forecast can then depend only on
+  sessions up to its close, as known at its decision time.
+- Rows dated before the first session are outside the window and dropped.
+- An asset with any close missing in the window is incomplete
+  (`incomplete_assets`). Its forecast is refused, never computed from
+  median-filled features.
 
 Timing conventions (assumed, not verified; recorded in every forecast):
 
@@ -46,13 +58,19 @@ from stock_agent.model_validation.audit import LeakageError, table_sha256
 PRICE_COLUMNS = ("fund_id", "session_date", "close", "adjustment_basis")
 DISTRIBUTION_COLUMNS = ("fund_id", "ex_date", "amount", "amount_basis")
 SPLIT_COLUMNS = ("fund_id", "effective_date", "ratio_new_per_old")
+MISSING_COLUMNS = ("fund_id", "session_date")
+BATCH_COLUMNS = ("batch_id", "retrieved_at")
+REVISION_COLUMNS = ("fund_id", "session_date", "table", "change")
 _DATE_COLUMNS = {
     "prices": ("session_date",),
     "distributions": ("ex_date",),
     "splits": ("effective_date",),
+    "missing": ("session_date",),
+    "revisions": ("session_date",),
 }
-_COLUMNS = {"prices": PRICE_COLUMNS, "distributions": DISTRIBUTION_COLUMNS, "splits": SPLIT_COLUMNS}
-
+_DATA = {"prices": PRICE_COLUMNS, "distributions": DISTRIBUTION_COLUMNS, "splits": SPLIT_COLUMNS}
+_LINEAGE = {"missing": MISSING_COLUMNS, "revisions": REVISION_COLUMNS}
+INCOMPLETE = "incomplete_inference_window"
 
 Calendar = Callable[[pd.Timestamp, pd.Timestamp], pd.DatetimeIndex]
 
@@ -68,7 +86,45 @@ class InferenceWindow:
     prices: pd.DataFrame
     distributions: pd.DataFrame
     splits: pd.DataFrame
+    missing: pd.DataFrame
+    batches: pd.DataFrame
+    revisions: pd.DataFrame
     fingerprint: str
+    calendar: str
+
+    @property
+    def complete(self) -> bool:
+        return self.missing.empty
+
+    def incomplete_assets(self, assets: Sequence[str]) -> dict[str, list[str]]:
+        """Asset -> the sessions in the window without an unadjusted close, if any."""
+
+        result = {}
+        unadjusted = self.prices.loc[self.prices["adjustment_basis"] == "unadjusted"]
+        for asset in assets:
+            have = set(unadjusted.loc[unadjusted["fund_id"] == asset, "session_date"])
+            listed = set(self.missing.loc[self.missing["fund_id"] == asset, "session_date"])
+            lacking = sorted({s for s in self.sessions if s not in have} | listed)
+            if lacking:
+                result[asset] = [str(s.date()) for s in lacking]
+        return result
+
+    def lineage(self) -> dict[str, object]:
+        """What a record keeps of the window: batches, missing closes, revisions, completeness."""
+
+        def rows(frame: pd.DataFrame) -> list[dict]:
+            out = frame.copy()
+            for column in out.columns:
+                if isinstance(out[column].dtype, pd.DatetimeTZDtype):
+                    out[column] = out[column].map(lambda v: None if pd.isna(v) else v.isoformat())
+            return out.astype(object).where(out.notna(), None).to_dict("records")
+
+        return {
+            "batches": rows(self.batches),
+            "missing": rows(self.missing),
+            "revisions": rows(self.revisions),
+            "complete": self.complete,
+        }
 
 
 def session_stamp(value: object, name: str = "session") -> pd.Timestamp:
@@ -81,24 +137,27 @@ def session_stamp(value: object, name: str = "session") -> pd.Timestamp:
     return stamp.as_unit("ns")
 
 
+def _has(result: object, name: str) -> bool:
+    return name in result if isinstance(result, Mapping) else hasattr(result, name)
+
+
 def _part(result: object, name: str) -> object:
-    if isinstance(result, Mapping):
-        if name not in result:
-            raise WindowRefused(f"The inference window has no {name!r}.")
-        return result[name]
-    if not hasattr(result, name):
+    if not _has(result, name):
         raise WindowRefused(f"The inference window has no {name!r}.")
-    return getattr(result, name)
+    return result[name] if isinstance(result, Mapping) else getattr(result, name)
 
 
-def _table(result: object, name: str, first: pd.Timestamp, last: pd.Timestamp) -> pd.DataFrame:
+def _frame(result: object, name: str, columns: Sequence[str]) -> pd.DataFrame:
     frame = _part(result, name)
     if not isinstance(frame, pd.DataFrame):
         raise WindowRefused(f"window.{name} must be a DataFrame.")
-    missing = sorted(set(_COLUMNS[name]) - set(frame.columns))
-    if missing:
-        raise WindowRefused(f"window.{name} is missing columns {missing}.")
-    frame = frame.loc[:, list(_COLUMNS[name])].copy()
+    lacking = sorted(set(columns) - set(frame.columns))
+    if lacking:
+        raise WindowRefused(f"window.{name} is missing columns {lacking}.")
+    return frame.copy()
+
+
+def _dated(frame: pd.DataFrame, name: str, first: pd.Timestamp, last: pd.Timestamp):
     keep = pd.Series(True, index=frame.index)
     for column in _DATE_COLUMNS[name]:
         dates = pd.to_datetime(frame[column], utc=True).dt.as_unit("ns")
@@ -126,6 +185,7 @@ def coerce_window(
     forecast_close: object,
     lookback: int,
     calendar: Calendar,
+    retrieved_by: pd.Timestamp,
 ) -> InferenceWindow:
     """
     Check a loader result against the contract above (refuses, never repairs).
@@ -137,9 +197,13 @@ def coerce_window(
     """
 
     close = session_stamp(forecast_close, "forecast_close")
+    cutoff = pd.Timestamp(retrieved_by).tz_convert("UTC")
     sessions = pd.DatetimeIndex(pd.to_datetime(_part(result, "sessions"), utc=True)).as_unit("ns")
-    if len(sessions) != lookback:
-        raise WindowRefused(f"The window holds {len(sessions)} sessions, not {lookback}.")
+    if len(sessions) != lookback + 1:
+        raise WindowRefused(
+            f"The window holds {len(sessions)} sessions, not {lookback + 1} "
+            f"({lookback} daily returns)."
+        )
     if not sessions.is_monotonic_increasing or sessions.has_duplicates:
         raise WindowRefused("Window sessions must be strictly increasing.")
     if (sessions != sessions.normalize()).any():
@@ -154,8 +218,22 @@ def coerce_window(
             f"The window's sessions differ from the exchange calendar {calendar_id(calendar)} "
             f"between {sessions[0].date()} and {close.date()}."
         )
-    tables = {name: _table(result, name, sessions[0], close) for name in _COLUMNS}
-    absent = sorted(set(assets) - set(tables["prices"]["fund_id"]))
+    tables = {
+        name: _dated(_frame(result, name, columns), name, sessions[0], close)
+        for name, columns in {**_DATA, **_LINEAGE}.items()
+    }
+    tables["prices"] = tables["prices"].loc[:, list(PRICE_COLUMNS)]
+    tables["distributions"] = tables["distributions"].loc[:, list(DISTRIBUTION_COLUMNS)]
+    tables["splits"] = tables["splits"].loc[:, list(SPLIT_COLUMNS)]
+    batches = _frame(result, "batches", BATCH_COLUMNS)
+    batches["retrieved_at"] = pd.to_datetime(batches["retrieved_at"], utc=True)
+    if (batches["retrieved_at"] > cutoff).any():
+        raise LeakageError(
+            f"The window uses a batch retrieved after the decision time {cutoff.isoformat()}."
+        )
+    absent = sorted(
+        set(assets) - set(tables["prices"]["fund_id"]) - set(tables["missing"]["fund_id"])
+    )
     if absent:
         raise WindowRefused(f"The window has no prices for {absent}.")
     fingerprint = _part(result, "fingerprint") if _has(result, "fingerprint") else None
@@ -163,14 +241,23 @@ def coerce_window(
         fingerprint = sha256_json(
             {
                 "sessions": [str(s.date()) for s in sessions],
+                "batches": table_sha256(batches.reset_index(drop=True)),
                 **{name: table_sha256(frame) for name, frame in tables.items()},
             }
         )
-    return InferenceWindow(close, sessions, **tables, fingerprint=str(fingerprint))
-
-
-def _has(result: object, name: str) -> bool:
-    return name in result if isinstance(result, Mapping) else hasattr(result, name)
+    window_calendar = _part(result, "calendar_id") if _has(result, "calendar_id") else None
+    return InferenceWindow(
+        close,
+        sessions,
+        tables["prices"],
+        tables["distributions"],
+        tables["splits"],
+        tables["missing"],
+        batches.reset_index(drop=True),
+        tables["revisions"],
+        fingerprint=str(fingerprint),
+        calendar=str(window_calendar or calendar_id(calendar)),
+    )
 
 
 def local_instant(session: pd.Timestamp, local_time: str, timezone: str) -> pd.Timestamp:

@@ -36,9 +36,9 @@ def test_without_a_ledger_the_panel_says_no_forecast_is_recorded():
 
 
 def test_a_recorded_forecast_shows_its_point_band_null_as_of_and_labels(
-    prospective_frozen, ledger_path
+    prospective_frozen, ledger_path, prospective_store_root
 ):
-    entry = record(prospective_frozen, ledger_path)
+    entry = record(prospective_frozen, ledger_path, prospective_store_root)
     app = running("experiments")
     text = text_of(app)  # scanned for advice wording
     assert wording.PROSPECTIVE_TITLE in text and wording.PROSPECTIVE_EMPTY_TITLE not in text
@@ -62,9 +62,25 @@ def test_a_recorded_forecast_shows_its_point_band_null_as_of_and_labels(
     assert set(table[columns["outcome"]]) == {wording.PROSPECTIVE_PENDING}  # nothing matured
 
 
-def test_scores_appear_only_once_matured(prospective_frozen, ledger_path):
-    record(prospective_frozen, ledger_path)
-    score(ledger_path, "2026-10-23", "2026-10-23T23:00:00Z")  # only the 5-session rows matured
+def test_an_asset_refused_for_a_missing_close_is_named_not_filled(
+    prospective_frozen, ledger_path, tmp_path
+):
+    from forecast_prospective_helpers import prospective_store, without_close
+
+    gap = prospective_store(tmp_path / "gap", edit=without_close("VTI", ["2026-09-15"]))
+    record(prospective_frozen, ledger_path, gap)
+    app = running("experiments")
+    text = text_of(app)
+    assert wording.PROSPECTIVE_REFUSED.format(assets="VTI") in text
+    (table,) = _tables(app)
+    assert "VTI" not in set(table[wording.PROSPECTIVE_COLUMNS["fund"]])
+
+
+def test_scores_appear_only_once_matured(prospective_frozen, ledger_path, prospective_store_root):
+    record(prospective_frozen, ledger_path, prospective_store_root)
+    score(
+        ledger_path, "2026-10-23", "2026-10-23T23:00:00Z", prospective_store_root
+    )  # only the 5-session rows matured
     app = running("experiments")
     text = text_of(app)
     forecasts, cumulative = _tables(app)
@@ -78,8 +94,10 @@ def test_scores_appear_only_once_matured(prospective_frozen, ledger_path):
     assert "far too few to judge calibration or skill" in text
 
 
-def test_a_ledger_that_fails_its_check_shows_nothing_but_that(prospective_frozen, ledger_path):
-    record(prospective_frozen, ledger_path)
+def test_a_ledger_that_fails_its_check_shows_nothing_but_that(
+    prospective_frozen, ledger_path, prospective_store_root
+):
+    record(prospective_frozen, ledger_path, prospective_store_root)
     text = ledger_path.read_text(encoding="utf-8")
     ledger_path.write_text(text.replace('"VTI"', '"VXX"', 1), encoding="utf-8")
     app = running("experiments")
@@ -88,8 +106,10 @@ def test_a_ledger_that_fails_its_check_shows_nothing_but_that(prospective_frozen
     assert not app.dataframe
 
 
-def test_the_apps_ledger_check_agrees_with_the_jobs(prospective_frozen, ledger_path):
-    record(prospective_frozen, ledger_path)
+def test_the_apps_ledger_check_agrees_with_the_jobs(
+    prospective_frozen, ledger_path, prospective_store_root
+):
+    record(prospective_frozen, ledger_path, prospective_store_root)
     text = ledger_path.read_text(encoding="utf-8")
     entries = ledger.read_ledger(ledger_path)
     mine = forecast_records.verified_entries(text)

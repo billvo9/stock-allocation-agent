@@ -17,7 +17,10 @@ Subcommands, run from the repository root:
         .venv/bin/python scripts/forecast_prospective.py report
 
 Training reads the F1 research store only (sessions up to 2024-12-31); the
-prospective store is read only through the real-etf-data loader. The ledger
+prospective store is read only through `load_inference_window`, with the
+record's decision time as `retrieved_by`, and every window is checked
+against the rules-based NYSE calendar. An asset with a close missing in its
+window is refused (`incomplete_inference_window`), never median-filled. The ledger
 (default data/raw/prospective_forecasts/ledger.jsonl) and the outputs
 (default reports/ml/prospective) are private and ignored by Git. Each
 forecast is labelled "unvalidated, no demonstrated skill": these are research
@@ -27,12 +30,15 @@ records, never recommendations. Nothing here contacts a network.
 from __future__ import annotations
 
 import argparse
-import importlib
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
 
+# The reviewed consumer of the prospective store: only the loader and the rules
+# calendar (tests/test_prospective_boundaries.py allows exactly these names).
+from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
+from stock_agent.data.prospective.inference import load_inference_window
 from stock_agent.forecasting.prospective import forecast, freeze, frozen, ledger
 from stock_agent.forecasting.prospective.config import load_config
 from stock_agent.forecasting.provenance import code_provenance, environment
@@ -42,31 +48,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = PROJECT_ROOT / "configs" / "prospective" / "etf_prospective_v1.yaml"
 DEFAULT_OUTPUT = PROJECT_ROOT / freeze.DEFAULT_OUTPUT
 DEFAULT_LEDGER = PROJECT_ROOT / ledger.DEFAULT_LEDGER
-# The prospective-store loader and the NYSE calendar beyond 2024, both built
-# by the real-etf-data ticket. Update these lines if their final names differ.
-# The calendar is the independent session schedule every window is checked
-# against (nyse.sessions refuses dates after 2024 until it is extended).
-LOADER = ("stock_agent.data.prospective", "load_inference_window")
-CALENDAR = ("stock_agent.calendars.nyse", "sessions")
 
 
-def _resolve(target: tuple[str, str], what: str):
-    module, name = target
-    try:
-        return getattr(importlib.import_module(module), name)
-    except (ModuleNotFoundError, AttributeError):
-        raise SystemExit(
-            f"The {what} {module}.{name} is not available on this branch. It comes with the "
-            "real-etf-data ticket; nothing was read or written."
-        ) from None
+def exchange_calendar(start, end) -> pd.DatetimeIndex:
+    """The rules-based NYSE sessions in [start, end]: every window is checked against it."""
+
+    return sessions(start, end)
 
 
-def _loader():
-    return _resolve(LOADER, "prospective-store loader")
-
-
-def _calendar():
-    return _resolve(CALENDAR, "exchange calendar")
+exchange_calendar.calendar_id = CALENDAR_ID
 
 
 def _now() -> pd.Timestamp:
@@ -98,19 +88,27 @@ def _forecast(args) -> int:
     models = forecast.load_models(args.bundle, registry)
     entry = forecast.record_forecast(
         models,
-        loader=_loader(),
+        loader=load_inference_window,
         store_root=args.store_root,
         forecast_close=pd.Timestamp(args.forecast_close, tz="UTC"),
         ledger_path=args.ledger,
         created_at=_now(),
         code=code_provenance(PROJECT_ROOT),
-        calendar=_calendar(),
+        calendar=exchange_calendar,
     )
+    if entry.kind == "refusal":
+        print(f"refused as of {entry.payload['as_of_session']}: {entry.payload['refusals']}")
+        print(f"ledger head {entry.entry_sha256}: keep a copy outside the ledger")
+        return 1
     rows = pd.DataFrame(entry.payload["rows"])
     columns = ["asset", "horizon", "target", "point", "band_low", "band_high", "null", "stage"]
     print(f"forecast {entry.payload['forecast_id']} as of {entry.payload['as_of_session']}")
     print(", ".join(entry.payload["labels"]))
     print(rows.loc[:, [c for c in columns if c in rows]].to_string(index=False))
+    for refusal in entry.payload["refusals"]:
+        print(
+            f"refused {refusal['asset']}: {refusal['reason']} {refusal['sessions_without_close']}"
+        )
     print(f"ledger head {entry.entry_sha256}: note it outside the ledger to detect truncation")
     return 0
 
@@ -118,12 +116,12 @@ def _forecast(args) -> int:
 def _score(args) -> int:
     entry, left = forecast.score_matured(
         ledger_path=args.ledger,
-        loader=_loader(),
+        loader=load_inference_window,
         store_root=args.store_root,
         score_close=pd.Timestamp(args.score_close, tz="UTC"),
         scored_at=_now(),
         code=code_provenance(PROJECT_ROOT),
-        calendar=_calendar(),
+        calendar=exchange_calendar,
     )
     print(f"scored {0 if entry is None else len(entry.payload['scores'])} rows")
     if left:

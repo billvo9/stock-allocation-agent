@@ -6,11 +6,10 @@ never evidence about funds.
   distributions (and VTI's 2008 2-for-1 split), under `FIXTURE_ADAPTER_ID`,
   whose data class is "synthetic". It is ingested with the ordinary F1
   writer, so training reads it through the ordinary fail-closed reader.
-- `fixture_store` and `load_fixture_window`: sessions after 2024 on a
-  weekday calendar, from the same generator, and a loader with the
-  signature of the real prospective-store loader
-  (`load_inference_window(store_root, assets, forecast_close, lookback=63)`);
-  here `store_root` is the `FixtureStore` itself.
+- `synthetic_tables`: the same generator on any session list, without a
+  batch id: the tests feed it, on post-2024 exchange sessions, to the real
+  prospective-store writer and read it back through the real loader. No
+  stand-in for the prospective store or its loader exists here.
 
 Prices follow P_t = (P_{t-1} (1 + r_t) - D_t) / f_t, so the approved F5.1
 total return (f_t P_t + D_t) / P_{t-1} - 1 recovers r_t exactly; r_t is
@@ -20,7 +19,6 @@ GARCH(1,1) as in forecasting.etf_data.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -86,7 +84,9 @@ def _series(fund_id: str, sessions: pd.DatetimeIndex, seed: int, start_price: fl
     return closes, cash, ratios
 
 
-def _tables(fund_ids: Sequence[str], sessions: pd.DatetimeIndex, seed: int):
+def synthetic_tables(fund_ids: Sequence[str], sessions: pd.DatetimeIndex, seed: int = 0):
+    """F1-schema prices, distributions and splits (no batch_id) of `fund_ids` on `sessions`."""
+
     prices, distributions, splits = [], [], []
     for fund_id in fund_ids:
         closes, cash, ratios = _series(fund_id, sessions, seed)
@@ -159,7 +159,7 @@ def fixture_batch(
 
     ids = tuple(sorted(fund_ids))
     sessions = nyse.sessions(start, end_exclusive - pd.Timedelta(days=1))
-    prices, distributions, splits = _tables(ids, sessions, seed)
+    prices, distributions, splits = synthetic_tables(ids, sessions, seed)
     payload = {
         "fixture": FIXTURE_ADAPTER_ID,
         "seed": seed,
@@ -184,77 +184,4 @@ def fixture_batch(
     )
 
 
-@dataclass(frozen=True, eq=False)
-class FixtureStore:
-    """Post-2024 synthetic sessions (weekdays) standing in for the prospective store."""
-
-    sessions: pd.DatetimeIndex
-    prices: pd.DataFrame
-    distributions: pd.DataFrame
-    splits: pd.DataFrame
-
-
-def fixture_store(fund_ids: Sequence[str], *, first: str, last: str, seed: int = 7) -> FixtureStore:
-    sessions = pd.bdate_range(first, last, tz="UTC").as_unit("us")
-    prices, distributions, splits = _tables(tuple(sorted(fund_ids)), sessions, seed)
-    return FixtureStore(sessions, prices, distributions, splits)
-
-
-def truncated(store: FixtureStore, last: object) -> FixtureStore:
-    """The same store as known on `last` (no session after it)."""
-
-    stamp = (
-        pd.Timestamp(last, tz="UTC") if pd.Timestamp(last).tzinfo is None else pd.Timestamp(last)
-    )
-    return FixtureStore(
-        store.sessions[store.sessions <= stamp],
-        store.prices.loc[store.prices["session_date"] <= stamp].reset_index(drop=True),
-        store.distributions.loc[store.distributions["ex_date"] <= stamp].reset_index(drop=True),
-        store.splits.loc[store.splits["effective_date"] <= stamp].reset_index(drop=True),
-    )
-
-
-def weekday_sessions(start: object, end: object) -> pd.DatetimeIndex:
-    """The fixture store's exchange calendar: every weekday (no holidays)."""
-
-    return pd.bdate_range(pd.Timestamp(start).date(), pd.Timestamp(end).date(), tz="UTC")
-
-
-weekday_sessions.calendar_id = "synthetic_weekdays_v1"
-
-
-def load_fixture_window(
-    store_root: FixtureStore, assets: Sequence[str], forecast_close: object, lookback: int = 63
-) -> dict[str, object]:
-    """The fixture loader: the `lookback` sessions ending at `forecast_close`."""
-
-    close = pd.Timestamp(forecast_close)
-    close = close.tz_localize("UTC") if close.tzinfo is None else close.tz_convert("UTC")
-    sessions = store_root.sessions[store_root.sessions <= close]
-    if len(sessions) < lookback or sessions[-1] != close:
-        raise ValueError(f"The fixture store has no {lookback}-session window ending {close}.")
-    window = sessions[-lookback:]
-    first = window[0]
-
-    def inside(frame: pd.DataFrame, column: str) -> pd.DataFrame:
-        keep = frame["fund_id"].isin(assets) & (frame[column] >= first) & (frame[column] <= close)
-        return frame.loc[keep].reset_index(drop=True)
-
-    return {
-        "sessions": window,
-        "prices": inside(store_root.prices, "session_date"),
-        "distributions": inside(store_root.distributions, "ex_date"),
-        "splits": inside(store_root.splits, "effective_date"),
-    }
-
-
-__all__ = [
-    "FIXTURE_ADAPTER_ID",
-    "TRAINING_FIRST",
-    "FixtureStore",
-    "fixture_batch",
-    "fixture_store",
-    "load_fixture_window",
-    "truncated",
-    "weekday_sessions",
-]
+__all__ = ["FIXTURE_ADAPTER_ID", "TRAINING_FIRST", "fixture_batch", "synthetic_tables"]

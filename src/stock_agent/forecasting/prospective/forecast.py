@@ -12,11 +12,20 @@ session, `forecast_close`):
    the close's assumed availability (18:00 America/New_York); created_at
    before the record deadline (09:30 America/New_York on the next weekday).
 3. The window (`load_inference_window(store_root, assets, forecast_close,
-   lookback)`) is checked by window.coerce_window: nothing after the close.
-4. Features are computed at the close from the window's F5.1 total returns
-   with the training formulas (series.py), and each frozen fit predicts.
-5. One "forecast" entry is appended to the ledger, refused if the ledger
-   already holds a forecast for this as-of session and bundle.
+   lookback, retrieved_by=created_at)`: lookback daily returns, so
+   lookback + 1 closes) is checked by window.coerce_window: nothing after the
+   close, no batch retrieved after created_at, sessions equal to the
+   exchange calendar.
+4. An asset with a close missing in its window is refused
+   (`incomplete_inference_window`), never median-filled. For every other
+   asset, features are computed at the close from the window's F5.1 total
+   returns with the training formulas (series.py), and each frozen fit
+   predicts.
+5. One "forecast" entry is appended to the ledger (with the window's
+   batches, missing closes, revisions and completeness, and any refused
+   assets), refused if the ledger already holds a forecast for this as-of
+   session and bundle. When every asset is refused, a "refusal" entry is
+   appended instead: never a forecast.
 
 Per asset, horizon and target a row holds the point forecast, the 10% and
 90% band ends, the historical-mean null, the model id, version and entry
@@ -28,7 +37,10 @@ Score (`score_matured`). Once the exit session (entry + h) has closed and its
 close is available, the outcome is computed from the prospective store
 through the same loader, and one "score" entry records, per matured row,
 the outcome, whether it lies inside the band, its error and the null's
-error. Forecast entries are never edited; a row is scored once.
+error, with its variant (bundle, config hash, model id and version) and the
+outcome window's lineage. The window runs from the earliest pending as-of
+session to the scoring close, read with retrieved_by = scored_at. Forecast
+entries are never edited; a row is scored once.
 """
 
 from __future__ import annotations
@@ -144,14 +156,29 @@ def _features_at_close(win: window.InferenceWindow, asset: str) -> tuple[bool, n
     return bool(last["close_observed"]), values
 
 
-def forecast_rows(models: Models, win: window.InferenceWindow) -> list[dict[str, object]]:
-    """Every (asset, horizon, target) row of one forecast, from the window alone."""
+def forecast_rows(
+    models: Models, win: window.InferenceWindow
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """
+    Every (asset, horizon, target) row of one forecast, from the window alone,
+    and the assets refused because a close is missing in their window
+    (`incomplete_inference_window`): their features are never median-filled.
+    """
 
     config = models.config
     bundle = models.bundle
     rows: list[dict[str, object]] = []
+    incomplete = win.incomplete_assets(config.assets)
+    refusals = [
+        {"asset": asset, "reason": window.INCOMPLETE, "sessions_without_close": sessions}
+        for asset, sessions in incomplete.items()
+    ]
     for asset in config.assets:
+        if asset in incomplete:
+            continue
         observed, x = _features_at_close(win, asset)
+        if not observed:  # incomplete_assets lists every missing close
+            raise ForecastRefused("window", f"{asset}: no close at the forecast close")
         imputed = [name for name, value in zip(series.FEATURES, x, strict=True) if np.isnan(value)]
         for horizon in config.horizons:
             fits = {t: bundle.fit(asset, horizon, t) for t in config.targets}
@@ -172,11 +199,6 @@ def forecast_rows(models: Models, win: window.InferenceWindow) -> list[dict[str,
                     "band_method": band["method"],
                     "band_level": band["level"],
                 }
-                if not observed:
-                    rows.append(
-                        {**base, "status": "unavailable", "reason": "no_close_at_forecast_close"}
-                    )
-                    continue
                 if target == "log_realized_volatility":
                     point, scale = v_hat, 1.0
                 else:
@@ -194,6 +216,10 @@ def forecast_rows(models: Models, win: window.InferenceWindow) -> list[dict[str,
                         "band_scale": scale,
                         "null": fit["null"]["value"],
                         "null_model": fit["null"]["model"],
+                        # A complete window can still leave a feature undefined (no price
+                        # movement, or a total return the approved formulas cannot give, such
+                        # as cash on a split date without its share basis): imputed as in
+                        # training and listed here.
                         "imputed_features": imputed,
                     }
                 )
@@ -201,7 +227,7 @@ def forecast_rows(models: Models, win: window.InferenceWindow) -> list[dict[str,
                     key: display_percent(target, rows[-1][key])
                     for key in ("point", "band_low", "band_high", "null")
                 }
-    return rows
+    return rows, refusals
 
 
 def _duplicate_guard(as_of: str, bundle_id: str):
@@ -260,12 +286,17 @@ def record_forecast(
     for identity in models.entries.values():
         if pd.Timestamp(identity["registered_at"]) > created:
             raise ForecastRefused("not_frozen", "the models were registered after this forecast")
-    lookback = config.prospective.lookback_sessions
-    result = loader(store_root, list(config.assets), as_of, lookback=lookback)
+    lookback = config.prospective.lookback_sessions  # daily returns: lookback + 1 closes
+    result = loader(store_root, list(config.assets), as_of, lookback=lookback, retrieved_by=created)
     win = window.coerce_window(
-        result, assets=config.assets, forecast_close=as_of, lookback=lookback, calendar=calendar
+        result,
+        assets=config.assets,
+        forecast_close=as_of,
+        lookback=lookback,
+        calendar=calendar,
+        retrieved_by=created,
     )
-    rows = forecast_rows(models, win)
+    rows, refusals = forecast_rows(models, win)
     bundle = models.bundle
     as_of_text = str(as_of.date())
     payload = {
@@ -286,8 +317,12 @@ def record_forecast(
         "data": {
             "data_class": bundle.document["data_class"],
             "window_fingerprint": win.fingerprint,
-            "calendar": window.calendar_id(calendar),
-            "lookback_sessions": lookback,
+            "calendar": win.calendar,
+            "checked_against": window.calendar_id(calendar),
+            "retrieved_by": created.isoformat(),
+            "lookback_returns": lookback,
+            "closes": len(win.sessions),
+            **win.lineage(),
             "first_session": str(win.sessions[0].date()),
             "training_end": bundle.document["training_data"]["training_end"],
         },
@@ -308,7 +343,12 @@ def record_forecast(
         "labels": list(config.labels),
         "code": dict(code),
         "rows": rows,
+        "refusals": refusals,
     }
+    if not rows:  # every asset refused: a refusal, never a forecast
+        refusal = {**payload, "record_type": "prospective_refusal"}
+        refusal.pop("rows")
+        return ledger.append_entry(ledger_path, "refusal", refusal, recorded_at=created)
     return ledger.append_entry(
         ledger_path,
         "forecast",
@@ -414,11 +454,22 @@ def score_matured(
         raise ForecastRefused(
             "score_close", "the scoring close precedes every pending as-of session"
         )
-    lookback = int(np.busday_count(earliest.date(), close.date())) + 2
+    # The window runs from the earliest pending as-of session to the scoring close.
+    lookback = len(calendar(earliest, close)) - 1
+    if lookback < 1:
+        return None, [
+            {"forecast_entry_sha256": e.entry_sha256, "asset": r["asset"], "reason": "not_matured"}
+            for e, r in pending
+        ]
     assets = sorted({row["asset"] for _, row in pending})
-    result = loader(store_root, assets, close, lookback=lookback)
+    result = loader(store_root, assets, close, lookback=lookback, retrieved_by=stamp)
     win = window.coerce_window(
-        result, assets=assets, forecast_close=close, lookback=lookback, calendar=calendar
+        result,
+        assets=assets,
+        forecast_close=close,
+        lookback=lookback,
+        calendar=calendar,
+        retrieved_by=stamp,
     )
     scores, left = [], []
     for entry, row in pending:
@@ -515,7 +566,10 @@ def score_matured(
         "scored_at": stamp.isoformat(),
         "score_close": str(close.date()),
         "outcome_window_fingerprint": win.fingerprint,
-        "calendar": window.calendar_id(calendar),
+        "calendar": win.calendar,
+        "checked_against": window.calendar_id(calendar),
+        "retrieved_by": stamp.isoformat(),
+        "outcome_data": win.lineage(),
         "code": dict(code),
         "scores": scores,
         "cumulative": cumulative.to_dict("records"),

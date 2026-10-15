@@ -45,6 +45,9 @@ def _forecast(record, records: ForecastRecords) -> None:
             "caption",
         )
         say("; ".join(record["labels"]))
+        refused = [refusal["asset"] for refusal in record.get("refusals", ())]
+        if refused:
+            say(wording.PROSPECTIVE_REFUSED.format(assets=", ".join(refused)), "caption")
         st.dataframe(
             forecast_records.forecast_table(record, records.scores),
             hide_index=True,

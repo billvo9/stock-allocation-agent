@@ -53,6 +53,9 @@ STORE_SIDE = (
 # in the change that introduces it, after review. They may import only these names,
 # with `from ... import name` (a whole-module import would reach `read_batch`).
 INFERENCE_CONSUMERS: set[str] = set()
+# The forecast job's scripts, by path relative to the repository root (reviewed in PR #74):
+# the same rule, so a script reaches the store only through the loader.
+SCRIPT_CONSUMERS = {"scripts/forecast_prospective.py"}
 CONSUMER_NAMES = {
     "stock_agent.data.prospective.inference": {
         "InferenceWindow",
@@ -68,6 +71,8 @@ CONSUMER_NAMES = {
         "MISSING_SESSION",
     },
     "stock_agent.data.prospective.window": {"H_END", "LOOKBACK_SESSIONS", "WINDOW_START"},
+    # The rules calendar's session list and id, which consumers check every window against.
+    "stock_agent.calendars.nyse_rules": {"sessions", "CALENDAR_ID"},
 }
 FORBIDDEN_MODULES = (
     "stock_agent.data.prospective",
@@ -181,6 +186,12 @@ def consumer_violations(path: Path) -> list[str]:
 def test_inference_consumers_import_only_the_loader_and_the_window_constants():
     for relative in INFERENCE_CONSUMERS:
         assert consumer_violations(PACKAGE / relative) == [], relative
+    for relative in SCRIPT_CONSUMERS:
+        path = PROJECT / relative
+        assert path.is_file(), relative
+        assert consumer_violations(path) == [], relative
+        code = _code(path)
+        assert "importlib" not in code and "__import__" not in code, relative  # static only
 
 
 def test_the_consumer_rule_catches_the_writer_and_whole_module_imports(tmp_path):
@@ -226,6 +237,8 @@ def test_the_research_scripts_use_no_prospective_reader():
     for script in sorted((PROJECT / "scripts").glob("*.py")):
         if script.name in {"collect_prospective.py", "audit_fund_coverage.py"}:
             continue
+        if f"scripts/{script.name}" in SCRIPT_CONSUMERS:
+            continue  # held to the stricter consumer rule instead (loader and calendar only)
         imported = _imports(script)
         assert not sorted(name for name in imported if _forbidden(name)), script.name
     audit = _imports(PROJECT / "scripts" / "audit_fund_coverage.py")

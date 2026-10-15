@@ -1,6 +1,6 @@
 # Prospective ETF forecasts (VTI, AGG, SHV)
 
-Status (2026-10-14): implemented and tested end to end on synthetic fixtures, on `claude/prospective-etf-forecasts-9e5b22`; merge pending. No real data has been read: the Tiingo audit and collection run in the owner's terminal, and storing needs the owner's approval.
+Status (2026-10-15): implemented and tested end to end on synthetic fixtures, through PR #73's real prospective store writer and `load_inference_window`, on `claude/prospective-etf-forecasts-9e5b22`; merge pending. No real data has been read: the Tiingo audit and collection run in the owner's terminal, and storing needs the owner's approval.
 
 Code: `src/stock_agent/forecasting/prospective/`. Config: `configs/prospective/etf_prospective_v1.yaml`. Job: `scripts/forecast_prospective.py`. Panel: the Lab's Experiments page (`app/experiments.py`, `app/forecast_records.py`). Tests: `tests/test_prospective_*.py`, `tests/test_app_prospective.py`, `tests/test_forecast_prospective_script.py`.
 
@@ -19,7 +19,7 @@ Recorded verbatim in `docs/PROJECT_STATE.md`, "prospective forecasting track":
 | Step | Command | Reads | Writes (once) |
 |---|---|---|---|
 | Freeze | `forecast_prospective.py freeze --research-store <F1 store>` | The F1 research store (sessions to 2024-12-31) | `reports/ml/prospective/`: the experiment run, the frozen bundle, six registry entries |
-| Forecast | `forecast_prospective.py forecast --bundle <bundle> --store-root <store> --forecast-close <date>` | The bundle and registry; the prospective store through `load_inference_window` | One `forecast` entry in the ledger |
+| Forecast | `forecast_prospective.py forecast --bundle <bundle> --store-root <store> --forecast-close <date>` | The bundle and registry; the prospective store through `load_inference_window(..., retrieved_by=created_at)` | One `forecast` entry in the ledger (or a `refusal` when every asset's window is incomplete) |
 | Score | `forecast_prospective.py score --store-root <store> --score-close <date>` | The ledger; the prospective store through the same loader | One `score` entry for the rows that matured |
 | Report | `forecast_prospective.py report` | The ledger | Nothing |
 
@@ -38,11 +38,21 @@ The ledger defaults to `data/raw/prospective_forecasts/ledger.jsonl`. It is priv
 - **Training data.** Only the F1 research store (`data/funds/reader.read_store`, the fail-closed reader). Any price, distribution or split date after 2024-12-31 is refused with a `LeakageError` before anything is computed; the frames, folds and the final refit check again.
 - **Data class.** It comes from a closed map of F1 adapters: the synthetic adapters give `synthetic`, and Tiingo gives `engineering_sandbox`. An unknown or mixed source is refused. Three hand-picked existing funds form a hindsight-selected list, not a registered research panel, so real-data entries stay `engineering_only` (see "Registry").
 - **Vintages.** Two unadjusted closes for one fund and session (two retrievals) are refused. Choosing among vintages needs an approved rule (F1, OD9).
-- **Prospective inputs.** The forecast job reads the prospective store only through the `real-etf-data` loader, `load_inference_window(store_root, assets, forecast_close, lookback=63)`. `window.coerce_window` checks the result:
-  - exactly 63 sessions ending at the close;
-  - those sessions equal an independent exchange calendar, so a session the store skipped cannot pass for a one-session return or shift a horizon. The calendar is injected (the NYSE calendar beyond 2024 from `real-etf-data`; weekdays for the fixture) and named in each record;
+- **Prospective inputs.** The forecast job reads the prospective store only through PR #73's loader, `load_inference_window(store_root, assets, forecast_close, lookback=63, *, retrieved_by)`.
+  - `scripts/forecast_prospective.py` is its one reviewed consumer. It imports statically only the loader and the rules calendar (`nyse_rules.sessions`, `CALENDAR_ID`), and `tests/test_prospective_boundaries.py` checks that. The research modules never import the prospective side.
+  - `retrieved_by` is the record's decision time (`created_at`; the scoring time when scoring), so only batches retrieved by then are read.
+  - **`lookback_sessions: 63` is the registered meaning of 63 daily returns:** 64 closes ending at the forecast close. Nothing had been frozen when this meaning was fixed.
+
+  `window.coerce_window` checks the result:
+  - exactly lookback + 1 sessions ending at the close;
+  - those sessions equal the rules-based NYSE calendar, checked independently, so a session the store skipped cannot pass for a one-session return or shift a horizon; the calendar id is recorded;
   - unadjusted closes and as-paid cash;
-  - no row dated after the close (a `LeakageError` otherwise). The contract this branch assumes is in the shared notes and in `window.py`; the lead relays the final one.
+  - no row dated after the close and no batch retrieved after `retrieved_by` (a `LeakageError` otherwise);
+  - the window's `batches`, `missing` closes, `revisions` and `complete` flag are carried into the record.
+- **Incomplete windows are refused, never filled.**
+  - An asset with any close missing in its window is not forecast. It is listed in the record's `refusals` with the reason `incomplete_inference_window` and the sessions without a close.
+  - When every asset is incomplete, a `refusal` entry is recorded instead of a forecast.
+  - A missing close is never replaced by the training median.
 - **Timing conventions (assumed, recorded in every forecast).**
   - A close counts as available from 18:00 America/New_York on its session. This is the OD9 descriptive convention, not proof of vendor publication time.
   - The as-of session must be on or after H_end (2026-10-14); earlier dates would be backdated records in the sealed period.
@@ -138,11 +148,12 @@ Per asset × horizon × target:
 Per record:
 - `as_of_session`, `created_at`, `close_available_at` and `record_deadline`;
 - the bundle id, manifest hash, config hash and status;
-- the window fingerprint, the code state, the conventions and the fixed labels.
+- the window fingerprint, the calendar id, `retrieved_by`, 63 returns from 64 closes, and the window's `batches`, `missing`, `revisions` and `complete` flag;
+- any refused assets (`refusals`), the code state, the conventions and the fixed labels.
 
 ## Scoring and the cumulative report
 
-- **When a row is scored.** Once its exit session (entry + h) is in the store and that close is available (18:00 New York). It is recorded with its outcome, whether the outcome is inside the band, and the model's and the null's errors.
+- **When a row is scored.** Once its exit session (entry + h) is in the store, as read with `retrieved_by` = the scoring time, and that close is available (18:00 New York). The outcome window runs from the earliest pending as-of session to the scoring close, and its lineage is recorded. It is recorded with its outcome, whether the outcome is inside the band, and the model's and the null's errors.
 - **When a row waits.** A row whose inputs are incomplete (a missing close in its window) is left pending with its reason, never scored as missing.
 - **Zero realized volatility.** If every return in a volatility outcome's window is 0 (possible for SHV, whose close moves in $0.01 steps), the log volatility is minus infinity, below every band. It is scored as outside the band, with no error, and never left pending: leaving such outcomes out would bias coverage upward.
 - **The cumulative report.** Each scoring run stores it:
@@ -182,10 +193,10 @@ These synthetic numbers verify the pipeline. They are not evidence about the fun
 
 ## Limitations
 
-- No real data yet. The window contract is built against a fixture until `real-etf-data` relays the final one; the script's loader import path (`LOADER`) may need one line changed.
+- No real data yet: the end-to-end tests run on a synthetic prospective store written and read by PR #73's real modules.
 - The bands' nominal level is not guaranteed: overlapping labels and regime changes break exchangeability. Development coverage varies by asset and horizon and is reported, not tuned.
 - The dev residuals come from expanding-window fits on less data than the frozen fit, so the frozen band may be slightly wide.
-- Missing features at the close are imputed with the training medians, as in training, and listed per row (`imputed_features`).
+- A complete window can still leave a feature undefined (no price movement, or a total return the approved formulas cannot give, such as cash on a split date without its share basis). Such a feature is imputed with the training median, as in training, and listed per row (`imputed_features`). A missing close is never imputed: that asset is refused.
 - **Flat windows in training.** A development row whose h returns are all 0 has no log volatility. Both of its labels are dropped, which biases development coverage upward, and a flat 5-session feature window is imputed as typical volatility.
   - Each fit records `zero_volatility_rows_dropped`; it is 0 on the GARCH fixture.
   - For real SHV data in 2010-2015 it may not be small. Check it after freezing.
@@ -196,7 +207,6 @@ These synthetic numbers verify the pipeline. They are not evidence about the fun
 
 ## Follow-ups
 
-- Connect the real `load_inference_window` once `real-etf-data` relays its contract, and update `LOADER` if the module differs.
 - Kupiec (unconditional) and Christoffersen (independence) coverage tests per asset, once enough non-overlapping scores exist.
 - Diebold-Mariano or Clark-West comparisons of the model and the null on the prospective record, after a pre-registered burn-in.
 - A pre-registered forecasting cadence (for example every 5 sessions), so missed sessions are visible as gaps.

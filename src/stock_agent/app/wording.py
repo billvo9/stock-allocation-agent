@@ -219,6 +219,10 @@ PROSPECTIVE_NO_SCORES = (
     "has closed."
 )
 PROSPECTIVE_PENDING = "Not yet known"
+PROSPECTIVE_REFUSED = (
+    "Not forecast, because a close was missing from its data for the window: {assets}. Missing "
+    "closes are never filled in."
+)
 PROSPECTIVE_NO_CLOSE = "No close on the as-of session"
 PROSPECTIVE_MEASURES = {
     "total_log_return": "Total return (log)",

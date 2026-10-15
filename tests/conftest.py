@@ -72,6 +72,15 @@ def prospective_frozen(tmp_path_factory):
     return freeze_fixture(tmp_path_factory.mktemp("prospective"))
 
 
+@pytest.fixture(scope="session")
+def prospective_store_root(tmp_path_factory):
+    """A synthetic prospective store written by the real writer (forecast_prospective_helpers)."""
+
+    from forecast_prospective_helpers import prospective_store
+
+    return prospective_store(tmp_path_factory.mktemp("prospective_store") / "store")
+
+
 @pytest.fixture
 def labeled_panel() -> Callable[..., pd.DataFrame]:
     return build_labeled_panel

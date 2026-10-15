@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 
 import pytest
-from forecast_prospective_helpers import REPO
+from forecast_prospective_helpers import AS_OF, CREATED, REPO
 
 SCRIPT = REPO / "scripts" / "forecast_prospective.py"
 
@@ -31,27 +31,32 @@ def test_the_report_refuses_a_ledger_without_the_kept_head(tmp_path):
         _script().main(["--ledger", str(path), "report", "--expect-head", "a" * 64])
 
 
-def test_without_the_store_loader_nothing_is_read_or_written(
-    prospective_frozen, tmp_path, monkeypatch
+def test_the_script_forecasts_through_the_real_loader_and_calendar(
+    prospective_frozen, prospective_store_root, tmp_path, monkeypatch
 ):
+    from stock_agent.calendars import nyse_rules
+    from stock_agent.forecasting.prospective import ledger
+
     script = _script()
-    monkeypatch.setattr(script, "LOADER", ("stock_agent.no_such_loader", "load_inference_window"))
-    ledger_path = tmp_path / "ledger.jsonl"
-    with pytest.raises(SystemExit, match="is not available on this branch"):
-        script.main(
-            [
-                "--ledger",
-                str(ledger_path),
-                "forecast",
-                "--bundle",
-                str(prospective_frozen.result.bundle.path),
-                "--store-root",
-                str(tmp_path / "store"),
-                "--forecast-close",
-                "2026-10-14",
-            ]
-        )
-    assert not ledger_path.exists()
+    monkeypatch.setattr(script, "_now", lambda: CREATED)
+    path = tmp_path / "ledger.jsonl"
+    argv = [
+        "--ledger",
+        str(path),
+        "forecast",
+        "--bundle",
+        str(prospective_frozen.result.bundle.path),
+        "--store-root",
+        str(prospective_store_root),
+        "--forecast-close",
+        AS_OF,
+    ]
+    assert script.main(argv) == 0
+    (entry,) = ledger.read_ledger(path)
+    assert entry.kind == "forecast"
+    assert entry.payload["data"]["calendar"] == nyse_rules.CALENDAR_ID
+    assert entry.payload["data"]["retrieved_by"] == CREATED.isoformat()
+    assert script.exchange_calendar.calendar_id == nyse_rules.CALENDAR_ID
 
 
 def test_the_defaults_are_private_paths():
