@@ -137,7 +137,7 @@ OOS R² of per-asset ridge against the historical mean (bootstrap 95% interval),
 
 ## Follow-ups
 
-- **A predictive interval that carries parameter and forecast uncertainty.** For example, split-conformal calibration of the standardized residual |y − μ̂| / (σ̂√h) on development folds, applied per asset, or a t multiplier fitted on training residuals. Then Kupiec and Christoffersen coverage tests per asset.
+- **A predictive interval that carries parameter and forecast uncertainty.** Done for the prospective track (`ml_prospective.md`: split-conformal bands, per asset, horizon and target). For this track, for example, split-conformal calibration of the standardized residual |y − μ̂| / (σ̂√h) on development folds, applied per asset, or a t multiplier fitted on training residuals. Then Kupiec and Christoffersen coverage tests per asset.
 - **Permutation nulls** per asset, with tuning inside every draw.
 - **Fund-level evidence rules** (owner decision).
 
