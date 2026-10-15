@@ -54,10 +54,10 @@ Mapping
 Distribution-basis verification (per fund; every fund must pass)
     Storage requires primary-source amounts for every fund (route (b)); the
     split ratio (route (a)) is a consistency check that can only fail a fund:
-    (i)   at least `MIN_VERIFIED_AMOUNTS` entries of the reviewed
-          `VERIFIED_DISTRIBUTIONS` allowlist in the window, each matching the
-          vendor's divCash within `AMOUNT_TOLERANCE`; a listed date with no
-          served divCash is a mismatch, and any mismatch fails the fund;
+    (i)   at least `MIN_VERIFIED_AMOUNTS` of the owner's hand-filled anchors
+          (`anchors.py`, a private git-ignored file) in the window, each
+          matching the vendor's divCash within `AMOUNT_TOLERANCE`; a listed date
+          with no served divCash is a mismatch, and any mismatch fails the fund;
     (ii)  for every verified split in the window, at least one listed match
           strictly before and one strictly after the split session (a vendor
           rescales every amount between two splits by one factor, so matches
@@ -73,7 +73,11 @@ Distribution-basis verification (per fund; every fund must pass)
     segment's amounts are per share as paid. It does not show that any other
     amount is correct, or that no distribution is missing or extra.
     Neither route detects a later split applied uniformly to the whole
-    closing-price history; route (b) anchors amounts only.
+    closing-price history; route (b) anchors amounts only. The anchors are
+    passed in explicitly (`DistributionAnchors`, research scope here); no
+    amount lives in code, and the adapter's default is an empty allowlist, so
+    nothing is stored without them. The batch's vintage note records the
+    anchors file's sha256, never an amount.
 
 Raw payload
     The canonical JSON of the allowlisted fields actually used, keyed by
@@ -89,6 +93,12 @@ Secrets and failures
     block (no chained exception, header or body); other exception types
     propagate unchanged. The default transport ignores environment proxies,
     follows no redirects and sends the key as an unredirected header.
+
+Prospective mode
+    `tiingo_prospective.py` reuses the request loop (`TiingoAdapter.request_elements`),
+    the element checks (`checked_sessions`, with its own window refusal), the
+    mapping and the gate. This module's research path is unchanged: it still
+    refuses anything on or after `MODEL_HOLDOUT_START`.
 
 Nothing here computes a return, adjusts a value or fills a gap.
 """
@@ -126,6 +136,7 @@ from stock_agent.data.funds.schema import (
     utc_timestamp,
 )
 from stock_agent.data.funds.validation import validate_request
+from stock_agent.data.vendors.anchors import AnchorScope, DistributionAnchors
 from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
 
 TOKEN_ENV = "TIINGO_API_KEY"
@@ -153,13 +164,13 @@ VERIFIED_SPLITS = {
     ("VTI", "2008-06-18"): 2.0,
 }
 
-# Primary-source distribution amounts per share as paid: (ticker, ex_date) ->
-# amount. Code-reviewed; every entry needs a citation comment. Empty until the
-# owner adds sourced entries: amounts are never invented.
-VERIFIED_DISTRIBUTIONS: dict[tuple[str, str], float] = {}
+# Primary-source distribution amounts are never in code: issuer terms forbid
+# redistribution and this repository is public. They come from the owner's
+# private, hand-filled anchors file (`anchors.py`).
+NO_ANCHORS = DistributionAnchors.empty(AnchorScope.RESEARCH)
 
 MIN_SIDE = 4  # distributions required on each side of a verified split
-MIN_VERIFIED_AMOUNTS = 2  # VERIFIED_DISTRIBUTIONS entries required in the window
+MIN_VERIFIED_AMOUNTS = 2  # matching anchors required in the window
 AMOUNT_TOLERANCE = 1e-6
 
 TERMS_NOTE = (
@@ -170,8 +181,9 @@ VINTAGE_NOTE = (
     "close, divCash and splitFactor as served on the retrieval date; not a point-in-time "
     "vintage; the ticker-to-security mapping and the set of sessions served are Tiingo's "
     "view at retrieval; distribution amounts are stored only after a spot check against "
-    "sampled primary-source amounts (VERIFIED_DISTRIBUTIONS), which tests the share basis but "
-    "does not validate any other amount or that no distribution is missing; neither that "
+    "sampled primary-source amounts (the owner's private, hand-filled anchors), which tests the "
+    "share basis but does not validate any other amount or that no distribution is missing; "
+    "neither that "
     "spot check nor the split checks detect a "
     "later split applied uniformly to the whole closing-price history, because closes are "
     "checked against an external fact only at verified split sessions; "
@@ -425,12 +437,50 @@ class CheckedSession:
     split_factor: float
 
 
+SessionGuard = Callable[[str, pd.Timestamp], None]
+PreviousSession = Callable[[pd.Timestamp], pd.Timestamp]
+
+
+def _refuse_lockbox(label: str, session: pd.Timestamp) -> None:
+    if session >= MODEL_HOLDOUT_START:
+        raise refuse(
+            RefusalReason.LOCKBOX_VIOLATION,
+            f"{label}.date {session.date()} is on or after the holdout start; batch refused",
+        )
+
+
+def _frozen_previous(session: pd.Timestamp) -> pd.Timestamp:
+    return nyse.sessions(nyse.COVERAGE.first, session - _ONE_DAY)[-1]
+
+
 def check_elements(
     ticker: str, data: object, first: pd.Timestamp, last: pd.Timestamp
 ) -> list[CheckedSession]:
     """
     The fail-closed checks for one ticker's elements, in [first, last] (both
-    inclusive), including the split allowlist and the raw-close check.
+    inclusive), including the lockbox, the split allowlist and the raw-close
+    check (on the frozen research calendar).
+    """
+
+    return checked_sessions(
+        ticker, data, first, last, guard=_refuse_lockbox, previous_session=_frozen_previous
+    )
+
+
+def checked_sessions(
+    ticker: str,
+    data: object,
+    first: pd.Timestamp,
+    last: pd.Timestamp,
+    *,
+    guard: SessionGuard,
+    previous_session: PreviousSession,
+) -> list[CheckedSession]:
+    """
+    `check_elements` with the date guard and the calendar as parameters: the
+    research path refuses the lockbox, the prospective path refuses dates
+    before its window. `guard(label, session)` runs right after each date is
+    parsed, before the request-range check.
     """
 
     if not isinstance(data, list):
@@ -443,11 +493,7 @@ def check_elements(
         label = f"{ticker} prices[{index}]"
         element = _element(label, item)
         session = _session(f"{label}.date", element["date"])
-        if session >= MODEL_HOLDOUT_START:
-            raise refuse(
-                RefusalReason.LOCKBOX_VIOLATION,
-                f"{label}.date {session.date()} is on or after the holdout start; batch refused",
-            )
+        guard(label, session)
         if not first <= session <= last:
             raise refuse(RefusalReason.OUTSIDE_REQUEST, f"{label}.date {session.date()}")
         if session in checked:
@@ -466,7 +512,7 @@ def check_elements(
                 "verified share-count split",
             )
         checked[session] = CheckedSession(session, close, div_cash, split_factor)
-    _check_verified_splits(ticker, checked, first, last)
+    _check_verified_splits(ticker, checked, first, last, previous_session)
     return [checked[session] for session in sorted(checked)]
 
 
@@ -475,6 +521,7 @@ def _check_verified_splits(
     checked: dict[pd.Timestamp, CheckedSession],
     first: pd.Timestamp,
     last: pd.Timestamp,
+    previous_session: PreviousSession,
 ) -> None:
     for (symbol, date), factor in sorted(VERIFIED_SPLITS.items()):
         split = parse_date("verified split", date)
@@ -493,7 +540,7 @@ def _check_verified_splits(
                 f"{ticker} verified split {date} x{factor:g}: the vendor factor is "
                 f"{'missing' if row is None else 'different'}",
             )
-        previous = nyse.sessions(nyse.COVERAGE.first, split - _ONE_DAY)[-1]
+        previous = previous_session(split)
         before = checked.get(previous)
         if before is None or not split_close_consistent(row.close * factor / before.close):
             raise TiingoDataRefused(
@@ -527,7 +574,7 @@ def _texts(value: str, count: int) -> pd.Series:
     return pd.Series([value] * count, dtype=object)
 
 
-def _frames(
+def frames(
     checked: dict[str, list[CheckedSession]],
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """F1 rows: unadjusted closes, divCash distributions and verified splits."""
@@ -604,7 +651,7 @@ def parse_payload(payload: bytes) -> ParsedPayload:
         if not _TICKER.fullmatch(ticker):
             raise refuse(RefusalReason.INVALID_FIELD, "a payload key is not a Tiingo ticker")
         checked[ticker] = check_elements(ticker, elements, first, last)
-    return ParsedPayload(first, last, tuple(checked), *_frames(checked))
+    return ParsedPayload(first, last, tuple(checked), *frames(checked))
 
 
 # --- distribution-basis verification ---------------------------------------------
@@ -652,17 +699,20 @@ class BasisCheck:
     detail: str
 
 
-def _check_fund(
+def check_fund(
     fund: str,
     first: pd.Timestamp,
     last: pd.Timestamp,
     distributions: pd.DataFrame,
     splits: pd.DataFrame,
+    anchors: Mapping[tuple[str, str], float],
 ) -> BasisCheck:
+    """One fund's rules (i) to (iv) over [first, last], against `anchors` entries."""
+
     own = distributions[distributions["fund_id"] == fund].sort_values("ex_date")
     served = dict(zip(own["ex_date"], own["amount"], strict=True))
     listed = {}
-    for (symbol, text), amount in VERIFIED_DISTRIBUTIONS.items():
+    for (symbol, text), amount in anchors.items():
         date = parse_date("verified distribution", text)
         if symbol == fund and first <= date <= last:
             listed[date] = amount
@@ -744,31 +794,34 @@ def _rebuilt(retrieval: Retrieval) -> ParsedPayload:
     return parsed
 
 
-def _checks(retrieval: Retrieval, parsed: ParsedPayload) -> tuple[BasisCheck, ...]:
+def require_scope(anchors: DistributionAnchors, scope: AnchorScope) -> DistributionAnchors:
+    """The anchors, if loaded for `scope`; research and prospective anchors never mix."""
+
+    if not isinstance(anchors, DistributionAnchors) or anchors.scope is not scope:
+        found = getattr(anchors, "scope", type(anchors).__name__)
+        raise ValueError(f"expected {scope.value}-scope DistributionAnchors, got {found}")
+    return anchors
+
+
+def basis_checks(
+    fund_ids: Sequence[str], parsed: ParsedPayload, anchors: DistributionAnchors
+) -> tuple[BasisCheck, ...]:
     return tuple(
-        _check_fund(fund, parsed.start, parsed.end_date, parsed.distributions, parsed.splits)
-        for fund in retrieval.fund_ids
+        check_fund(
+            fund,
+            parsed.start,
+            parsed.end_date,
+            parsed.distributions,
+            parsed.splits,
+            anchors.entries,
+        )
+        for fund in fund_ids
     )
 
 
-def verify_distribution_basis(retrieval: Retrieval) -> tuple[BasisCheck, ...]:
-    """
-    Per fund, on the tables rebuilt from the raw payload: (i) to (iv) in the
-    module docstring. Only primary-source amounts can pass a fund; the split
-    ratio can only fail one.
-    """
+def refuse_failing(checks: tuple[BasisCheck, ...]) -> None:
+    """`unverified_distribution_basis` unless every fund passed (counts and ratios only)."""
 
-    return _checks(retrieval, _rebuilt(retrieval))
-
-
-def verified_batch(retrieval: Retrieval) -> RawBatch:
-    """
-    The F1 batch, built from the tables rebuilt from the raw payload, only
-    when every fund's distribution basis is verified.
-    """
-
-    parsed = _rebuilt(retrieval)
-    checks = _checks(retrieval, parsed)
     failing = [check for check in checks if not check.passed]
     if failing:
         raise TiingoDataRefused(
@@ -779,6 +832,31 @@ def verified_batch(retrieval: Retrieval) -> RawBatch:
             )
             + "; nothing may be stored under an unverified basis",
         )
+
+
+def verify_distribution_basis(
+    retrieval: Retrieval, *, anchors: DistributionAnchors
+) -> tuple[BasisCheck, ...]:
+    """
+    Per fund, on the tables rebuilt from the raw payload: (i) to (iv) in the
+    module docstring, against research-scope anchors. Only primary-source
+    amounts can pass a fund; the split ratio can only fail one.
+    """
+
+    anchors = require_scope(anchors, AnchorScope.RESEARCH)
+    return basis_checks(retrieval.fund_ids, _rebuilt(retrieval), anchors)
+
+
+def verified_batch(retrieval: Retrieval, *, anchors: DistributionAnchors) -> RawBatch:
+    """
+    The F1 batch, built from the tables rebuilt from the raw payload, only
+    when every fund's distribution basis is verified against research-scope
+    anchors. The vintage note records the anchors file's sha256.
+    """
+
+    anchors = require_scope(anchors, AnchorScope.RESEARCH)
+    parsed = _rebuilt(retrieval)
+    refuse_failing(basis_checks(retrieval.fund_ids, parsed, anchors))
     funds = ", ".join(retrieval.fund_ids)
     return RawBatch(
         adapter_id=TiingoAdapter.adapter_id,
@@ -791,8 +869,9 @@ def verified_batch(retrieval: Retrieval) -> RawBatch:
         raw_payload=retrieval.raw_payload,
         terms_note=TERMS_NOTE,
         vintage_note=(
-            f"{VINTAGE_NOTE}; distribution basis spot-checked against primary-source amounts "
-            f"(a sample, not a validation of every distribution): {funds}"
+            f"{VINTAGE_NOTE}; {anchors.provenance_note()}; distribution basis spot-checked "
+            f"against primary-source amounts (a sample, not a validation of every "
+            f"distribution): {funds}"
         ),
         prices=parsed.prices,
         distributions=parsed.distributions,
@@ -807,12 +886,13 @@ class TiingoAdapter:
     """
     `FundDataAdapter` for Tiingo daily prices. Fund ids are the Tiingo tickers
     (upper case). Every collaborator is injected: the token provider, the
-    transport `(url, headers) -> (status, body)` and the clock for
-    `retrieved_at`.
+    transport `(url, headers) -> (status, body)`, the clock for
+    `retrieved_at` and the research-scope distribution anchors `fetch`
+    verifies against (default: none, so `fetch` stores nothing).
     """
 
     adapter_id = "tiingo_daily"
-    adapter_version = "4"
+    adapter_version = "5"
     terms_note = TERMS_NOTE
     vintage_note = VINTAGE_NOTE
 
@@ -822,10 +902,17 @@ class TiingoAdapter:
         token_provider: TokenProvider = env_token,
         transport: Transport = urllib_transport,
         clock: Clock = utc_now,
+        anchors: DistributionAnchors = NO_ANCHORS,
     ) -> None:
         self._token_provider = token_provider
         self._transport = transport
         self._clock = clock
+        self._anchors = require_scope(anchors, AnchorScope.RESEARCH)
+
+    def now(self) -> pd.Timestamp:
+        """The injected clock, as a UTC timestamp."""
+
+        return utc_timestamp("clock", self._clock())
 
     def _get(self, token: _Token, ticker: str, url: str) -> str:
         # An expected network failure is reported by type only and raised outside
@@ -861,6 +948,29 @@ class TiingoAdapter:
             raise TiingoRequestFailed(reason, ticker=ticker, status=status)
         return _utf8(f"{ticker} prices response", body)
 
+    def request_elements(
+        self,
+        ids: Sequence[str],
+        first: pd.Timestamp,
+        last: pd.Timestamp,
+        check: Callable[[str, object], object],
+    ) -> dict[str, list]:
+        """
+        One prices call per ticker for [first, last] (Tiingo's endDate is
+        inclusive). The key is read once; each response is parsed strictly and
+        passed to `check` before the next request, so a refusal stops the
+        batch at once. Callers validate the request before calling this.
+        """
+
+        start_date, end_date = f"{first:%Y-%m-%d}", f"{last:%Y-%m-%d}"
+        token = _Token(self._token_provider())
+        elements = {}
+        for ticker in ids:  # each response is checked before the next request
+            data = loads_strict(self._get(token, ticker, prices_url(ticker, start_date, end_date)))
+            check(ticker, data)
+            elements[ticker] = data
+        return elements
+
     def retrieve(
         self, fund_ids: Sequence[str], start: pd.Timestamp, end_exclusive: pd.Timestamp
     ) -> Retrieval:
@@ -878,12 +988,9 @@ class TiingoAdapter:
             )
         last = end - _ONE_DAY
         start_date, end_date = f"{first:%Y-%m-%d}", f"{last:%Y-%m-%d}"
-        token = _Token(self._token_provider())
-        elements = {}
-        for ticker in ids:  # each response is checked before the next request
-            data = loads_strict(self._get(token, ticker, prices_url(ticker, start_date, end_date)))
-            check_elements(ticker, data, first, last)
-            elements[ticker] = data
+        elements = self.request_elements(
+            ids, first, last, lambda ticker, data: check_elements(ticker, data, first, last)
+        )
         retrieved_at = utc_timestamp("retrieved_at", self._clock())
         envelope = {
             "envelope_version": ENVELOPE_VERSION,
@@ -911,13 +1018,13 @@ class TiingoAdapter:
     ) -> RawBatch:
         """The F1 seam: a batch only when every fund's distribution basis is verified."""
 
-        return verified_batch(self.retrieve(fund_ids, start, end_exclusive))
+        return verified_batch(self.retrieve(fund_ids, start, end_exclusive), anchors=self._anchors)
 
 
 __all__ = [
     "ALLOWED_FIELDS",
     "BAND",
-    "VERIFIED_DISTRIBUTIONS",
+    "NO_ANCHORS",
     "VERIFIED_SPLITS",
     "BasisCheck",
     "ParsedPayload",
@@ -928,11 +1035,16 @@ __all__ = [
     "TiingoFailure",
     "TiingoRefusal",
     "TiingoRequestFailed",
+    "basis_checks",
     "check_elements",
+    "check_fund",
+    "checked_sessions",
     "discriminable",
     "env_token",
     "parse_payload",
     "prices_url",
+    "refuse_failing",
+    "require_scope",
     "urllib_transport",
     "verified_batch",
     "verify_distribution_basis",
