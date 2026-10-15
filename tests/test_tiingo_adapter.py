@@ -2,9 +2,9 @@
 Offline tests of the Tiingo adapter and the coverage-audit script. Every
 response is an invented fixture shaped like Tiingo's documented JSON; tickers
 are labels only and no value is a real price or distribution. The key is an
-invented sentinel. Where a test needs `VERIFIED_DISTRIBUTIONS` entries, it
-patches in invented amounts that match its own fixture; the real allowlist
-stays empty.
+invented sentinel. Where a test needs primary-source anchors, it passes
+invented amounts that match its own fixture (a `DistributionAnchors`, or a
+temporary CSV for the audit script); no amount lives in code.
 """
 
 import ast
@@ -25,7 +25,9 @@ import sys
 import traceback
 import urllib.error
 import urllib.request
+from decimal import Decimal
 from pathlib import Path
+from types import MappingProxyType
 
 import pandas as pd
 import pytest
@@ -42,6 +44,8 @@ from stock_agent.data.funds.schema import (
     loads_strict,
 )
 from stock_agent.data.vendors import tiingo
+from stock_agent.data.vendors.anchors import COLUMNS as ANCHOR_COLUMNS
+from stock_agent.data.vendors.anchors import AnchorScope, DistributionAnchors, parse_anchors
 from stock_agent.data.vendors.tiingo import (
     ALLOWED_FIELDS,
     TiingoAdapter,
@@ -184,8 +188,39 @@ class FakeTransport:
         return 200, body(self.prices.get(ticker, price_list()))
 
 
-def adapter(transport, token=TOKEN, clock=RETRIEVED) -> TiingoAdapter:
-    return TiingoAdapter(token_provider=lambda: token, transport=transport, clock=lambda: clock)
+def adapter(transport, token=TOKEN, clock=RETRIEVED, anchors=tiingo.NO_ANCHORS) -> TiingoAdapter:
+    return TiingoAdapter(
+        token_provider=lambda: token, transport=transport, clock=lambda: clock, anchors=anchors
+    )
+
+
+def listed(entries: dict) -> DistributionAnchors:
+    """Invented research-scope anchors (test fixtures, never real amounts)."""
+
+    counts = MappingProxyType({"anchor": len(entries)})
+    return DistributionAnchors(
+        AnchorScope.RESEARCH, MappingProxyType(dict(entries)), None, None, len(entries), counts, 0
+    )
+
+
+def anchor_csv(entries: dict) -> bytes:
+    """The anchors file for invented entries, amounts written as plain decimals."""
+
+    lines = [",".join(ANCHOR_COLUMNS)]
+    for (fund, ex_date), amount in sorted(entries.items()):
+        text = format(Decimal(repr(amount)), "f")
+        decimals = len(text.partition(".")[2])
+        lines.append(
+            f"{fund},{ex_date},{text},{decimals},per_share_as_paid,anchor,Fixture publisher,"
+            "https://example.invalid/fixture,2026-10-14,invented test fixture"
+        )
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def write_anchors(directory: Path, entries: dict, name: str = "anchors.csv") -> Path:
+    path = directory / name
+    path.write_bytes(anchor_csv(entries))
+    return path
 
 
 def retrieve(transport=None, funds=("VTI",), start=START, end=END_EXCLUSIVE, **kwargs):
@@ -198,17 +233,18 @@ def fetch(transport=None, funds=("VTI",), start=START, end=END_EXCLUSIVE, **kwar
     return adapter(transport, **kwargs).fetch(list(funds), day(start), day(end))
 
 
-@pytest.fixture
-def verified(monkeypatch):
-    """Invented allowlist entries matching DEFAULT_DIVIDENDS (test-only, not real amounts)."""
+VERIFIED_ENTRIES = {
+    (ticker, date): amount
+    for ticker in ("VTI", "AGG", "SHV")
+    for date, amount in DEFAULT_DIVIDENDS.items()
+}
 
-    entries = {
-        (ticker, date): amount
-        for ticker in ("VTI", "AGG", "SHV")
-        for date, amount in DEFAULT_DIVIDENDS.items()
-    }
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
-    return entries
+
+@pytest.fixture
+def verified():
+    """Invented anchors matching DEFAULT_DIVIDENDS (test-only, not real amounts)."""
+
+    return listed(VERIFIED_ENTRIES)
 
 
 def refused(reason, call, *args, **kwargs) -> FundDataRefused:
@@ -353,11 +389,11 @@ def test_div_cash_maps_to_distributions_with_no_invented_dates_or_type():
 
 
 def test_a_verified_batch_records_instruments_and_notes(verified):
-    raw = fetch(funds=("VTI", "AGG"))
+    raw = fetch(funds=("VTI", "AGG"), anchors=verified)
     assert raw.fund_ids == ("VTI", "AGG")
     assert raw.instruments == (Instrument("VTI", "VTI", None), Instrument("AGG", "AGG", None))
     assert raw.retrieved_at == RETRIEVED
-    assert raw.adapter_id == "tiingo_daily" and raw.adapter_version == "4"
+    assert raw.adapter_id == "tiingo_daily" and raw.adapter_version == "5"
     assert "Internal Use Only" in raw.terms_note and "no redistribution" in raw.terms_note
     note = raw.vintage_note
     assert "not a point-in-time vintage" in note
@@ -373,6 +409,28 @@ def test_a_verified_batch_records_instruments_and_notes(verified):
         "distribution basis spot-checked against primary-source amounts "
         "(a sample, not a validation of every distribution): VTI, AGG"
     )
+    assert "distribution anchors file: none" in note  # built in memory, not from a file
+
+
+def test_the_vintage_note_records_the_anchors_file_sha256_and_never_an_amount():
+    raw_csv = anchor_csv(VERIFIED_ENTRIES)
+    anchors = parse_anchors(raw_csv, AnchorScope.RESEARCH, today=RETRIEVED)
+    raw = fetch(funds=("VTI", "AGG"), anchors=anchors)
+    digest = hashlib.sha256(raw_csv).hexdigest()
+    assert f"distribution anchors file sha256 {digest} (research scope)" in raw.vintage_note
+    assert "0.125" not in raw.vintage_note and "0.25" not in raw.vintage_note
+
+
+def test_research_paths_refuse_prospective_scope_anchors():
+    prospective = DistributionAnchors.empty(AnchorScope.PROSPECTIVE)
+    with pytest.raises(ValueError):
+        adapter(FakeTransport(), anchors=prospective)
+    retrieval = retrieve()
+    for call in (verified_batch, verify_distribution_basis):
+        with pytest.raises(ValueError):
+            call(retrieval, anchors=prospective)
+    with pytest.raises(ValueError):
+        verified_batch(retrieval, anchors=VERIFIED_ENTRIES)  # a bare mapping is not anchors
 
 
 # --- the field allowlist ---------------------------------------------------------
@@ -548,13 +606,17 @@ def test_a_listed_split_that_is_not_discriminable_refuses_the_batch(monkeypatch)
 # --- distribution-basis verification ---------------------------------------------
 
 
-def test_the_real_distribution_allowlist_starts_empty():
-    assert tiingo.VERIFIED_DISTRIBUTIONS == {}  # owner step: add sourced entries
+def test_no_distribution_amount_lives_in_code():
+    # Owner decision of 2026-10-14: anchors are hand-filled into a private file.
+    assert not hasattr(tiingo, "VERIFIED_DISTRIBUTIONS")
+    assert dict(tiingo.NO_ANCHORS.entries) == {} and tiingo.NO_ANCHORS.sha256 is None
+    assert tiingo.NO_ANCHORS.scope is AnchorScope.RESEARCH
 
 
-def basis(rows, fund="VTI", start=AUDIT_START, end=AUDIT_END):
+def basis(rows, fund="VTI", start=AUDIT_START, end=AUDIT_END, anchors=tiingo.NO_ANCHORS):
     transport = FakeTransport(prices={fund: rows})
-    [check] = verify_distribution_basis(retrieve(transport, funds=(fund,), start=start, end=end))
+    retrieval = retrieve(transport, funds=(fund,), start=start, end=end)
+    [check] = verify_distribution_basis(retrieval, anchors=anchors)
     return check
 
 
@@ -562,10 +624,9 @@ def basis(rows, fund="VTI", start=AUDIT_START, end=AUDIT_END):
     "pre_split, passed",
     [(0.60, True), (0.66, True), (0.54, True), (0.30, False), (0.45, False), (0.80, False)],
 )
-def test_the_split_ratio_can_only_fail_a_fund(monkeypatch, pre_split, passed):
+def test_the_split_ratio_can_only_fail_a_fund(pre_split, passed):
     assert not basis(vti_rows(pre_split)).passed  # no primary-source amounts: never stored
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(pre_split))
-    check = basis(vti_rows(pre_split))
+    check = basis(vti_rows(pre_split), anchors=listed(invented_vti_entries(pre_split)))
     assert check.passed is passed
     assert check.route == ("primary_source_spot_check" if passed else None)
     assert check.split_check == ("agreed" if passed else "failed")
@@ -573,12 +634,11 @@ def test_the_split_ratio_can_only_fail_a_fund(monkeypatch, pre_split, passed):
     assert f"median before / (factor x median after) = {ratio:.2f}" in check.detail
 
 
-def test_split_adjusted_pre_split_amounts_fail_despite_listed_post_split_matches(monkeypatch):
+def test_split_adjusted_pre_split_amounts_fail_despite_listed_post_split_matches():
     # The statistical probe: pre-split amounts served split-adjusted, and two listed
     # post-split amounts that match. Post-split matches say nothing about the other side.
     entries = invented_vti_entries(0.30, before=0, after=2)
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
-    check = basis(vti_rows(0.30))
+    check = basis(vti_rows(0.30), anchors=listed(entries))
     assert not check.passed and check.route is None and check.split_check == "failed"
     assert "2 (needs 2), 2 match, 0 do not" in check.detail
     assert "listed matches 0 before, 2 after (needs 1 each)" in check.detail
@@ -593,7 +653,7 @@ def test_split_adjusted_pre_split_amounts_fail_despite_listed_post_split_matches
         (1.00, 1.67, "failed"),  # as paid after a 40% cut: a false failure
     ],
 )
-def test_the_split_ratio_worked_examples(monkeypatch, served_pre_split, ratio, split_check):
+def test_the_split_ratio_worked_examples(served_pre_split, ratio, split_check):
     """
     After the split VTI pays 0.30 per new share, which is 0.60 per old share.
     Let R = (amount per old share before the split) / 0.60, so R > 1 is a cut
@@ -604,53 +664,49 @@ def test_the_split_ratio_worked_examples(monkeypatch, served_pre_split, ratio, s
     served split-adjusted (0.50) it agrees; served as paid (1.00) it fails.
     """
 
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(served_pre_split))
-    check = basis(vti_rows(served_pre_split))
+    anchors = listed(invented_vti_entries(served_pre_split))
+    check = basis(vti_rows(served_pre_split), anchors=anchors)
     assert check.split_check == split_check
     verdict = "within" if split_check == "agreed" else "outside"
     assert f"= {ratio:.2f}, {verdict}" in check.detail
 
 
-def test_an_issuer_amount_catches_the_false_agreement(monkeypatch):
+def test_an_issuer_amount_catches_the_false_agreement():
     # The third worked example: the issuer paid 1.00 per old share and the vendor
     # serves 0.50. The split ratio agrees; the issuer's amount does not match.
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(1.00))
-    check = basis(vti_rows(0.50))
+    check = basis(vti_rows(0.50), anchors=listed(invented_vti_entries(1.00)))
     assert not check.passed and check.split_check == "agreed"
     assert "2 (needs 2), 1 match, 1 do not" in check.detail
 
 
 @pytest.mark.parametrize("before, after", [(0, 2), (2, 0)])
-def test_listed_matches_are_needed_on_both_sides_of_each_split(monkeypatch, before, after):
+def test_listed_matches_are_needed_on_both_sides_of_each_split(before, after):
     entries = invented_vti_entries(0.60, before=before, after=after)
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
-    check = basis(vti_rows(0.60))
+    check = basis(vti_rows(0.60), anchors=listed(entries))
     assert not check.passed and check.split_check == "agreed"  # fails on (ii) alone
     assert f"listed matches {before} before, {after} after" in check.detail
 
 
-def test_a_distribution_on_a_split_session_fails_the_fund(monkeypatch):
+def test_a_distribution_on_a_split_session_fails_the_fund():
     rows = vti_rows(0.60)
     for row in rows:
         if row["date"].startswith(VTI_SPLIT):
             row["divCash"] = 0.15  # an invented amount whose share basis cannot be known
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(0.60))
-    check = basis(rows)
+    check = basis(rows, anchors=listed(invented_vti_entries(0.60)))
     assert not check.passed and check.split_check == "agreed"
     assert "distributions on the split session 1" in check.detail
 
 
-def test_a_split_ratio_that_is_not_computable_neither_passes_nor_fails(monkeypatch):
+def test_a_split_ratio_that_is_not_computable_neither_passes_nor_fails():
     start = "2007-12-01"  # three pre-split distributions only
     assert not basis(vti_rows(0.60, start=start), start=start).passed
     entries = invented_vti_entries(0.60, start=start)
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
-    check = basis(vti_rows(0.60, start=start), start=start)
+    check = basis(vti_rows(0.60, start=start), start=start, anchors=listed(entries))
     assert check.passed and check.split_check == "not_computable"
     assert "3 before, 4 after (needs 4 each), not computable" in check.detail
 
 
-def test_the_amount_route_needs_two_exact_primary_source_matches(monkeypatch):
+def test_the_amount_route_needs_two_exact_primary_source_matches():
     dates = quarterly(AUDIT_START, AUDIT_END)
     cases = [
         ({("AGG", dates[0]): 0.40, ("AGG", dates[1]): 0.40 + 5e-7}, True),
@@ -661,24 +717,23 @@ def test_the_amount_route_needs_two_exact_primary_source_matches(monkeypatch):
         ({("VTI", dates[0]): 0.40, ("VTI", dates[1]): 0.40}, False),  # another fund
     ]
     for entries, passed in cases:
-        monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
-        check = basis(agg_rows(), fund="AGG")
+        check = basis(agg_rows(), fund="AGG", anchors=listed(entries))
         assert check.passed is passed, (entries, check)
         assert check.route == ("primary_source_spot_check" if passed else None)
         assert check.split_check == "no_split"
 
 
-def test_a_mismatched_primary_source_amount_fails_the_fund(monkeypatch):
+def test_a_mismatched_primary_source_amount_fails_the_fund():
     pre_split_date = quarterly(AUDIT_START, AUDIT_END)[1]
     entries = invented_vti_entries(0.60) | {("VTI", pre_split_date): 0.61}
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
-    check = basis(vti_rows(0.60))
+    check = basis(vti_rows(0.60), anchors=listed(entries))
     assert not check.passed and check.split_check == "agreed"
     assert "3 (needs 2), 2 match, 1 do not" in check.detail
 
 
 def test_a_fund_without_distributions_cannot_be_verified(verified):
-    check = basis(price_list(dividends={}), fund="SHV", start=START, end=END_EXCLUSIVE)
+    rows = price_list(dividends={})
+    check = basis(rows, fund="SHV", start=START, end=END_EXCLUSIVE, anchors=verified)
     assert not check.passed  # the invented entries list amounts that were not served
 
 
@@ -692,27 +747,27 @@ def test_direct_use_of_the_adapter_stores_nothing_unverified(tmp_path):
 
 def test_verified_batch_stores_only_tables_rebuilt_from_the_payload(verified):
     retrieval = retrieve(funds=("VTI", "AGG"))
-    batch = verified_batch(retrieval)
+    batch = verified_batch(retrieval, anchors=verified)
     assert batch.distributions.equals(parse_payload(retrieval.raw_payload).distributions)
     changed = retrieval.distributions.copy()
     changed.loc[changed.index[0], "amount"] = 0.5  # an in-memory edit the payload lacks
     tampered = dataclasses.replace(retrieval, distributions=changed)
     for call in (verified_batch, verify_distribution_basis):
-        refused(TiingoRefusal.PAYLOAD_MISMATCH, call, tampered)
+        refused(TiingoRefusal.PAYLOAD_MISMATCH, call, tampered, anchors=verified)
     for change in (
         {"fund_ids": ("VTI",)},
         {"start": day("2014-06-03")},
         {"end_exclusive": day("2014-06-13")},
     ):
         mismatched = dataclasses.replace(retrieval, **change)
-        refused(TiingoRefusal.PAYLOAD_MISMATCH, verified_batch, mismatched)
+        refused(TiingoRefusal.PAYLOAD_MISMATCH, verified_batch, mismatched, anchors=verified)
 
 
 # --- the stored payload ----------------------------------------------------------
 
 
 def test_the_payload_holds_only_the_allowlisted_fields_and_f1_hashes_it(tmp_path, verified):
-    raw = fetch(funds=("VTI", "AGG"))
+    raw = fetch(funds=("VTI", "AGG"), anchors=verified)
     envelope = json.loads(raw.raw_payload)
     assert set(envelope) == {"envelope_version", "source_id", "start_date", "end_date"} | {
         "fields",
@@ -724,7 +779,7 @@ def test_the_payload_holds_only_the_allowlisted_fields_and_f1_hashes_it(tmp_path
     )
     assert envelope["prices"]["VTI"] == price_list()  # the values used, unchanged
     assert raw.raw_payload == dumps_canonical(envelope).encode("utf-8")  # canonical
-    assert raw.raw_payload == fetch(funds=("VTI", "AGG")).raw_payload  # deterministic
+    assert raw.raw_payload == fetch(funds=("VTI", "AGG"), anchors=verified).raw_payload
     for name in (*FORBIDDEN_NAMES, "volume", TOKEN):
         assert name.encode() not in raw.raw_payload
     parsed = parse_payload(raw.raw_payload)  # re-parsing needs no request
@@ -893,6 +948,13 @@ def test_a_transport_returning_the_wrong_shape_is_refused():
     failed(TiingoFailure.TRANSPORT_ERROR, retrieve, lambda url, headers: (200, "text"))
 
 
+def test_the_key_wrapper_never_shows_the_key():
+    token = tiingo._Token(TOKEN)
+    for shown in (repr(token), str(token), f"{token}", f"{token!r}", repr([token])):
+        assert TOKEN not in shown and shown.count("<redacted>") == 1
+    assert token.headers() == {"Authorization": f"Token {TOKEN}"}  # the only way out
+
+
 def test_the_key_comes_from_the_environment_and_is_never_echoed(monkeypatch):
     monkeypatch.delenv(tiingo.TOKEN_ENV, raising=False)
     error = failed(TiingoFailure.MISSING_TOKEN, tiingo.env_token)
@@ -983,11 +1045,26 @@ def _tree(path: Path) -> set[Path]:
 
 
 def run_audit(
-    root, repo, transport, funds=("VTI", "AGG"), start=AUDIT_START, end=AUDIT_END, store=True
+    root,
+    repo,
+    transport,
+    funds=("VTI", "AGG"),
+    start=AUDIT_START,
+    end=AUDIT_END,
+    store=True,
+    anchors=None,
 ):
+    """`anchors` is an anchors CSV path; by default a missing file (an empty allowlist)."""
+
+    anchors = repo.parent / "no-anchors.csv" if anchors is None else anchors
     argv = (["--store", "--root", str(root)] if store else []) + ["--funds", *funds]
-    argv += ["--start", start, "--end-exclusive", end, "--authorized"]
-    return audit.main(argv, adapter_factory=lambda: adapter(transport), project_root=repo)
+    argv += ["--start", start, "--end-exclusive", end, "--authorized", "--anchors", str(anchors)]
+    return audit.main(
+        argv,
+        adapter_factory=lambda: adapter(transport),
+        project_root=repo,
+        clock=lambda: RETRIEVED,
+    )
 
 
 def test_the_audit_refuses_to_run_without_authorization(tmp_path, repo, capsys):
@@ -1001,12 +1078,11 @@ def _snapshot(path: Path) -> dict[Path, int]:
     return {item: item.stat().st_mtime_ns for item in [path, *path.rglob("*")]}
 
 
-@pytest.mark.parametrize("listed", [True, False])
-def test_the_default_audit_is_a_read_only_report(
-    tmp_path, repo, capsys, monkeypatch, verified, listed
-):
-    if not listed:  # the real, empty allowlist: the basis gate fails, still nothing is written
-        monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", {})
+@pytest.mark.parametrize("has_anchors", [True, False])
+def test_the_default_audit_is_a_read_only_report(tmp_path, repo, capsys, monkeypatch, has_anchors):
+    # Without anchors (a missing file: an empty allowlist) the basis gate fails, and
+    # still nothing is written.
+    anchors = write_anchors(tmp_path, VERIFIED_ENTRIES) if has_anchors else None
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))  # a stray `~` would land here
@@ -1020,11 +1096,18 @@ def test_the_default_audit_is_a_read_only_report(
     before = _snapshot(tmp_path)
     transport = FakeTransport()
     code = run_audit(
-        None, repo, transport, funds=("VTI",), start=START, end=END_EXCLUSIVE, store=False
+        None,
+        repo,
+        transport,
+        funds=("VTI",),
+        start=START,
+        end=END_EXCLUSIVE,
+        store=False,
+        anchors=anchors,
     )
     out = capsys.readouterr().out
     assert code == 0 and len(transport.calls) == 1
-    verdict = audit.SPOT_CHECKED if listed else "NOT verified"
+    verdict = audit.SPOT_CHECKED if has_anchors else "NOT verified"
     assert f"  distribution basis: {verdict}; split check no_split (" in out
     assert out.rstrip().endswith(audit.READ_ONLY) and "stored batch" not in out
     assert _snapshot(tmp_path) == before  # nothing created, removed or modified
@@ -1050,9 +1133,21 @@ def test_the_audit_refuses_a_root_that_would_put_vendor_data_in_the_repository(
     assert _tree(tmp_path) == before
 
 
+def ignored(repository, path):  # a git check-ignore that confirms the path is ignored
+    return 0
+
+
+def not_ignored(repository, path):  # git says not ignored (or git is missing)
+    return 1
+
+
 def test_private_roots_lie_outside_every_repository_or_under_its_data_raw(tmp_path, repo):
     allowed = repo / "data" / "raw" / "tiingo"
-    assert audit.private_root(allowed, repo) == allowed.resolve()
+    assert audit.private_root(allowed, repo, ignored) == allowed.resolve()
+    # Under data/raw/ is not enough: git must confirm the root is ignored there.
+    for runner in (not_ignored, lambda repository, path: 128, lambda repository, path: -1):
+        with pytest.raises(ValueError, match="does not confirm it is ignored"):
+            audit.private_root(allowed, repo, runner)
     assert audit.private_root(tmp_path / "elsewhere", repo) == (tmp_path / "elsewhere").resolve()
     (tmp_path / "link").symlink_to(repo / "src")
     with pytest.raises(ValueError):
@@ -1065,7 +1160,9 @@ def test_private_roots_lie_outside_every_repository_or_under_its_data_raw(tmp_pa
         with pytest.raises(ValueError):
             audit.private_root(refused_root, repo)
     inside_raw = clone / "data" / "raw" / "tiingo"
-    assert audit.private_root(inside_raw, repo) == inside_raw.resolve()
+    assert audit.private_root(inside_raw, repo, ignored) == inside_raw.resolve()
+    with pytest.raises(ValueError):
+        audit.private_root(inside_raw, repo, not_ignored)  # a clone that tracks data/raw/
 
 
 def test_a_case_variant_path_into_the_repository_is_refused(tmp_path, repo):
@@ -1073,7 +1170,7 @@ def test_a_case_variant_path_into_the_repository_is_refused(tmp_path, repo):
     if variant.exists():  # a case-insensitive file system, as macOS uses by default
         with pytest.raises(ValueError):
             audit.private_root(variant / "store", repo)
-        assert audit.private_root(variant / "data" / "raw" / "x", repo)
+        assert audit.private_root(variant / "data" / "raw" / "x", repo, ignored)
     else:  # a case-sensitive file system: a different directory, not the repository
         assert audit.private_root(variant / "store", repo) == (variant / "store").resolve()
 
@@ -1081,16 +1178,17 @@ def test_a_case_variant_path_into_the_repository_is_refused(tmp_path, repo):
 def test_an_existing_root_open_to_others_is_refused_and_never_changed(tmp_path, repo, capsys):
     existing = tmp_path / "existing"
     existing.mkdir()
+    no_anchors = ["--anchors", str(tmp_path / "no-anchors.csv")]
     for mode in (0o755, 0o710, 0o701):
         os.chmod(existing, mode)
-        argv = ["--root", str(existing), "--authorized", "--store"]
+        argv = ["--root", str(existing), "--authorized", "--store", *no_anchors]
         assert audit.main(argv, adapter_factory=never, project_root=repo) == 2
         error = capsys.readouterr().err
         assert "restrict it yourself" in error and "chmod 700" in error
         assert stat.S_IMODE(existing.stat().st_mode) == mode  # the audit never changes it
     afile = tmp_path / "afile"
     afile.write_text("", encoding="utf-8")
-    argv = ["--root", str(afile), "--authorized", "--store"]
+    argv = ["--root", str(afile), "--authorized", "--store", *no_anchors]
     assert audit.main(argv, adapter_factory=never, project_root=repo) == 2
     assert "not a directory" in capsys.readouterr().err
     # A private existing root is used as it is; a missing root is created private.
@@ -1109,15 +1207,15 @@ def _section(lines: list[str], fund: str, following: str | None) -> list[str]:
     return lines[lines.index(fund) + 1 : end]
 
 
-def test_an_offline_audit_verifies_every_fund_then_stores(tmp_path, repo, capsys, monkeypatch):
+def test_an_offline_audit_verifies_every_fund_then_stores(tmp_path, repo, capsys):
     dates = quarterly(AUDIT_START, AUDIT_END)
     # Invented primary-source entries matching the fixtures (test-only, not real amounts).
     entries = invented_vti_entries(0.60) | {("AGG", d): 0.40 for d in dates[:2]}
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
+    anchors = write_anchors(tmp_path, entries)
     rows = {"VTI": vti_rows(0.60), "AGG": agg_rows()}
     transport = FakeTransport(prices=rows)
     root = tmp_path / "private"
-    code = run_audit(root, repo, transport)
+    code = run_audit(root, repo, transport, anchors=anchors)
     out = capsys.readouterr().out
     assert code == 0, out
     assert len(transport.calls) == 2
@@ -1149,11 +1247,16 @@ def test_an_offline_audit_verifies_every_fund_then_stores(tmp_path, repo, capsys
     assert "total return: not computed by the audit (OD8 group A descriptive calculations)" in out
     assert "stored tables match a re-parse of the stored raw payload: True" in out
     assert TOKEN not in out and "40.0" not in out and "0.6" not in out
+    digest = hashlib.sha256(anchors.read_bytes()).hexdigest()
+    assert f"anchors file: {anchors.resolve()}" in lines and f"  sha256 {digest}" in lines
+    assert "  rows 4 (anchor 4)" in lines
+    assert "  research-scope anchors per fund: AGG 2, VTI 2" in lines
     batch = read_batch(next(root.iterdir()))
     assert batch.record.vintage_note.endswith(
         "distribution basis spot-checked against primary-source amounts "
         "(a sample, not a validation of every distribution): VTI, AGG"
     )
+    assert f"distribution anchors file sha256 {digest}" in batch.record.vintage_note
     assert _tree(repo) == {repo / "data", repo / "data" / "raw"}  # nothing written in the repo
 
 
@@ -1167,11 +1270,11 @@ def test_vti_alone_is_refused_without_primary_source_amounts(tmp_path, repo, cap
     assert "  distribution basis: NOT verified; split check agreed (" in captured.out
 
 
-def test_one_unverified_fund_means_nothing_is_stored(tmp_path, repo, capsys, monkeypatch):
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(0.60))
+def test_one_unverified_fund_means_nothing_is_stored(tmp_path, repo, capsys):
+    anchors = write_anchors(tmp_path, invented_vti_entries(0.60))
     root = tmp_path / "private"
     transport = FakeTransport(prices={"VTI": vti_rows(0.60), "AGG": agg_rows()})
-    code = run_audit(root, repo, transport)  # AGG has no listed amounts
+    code = run_audit(root, repo, transport, anchors=anchors)  # AGG has no listed amounts
     captured = capsys.readouterr()
     assert code == 1 and list(root.iterdir()) == []
     assert "NOT STORED unverified_distribution_basis: AGG;" in captured.err
@@ -1184,13 +1287,12 @@ def test_one_unverified_fund_means_nothing_is_stored(tmp_path, repo, capsys, mon
     assert "stored" not in captured.out.replace("NOT STORED", "")
 
 
-def test_split_adjusted_div_cash_is_never_stored(tmp_path, repo, capsys, monkeypatch):
+def test_split_adjusted_div_cash_is_never_stored(tmp_path, repo, capsys):
     # Two listed post-split amounts match, but the pre-split side was served split-adjusted.
-    entries = invented_vti_entries(0.30, before=0, after=2)
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", entries)
+    anchors = write_anchors(tmp_path, invented_vti_entries(0.30, before=0, after=2))
     root = tmp_path / "private"
     transport = FakeTransport(prices={"VTI": vti_rows(pre_split_dividend=0.30)})
-    code = run_audit(root, repo, transport, funds=("VTI",))
+    code = run_audit(root, repo, transport, funds=("VTI",), anchors=anchors)
     captured = capsys.readouterr()
     assert code == 1 and list(root.iterdir()) == []
     assert "NOT STORED unverified_distribution_basis: VTI;" in captured.err
@@ -1198,22 +1300,21 @@ def test_split_adjusted_div_cash_is_never_stored(tmp_path, repo, capsys, monkeyp
 
 
 def test_a_failed_re_parse_comparison_exits_with_an_error(tmp_path, repo, capsys, monkeypatch):
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(0.60))
+    anchors = write_anchors(tmp_path, invented_vti_entries(0.60))
     monkeypatch.setattr(audit, "reparse_matches", lambda batch: False)
     transport = FakeTransport(prices={"VTI": vti_rows(0.60)})
-    code = run_audit(tmp_path / "private", repo, transport, funds=("VTI",))
+    code = run_audit(tmp_path / "private", repo, transport, funds=("VTI",), anchors=anchors)
     captured = capsys.readouterr()
     assert code == 1
     assert "stored tables match a re-parse of the stored raw payload: False" in captured.out
     assert "FAILED the stored tables differ from a re-parse" in captured.err
 
 
-def test_a_stored_audit_holds_no_key_adjusted_level_or_metadata(
-    tmp_path, repo, capsys, monkeypatch
-):
-    monkeypatch.setattr(tiingo, "VERIFIED_DISTRIBUTIONS", invented_vti_entries(0.60))
+def test_a_stored_audit_holds_no_key_adjusted_level_or_metadata(tmp_path, repo, capsys):
+    anchors = write_anchors(tmp_path, invented_vti_entries(0.60))
     root = tmp_path / "private"
-    assert run_audit(root, repo, FakeTransport(prices={"VTI": vti_rows(0.60)}), funds=("VTI",)) == 0
+    transport = FakeTransport(prices={"VTI": vti_rows(0.60)})
+    assert run_audit(root, repo, transport, funds=("VTI",), anchors=anchors) == 0
     capsys.readouterr()
     [batch] = list(root.iterdir())
     assert {path.name for path in batch.iterdir()} == FILE_SET  # only the F1 files

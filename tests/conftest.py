@@ -65,9 +65,9 @@ def _hermetic_forecast_ledger(tmp_path_factory):
 
 @pytest.fixture(scope="session")
 def prospective_frozen(tmp_path_factory):
-    """One synthetic F1 store, frozen bundle and registry (prospective_helpers)."""
+    """One synthetic F1 store, frozen bundle and registry (forecast_prospective_helpers)."""
 
-    from prospective_helpers import freeze_fixture
+    from forecast_prospective_helpers import freeze_fixture
 
     return freeze_fixture(tmp_path_factory.mktemp("prospective"))
 

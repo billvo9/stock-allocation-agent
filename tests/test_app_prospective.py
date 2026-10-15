@@ -8,7 +8,7 @@ app's own ledger check agreeing with the forecasting job's.
 from __future__ import annotations
 
 import pytest
-from prospective_helpers import AS_OF, record, score
+from forecast_prospective_helpers import AS_OF, record, score
 from test_app_destinations import running, text_of
 
 from stock_agent.app import forecast_records, wording
@@ -103,7 +103,7 @@ def test_the_apps_ledger_check_agrees_with_the_jobs(prospective_frozen, ledger_p
 
 
 def test_the_default_ledger_is_private_and_ignored_by_git():
-    from prospective_helpers import REPO
+    from forecast_prospective_helpers import REPO
 
     relative = forecast_records.DEFAULT_LEDGER.relative_to(REPO)
     assert relative == ledger.DEFAULT_LEDGER

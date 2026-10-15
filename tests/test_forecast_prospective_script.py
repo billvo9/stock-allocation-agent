@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 
 import pytest
-from prospective_helpers import REPO
+from forecast_prospective_helpers import REPO
 
 SCRIPT = REPO / "scripts" / "forecast_prospective.py"
 

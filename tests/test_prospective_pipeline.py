@@ -15,7 +15,7 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from prospective_helpers import (
+from forecast_prospective_helpers import (
     AS_OF,
     CREATED,
     PROVENANCE,

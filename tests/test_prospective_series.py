@@ -10,7 +10,7 @@ import copy
 import numpy as np
 import pandas as pd
 import pytest
-from prospective_helpers import REGISTERED, registered_raw
+from forecast_prospective_helpers import REGISTERED, registered_raw
 
 from stock_agent.calendars import nyse
 from stock_agent.forecasting import etf_data

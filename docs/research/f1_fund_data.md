@@ -117,6 +117,7 @@ Sessions in the requested range with no close of any basis are not an error. The
 - The closures are a frozen tuple of dates. Tests rebuild them independently, for every year, from the holiday rules: an Easter computus for Good Friday, nth-weekday rules, Juneteenth from 2022, Sunday holidays observed on Monday and Saturday holidays on Friday unless that Friday ends a month or year (so 2004-12-31, 2010-12-31 and 2021-12-31 traded). Special closures: 2004-06-11, 2007-01-02, 2012-10-29, 2012-10-30 and 2018-12-05.
 - The special-closure dates come from the ticket brief and published NYSE history; they were not re-checked against an external source in this slice.
 - **Out of scope:** early closes (13:00 ET) are ordinary sessions here, with no open or close times; the SIFMA bond calendar is not represented. OD14 decides the production calendar.
+- **Beyond 2024 (2026-10-14):** `calendars/nyse_rules.py` generates the closures from the same rules, reproduces this frozen list exactly through 2024 (a test asserts equality, and another pins the frozen calendar's sessions by sha256), and extends coverage through 2027-12-31 for the prospective store only. `nyse.py` is unchanged and remains the research calendar; research code may not import `nyse_rules`. See `prospective_data_path.md`.
 
 ## Learning notes
 
@@ -129,7 +130,7 @@ Sessions in the requested range with no close of any basis are not an error. The
 
 ## Tiingo adapter
 
-Status (2026-10-14): code and offline tests only. No request has been made to Tiingo, and no Tiingo data exists in this repository.
+Status (2026-10-14): code and offline tests only. No request has been made to Tiingo, and no Tiingo data exists in this repository. The distribution anchors now come from the owner's private, git-ignored file (below); the prospective store and Tiingo prospective mode are documented in `prospective_data_path.md`.
 
 Owner approvals and requirements (2026-10-14), and the independent review that followed:
 - Evaluate the Tiingo Starter (free) API for private, local research, subject to its terms and a coverage audit, for VTI, AGG and SHV. Data is never redistributed or committed, and credentials are never exposed. The real audit runs only after the owner confirms the key is configured and authorizes the run.
@@ -220,8 +221,8 @@ Every check expected near 1 uses one fixed band, `BAND = log 1.25`.
 F1's `AmountBasis` has no "unknown" value, and adding one would be a contract change needing owner approval. So instead of labelling an unverified amount, the adapter refuses to store it.
 
 **The gate (a fail-closed lead decision).** Storage requires primary-source amounts for every fund. The split ratio is only a consistency check: it can fail a fund but never pass one. Relaxing this gate would be an owner lockbox decision. A fund passes only when all four hold:
-1. **Anchored amounts.** At least 2 entries of the code-reviewed `VERIFIED_DISTRIBUTIONS` allowlist fall in the window, each matching the vendor's `divCash` on the same ex-date within 1e-6, with no mismatch.
-   - Entries are primary-source amounts per share as paid, keyed (fund, ex-date), each with a citation comment.
+1. **Anchored amounts.** At least 2 of the owner's anchors (`data/vendors/anchors.py`, a private git-ignored CSV) fall in the window, each matching the vendor's `divCash` on the same ex-date within 1e-6, with no mismatch.
+   - Anchors are primary-source amounts per share as paid, keyed (fund, ex-date), each row with its publisher, URL and retrieval date.
    - A listed date with no served distribution counts as a mismatch.
 2. **Both sides of every split.** For every verified split in the window, at least one listed match lies strictly before the split session and one strictly after it. A vendor rescales every amount between one split and the next by the same factor, so matches on one side prove nothing about the other.
 3. **The split ratio, when computable.** With at least 4 distributions on each side, m = median(last 4 before) / (f × median(first 4 after)) must satisfy |log m| < BAND.
@@ -238,13 +239,13 @@ F1's `AmountBasis` has no "unknown" value, and adding one would be a contract ch
 
 The detail holds counts and ratios only.
 
-**Owner step.** `VERIFIED_DISTRIBUTIONS` starts empty: amounts are never invented. So nothing stores today, VTI included.
-- For every fund, add at least two sourced per-share amounts in each window you want stored. Each comes from the fund sponsor's distribution history or an SEC filing, with its citation in a comment.
+**Owner step (2026-10-14: "Fill by hand").** No amount lives in code: the in-code `VERIFIED_DISTRIBUTIONS` allowlist was replaced by a loader for the owner's private anchors file, `data/raw/issuer_sources/anchors.csv` by default (ignored by `data/raw/*`; override with `STOCK_AGENT_ANCHORS` or `--anchors`). Until the owner fills it, the allowlist is empty and nothing stores, VTI included.
+- For every fund, add at least two issuer amounts in each window you want stored, copied by hand from the fund sponsor's distribution history, each row with its publisher, URL and retrieval date. The format and fill-in steps are in `prospective_data_path.md`; the header-only template is `docs/templates/distribution_anchors_template.csv`.
 - For VTI across 2008-06-18, include at least one amount on each side of the split.
 - A window with no distributions cannot be verified, so it is not stored.
-- **Issuer terms constrain where the amounts live.** Vanguard's and BlackRock's (iShares) website terms, read 2026-10-14, limit their content to personal, non-commercial use. They forbid redistribution and automated access. This repository is public, so issuer amounts must not be committed here, including in `VERIFIED_DISTRIBUTIONS`.
-  - **Follow-up:** load the anchors from a private, ignored file that the owner fills by hand from the issuer pages. Each row carries its source, retrieval date and reported precision.
-  - **Status:** until then, `VERIFIED_DISTRIBUTIONS` stays empty and nothing is stored.
+- **Issuer terms constrain where the amounts live.** Vanguard's and BlackRock's (iShares) website terms, read 2026-10-14, limit their content to personal, non-commercial use. They forbid redistribution and automated access. This repository is public, so issuer amounts are never committed: a file inside any repository is loaded only if `git check-ignore` confirms it is ignored. The rows research agents gathered under `issuer_sources/2026-10-14/` are not anchors, and that directory is refused.
+- **The anchors lockbox.** The research audit uses anchors with ex-dates before 2025-01-01; the prospective store uses anchors on or after its window start (2026-07-16). An anchor dated between them (the sealed period) refuses the whole file.
+- **What the audit prints.** The file's sha256, row counts by status, per-fund anchor counts and the count outside scope; never an amount. Each stored batch's vintage note records the sha256 (adapter version 5).
 
 **What neither route detects.** Neither route detects a later split applied uniformly to the whole closing-price history. Route (b) anchors amounts only. Closes are checked against an external fact only at verified split sessions. A uniform rescaling of closes alone would distort D/P, and it is undetectable without a primary-source close anchor. **Follow-up:** add primary-source close anchors (for example sponsor-published closing prices or NAVs on a few dates) as an owner-reviewed allowlist.
 
@@ -312,9 +313,12 @@ Each batch's `retrieved_at` is the only observed timestamp, and a later retrieva
 
 ### Running the coverage audit (after the owner configures the key and authorizes it)
 
+The owner's exact command, what a good result looks like and what each refusal means are in `prospective_data_path.md` ("Owner commands"). In short:
+
 ```bash
 read -rs TIINGO_API_KEY && export TIINGO_API_KEY    # typed, not echoed or kept in history
-PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py --authorized    # read-only report
+PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py --authorized \
+    --funds VTI AGG SHV --start 2005-01-01 --end-exclusive 2025-01-01    # read-only report
 ```
 
 Persisting a real fund batch needs the owner's separate approval, and then `--store --root ~/stock-agent-private/fund_store` is added. Without `--store` the audit writes nothing anywhere. `--store` and `--root` go together, and either one alone is refused.
