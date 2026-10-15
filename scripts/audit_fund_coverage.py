@@ -29,10 +29,12 @@ a real fund batch needs the owner's separate approval (`--store --root`).
    reported.
 
 It never prints prices, amounts or the key, and writes vendor data only with
-`--store`, under `--root`, which must lie outside every repository or under that repository's
-ignored `data/raw/`, and must not be (or lie inside) a prospective store. A missing root is created with mode 0o700; an existing
-root whose mode grants any group or other permission is refused, and the
-owner restricts it. It requests no adjusted series and performs no
+`--store`, under `--root`, which must lie outside every repository or under
+that repository's `data/raw/` where Git confirms it is ignored, and must not
+be (or lie inside) a prospective store. A missing root, and any missing
+parents, are created with mode 0o700; an existing root whose mode grants any
+group or other permission is refused, and the owner restricts it. It
+requests no adjusted series and performs no
 vendor-adjusted reconciliation (that needs a separate, owner-approved isolated
 procedure), and it computes no return (returns belong to the OD8 group A
 descriptive calculations, not the audit).

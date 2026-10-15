@@ -9,8 +9,11 @@ outside every repository, or inside a repository only where Git ignores it.
     private_root     a store root: outside every repository, or strictly inside
                      that repository's `data/raw/` where `git check-ignore`
                      confirms it is ignored
-    prepare_root     create a missing root with mode 0o700; never change an
-                     existing one, and refuse it if it grants group or other access
+    root_refusal     why an existing root is unusable (not a directory, or open to
+                     group or other); creates nothing
+    prepare_root     create a missing root, and any missing parents, with mode
+                     0o700; never change an existing directory, and refuse a root
+                     that grants group or other access
     repository_of    the repository (this one, another clone or a worktree) that
                      contains a path, if any
     git_ignored      whether `git check-ignore` says a path is ignored in its repository
@@ -75,16 +78,14 @@ def private_root(root: Path, project_root: Path, git_runner: GitRunner | None = 
     return resolved
 
 
-def prepare_root(root: Path) -> str | None:
+def root_refusal(root: Path) -> str | None:
     """
-    Create a missing root with mode 0o700. An existing root is never changed:
-    it must be a directory that grants no group or other permission. Returns
-    the refusal message, or None.
+    Read-only: the refusal message for an existing root that is not a
+    directory or grants any group or other permission, else None. A missing
+    root is not refused here. Nothing is created or changed.
     """
 
-    if not root.exists():
-        root.mkdir(mode=ROOT_MODE, parents=True)
-        os.chmod(root, ROOT_MODE)  # only the directory created here
+    if not root.exists() and not root.is_symlink():
         return None
     if root.is_symlink() or not root.is_dir():
         return f"--root {root} exists and is not a directory"
@@ -95,6 +96,36 @@ def prepare_root(root: Path) -> str | None:
             f"restrict it yourself (for example `chmod 700 {root}`) and run again"
         )
     return None
+
+
+def make_private_directories(path: Path) -> None:
+    """
+    Create `path` and every missing parent with mode 0o700. Only the
+    directories created here are chmod-ed; an existing directory is never
+    changed.
+    """
+
+    missing = []
+    current = path
+    while not current.exists():
+        missing.append(current)
+        current = current.parent
+    for directory in reversed(missing):
+        directory.mkdir(mode=ROOT_MODE)
+        os.chmod(directory, ROOT_MODE)  # mkdir's mode is masked by the umask
+
+
+def prepare_root(root: Path) -> str | None:
+    """
+    Create a missing root (and its missing parents) with mode 0o700. An
+    existing root is never changed: it must be a directory that grants no
+    group or other permission. Returns the refusal message, or None.
+    """
+
+    refusal = root_refusal(root)
+    if refusal is None and not root.exists():
+        make_private_directories(root)
+    return refusal
 
 
 def repository_of(path: Path, project_root: Path) -> Path | None:
@@ -139,8 +170,10 @@ __all__ = [
     "ROOT_MODE",
     "GitRunner",
     "git_ignored",
+    "make_private_directories",
     "prepare_root",
     "private_root",
     "repository_of",
+    "root_refusal",
     "run_git_check_ignore",
 ]

@@ -196,7 +196,8 @@ def session_date(value: object, *, label: str = "date") -> pd.Timestamp:
     if not COVERAGE.first <= timestamp <= COVERAGE.last:
         raise CalendarRefused(
             "outside_coverage",
-            f"{label} {timestamp.date()} is outside {COVERAGE.first.date()}..{COVERAGE.last.date()}",
+            f"{label} {timestamp.date()} is outside "
+            f"{COVERAGE.first.date()}..{COVERAGE.last.date()}",
         )
     return timestamp
 

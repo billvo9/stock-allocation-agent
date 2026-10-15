@@ -298,9 +298,20 @@ def test_an_anchor_in_the_sealed_period_refuses_the_file_in_either_scope(ex_date
     refused(AnchorRefusal.SEALED_PERIOD, row(ex_date="2025-06-02", status="draft"))
 
 
-def test_the_window_start_and_the_last_research_session_are_allowed():
-    assert parse(row(ex_date="2026-07-16"), scope=AnchorScope.PROSPECTIVE).rows == 1
-    assert parse(row(ex_date="2024-12-31")).rows == 1
+@pytest.mark.parametrize(
+    ("ex_date", "scope", "other"),
+    [
+        ("2026-07-16", AnchorScope.PROSPECTIVE, AnchorScope.RESEARCH),  # the window start
+        ("2026-10-14", AnchorScope.PROSPECTIVE, AnchorScope.RESEARCH),  # H_end
+        ("2024-12-31", AnchorScope.RESEARCH, AnchorScope.PROSPECTIVE),  # the last research day
+    ],
+)
+def test_anchors_on_each_scope_edge_are_kept_in_scope_and_counted_outside(ex_date, scope, other):
+    kept = parse(row(ex_date=ex_date), scope=scope)
+    assert dict(kept.entries) == {("AGG", ex_date): 0.1234}
+    assert kept.outside_scope == 0 and kept.per_fund() == {"AGG": 1}
+    elsewhere = parse(row(ex_date=ex_date), scope=other)
+    assert dict(elsewhere.entries) == {} and elsewhere.outside_scope == 1
 
 
 @pytest.mark.parametrize(

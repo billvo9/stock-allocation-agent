@@ -20,6 +20,7 @@ from prospective_helpers import AFTER_H_END, LATER, day
 from stock_agent.calendars import nyse_rules
 from stock_agent.data.funds.adapter import SyntheticFundAdapter
 from stock_agent.data.funds.ingest import ingest_batch
+from stock_agent.data.funds.reader import read_store as read_research_store
 from stock_agent.data.funds.schema import FundDataRefused, RefusalReason
 from stock_agent.data.prospective.inference import load_inference_window
 from stock_agent.data.prospective.store import ingest_prospective, prepare_store
@@ -475,7 +476,7 @@ def test_one_unverified_fund_means_nothing_is_stored(tmp_path, repo, capsys):
     code = run(repo, None, "--store", "--root", str(root), anchors=anchors)
     captured = capsys.readouterr()
     assert code == 1 and "NOT STORED unverified_distribution_basis: VTI;" in captured.err
-    assert [entry.name for entry in root.iterdir()] == [MARKER_FILE]
+    assert not root.exists()  # the root is created only for a verified batch
 
 
 def test_a_failed_read_back_exits_with_an_error(tmp_path, repo, capsys, monkeypatch):
@@ -486,18 +487,28 @@ def test_a_failed_read_back_exits_with_an_error(tmp_path, repo, capsys, monkeypa
     assert code == 1 and "FAILED the stored tables differ" in capsys.readouterr().err
 
 
-def test_the_research_store_is_never_a_prospective_root(tmp_path, repo, capsys):
-    research = tmp_path / "research"
-    research.mkdir()
-    os.chmod(research, 0o700)
+def _research_store(path: Path) -> Path:
+    path.mkdir(parents=True)
+    os.chmod(path, 0o700)
     raw = SyntheticFundAdapter(retrieved_at=pd.Timestamp("2026-10-14T00:00:00Z")).fetch(
         ["SYN_EQ"], day("2024-12-02"), day("2025-01-01")
     )
-    ingest_batch(research, raw)
-    before = snapshot(research)
-    assert run(repo, None, "--store", "--root", str(research), factory=never) == 2
+    ingest_batch(path, raw)
+    return path
+
+
+def test_the_research_store_is_never_a_prospective_root(tmp_path, repo, capsys):
+    research = _research_store(tmp_path / "private" / "research")
+    os.chmod(tmp_path / "private", 0o700)
+    before = snapshot(tmp_path / "private")
+    for root in (research, research / "prospective", research / "a" / "b"):
+        assert run(repo, None, "--store", "--root", str(root), factory=never) == 2
+        assert "is, or lies inside, the research store" in capsys.readouterr().err
+    # A root containing the research store is neither empty nor a prospective store.
+    assert run(repo, None, "--store", "--root", str(tmp_path / "private"), factory=never) == 2
     assert "never the research store" in capsys.readouterr().err
-    assert snapshot(research) == before
+    assert snapshot(tmp_path / "private") == before
+    assert len(read_research_store(research).batches) == 1  # F1 still reads it
 
 
 def test_roots_inside_a_repository_or_a_prospective_store_are_refused(tmp_path, repo, capsys):
@@ -534,4 +545,37 @@ def test_a_refused_retrieval_reports_its_reason_and_stores_nothing(tmp_path, rep
     captured = capsys.readouterr()
     assert code == 1 and "REFUSED rate_limited; ticker VTI; HTTP 429" in captured.err
     assert TOKEN not in captured.out + captured.err
-    assert [entry.name for entry in root.iterdir()] == [MARKER_FILE]
+    assert not root.exists()  # nothing created for a refused retrieval
+
+
+def test_a_refused_write_removes_the_root_it_created_but_never_an_existing_store(
+    tmp_path, repo, capsys, monkeypatch
+):
+    anchors = write_anchors(tmp_path, anchor_rows())
+
+    def refuse_write(root, batch):
+        raise FundDataRefused(RefusalReason.ALREADY_EXISTS, "simulated refusal")
+
+    monkeypatch.setattr(script, "ingest_prospective", refuse_write)
+    fresh = tmp_path / "fresh" / "store"
+    code = run(repo, None, "--funds", "AGG", "--store", "--root", str(fresh), anchors=anchors)
+    assert code == 1 and "simulated refusal" in capsys.readouterr().err
+    assert not fresh.exists()
+    existing = tmp_path / "existing"
+    assert prepare_store(existing) is None
+    code = run(repo, None, "--funds", "AGG", "--store", "--root", str(existing), anchors=anchors)
+    assert code == 1 and [entry.name for entry in existing.iterdir()] == [MARKER_FILE]
+    capsys.readouterr()
+
+
+def test_new_parent_directories_are_private_and_existing_ones_unchanged(tmp_path, repo, capsys):
+    anchors = write_anchors(tmp_path, anchor_rows())
+    base = tmp_path / "home"
+    base.mkdir()
+    os.chmod(base, 0o755)
+    root = base / "stock-agent-private" / "nested" / "prospective"
+    code = run(repo, None, "--funds", "AGG", "--store", "--root", str(root), anchors=anchors)
+    assert code == 0, capsys.readouterr().err
+    for directory in (root, root.parent, root.parent.parent):
+        assert stat.S_IMODE(directory.stat().st_mode) == 0o700, directory
+    assert stat.S_IMODE(base.stat().st_mode) == 0o755  # existing: never changed

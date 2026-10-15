@@ -12,7 +12,8 @@ names the row and column, never a value).
 
 Usage:
     PYTHONPATH=src .venv/bin/python scripts/check_anchors.py
-    PYTHONPATH=src .venv/bin/python scripts/check_anchors.py --anchors ~/stock-agent-private/anchors.csv
+    PYTHONPATH=src .venv/bin/python scripts/check_anchors.py \
+        --anchors ~/stock-agent-private/anchors.csv
 """
 
 from __future__ import annotations

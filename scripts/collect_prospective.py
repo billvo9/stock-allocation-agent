@@ -28,11 +28,14 @@ needs the owner's OK at that step (`--store --root`).
    the owner knows which anchors to fill in), splits, and the
    distribution-basis verification (counts and ratios).
 2. Store (only with `--store`): only when every fund passes. The root is
-   created with mode 0o700 and the store marker, or must already be this
-   prospective store (never the research store) with no group or other
-   access; an existing root's mode is never changed. The batch is written
-   once, read back through the store's only reader, and its tables compared
-   with a re-parse of the stored payload (exit 1 if they differ).
+   checked before any request (outside every repository or in an ignored
+   data/raw/; not at or inside a research store or inside a prospective
+   store; empty or already this prospective store; no group or other
+   access), but created, with any missing parents at mode 0o700, only when
+   a verified batch is about to be written, so a refused run leaves no
+   empty store. An existing directory's mode is never changed. The batch is
+   written once, read back through the store's only reader, and its tables
+   compared with a re-parse of the stored payload (exit 1 if they differ).
 
 Exit codes: 0 success; 1 a refused retrieval, an unverified fund (nothing
 stored) or a failed read-back; 2 refused before any request.
@@ -43,7 +46,7 @@ computes no return.
 Usage (the owner's commands and what to expect are in
 docs/research/prospective_data_path.md):
     PYTHONPATH=src .venv/bin/python scripts/collect_prospective.py --authorized
-    PYTHONPATH=src .venv/bin/python scripts/collect_prospective.py --authorized \\
+    PYTHONPATH=src .venv/bin/python scripts/collect_prospective.py --authorized \
         --store --root ~/stock-agent-private/prospective_store
 """
 
@@ -57,10 +60,21 @@ from pathlib import Path
 import pandas as pd
 
 from stock_agent.calendars import nyse_rules
-from stock_agent.data.funds.schema import DATA_TABLES, FundDataRefused, conform, parse_date
+from stock_agent.data.funds.schema import (
+    BATCH_FILE,
+    BATCH_ID_PATTERN,
+    DATA_TABLES,
+    FundDataRefused,
+    conform,
+    parse_date,
+)
 from stock_agent.data.private_paths import GitRunner, private_root, run_git_check_ignore
 from stock_agent.data.prospective.inference import StoredProspectiveBatch, read_batch
-from stock_agent.data.prospective.store import ingest_prospective, prepare_store
+from stock_agent.data.prospective.store import (
+    ingest_prospective,
+    prepare_store,
+    store_root_refusal,
+)
 from stock_agent.data.prospective.validation import MARKER_FILE
 from stock_agent.data.prospective.window import (
     H_END,
@@ -176,6 +190,33 @@ def reparse_matches(batch: StoredProspectiveBatch) -> bool:
     )
 
 
+def research_store_at_or_above(root: Path) -> Path | None:
+    """
+    The root or nearest ancestor that holds an F1 research batch (a directory
+    named like an F1 batch id with a `batch.json`), or None. A prospective
+    root there would make F1's `read_store` refuse the research store. A root
+    that contains a research store is refused separately: it is neither empty
+    nor a prospective store.
+    """
+
+    for path in (root, *root.parents):
+        if path.is_dir() and any(
+            BATCH_ID_PATTERN.fullmatch(entry.name) and (entry / BATCH_FILE).is_file()
+            for entry in path.iterdir()
+        ):
+            return path
+    return None
+
+
+def remove_if_unused(root: Path, existed: bool) -> None:
+    """Remove a root this run created if it holds only the marker (a refused write)."""
+
+    marker = root / MARKER_FILE
+    if not existed and root.is_dir() and [entry.name for entry in root.iterdir()] == [MARKER_FILE]:
+        marker.unlink()
+        root.rmdir()
+
+
 def nested_in_prospective_store(root: Path) -> bool:
     """Whether an ancestor of the root (not the root itself) holds the store marker."""
 
@@ -240,6 +281,14 @@ def main(
     if root is not None and nested_in_prospective_store(root):
         print(f"Refused: --root {root} lies inside a prospective store", file=sys.stderr)
         return 2
+    research = None if root is None else research_store_at_or_above(root)
+    if research is not None:
+        print(
+            f"Refused: --root {root} is, or lies inside, the research store {research}; use a "
+            "separate directory",
+            file=sys.stderr,
+        )
+        return 2
     try:
         anchors = load_anchors(
             anchors_path(args.anchors, project_root=project_root),
@@ -251,7 +300,7 @@ def main(
     except AnchorsRefused as error:
         print(f"Refused: anchors {error}", file=sys.stderr)
         return 2
-    refusal = prepare_store(root) if args.store else None
+    refusal = store_root_refusal(root) if args.store else None  # creates nothing
     if refusal is not None:
         print(f"Refused: {refusal}", file=sys.stderr)
         return 2
@@ -277,10 +326,16 @@ def main(
             file=sys.stderr,
         )
         return 1
+    existed = root.exists()
     try:
-        result = ingest_prospective(root, verified_prospective_batch(retrieval, anchors=anchors))
-        stored = read_batch(result.path)
+        batch = verified_prospective_batch(retrieval, anchors=anchors)
+        refusal = prepare_store(root)  # the root is created only now, for a verified batch
+        if refusal is not None:
+            print(f"REFUSED {refusal}", file=sys.stderr)
+            return 1
+        stored = read_batch(ingest_prospective(root, batch).path)
     except FundDataRefused as error:
+        remove_if_unused(root, existed)
         print(f"REFUSED {error}", file=sys.stderr)
         return 1
     matches = reparse_matches(stored)

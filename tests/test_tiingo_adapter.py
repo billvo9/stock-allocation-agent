@@ -948,6 +948,13 @@ def test_a_transport_returning_the_wrong_shape_is_refused():
     failed(TiingoFailure.TRANSPORT_ERROR, retrieve, lambda url, headers: (200, "text"))
 
 
+def test_the_key_wrapper_never_shows_the_key():
+    token = tiingo._Token(TOKEN)
+    for shown in (repr(token), str(token), f"{token}", f"{token!r}", repr([token])):
+        assert TOKEN not in shown and shown.count("<redacted>") == 1
+    assert token.headers() == {"Authorization": f"Token {TOKEN}"}  # the only way out
+
+
 def test_the_key_comes_from_the_environment_and_is_never_echoed(monkeypatch):
     monkeypatch.delenv(tiingo.TOKEN_ENV, raising=False)
     error = failed(TiingoFailure.MISSING_TOKEN, tiingo.env_token)

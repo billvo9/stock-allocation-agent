@@ -111,10 +111,10 @@ Isolation from the research store:
 - F1's `read_store` and `read_batch` refuse a prospective root (the marker is not a batch) and a prospective batch (the `P` prefix);
 - a prospective batch is not an F1 `RawBatch`, and its dates fall after F1's cap, so F1's `ingest_batch` refuses it;
 - the payload envelope is version `p1` and names the store, H_end and the window start, so neither Tiingo parser accepts the other's payload;
-- the audit refuses a `--root` that is, or lies inside, a prospective store; the collection refuses a non-empty root without the marker (for example the research store) and a root nested inside a prospective store;
+- the audit refuses a `--root` that is, or lies inside, a prospective store; the collection refuses a root that is, or lies inside, a research store (a directory holding an F1 batch), a non-empty root without the marker (for example one that contains the research store), and a root nested inside a prospective store;
 - tests forbid research packages and scripts from importing the prospective package, `nyse_rules` or the Tiingo prospective mode (by import statement or by name), check that importing research entry points loads none of them, and run every research reader (F1, the model-health fund-store check, the T2 run reader, the forecast-artifact reader) against a prospective root to confirm each refuses it.
 
-Roots: the collection's `--root` (and the audit's) must lie outside every repository, or strictly inside a repository's `data/raw/` where `git check-ignore` confirms it is ignored (for example `data/raw/prospective/`); a repository that tracks its `data/raw/`, or Git missing, refuses it. A missing root is created with mode 0o700; an existing root is never changed and must grant no group or other access.
+Roots: the collection's `--root` (and the audit's) must lie outside every repository, or strictly inside a repository's `data/raw/` where `git check-ignore` confirms it is ignored (for example `data/raw/prospective/`); a repository that tracks its `data/raw/`, or Git missing, refuses it. The collection checks the root before any request but creates it, with any missing parents at mode 0o700, only when a verified batch is about to be written; a refused run leaves no empty store, and a root it created is removed again if the write itself is refused. An existing directory is never changed, and an existing root must grant no group or other access.
 
 ## 5. The inference loader (for the forecast job)
 
@@ -241,9 +241,9 @@ Store only funds that pass. For the first collection that is AGG and SHV:
 PYTHONPATH=src .venv/bin/python scripts/collect_prospective.py --authorized --funds AGG SHV --store --root ~/stock-agent-private/prospective_store
 ```
 
-**A good result** (exit code 0): the 6.3 report, then `stored batch: P2026...`, `stored tables match a re-parse of the stored raw payload: True` and `stored under: ...`. The root is created with mode 0o700 and holds `PROSPECTIVE_STORE.json` and the batch. Use a different directory from the research store.
+**A good result** (exit code 0): the 6.3 report, then `stored batch: P2026...`, `stored tables match a re-parse of the stored raw payload: True` and `stored under: ...`. The root (and any new parent, such as `~/stock-agent-private`) is created with mode 0o700 only at this point, and holds `PROSPECTIVE_STORE.json` and the batch. Use a different directory from the research store, and not one inside it.
 
-**Refusals:** exit code 2 before any request for `--root` problems (`inside the repository`, `has mode ...` with a `chmod 700` hint, `is neither empty nor a prospective store ... never the research store`, `lies inside a prospective store`); exit code 1 for `NOT STORED unverified_distribution_basis: <funds>` (a fund failed the gate; nothing was stored: store the passing funds alone or add anchors), a refused retrieval, or `FAILED the stored tables differ from a re-parse ...` (report it).
+**Refusals:** exit code 2 before any request, with nothing created, for `--root` problems (`inside the repository`, `does not confirm it is ignored`, `has mode ...` with a `chmod 700` hint, `is, or lies inside, the research store`, `is neither empty nor a prospective store ... never the research store`, `lies inside a prospective store`); exit code 1, with no root created, for `NOT STORED unverified_distribution_basis: <funds>` (a fund failed the gate: store the passing funds alone or add anchors) or a refused retrieval; exit code 1 for `FAILED the stored tables differ from a re-parse ...` (report it).
 
 ### 6.5 Later collections
 

@@ -7,11 +7,14 @@ contract (`validation`).
 Private root (caller-given; there is no default)
     The collection script checks it with `private_paths.private_root`: outside
     every repository, or strictly inside an ignored `data/raw/`.
-    `prepare_store` creates a missing root with mode 0o700 and writes the
-    marker; it writes the marker into an existing root only when that root is
-    empty and grants no group or other access, and never changes an existing
-    root's mode. A non-empty root without this store's marker (an F1 store,
-    for example) is refused.
+    `store_root_refusal` checks a root without creating anything, so the
+    collection can refuse a bad root before any request. `prepare_store`
+    then creates a missing root (and missing parents) with mode 0o700 and
+    writes the marker, only when a verified batch is about to be written; it
+    writes the marker into an existing root only when that root is empty and
+    grants no group or other access, and never changes an existing
+    directory's mode. A non-empty root without this store's marker (an F1
+    store, for example) is refused.
 """
 
 from __future__ import annotations
@@ -39,7 +42,7 @@ from stock_agent.data.funds.schema import (
     refuse,
     utc_timestamp,
 )
-from stock_agent.data.private_paths import prepare_root
+from stock_agent.data.private_paths import make_private_directories, root_refusal
 from stock_agent.data.prospective.validation import (
     MANIFEST_FILE,
     MARKER_FILE,
@@ -86,21 +89,16 @@ class ProspectiveIngestResult:
     missing_sessions: pd.DataFrame
 
 
-def prepare_store(root: Path) -> str | None:
+def store_root_refusal(root: Path) -> str | None:
     """
-    Make `root` a prospective store: create it (mode 0o700) with the marker,
-    or write the marker into an existing empty private directory, or accept an
-    existing prospective store. Returns the refusal message, or None.
+    Read-only: why `root` cannot be a prospective store, or None. A missing
+    root or an empty private directory is acceptable; an existing prospective
+    store is accepted as it is. Nothing is created or changed.
     """
 
-    refusal = prepare_root(root)
-    if refusal is not None:
+    refusal = root_refusal(root)
+    if refusal is not None or not root.exists() or not any(root.iterdir()):
         return refusal
-    if not any(root.iterdir()):
-        marker = root / MARKER_FILE
-        marker.write_text(dumps_file(marker_document()), encoding="utf-8")
-        os.chmod(marker, 0o600)
-        return None
     try:
         check_marker(root)
     except FundDataRefused as error:
@@ -108,6 +106,25 @@ def prepare_store(root: Path) -> str | None:
             f"--root {root} is neither empty nor a prospective store ({error}); use a separate "
             "directory, never the research store"
         )
+    return None
+
+
+def prepare_store(root: Path) -> str | None:
+    """
+    Make `root` a prospective store: create it (and missing parents, mode
+    0o700) with the marker, or write the marker into an existing empty private
+    directory, or accept an existing prospective store. Returns the refusal
+    message, or None.
+    """
+
+    refusal = store_root_refusal(root)
+    if refusal is not None:
+        return refusal
+    make_private_directories(root)
+    if not any(root.iterdir()):
+        marker = root / MARKER_FILE
+        marker.write_text(dumps_file(marker_document()), encoding="utf-8")
+        os.chmod(marker, 0o600)
     return None
 
 
@@ -211,4 +228,5 @@ __all__ = [
     "build_record",
     "ingest_prospective",
     "prepare_store",
+    "store_root_refusal",
 ]

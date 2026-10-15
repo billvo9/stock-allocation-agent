@@ -34,7 +34,11 @@ from stock_agent.data.prospective.inference import (
     load_inference_window,
     read_batch,
 )
-from stock_agent.data.prospective.store import ingest_prospective, prepare_store
+from stock_agent.data.prospective.store import (
+    ingest_prospective,
+    prepare_store,
+    store_root_refusal,
+)
 from stock_agent.data.prospective.validation import (
     BATCH_ID_PATTERN,
     FILE_SET,
@@ -161,6 +165,29 @@ def test_an_existing_root_is_never_changed(tmp_path):
     os.chmod(root, 0o700)
     assert prepare_store(root) is None  # empty and private: the marker is written
     assert (root / MARKER_FILE).is_file()
+
+
+def test_new_parents_are_private_and_existing_directories_are_never_changed(tmp_path):
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    os.chmod(existing, 0o755)
+    root = existing / "a" / "b" / "store"
+    assert store_root_refusal(root) is None and not (existing / "a").exists()  # read-only
+    assert prepare_store(root) is None
+    for directory in (root, root.parent, root.parent.parent):
+        assert stat.S_IMODE(directory.stat().st_mode) == 0o700, directory
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o755
+
+
+def test_the_read_only_root_check_creates_nothing(tmp_path):
+    open_root = tmp_path / "open"
+    open_root.mkdir()
+    os.chmod(open_root, 0o755)
+    assert "restrict it yourself" in store_root_refusal(open_root)
+    assert store_root_refusal(tmp_path / "missing" / "root") is None
+    assert not (tmp_path / "missing").exists()
+    os.chmod(open_root, 0o700)
+    assert store_root_refusal(open_root) is None and not any(open_root.iterdir())
 
 
 def test_a_research_store_or_any_non_empty_directory_is_refused(tmp_path):
