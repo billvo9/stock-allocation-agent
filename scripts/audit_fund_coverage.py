@@ -6,6 +6,12 @@ configured `TIINGO_API_KEY` locally and authorized the run (`--authorized`).
 
 Read-only by default: without `--store` it writes nothing anywhere. Storing
 a real fund batch needs the owner's separate approval (`--store --root`).
+0. Load the owner's private distribution anchors (research scope: ex-dates
+   before 2025-01-01) from `--anchors`, `STOCK_AGENT_ANCHORS` or the default
+   `data/raw/issuer_sources/anchors.csv`, before any request. A malformed
+   file, or one inside a repository where Git does not ignore it, refuses the
+   run (exit 2); a missing file is an empty allowlist. It prints the file's
+   sha256, row counts and per-fund anchor counts, never an amount.
 1. Verify in memory (always). The Tiingo adapter retrieves the funds (one prices call
    per fund, allowlisted columns only, each response checked before the next
    request, no retry). A success means every element held exactly the
@@ -24,15 +30,17 @@ a real fund batch needs the owner's separate approval (`--store --root`).
 
 It never prints prices, amounts or the key, and writes vendor data only with
 `--store`, under `--root`, which must lie outside every repository or under that repository's
-ignored `data/raw/`. A missing root is created with mode 0o700; an existing
+ignored `data/raw/`, and must not be (or lie inside) a prospective store. A missing root is created with mode 0o700; an existing
 root whose mode grants any group or other permission is refused, and the
 owner restricts it. It requests no adjusted series and performs no
 vendor-adjusted reconciliation (that needs a separate, owner-approved isolated
 procedure), and it computes no return (returns belong to the OD8 group A
 descriptive calculations, not the audit).
 
-Usage (a read-only coverage report):
-    PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py --authorized
+Usage (a read-only coverage report; the owner's command is in
+docs/research/prospective_data_path.md):
+    PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py --authorized \
+        --funds VTI AGG SHV --start 2005-01-01 --end-exclusive 2025-01-01
 
 Storing, only after the owner separately approves persisting a batch:
     PYTHONPATH=src .venv/bin/python scripts/audit_fund_coverage.py --authorized \
@@ -42,8 +50,6 @@ Storing, only after the owner separately approves persisting a batch:
 from __future__ import annotations
 
 import argparse
-import os
-import stat
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -60,6 +66,20 @@ from stock_agent.data.funds.schema import (
     conform,
     parse_date,
 )
+from stock_agent.data.private_paths import (
+    GitRunner,
+    prepare_root,
+    private_root,
+    run_git_check_ignore,
+)
+from stock_agent.data.prospective.validation import MARKER_FILE
+from stock_agent.data.vendors.anchors import (
+    AnchorScope,
+    AnchorsRefused,
+    DistributionAnchors,
+    anchors_path,
+    load_anchors,
+)
 from stock_agent.data.vendors.tiingo import (
     ALLOWED_FIELDS,
     BasisCheck,
@@ -67,6 +87,7 @@ from stock_agent.data.vendors.tiingo import (
     TiingoAdapter,
     TiingoRequestFailed,
     parse_payload,
+    utc_now,
     verified_batch,
     verify_distribution_basis,
 )
@@ -74,7 +95,6 @@ from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FUNDS = ("VTI", "AGG", "SHV")
-ROOT_MODE = 0o700
 # A pass is a spot check of sampled amounts, never proof that the history is valid.
 SPOT_CHECKED = (
     "spot-checked against primary-source amounts (not a validation of every distribution)"
@@ -84,41 +104,6 @@ READ_ONLY = (
     "owner's separate approval (--store --root)"
 )
 _SHOWN = 10  # dates listed per finding
-
-
-def _is_repository(path: Path, project_root: Path) -> bool:
-    return os.path.samefile(path, project_root) or (path / ".git").exists()
-
-
-def private_root(root: Path, project_root: Path) -> Path:
-    """
-    The resolved root, or ValueError if it could place vendor data in a
-    repository. Every existing ancestor is checked with `os.path.samefile`
-    (which also matches a case-variant path on a case-insensitive file
-    system). An ancestor that is this repository, or holds a `.git` (another
-    clone or a worktree), is allowed only when the root lies strictly inside
-    that repository's `data/raw/`. A root that contains this repository is
-    refused too.
-    """
-
-    resolved = root.expanduser().resolve()
-    existing = [path for path in (resolved, *resolved.parents) if path.exists()]
-    for index, ancestor in enumerate(existing):
-        if not _is_repository(ancestor, project_root):
-            continue
-        raw = ancestor / "data" / "raw"
-        below = [path for path in existing[:index] if path != resolved]
-        if not (raw.is_dir() and any(os.path.samefile(path, raw) for path in below)):
-            raise ValueError(
-                f"--root {resolved} is inside the repository {ancestor}; use a directory "
-                "outside it or a subdirectory of its data/raw/"
-            )
-    project = project_root.resolve()
-    if resolved.exists() and any(
-        os.path.samefile(resolved, path) for path in (project, *project.parents)
-    ):
-        raise ValueError(f"--root {resolved} contains the repository")
-    return resolved
 
 
 def _dates(values: pd.Series) -> str:
@@ -139,7 +124,9 @@ def _split_line(prices: pd.DataFrame, split) -> str:
     )
 
 
-def verification_lines(retrieval: Retrieval, checks: tuple[BasisCheck, ...]) -> list[str]:
+def verification_lines(
+    retrieval: Retrieval, checks: tuple[BasisCheck, ...], anchors: DistributionAnchors
+) -> list[str]:
     """Phase 1: aggregates of the in-memory retrieval and its basis verification."""
 
     end_date = retrieval.end_exclusive - pd.Timedelta(days=1)
@@ -150,6 +137,7 @@ def verification_lines(retrieval: Retrieval, checks: tuple[BasisCheck, ...]) -> 
         f"request: {' '.join(retrieval.fund_ids)} {window}, Tiingo endDate {end_date:%Y-%m-%d}",
         f"retrieved_at {retrieval.retrieved_at}",
         f"field allowlist: every element had exactly {', '.join(ALLOWED_FIELDS)}",
+        *anchors.summary_lines(),
     ]
     for fund, check in zip(retrieval.fund_ids, checks, strict=True):
         prices = retrieval.prices[retrieval.prices["fund_id"] == fund]
@@ -190,28 +178,6 @@ def verification_lines(retrieval: Retrieval, checks: tuple[BasisCheck, ...]) -> 
     return lines
 
 
-def prepare_root(root: Path) -> str | None:
-    """
-    Create a missing root with mode 0o700. An existing root is never changed:
-    it must be a directory that grants no group or other permission. Returns
-    the refusal message, or None.
-    """
-
-    if not root.exists():
-        root.mkdir(mode=ROOT_MODE, parents=True)
-        os.chmod(root, ROOT_MODE)  # only the directory created here
-        return None
-    if not root.is_dir():
-        return f"--root {root} exists and is not a directory"
-    mode = stat.S_IMODE(root.stat().st_mode)
-    if mode & 0o077:
-        return (
-            f"--root {root} has mode {mode:o}, which grants group or other access; "
-            f"restrict it yourself (for example `chmod 700 {root}`) and run again"
-        )
-    return None
-
-
 def reparse_matches(batch: StoredBatch) -> bool:
     """Whether the stored tables equal a fresh parse of the stored raw payload."""
 
@@ -224,11 +190,19 @@ def reparse_matches(batch: StoredBatch) -> bool:
     )
 
 
+def inside_prospective_store(root: Path) -> bool:
+    """Whether the root, or any of its ancestors, holds the prospective store's marker."""
+
+    return any((path / MARKER_FILE).exists() for path in (root, *root.parents))
+
+
 def main(
     argv: list[str] | None = None,
     *,
     adapter_factory: Callable[[], TiingoAdapter] = TiingoAdapter,
     project_root: Path = PROJECT_ROOT,
+    clock: Callable[[], pd.Timestamp] = utc_now,
+    git_runner: GitRunner = run_git_check_ignore,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument("--root", type=Path, help="private store directory (with --store only)")
@@ -244,6 +218,11 @@ def main(
         "--store",
         action="store_true",
         help="persist the verified batch under --root; needs the owner's separate approval",
+    )
+    parser.add_argument(
+        "--anchors",
+        help="the private anchors CSV (default: $STOCK_AGENT_ANCHORS, else "
+        "data/raw/issuer_sources/anchors.csv)",
     )
     args = parser.parse_args(argv)
 
@@ -262,11 +241,29 @@ def main(
         )
         return 2
     try:
-        root = private_root(args.root, project_root) if args.store else None
+        root = private_root(args.root, project_root, git_runner) if args.store else None
         start = parse_date("--start", args.start)
         end_exclusive = parse_date("--end-exclusive", args.end_exclusive)
     except (ValueError, FundDataRefused) as error:
         print(f"Refused: {error}", file=sys.stderr)
+        return 2
+    if root is not None and inside_prospective_store(root):
+        print(
+            f"Refused: --root {root} is (or lies inside) a prospective store; the research "
+            "store must be a separate directory",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        anchors = load_anchors(
+            anchors_path(args.anchors, project_root=project_root),
+            AnchorScope.RESEARCH,
+            project_root=project_root,
+            today=clock(),
+            git_runner=git_runner,
+        )
+    except AnchorsRefused as error:
+        print(f"Refused: anchors {error}", file=sys.stderr)
         return 2
 
     refusal = prepare_root(root) if args.store else None
@@ -275,11 +272,11 @@ def main(
         return 2
     try:
         retrieval = adapter_factory().retrieve(args.funds, start, end_exclusive)
-        checks = verify_distribution_basis(retrieval)
+        checks = verify_distribution_basis(retrieval, anchors=anchors)
     except (FundDataRefused, TiingoRequestFailed) as error:
         print(f"REFUSED {error}", file=sys.stderr)
         return 1
-    for line in verification_lines(retrieval, checks):
+    for line in verification_lines(retrieval, checks, anchors):
         print(line)
     print()
     print(
@@ -299,7 +296,7 @@ def main(
         )
         return 1
     try:
-        stored = read_batch(ingest_batch(root, verified_batch(retrieval)).path)
+        stored = read_batch(ingest_batch(root, verified_batch(retrieval, anchors=anchors)).path)
     except FundDataRefused as error:
         print(f"REFUSED {error}", file=sys.stderr)
         return 1
