@@ -1,10 +1,27 @@
 # T5a: the open financial decisions (v2, 2026-10-14)
 
-**Status: PENDING OWNER APPROVAL (OD8 group B). Nothing in this packet is approved.**
+**Status: D1-D8 APPROVED by the owner on 2026-10-15, as recorded below (D9 is not part of this packet and stays pending). One D5 clause awaits the owner's confirmation (see D5 below).**
+
+## Owner approval record (2026-10-15, verbatim, in the lead session)
+
+The owner approved "the following D1-D8 choices, provided they exactly match the current `docs/research/t5a_open_decisions.md` packet", and asked that a material difference stop work and be identified.
+
+| Id | The owner's words (verbatim) | Match with this packet |
+|---|---|---|
+| D1 | "Next-session-close execution." | Matches D1. |
+| D2 | "Costs on actual risky-asset traded notional, multiplicative accounting. Provisional assumptions of 10 bp single stocks, 5 bp broad ETFs, 2 bp SHV and zero cost for the cash funding leg. Report 0×, 1× and 2× sensitivity." | Matches D2. The rates are provisional assumptions. |
+| D3 | "Begin in cash, charge initial construction and use no terminal liquidation charge for marked-to-market comparisons." | Matches D3. |
+| D4 | "D4(a): Uninvested cash earns 0% for synthetic engineering. SHV is a separately traded ETF. Do not claim this is realistic interest-bearing cash economics; Group C remains necessary for real economic comparisons." | Matches D4 (a), with a narrower scope: synthetic engineering only. Group C is required before any real economic comparison. |
+| D5 | "Long-only, sum-to-one, excess above a cap goes to cash, default cap 1.0 and no default turnover cap for plain baselines. Stricter constraints are explicitly registered for learned policies." | Matches D5's rules and defaults. **One clause awaits confirmation:** the packet says stricter sets are "identical for every compared policy", and the owner's words could be read as stricter sets for learned policies only. Until the owner confirms, a registered constraint set applies identically to every policy in a comparison, as this packet states. |
+| D6 | "Defer a whole rebalance when any held or targeted asset lacks an executable close. A newer valid target supersedes an older deferred target. Never fabricate intermediate wealth or a return through an unresolved distribution gap." | Matches D6 as corrected on 2026-10-14. It also settles the sub-question: the newer target supersedes (`superseded_deferred_target`). |
+| D7 | "Common initial build date, registered rebalance offset and consistent schedules across comparisons." | Matches D7. |
+| D8 | "D8(a): PPO reward equals net log-wealth growth, without double-counting already incurred transaction costs." | Matches D8 (a). Option (b) is not approved. |
+
+Not approved here: D9 (the Builder's buy-and-hold mix), D4 (b) (group C cash returns), D8 (b) and (c), and groups C and D of `t5_portfolio_formulas.md`.
 
 - Recorded in the repository on 2026-10-14 with its substance unchanged; only this status block is added.
 - Formula ids and option names refer to `docs/research/t5_portfolio_formulas.md` (sections 1, 2, 7 and 8).
-- The T5a engine interface (`src/stock_agent/portfolio/transition.py`, `schedule.py`, `engine.py`, and `log_growth_reward` in `src/stock_agent/environment/reward.py`) raises `NotImplementedError` until the owner approves D1–D8.
+- The T5a engine interface (`src/stock_agent/portfolio/transition.py`, `schedule.py`, `engine.py`, and `log_growth_reward` in `src/stock_agent/environment/reward.py`) raised `NotImplementedError` until this approval. The implementation follows in the T5a engine pull request.
 - `tests/reference/t5a_reference.py`, a test-only shares-and-cash ledger of the recommended options, reproduces every number below (`tests/test_t5a_reference.py`). D4 (b) is group C and is not reproduced.
 - D6 was corrected on 2026-10-14 after independent review: a rebalance now waits for every **held or targeted** asset, and the packet adds an open sub-question about a decision that arrives while a rebalance is deferred. Until the owner answers it, the oracle refuses that case (`ScenarioNotCovered`). The recommended rule (the newer target supersedes) is held as a strict xfail on both the oracle and the engine.
 - The approval, with its date and the owner's exact words, is recorded here and in `docs/PROJECT_STATE.md` before any formula is implemented.
