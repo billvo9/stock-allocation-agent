@@ -316,3 +316,14 @@ def test_the_info_records_the_transition_and_reward_identity():
     _, info = env.reset()
     assert info["transition"]["status"] == tr.APPROVED
     assert info["reward"]["name"] == "log_net_growth"
+
+
+def test_the_environment_lag_is_bound_to_the_registered_execution_lag(monkeypatch):
+    from stock_agent.portfolio import schedule
+
+    data = tiny([0.0, 0.01, 0.02, 0.0])
+    assert schedule.execution_lag() == rl_env.ENV_EXECUTION_LAG == 1
+    make_env(data)
+    monkeypatch.setattr(rl_env, "execution_lag", lambda: 2)
+    with pytest.raises(ValueError, match="execution lag"):
+        make_env(data)

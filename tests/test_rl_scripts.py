@@ -142,15 +142,13 @@ def evaluated(run_dir):
     return run_dir
 
 
-def test_evaluation_writes_an_engineering_report_and_the_counted_table(evaluated):
-    # The transition is owner-approved (T5a, 2026-10-15), so the harness releases the table,
-    # write-once and numbered like the report; before the approval it was withheld.
+def test_evaluation_writes_an_engineering_report_and_withholds_tables(evaluated):
+    # The transition is approved, but tables stay withheld until the registered comparison.
     report = json.loads((evaluated / "evaluation_test_1.json").read_text())
     assert report["fold_role"] == "test" and report["fairness"] == "passed"
     assert report["fold_evaluation_number"] == 1
-    assert report["comparison_tables"] == "available"
-    table = json.loads((evaluated / "comparison_test_1.json").read_text())
-    assert table["label"] == "approved_transition"
+    assert report["comparison_tables"].startswith("withheld")
+    assert not list(evaluated.glob("comparison_*.json"))
     assert report["provenance"]["code_sha_matches"] is True
     methods = report["methods"]
     for name in (

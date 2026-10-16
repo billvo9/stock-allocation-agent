@@ -62,6 +62,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from stock_agent.portfolio.schedule import execution_lag
 from stock_agent.portfolio.transition import Constraints, FeasibleTarget, feasible_target
 from stock_agent.rl.observation import (
     Observation,
@@ -73,6 +74,11 @@ from stock_agent.rl.reward import REWARD_INFO, log_growth_reward
 from stock_agent.rl.scenarios import ScenarioData, generate_scenario
 from stock_agent.rl.splits import FoldSpec
 from stock_agent.rl.transition import PortfolioStep, TransitionInfo, check_step_result
+
+# The environment books each decision's trade at the next complete session's
+# close: a lag of one session. It must equal the registered execution lag
+# (D1, `portfolio.schedule.execution_lag`, bound to the label's entry_lag).
+ENV_EXECUTION_LAG = 1
 
 
 @dataclass(frozen=True)
@@ -161,6 +167,11 @@ class AllocationEnv:
         if builder.asset_names != data.asset_names or builder.cash_index != data.cash_index:
             raise ValueError("The observation builder was made for a different universe.")
         self.constraints = self.config.constraints(data.cash_index)
+        if execution_lag() != ENV_EXECUTION_LAG:
+            raise ValueError(
+                f"The registered execution lag is {execution_lag()}, but the environment "
+                f"executes {ENV_EXECUTION_LAG} session after each decision."
+            )
         self.complete = data.complete_sessions(self.start, self.stop)
         if len(self.complete) < 3:
             raise ValueError("An episode window needs at least three complete sessions.")

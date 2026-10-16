@@ -319,8 +319,8 @@ and see the same observation at the same decisions of the same environment.
   Training takes a `SplitPlan` and refuses a normalizer not fitted on its
   train fold (or an identity one), an embargo shorter than the lookback and
   overlapping seeds. `LearnedResult.to_dict()` records the frozen normalizer
-  and its provenance, the folds, the transition and reward identity with the
-  engineering-only label, the environment schedule and every scenario's
+  and its provenance, the folds, the transition and reward identity with
+  their approval status, the environment schedule and every scenario's
   fingerprint.
 - **Diagnostics are not metrics.** `EpisodeRecord.engineering_diagnostics()`
   (log growth, wealth ratio, largest observed decline, cost, turnover, all
@@ -662,14 +662,20 @@ will move; then compare.
 
 - **Track A (approved 2026-10-15, implemented).** The environment injects
   `stock_agent.portfolio.transition.portfolio_step`; the stand-in
-  `rl/reference_transition.py` is deleted. The boundary test admits exactly
-  one project import outside `rl`, `stock_agent.portfolio.transition`, and
-  still forbids `stock_agent.environment` (whose retired pre-T5a helpers stay
-  uncorrected). `rl.reward.log_growth_reward` is therefore the same one-line
+  `rl/reference_transition.py` is deleted. The boundary test admits two
+  project imports outside `rl`, `stock_agent.portfolio.transition` and
+  `stock_agent.portfolio.schedule` (the environment checks its one-session
+  lag against `execution_lag()`), and still forbids `stock_agent.environment`
+  (whose retired pre-T5a helpers stay uncorrected). `rl.reward.log_growth_reward` is therefore the same one-line
   formula as `stock_agent.environment.reward.log_growth_reward`, and a test
   checks they agree. `tests/test_t5a_engine.py` replays the backtest engine,
   the environment and the oracle on the same targets and returns and finds
   one wealth path within 1e-12, with and without binding constraints.
+- **Comparison tables stay withheld.** An approved transition is necessary
+  but not sufficient: `run_comparison(..., release_tables=True)` is required
+  too, and no caller passes it. The registered comparison (a separate, later
+  change) will release tables under its own protocol, with every test-fold
+  look counted; until then `evaluate_rl.py` writes engineering reports only.
 - **Track B (merged contract).** Forecast artifacts are dated:
   `read_forecast_artifact(path)` and `forecasts_asof(frame, decision_time)`,
   selecting on `available_at <= decision_time`. RL scenarios count sessions,

@@ -173,6 +173,7 @@ def test_the_health_reader_accepts_the_file_and_judges_only_declared_limits(tmp_
 
 # The pre-T5a `run_rebalanced_backtest` on the script's synthetic panel, computed with the
 # code at 8b5e564 before the migration: (final wealth, two-way turnover, max drawdown).
+# Every baseline is checked here; the script reports the attribution of one (equal weight).
 LEGACY = {
     "equal_weight": (125362.25125292479, 1.3389310694121508, 0.11979373311982477),
     "inverse_volatility": (129512.53655693728, 4.133904549548478, 0.08041197275873457),
@@ -186,54 +187,56 @@ def script():
 
 
 @pytest.fixture(scope="module")
-def rows(script):
-    table = pd.DataFrame(script.attribution(script.synthetic_feature_frame()))
-    return table.set_index(["baseline", "step"])
+def frame(script):
+    return script.synthetic_feature_frame()
+
+
+def _rows(script, frame, name):
+    return pd.DataFrame(script.attribution(frame, name)).set_index("step")
 
 
 @pytest.mark.parametrize("name", sorted(LEGACY))
-def test_the_attribution_starts_from_the_exact_legacy_numbers(script, rows, name):
-    final, two_way, _ = LEGACY[name]
-    legacy = rows.loc[(name, "legacy")]
+def test_the_attribution_starts_from_the_exact_legacy_numbers(script, frame, name):
+    final, two_way, drawdown = LEGACY[name]
+    legacy = _rows(script, frame, name).loc["legacy"]
     assert legacy["terminal_wealth_ratio"] * script.INITIAL_WEALTH == pytest.approx(
         final, rel=1e-12
     )
     # The legacy engine reported two-way turnover and gave the initial portfolio for free.
     assert 2 * (legacy["total_turnover_one_way"] - 1.0) == pytest.approx(two_way, rel=1e-12)
-    returns, targets = script.baseline_frames(script.synthetic_feature_frame())[name]
+    returns, targets = script.baseline_frames(frame)[name]
     result = script.variant(
         returns,
         targets,
         lag=0,
-        transition=script.free_first_trade(script.legacy_transition),
+        transition=script.free_first_trade(script.retired_legacy_transition),
         offset=script.LEGACY_OFFSETS[name],
     )
-    assert result.max_drawdown == pytest.approx(LEGACY[name][2], rel=1e-12)
+    assert result.max_drawdown == pytest.approx(drawdown, rel=1e-12)
 
 
-@pytest.mark.parametrize("name", sorted(LEGACY))
-def test_the_attribution_ends_at_the_production_baseline(script, rows, name):
-    production = script.run_baselines(script.synthetic_feature_frame())[name]
-    final = rows.loc[(name, "schedule")]
-    assert final["terminal_wealth_ratio"] == pytest.approx(
+def test_the_reported_attribution_is_one_baseline_ending_at_its_production_run(script, frame):
+    rows = script.attribution(frame)
+    assert {row["baseline"] for row in rows} == {script.ATTRIBUTED} == {"equal_weight"}
+    assert [row["step"] for row in rows[:4]] == ["legacy", "lag", "cost_base", "build"]
+    production = script.run_baselines(frame)[script.ATTRIBUTED]
+    build = _rows(script, frame, script.ATTRIBUTED).loc["build"]
+    assert build["terminal_wealth_ratio"] == pytest.approx(
         production.final_wealth / production.initial_wealth, rel=1e-15
     )
-    assert rows.loc[(name, "cost_1x"), "terminal_wealth_ratio"] == final["terminal_wealth_ratio"]
-    registered = rows.loc[(name, f"offset_{script.REBALANCE_OFFSET}"), "terminal_wealth_ratio"]
-    assert registered == final["terminal_wealth_ratio"]
 
 
 @pytest.mark.parametrize("name", sorted(LEGACY))
-def test_each_step_changes_one_thing(script, rows, name):
-    legacy, lag = rows.loc[(name, "legacy")], rows.loc[(name, "lag")]
+def test_each_step_changes_one_thing(script, frame, name):
+    rows = _rows(script, frame, name)
+    legacy, lag = rows.loc["legacy"], rows.loc["lag"]
     # D1: the first valued close moves one session later (the build executes a close later).
     assert pd.Timestamp(lag["first_valued_date"]) > pd.Timestamp(legacy["first_valued_date"])
     # D3: the build adds exactly its own charge, 10 bp per unit of risky notional bought.
-    build, cost_base = rows.loc[(name, "build")], rows.loc[(name, "cost_base")]
-    added = build["costs_bp"] - cost_base["costs_bp"]
+    added = rows.loc["build", "costs_bp"] - rows.loc["cost_base", "costs_bp"]
     assert 0.0 < added <= 10.0 + 1e-9
     # D2 sensitivity: costs scale with the multiplier, everything else is fixed.
-    zero, one, two = (rows.loc[(name, f"cost_{m}x")] for m in ("0", "1", "2"))
+    zero, one, two = (rows.loc[f"cost_{m}x"] for m in ("0", "1", "2"))
     assert zero["costs_bp"] == 0.0 and two["costs_bp"] == pytest.approx(2 * one["costs_bp"])
     assert zero["total_turnover_one_way"] == one["total_turnover_one_way"]
     assert (
@@ -241,17 +244,23 @@ def test_each_step_changes_one_thing(script, rows, name):
     )
 
 
-def test_the_offset_family_shares_the_build(script, rows):
-    offsets = rows.xs("equal_weight", level="baseline").filter(like="offset_", axis=0)
-    assert len(offsets) == script.REBALANCE_EVERY
-    assert offsets["first_valued_date"].nunique() == 1
+def test_the_production_baselines_share_one_build(script, frame):
+    results = script.run_baselines(frame)
+    build = script.common_build_date(frame)
+    assert {run.build_date for run in results.values()} == {build}
+    assert len({run.history.wealth.index[0] for run in results.values()}) == 1
 
 
 def test_the_script_writes_one_readable_summary_per_baseline(script, tmp_path):
+    ticks = iter(range(10))
+
+    def clock():
+        return GENERATED_AT.replace(microsecond=next(ticks))
+
     assert (
         script.main(
             ["--health-inputs-root", str(tmp_path)],
-            clock=lambda: GENERATED_AT,
+            clock=clock,
             code_version=lambda: {"git_sha": SHA, "git_dirty": False},
         )
         == 0
@@ -262,8 +271,11 @@ def test_the_script_writes_one_readable_summary_per_baseline(script, tmp_path):
         "inverse_volatility_every_5.json",
         "momentum_20_every_5.json",
     ]
-    for path in files:
-        record = json.loads(path.read_text())
+    records = [json.loads(path.read_text()) for path in files]
+    assert len({record["run_id"] for record in records}) == 3
+    assert len({record["generated_at"] for record in records}) == 3  # each stamped when written
+    assert len({record["assumptions"]["build_date"] for record in records}) == 1
+    for record in records:
         assert record["synthetic"] is True and record["code_sha"] == SHA
         assert record["evidence_status"] == "synthetic_engineering_only"
         assert record["transition_status"] == "approved"
@@ -276,3 +288,23 @@ def test_the_script_writes_one_readable_summary_per_baseline(script, tmp_path):
         HealthState.HEALTHY,
         HealthState.INSUFFICIENT_EVIDENCE,
     }
+
+
+def test_no_source_module_imports_or_reimplements_the_retired_legacy_step():
+    import ast
+
+    root = Path(__file__).resolve().parents[1]
+    retired = root / "src" / "stock_agent" / "environment" / "portfolio_math.py"  # unimported
+    for path in (root / "src").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(text)):
+            if isinstance(node, ast.ImportFrom):
+                assert "run_t5a_baselines" not in (node.module or ""), path
+            elif isinstance(node, ast.Import):
+                assert all("run_t5a_baselines" not in a.name for a in node.names), path
+            elif isinstance(node, ast.FunctionDef):
+                assert "legacy_transition" not in node.name, path
+        if path != retired:
+            # The attribution step's own formulas: the cash leg on two-way turnover, additive.
+            assert "np.max(cost_rate)) * two_way" not in text, path
+            assert "net_return=gross - cost" not in text, path

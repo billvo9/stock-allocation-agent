@@ -38,8 +38,10 @@ Consequences:
   clip binds only at saturation (a fund-to-cash weight ratio beyond
   e^10, about 22,000), where the weights barely move; there the action has
   no gradient signal, exactly like a binding cap.
-- After approval, Track A's `feasible_target` (caps, turnover limits) will
-  compose with the map: w = feasible(softmax(z)). The ratio stays valid, but
+- The environment composes the engine's `feasible_target` (caps, turnover
+  limits; D5, approved 2026-10-15) with the map: w = feasible(softmax(z)),
+  applied by the environment after the action is mapped, so the sampled
+  action is still the one scored. The ratio stays valid, but
   where a cap binds, moving z within the capped region changes nothing the
   environment sees: those directions carry zero signal and only variance.
   The policy then learns nothing about how far past the cap it "wants" to

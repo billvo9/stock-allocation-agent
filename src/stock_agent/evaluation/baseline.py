@@ -11,14 +11,18 @@ is the single source of its costs, returns and drift:
   every risky asset, from the drifted weights, applied multiplicatively;
   the cash account is the free funding leg. 10 bp is the provisional
   single-stock rate.
-- D3: every run builds from 100% cash at the first execution close (the
-  close after the first date) and pays for it; there is no exit charge.
+- D3: every run builds from 100% cash at the first execution close and pays
+  for it; there is no exit charge. The build decision is `build_date` (by
+  default the first date); every portfolio and benchmark in a comparison
+  shares one (`require_common_schedule`), and rebalance offsets count from
+  it (D7).
 - D5: the plain-baseline constraint set, w_max = 1 and no turnover limit.
-- D7: rebalance decisions are the dates d > 0 with d mod k == offset, one
-  registered offset (default 0) shared by every compared baseline.
+- D7: rebalance decisions are the dates d after the build decision b with
+  (d - b) mod k == offset, one registered offset (default 0) shared by every
+  compared baseline.
 - D4 (a): a cash account earning 0% is added when the inputs have none;
-  uninvested cash earns 0% for synthetic engineering only (group C, a real
-  cash rate, is not approved), so a nonzero cash return is refused.
+  uninvested cash earns 0% for synthetic engineering only, and group C cash
+  returns (D4 (b)) are not approved, so a nonzero cash return is refused.
 
 `total_turnover` is the summed one-way turnover (F2.4) of every execution,
 the build included.
@@ -41,6 +45,11 @@ from stock_agent.portfolio.schedule import ScheduleSpec, decision_sessions, exec
 from stock_agent.portfolio.transition import Constraints, Transition, portfolio_step
 
 CASH_SYMBOL = "CASH"
+CASH_RETURN_REFUSAL = "Uninvested cash earns 0% (D4 (a)): group C cash returns are not approved."
+
+
+class ScheduleMismatchError(ValueError):
+    """Compared runs do not share one build date and one rebalance schedule (D3, D7)."""
 
 
 def prepare_feature_matrix(
@@ -91,9 +100,10 @@ def drift_weights(
 @dataclass(frozen=True)
 class BaselineResult:
     """
-    A baseline run. `simulation` is the engine's full record (executions,
-    steps, feasibility) and `constraints` the registered D5 set, when the
-    result came from the engine.
+    A baseline run. When the result came from the engine, `simulation` is
+    its full record (executions, steps, feasibility), `constraints` the
+    registered D5 set, `schedule` the registered schedule and `build_date`
+    the build decision's date.
     """
 
     initial_wealth: float
@@ -104,6 +114,8 @@ class BaselineResult:
     history: BacktestHistory | None = None
     simulation: SimulationResult | None = None
     constraints: Constraints | None = None
+    schedule: ScheduleSpec | None = None
+    build_date: pd.Timestamp | None = None
 
 
 def update_peak_and_drawdown(
@@ -210,8 +222,13 @@ def backtest_inputs(
     transaction_cost_rate: float,
     rebalance_offset: int = 0,
     cash_symbol: str = CASH_SYMBOL,
+    build_date: pd.Timestamp | None = None,
 ) -> BacktestInputs:
-    """Validate a date x symbol backtest and lay it out for `portfolio.engine.simulate`."""
+    """
+    Validate a date x symbol backtest and lay it out for
+    `portfolio.engine.simulate`. The build is decided at `build_date` (the
+    first date by default); earlier rows are never traded or earned.
+    """
 
     if rebalance_every <= 0:
         raise ValueError("Rebalance interval must be positive.")
@@ -225,10 +242,17 @@ def backtest_inputs(
     if list(returns.columns) != list(target_weights.columns):
         raise ValueError("Returns and target weights must have matching symbols.")
 
-    if len(returns) < 3:
+    if build_date is None:
+        first = 0
+    elif build_date in returns.index:
+        first = int(returns.index.get_loc(build_date))
+    else:
+        raise ValueError(f"The build date {build_date} is not a date of these inputs.")
+
+    if len(returns) - first < 3:
         raise ValueError(
-            "Backtest requires at least three dates: a decision, its execution close "
-            "and one earned return."
+            "Backtest requires at least three dates from the build: a decision, its "
+            "execution close and one earned return."
         )
 
     returns = returns.astype(float)
@@ -239,17 +263,19 @@ def backtest_inputs(
 
     if cash_symbol in returns.columns:
         if not (returns[cash_symbol].iloc[1:] == UNINVESTED_CASH_RETURN).all():
-            raise ValueError(
-                "Uninvested cash earns 0% (D4 (a)); a cash rate needs group C, "
-                "which is not approved."
-            )
+            raise ValueError(CASH_RETURN_REFUSAL)
     else:
         returns = returns.assign(**{cash_symbol: UNINVESTED_CASH_RETURN})
         target_weights = target_weights.assign(**{cash_symbol: 0.0})
 
     columns = tuple(returns.columns)
     cash = columns.index(cash_symbol)
-    schedule = ScheduleSpec(every=rebalance_every, offset=rebalance_offset, lag=execution_lag())
+    schedule = ScheduleSpec(
+        every=rebalance_every,
+        offset=rebalance_offset,
+        lag=execution_lag(),
+        first_decision=first,
+    )
     weights = target_weights.to_numpy(dtype=float)
     cost_rate = np.full(len(columns), float(transaction_cost_rate))
     cost_rate[cash] = 0.0
@@ -269,6 +295,7 @@ def baseline_result(
     simulation: SimulationResult,
     dates: pd.Index,
     constraints: Constraints | None = None,
+    schedule: ScheduleSpec | None = None,
 ) -> BaselineResult:
     """A `BaselineResult` from a complete engine run over `dates`."""
 
@@ -301,7 +328,42 @@ def baseline_result(
         history=BacktestHistory(portfolio_returns=portfolio_returns, wealth=wealth),
         simulation=simulation,
         constraints=constraints,
+        schedule=schedule,
+        build_date=None if schedule is None else dates[schedule.first_decision],
     )
+
+
+def require_common_schedule(
+    portfolios: dict[str, BaselineResult],
+    benchmarks: dict[str, BaselineResult] | None = None,
+) -> None:
+    """
+    D3 and D7: every compared portfolio and benchmark builds at one common
+    build date and first execution close, and every portfolio rebalances on
+    one registered schedule (the same k and offset). Buy-and-hold benchmarks
+    share the build only. Raises `ScheduleMismatchError` otherwise.
+    """
+
+    runs = {**portfolios, **(benchmarks or {})}
+    if not portfolios:
+        raise ScheduleMismatchError("A comparison needs at least one portfolio.")
+    missing = sorted(name for name, run in runs.items() if run.schedule is None)
+    if missing:
+        raise ScheduleMismatchError(f"No engine schedule recorded for {missing}.")
+
+    def first_close(run: BaselineResult) -> pd.Timestamp:
+        return run.history.wealth.index[0]
+
+    builds = {(run.build_date, first_close(run)) for run in runs.values()}
+    if len(builds) > 1:
+        detail = {name: (str(run.build_date), str(first_close(run))) for name, run in runs.items()}
+        raise ScheduleMismatchError(f"Runs build on different dates: {detail}")
+    phases = {(run.schedule.every, run.schedule.offset) for run in portfolios.values()}
+    if len(phases) > 1:
+        detail = {
+            name: (run.schedule.every, run.schedule.offset) for name, run in portfolios.items()
+        }
+        raise ScheduleMismatchError(f"Portfolios rebalance on different schedules: {detail}")
 
 
 def run_rebalanced_backtest(
@@ -313,6 +375,7 @@ def run_rebalanced_backtest(
     rebalance_offset: int = 0,
     *,
     cash_symbol: str = CASH_SYMBOL,
+    build_date: pd.Timestamp | None = None,
     transition: Transition = portfolio_step,
 ) -> BaselineResult:
     """
@@ -331,6 +394,7 @@ def run_rebalanced_backtest(
         transaction_cost_rate=transaction_cost_rate,
         rebalance_offset=rebalance_offset,
         cash_symbol=cash_symbol,
+        build_date=build_date,
     )
 
     simulation = simulate(
@@ -343,7 +407,7 @@ def run_rebalanced_backtest(
         transition=transition,
     )
 
-    return baseline_result(simulation, inputs.dates, inputs.constraints)
+    return baseline_result(simulation, inputs.dates, inputs.constraints, inputs.schedule)
 
 
 def run_inverse_volatility_baseline(
@@ -353,6 +417,7 @@ def run_inverse_volatility_baseline(
     rebalance_every: int = 5,
     transaction_cost_rate: float = 0.001,
     rebalance_offset: int = 0,
+    build_date: pd.Timestamp | None = None,
 ) -> BaselineResult:
     returns = prepare_feature_matrix(
         frame=frame,
@@ -372,6 +437,7 @@ def run_inverse_volatility_baseline(
         rebalance_every=rebalance_every,
         transaction_cost_rate=transaction_cost_rate,
         rebalance_offset=rebalance_offset,
+        build_date=build_date,
     )
 
 
@@ -403,6 +469,7 @@ def run_equal_weight_baseline(
     rebalance_every: int = 5,
     transaction_cost_rate: float = 0.001,
     rebalance_offset: int = 0,
+    build_date: pd.Timestamp | None = None,
 ) -> BaselineResult:
     returns = prepare_feature_matrix(
         frame=frame,
@@ -422,6 +489,7 @@ def run_equal_weight_baseline(
         rebalance_every=rebalance_every,
         transaction_cost_rate=transaction_cost_rate,
         rebalance_offset=rebalance_offset,
+        build_date=build_date,
     )
 
 
@@ -499,11 +567,10 @@ def run_momentum_baseline(
     cash_symbol: str = CASH_SYMBOL,
     cash_return: float = UNINVESTED_CASH_RETURN,
     rebalance_offset: int = 0,
+    build_date: pd.Timestamp | None = None,
 ) -> BaselineResult:
     if cash_return != UNINVESTED_CASH_RETURN:
-        raise ValueError(
-            "Uninvested cash earns 0% (D4 (a)); a cash rate needs group C, which is not approved."
-        )
+        raise ValueError(CASH_RETURN_REFUSAL)
 
     returns = prepare_feature_matrix(
         frame=frame,
@@ -536,4 +603,5 @@ def run_momentum_baseline(
         transaction_cost_rate=transaction_cost_rate,
         rebalance_offset=rebalance_offset,
         cash_symbol=cash_symbol,
+        build_date=build_date,
     )

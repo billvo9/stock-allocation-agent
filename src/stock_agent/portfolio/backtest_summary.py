@@ -79,6 +79,8 @@ def max_drawdown(wealth: Sequence[float | None]) -> float | None:
     if len(wealth) < 2 or any(value is None for value in wealth):
         return None
     values = np.asarray(wealth, dtype=float)
+    if not np.isfinite(values).all() or (values <= 0).any():
+        raise ValueError("wealth must be positive and finite to measure a drawdown")
     return float(np.max(1.0 - values / np.maximum.accumulate(values)))
 
 

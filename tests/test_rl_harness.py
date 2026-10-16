@@ -1,6 +1,7 @@
 """
 The comparison harness: every method on the same dates, assets, costs and
-constraints, and no comparison table until the transition is approved.
+constraints, and no comparison table until the transition is approved and the
+registered comparison releases it.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ def _entries():
     ]
 
 
-def _run(builder, info=UNAPPROVED):
+def _run(builder, info=UNAPPROVED, release_tables=False):
     return harness.run_comparison(
         _entries(),
         FOLD,
@@ -50,6 +51,7 @@ def _run(builder, info=UNAPPROVED):
         transition=tr.portfolio_step,
         transition_info=info,
         env_config=ENV_CONFIG,
+        release_tables=release_tables,
     )
 
 
@@ -127,8 +129,20 @@ def test_no_comparison_table_without_an_approved_transition(comparison):
         comparison.comparison_table()
 
 
+def test_an_approved_transition_alone_does_not_release_a_table(builder):
+    run = _run(builder, info=APPROVED)
+    assert not run.tables_released
+    assert run.engineering_report()["comparison_tables"] == harness.WITHHELD_UNRELEASED
+    with pytest.raises(harness.ComparisonWithheldError):
+        run.comparison_table()
+    # Releasing tables never overrides an unapproved transition.
+    unapproved = _run(builder, info=UNAPPROVED, release_tables=True)
+    with pytest.raises(harness.UnapprovedTransitionError):
+        unapproved.comparison_table()
+
+
 def test_with_an_approved_transition_learned_seeds_are_a_distribution(builder):
-    table = _run(builder, info=APPROVED).comparison_table()
+    table = _run(builder, info=APPROVED, release_tables=True).comparison_table()
     rows = {(row["method"], row["scenario"]): row for row in table["rows"]}
     assert ("equal_weight", "calm") in rows
     group = table["groups"]["ppo"]
@@ -139,7 +153,7 @@ def test_with_an_approved_transition_learned_seeds_are_a_distribution(builder):
 
 
 def test_comparison_tables_never_carry_engineering_diagnostics(builder):
-    table = _run(builder, info=APPROVED).comparison_table()
+    table = _run(builder, info=APPROVED, release_tables=True).comparison_table()
     for row in table["rows"]:
         assert set(row) == {"method", "scenario", "episodes", "log_growth", "trades", "fallbacks"}
     record = next(iter(next(iter(_run(builder, info=APPROVED).records.values())).values()))

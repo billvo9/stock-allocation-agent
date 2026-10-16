@@ -1,14 +1,15 @@
 # T5a: the approved portfolio engine (implementation notes)
 
-Status (2026-10-15): implemented as approved. The owner approved T5a
+Status (2026-10-16): implemented as approved. The owner approved T5a
 decisions D1-D8 on 2026-10-15 (`t5a_open_decisions.md`, approval record);
 group B of `t5_portfolio_formulas.md` (F1.1-F1.3, F2.1-F2.6, F7.1-F7.2,
 F8.1) is the specification. D9, D4 (b), D8 (b) and (c), and groups C and D
 are not approved and are not implemented.
 
 Everything here runs on synthetic data. Nothing in this document, the code or
-the tests is evidence about any real strategy, and the baseline numbers below
-are an attribution of an engine change, not a strategy comparison.
+the tests is evidence about any real strategy. No strategy comparison is
+published: the registered comparison (baselines against PPO) is a separate,
+later change, and comparison tables stay withheld until it releases them.
 
 ## 1. One source of portfolio economics
 
@@ -19,20 +20,27 @@ are an attribution of an engine change, not a strategy comparison.
 | Feasibility map (`feasible_target`, `Constraints`) | same | D5 |
 | Lag, schedule, offsets, deferral (`execution_lag`, `decision_sessions`, `execution_plan`, `offset_family`, `next_executable_session`) | `src/stock_agent/portfolio/schedule.py` | D1, D6, D7, F1.1, F1.3, F7.1, F7.2 |
 | The caller (`collect_targets`, `simulate`, `simulate_cost_sensitivity`) | `src/stock_agent/portfolio/engine.py` | D1, D3, D4 (a), D6 |
+| Common build date and schedule (`build_date`, `require_common_schedule`) | `src/stock_agent/evaluation/baseline.py` | D3, D7 |
 | Reward (`log_growth_reward`) | `src/stock_agent/environment/reward.py`, `src/stock_agent/rl/reward.py` | D8 (a) |
 | Health input (`backtest_summary`) | `src/stock_agent/portfolio/backtest_summary.py` | agreed format v1.0 |
 
 Every simulator calls `portfolio_step`:
 
-- `evaluation.baseline.run_rebalanced_backtest` and the rule baselines run on
-  `engine.simulate`;
+- `evaluation.baseline.run_rebalanced_backtest`, the rule baselines and the
+  buy-and-hold benchmark run on `engine.simulate`;
 - the RL environment (`rl.env.AllocationEnv`), every policy evaluation and
   PPO training inject it (`rl.transition.APPROVED_TRANSITION`, status
   `approved`); the engineering stand-in `rl/reference_transition.py` is
-  deleted;
+  deleted. The environment's one-session execution lag is checked against
+  `execution_lag()` when it is built;
 - `environment/portfolio_math.py`, the pre-T5a helpers, is imported by no
   production module (a test enforces it). It stays, unused, until the owner
   approves deleting it and its tests.
+
+`scripts/run_t5a_baselines.py` keeps the pre-T5a step,
+`retired_legacy_transition`, only to reproduce the old engine in the
+attribution (section 2). No module under `src/` imports or reimplements it
+(tested).
 
 ### The formulas, with the owner's words
 
@@ -55,17 +63,20 @@ Every simulator calls `portfolio_step`:
   `CostModel.sensitivity()` gives the 0×, 1× and 2× models and
   `engine.simulate_cost_sensitivity` runs all three on the same targets.
 - **D3** ("Begin in cash, charge initial construction and use no terminal
-  liquidation charge for marked-to-market comparisons."). Every run starts as
-  100% cash at its first decision's execution close and pays D2 for the
-  build. There is no exit charge.
+  liquidation charge for marked-to-market comparisons."). Every portfolio and
+  every benchmark starts as 100% cash at the common first execution close and
+  pays D2 for the build. There is no exit charge. The benchmarks are broad
+  equity price indices, bought through their tradable proxy, so the build
+  pays D2's broad-ETF rate (5 bp).
 - **D4 (a)** ("Uninvested cash earns 0% for synthetic engineering. SHV is a
   separately traded ETF. Do not claim this is realistic interest-bearing cash
   economics; Group C remains necessary for real economic comparisons.").
   Callers supply `engine.UNINVESTED_CASH_RETURN` (0.0) and label results
   "uninvested cash earns 0% (synthetic engineering only; group C pending)"
-  (`engine.CASH_RETURN_LABEL`). The baselines refuse a nonzero cash return.
-  The engine itself books whatever cash return it is given, so its mechanics
-  are also tested with nonzero rates.
+  (`engine.CASH_RETURN_LABEL`). Because group C cash returns (D4 (b)) are not
+  approved, the baselines refuse a nonzero cash return ("group C cash returns
+  are not approved"). The engine itself books whatever cash return it is
+  given, so its mechanics are also tested with nonzero rates.
 - **D5** ("Long-only, sum-to-one, excess above a cap goes to cash, default
   cap 1.0 and no default turnover cap for plain baselines. Stricter
   constraints are explicitly registered for learned policies."). A target
@@ -92,71 +103,62 @@ Every simulator calls `portfolio_step`:
   103.01505 and the sessions inside the gap have wealth None. A held asset
   whose close has no available return stops the run (`distribution_in_gap`).
 - **D7** ("Common initial build date, registered rebalance offset and
-  consistent schedules across comparisons."). Rebalance decisions are the
-  sessions d > d_first with (d − d_first) mod k = o. `offset_family` returns
-  all k offsets as one variant with a k-member family; the registered offset
-  is the result and the family is its sensitivity, never a choice.
+  consistent schedules across comparisons."). Every compared run is given one
+  `build_date`; rebalance decisions are the dates d after it with
+  (d − build) mod k = o, so offsets count from the common build.
+  `require_common_schedule` refuses a comparison whose portfolios and
+  benchmarks build on different dates or whose portfolios rebalance on
+  different schedules. `offset_family` returns all k offsets as one variant
+  with a k-member family; the registered offset is the result and the family
+  is its sensitivity, never a choice.
 - **D8 (a)** ("PPO reward equals net log-wealth growth, without
   double-counting already incurred transaction costs."). reward =
-  log(1 + R_net). `environment.reward.calculate_reward` no longer subtracts a
-  cost term; its squared-drawdown penalty is not an approved reward and
-  nothing in production calls it.
+  log(1 + R_net). The penalised `calculate_reward`, which subtracted costs a
+  second time and is not an approved reward, is removed.
 
-### Interpretations the packet left open
+### Interpretations pending the owner's confirmation
 
 Each is the simplest reading consistent with the owner's words, implemented
-identically in the engine, the oracle and the tests. Each is listed for the
-owner's review.
+identically in the engine, the oracle and the tests.
 
-1. **A hold does not supersede.** A decision of None ("keep the drifted
-   holdings") is not a target, so it does not replace a deferred target,
-   which keeps waiting. Otherwise a buy-and-hold whose build is deferred would
-   cancel its own build at its next (hold) decision and stay in cash.
-2. **The turnover limit applies to the build too.** One feasibility map
-   applies to every target, so with `tau_max` set a build from cash is
-   partial. This matches the reference oracle written to the packet. The
-   plain baselines register no `tau_max`, so it does not arise there.
-3. **Dust.** Weight changes below 1e-12 are zeroed (spec 2 (f)); a target
-   within 1e-12 of the drifted weights in every component is no trade.
-4. **The cash entry of `cost_rate` is never charged**, whatever its value
-   (F2.2 sums over non-cash legs only).
-5. **RL gaps.** The RL environment decides and trades only on sessions where
-   every asset closes (the universe-complete form of D6, with the packet's
-   "no decision is taken on gap sessions"). It equals the engine's rule
-   whenever every fund is held or targeted, which is true of every softmax
-   policy, and it is stricter otherwise, identically for every method.
-6. **Price-index benchmarks.** `run_buy_and_hold_benchmark` builds from cash at
-   the common first execution close but at zero cost: a price index cannot be
-   traded, and a fund total-return benchmark with a D2 build cost (F4.1) is
-   group C.
+- **(a) A hold does not supersede.** A decision of None ("keep the drifted
+  holdings") is not a target, so it does not replace a deferred target,
+  which keeps waiting. Otherwise a buy-and-hold whose build is deferred would
+  cancel its own build at its next (hold) decision and stay in cash.
+- **(b) The turnover limit also limits the build.** One feasibility map
+  applies to every target, so with `tau_max` set a build from cash is
+  partial: a 50/50 build with τ_max = 0.25 executes (0.125, 0.125, 0.75 cash).
+  This matches the reference oracle written to the packet. The plain
+  baselines register no limit, so it does not arise there.
+
+Other details, by the packet's own rules: weight changes below 1e-12 are dust
+and no trade (spec 2 (f)); the cash entry of `cost_rate` is never charged,
+whatever its value (F2.2). The RL environment decides and trades only on
+sessions where every asset closes (the universe-complete form of D6, with the
+packet's "no decision is taken on gap sessions"); it equals the engine's rule
+whenever every fund is held or targeted, which is true of every softmax
+policy, and it is stricter otherwise, identically for every method.
 
 ## 2. The baseline migration, one change at a time
 
-`scripts/run_t5a_baselines.py --attribution` runs the three rule baselines
-(equal weight, inverse volatility, 20-session momentum; rebalance every 5
-sessions; 10 bp) on a seeded synthetic panel (three Gaussian random-walk
-assets, seed 20261015, 300 sessions, 262 common dates), adding the approved
-rules one at a time. The `legacy` row reproduces the pre-T5a
-`run_rebalanced_backtest` exactly (tested to 1e-12). The last row is the
-production baseline. Δ is the change in terminal wealth from the previous
-row, in basis points of starting wealth. Turnover is one-way, including the
-initial portfolio.
+`scripts/run_t5a_baselines.py --attribution` takes the equal-weight baseline
+(three Gaussian random-walk assets, seed 20261015; rebalance every 5
+sessions; 10 bp) and adds the approved rules one at a time. The `legacy` row
+reproduces the pre-T5a `run_rebalanced_backtest` exactly (tested to 1e-12,
+and the same reproduction is tested for every baseline); the `build` row is
+the production baseline. Δ is the change in terminal wealth from the
+previous row, in basis points of starting wealth. This attributes an engine
+change; it compares no strategies.
 
-| Step | Change | Equal weight Δ | Inverse volatility Δ | Momentum Δ |
-|---|---|---|---|---|
-| legacy | lag 0, cash leg charged on two-way turnover, additive, free build, each strategy's own phase | (1.253623) | (1.295125) | (1.299716) |
-| lag | next-close execution (D1) | +54.6 | +48.8 | +229.3 |
-| cost_base | risky legs only, multiplicative (D2) | −0.0 | −0.2 | +50.3 |
-| build | charged build from cash (D3) | −12.6 | −13.0 | −13.3 |
-| schedule | one registered offset, o = 0 (D7) | +0.0 | −74.9 | −1,370.9 |
-| approved | final terminal wealth ratio | 1.257822 | 1.291199 | 1.189266 |
+| Step | Change | Δ (bp) |
+|---|---|---|
+| legacy | lag 0, cash leg charged on two-way turnover, additive, free build | (ratio 1.253623) |
+| lag | next-close execution (D1) | +54.6 |
+| cost_base | risky legs only, multiplicative (D2) | −0.0 |
+| build | charged build from cash (D3) | −12.6 |
 
-| Sensitivity (approved engine) | Equal weight | Inverse volatility | Momentum |
-|---|---|---|---|
-| all 5 offsets, max − min (bp) | 45.4 | 126.4 | 3,552.3 |
-| costs at 0× / 1× / 2× (bp of wealth, summed) | 0 / 23.0 / 45.9 | 0 / 50.4 / 100.8 | 0 / 274.5 / 549.0 |
-
-How to read it:
+Equal weight's rebalance phase is offset 0 before and after D7, so the
+schedule change does not move it. How to read it:
 
 - **Lag.** The execution moves one close later and the first earned return
   is dropped. On i.i.d. synthetic returns there is no short-term reversal or
@@ -164,25 +166,20 @@ How to read it:
   data, same-close execution of a close-based signal is systematically
   optimistic whenever returns reverse or continue at short horizons; that,
   not this table, is why D1 matters.
-- **Cost base.** Equal weight and inverse volatility hold no cash, so moving
-  the cost off the cash leg changes nothing and only the additive-to-
-  multiplicative change moves wealth (by less than 1 bp). Momentum moves in
-  and out of cash, and the legacy engine charged both legs of every such
-  trade: +50 bp.
-- **Build.** Each portfolio now pays 10 bp on its initial purchase: about
+- **Cost base.** Equal weight holds no cash, so moving the cost off the cash
+  leg changes nothing; only the additive-to-multiplicative change moves
+  wealth, by less than 1 bp. A rule that trades in and out of cash would
+  move more, because the legacy engine charged both legs of every such trade.
+- **Build.** The portfolio now pays 10 bp on its initial purchase: about
   −10 bp, compounded.
-- **Schedule.** Equal weight already used offset 0. The other two used the
-  phase k − 1 (spec 7 (a)). Momentum's −1,371 bp is a phase change, and its
-  own five offsets span 3,552 bp: a single rebalance phase is one draw among
-  k, so the offset family, not the registered result alone, says how much the
-  phase matters (F7.2).
 
 ## 3. The `backtest_summary` health input
 
 `scripts/run_t5a_baselines.py` writes one file per baseline to
 `reports/health_inputs/backtest_summary/<run_id>.json` (ignored by Git), in
 the agreed v1.0 format, with `transition_status` "approved", `synthetic`
-true and `evidence_status` "synthetic_engineering_only".
+true and `evidence_status` "synthetic_engineering_only". Each file has its
+own `run_id` and the time it was generated.
 
 | Measure | Definition | Compared with |
 |---|---|---|
@@ -192,11 +189,11 @@ true and `evidence_status` "synthetic_engineering_only".
 | `max_drawdown` | F6.5 on the simulated pre-trade wealth path; null if any close is unavailable (R5c) | `max_drawdown` (null: none registered) |
 
 `units` carries these definitions and `assumptions` the cost rates and
-multiplier, the cash label, the lag and the schedule. The health reader
-ignores both (extra fields). The F2.4 calendar-year annualization of turnover
-and an annualized cost figure are not used: their calendar basis is a group D
-matter (F6.1), and the per-execution maximum is the quantity D5's limit
-constrains.
+multiplier, the cash label, the lag, the build date and the schedule. The
+health reader ignores both (extra fields). The F2.4 calendar-year
+annualization of turnover and an annualized cost figure are not used: their
+calendar basis is a group D matter (F6.1), and the per-execution maximum is
+the quantity D5's limit constrains.
 
 ## 4. Validation
 
@@ -216,22 +213,20 @@ constrains.
   constraint, a binding cap, and a binding turnover limit. A simulator with a
   cost or timing advantage is detected.
 - **Execution delay.** A lag-0 engine, an engine whose holdings earn the
-  execution close's return, and a caller that shows a decision its next row
-  are each detected (`tests/reference/timing.py`).
+  execution close's return, a caller that shows a decision its next row, and
+  an RL environment whose lag disagrees with `execution_lag()` are each
+  detected.
 - **Invariants.** Seeded property tests of F8.1 (weights on the simplex
   within 1e-12, 0 ≤ C < 1, R_net ≤ R_gross, pure drift without a trade, an
   all-cash portfolio earns the cash return, telescoping wealth, costs move
-  wealth but never weights).
+  wealth but never weights, a nonzero cash cost entry is never charged).
 - **Determinism.** A simulation and a target collection replay bit for bit.
-- **Mutation probes (2026-10-15).** 36 targeted mutants, one per guarantee
-  (D1 3, D2 6, D3 2, D4 1, D5 7, D6 8, D7 2, D8 2, drift 2, health input 3),
-  each run against the T5a, baseline and RL-transition suites: 35 killed. The
-  survivor, "defer only on targeted assets", is equivalent: the held-asset
-  half of D6's rule is enforced twice (a session where a held asset has no
-  close is not valued, so nothing can trade there), and the mutant removing
-  both guards is killed. Three earlier survivors led to the tests for the
-  0% added cash account, a rebalance that sells a held asset inside its gap,
-  and drift reported at the final close.
+- **Mutation probes (2026-10-16).** 48 targeted mutants, one per guarantee,
+  run against the T5a, baseline, benchmark, reward and RL suites: 46 killed.
+  Both survivors are equivalent, because the guarantee is enforced twice
+  (the held-asset half of D6's deferral, also blocked by valuation; the
+  momentum baseline's cash-rate refusal, also made by `backtest_inputs`),
+  and each mutant that removes both guards is killed.
 
 ## 5. Limitations
 
@@ -240,11 +235,12 @@ constrains.
   about real trading costs or interest-bearing cash (group C).
 - Trades fill at the close at the close price; the O(c²) fixed point of
   paying costs from the traded amount is ignored (F2.3).
-- Benchmarks are still price indices at zero cost (group C, F4.1).
+- Benchmarks are still price indices, charged D2's broad-ETF rate to build;
+  a fund total-return benchmark (F4.1) is group C.
 - No performance metric beyond the descriptive drawdown is approved for
   simulations (group D: CAGR basis, intervals, participation).
 - The RL environment's gap rule is stricter than the engine's when a policy
-  neither holds nor targets some fund (section 1, item 5).
+  neither holds nor targets some fund (section 1).
 
 ## 6. Learning notes
 
@@ -267,10 +263,12 @@ constrains.
    Subtracting C again would give 0.0034119, counting $30 twice.
 5. **Leakage risks.** Same-close execution of a close-based signal (lag 0);
    a caller that hands a decision its own next return; carrying wealth flat
-   across a gap (a fabricated return of 0); and choosing the rebalance offset
-   or cost rate after seeing results.
-6. **Ways results could mislead.** One rebalance phase is one draw among k
-   (momentum's 3,552 bp offset spread above). Costs at 1× only hide how
+   across a gap (a fabricated return of 0); runs that build on different
+   dates; and choosing the rebalance offset or cost rate after seeing
+   results.
+6. **Ways results could mislead.** One rebalance phase is one draw among k,
+   so a phase change alone can move a high-turnover rule by more than any
+   cost assumption; report the offset family. Costs at 1× only hide how
    fragile a high-turnover rule is; 0× and 2× show it. A 0% cash rate
    understates cash-heavy rules. Synthetic random walks have no exploitable
    structure, so no ranking of rules on them means anything.

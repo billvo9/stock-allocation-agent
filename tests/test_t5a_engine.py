@@ -33,6 +33,7 @@ from stock_agent.portfolio.transition import (
     TBILL_FUND,
     Constraints,
     CostModel,
+    feasible_target,
     portfolio_step,
 )
 
@@ -534,3 +535,61 @@ def test_a_rebalance_that_sells_a_held_asset_waits_for_its_close():
     )
     assert result.trades[1].session == 4
     assert result.wealth[-1] == pytest.approx(103.01505, abs=1e-12)
+
+
+@pytest.mark.parametrize("cash_rate", [0.0, 0.001, 0.5])
+def test_the_cash_entry_of_cost_rate_is_never_charged(cash_rate):
+    # D2: the cash account is the free funding leg, whatever its cost_rate entry says.
+    rng = np.random.RandomState(42)
+    for _ in range(50):
+        w_pre, target = rng.dirichlet(np.ones(4)), rng.dirichlet(np.ones(4))
+        r_next = rng.uniform(-0.1, 0.1, 4)
+        free = portfolio_step(w_pre, target, r_next, np.array([1e-3, 5e-4, 2e-4, 0.0]), 3)
+        charged = portfolio_step(w_pre, target, r_next, np.array([1e-3, 5e-4, 2e-4, cash_rate]), 3)
+        assert charged.cost == free.cost and charged.net_return == free.net_return
+    returns = np.array([[NAN] * 2, [0.0] * 2, [0.0] * 2, [0.0] * 2])
+    sold = engine.simulate(
+        returns,
+        {0: np.array([1.0, 0.0]), 1: np.array([0.0, 1.0])},
+        lag=1,
+        cost_rate=np.array([0.001, cash_rate]),
+        constraints=Constraints(1),
+        initial_wealth=100_000.0,
+    )
+    assert sold.wealth[-1] == pytest.approx(100_000.0 * 0.999 * 0.999)  # build, then the sale
+
+
+def test_interpretation_b_the_turnover_limit_also_limits_the_build():
+    # Pending the owner's confirmation: one feasibility map for every target, the build
+    # included. A 50/50 build from cash with tau_max = 0.25 executes a quarter of the way.
+    record = feasible_target(
+        np.array([0.5, 0.5, 0.0]), np.array([0.0, 0.0, 1.0]), Constraints(2, tau_max=0.25)
+    )
+    np.testing.assert_allclose(record.weights, [0.125, 0.125, 0.75], rtol=0, atol=TOLERANCE)
+    assert record.alpha == pytest.approx(0.25) and record.binding == ("tau_max",)
+    result = engine.simulate(
+        np.array([[NAN] * 3, [0.0] * 3, [0.0] * 3]),
+        {0: np.array([0.5, 0.5, 0.0])},
+        lag=1,
+        cost_rate=np.zeros(3),
+        constraints=Constraints(2, tau_max=0.25),
+        initial_wealth=1.0,
+    )
+    np.testing.assert_allclose(result.steps[0].w_post_trade, [0.125, 0.125, 0.75], atol=TOLERANCE)
+
+
+def test_interpretation_a_a_hold_does_not_supersede_a_deferred_build():
+    # Pending the owner's confirmation: a buy-and-hold whose build is deferred still builds.
+    # A has no close at the build's execution close (1) or at 2; the holds are due at 2 and 3.
+    returns = np.array([[NAN] * 3, [NAN, 0.0, 0.0], [NAN, 0.01, 0.0], [0.02, 0.01, 0.0], [0.0] * 3])
+    result = engine.simulate(
+        returns,
+        {0: np.array([0.5, 0.5, 0.0]), 1: None, 2: None},
+        lag=1,
+        cost_rate=np.zeros(3),
+        constraints=Constraints(2),
+        initial_wealth=1.0,
+    )
+    build = result.executions[0]
+    assert (build.execution, build.reason) == (3, schedule.UNEXECUTABLE_MISSING_CLOSE)
+    assert result.trades[0].session == 3

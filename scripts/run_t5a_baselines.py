@@ -2,29 +2,30 @@
 Run the rule baselines on the approved T5a engine over a seeded synthetic panel.
 
 SYNTHETIC ENGINEERING ONLY. The panel is three random-walk assets standing
-for single stocks; nothing here is evidence about any real strategy, and the
-baselines' numbers are not a strategy comparison. Uninvested cash earns 0%
-(D4 (a), synthetic engineering only; group C pending), and the 10 bp cost is
-D2's provisional single-stock rate.
+for single stocks; nothing here is evidence about any real strategy, and no
+output compares strategies (the registered comparison is a separate, later
+change). Uninvested cash earns 0% (D4 (a), synthetic engineering only; group
+C pending), and the 10 bp cost is D2's provisional single-stock rate.
 
 Two outputs:
 
 - the Model Health Center's input (agreed format v1.0, ignored by Git), one
-  per baseline: <health-inputs-root>/backtest_summary/<run_id>.json;
-- with --attribution, the one-change-at-a-time attribution of each baseline's
-  numbers from the pre-T5a engine to the approved one:
+  per baseline: <health-inputs-root>/backtest_summary/<run_id>.json, each with
+  its own run_id and the time it was generated;
+- with --attribution, for the equal-weight baseline only, the
+  one-change-at-a-time attribution of its numbers from the pre-T5a engine to
+  the approved one, then its 0x, 1x and 2x cost sensitivity (D2):
       legacy     same-close execution (lag 0), the cash leg charged on two-way
-                 turnover and netted additively, a free initial portfolio, and
-                 each strategy's own rebalance phase
+                 turnover and netted additively, and a free initial portfolio
       lag        + next-close execution (D1)
       cost_base  + costs on risky legs only, multiplicative (D2)
-      build      + a charged build from 100% cash (D3)
-      schedule   + one registered rebalance offset for every baseline (D7)
-  then the approved engine at every rebalance offset (F7.2: the registered
-  offset is the result, the others its sensitivity family) and at 0x, 1x and
-  2x the cost rate (D2). The legacy
-  step reproduces the pre-T5a `run_rebalanced_backtest` exactly; the legacy
-  transition below exists only for this attribution.
+      build      + a charged build from 100% cash (D3): the approved engine
+  Equal weight's rebalance phase is unchanged by D7 (offset 0 before and
+  after). The legacy step reproduces the pre-T5a `run_rebalanced_backtest`
+  exactly, through `retired_legacy_transition`, which exists only here.
+
+Every baseline builds at one common build date, the first date with a
+momentum target (D3, D7; `require_common_schedule`).
 
 Usage (from the repository root):
     .venv/bin/python scripts/run_t5a_baselines.py [--attribution]
@@ -52,6 +53,7 @@ from stock_agent.evaluation.baseline import (
     prepare_feature_matrix,
     prepare_inverse_volatility_targets,
     prepare_momentum_targets,
+    require_common_schedule,
     run_equal_weight_baseline,
     run_inverse_volatility_baseline,
     run_momentum_baseline,
@@ -87,7 +89,15 @@ POLICIES = {
     "inverse_volatility": f"inverse_volatility_every_{REBALANCE_EVERY}",
     "momentum": f"momentum_{LOOKBACK}_every_{REBALANCE_EVERY}",
 }
-STEPS = ("legacy", "lag", "cost_base", "build", "schedule")
+ATTRIBUTED = "equal_weight"  # the one baseline whose attribution is reported
+STEPS = ("legacy", "lag", "cost_base", "build")
+# Each strategy's own pre-T5a rebalance phase: equal weight decided on dates
+# k, 2k, ..., the others on k - 1, 2k - 1, ... (spec 7 (a)).
+LEGACY_OFFSETS = {
+    "equal_weight": 0,
+    "inverse_volatility": REBALANCE_EVERY - 1,
+    "momentum": REBALANCE_EVERY - 1,
+}
 
 
 def synthetic_feature_frame(seed: int = SEED, sessions: int = SESSIONS) -> pd.DataFrame:
@@ -111,46 +121,42 @@ def synthetic_feature_frame(seed: int = SEED, sessions: int = SESSIONS) -> pd.Da
     return long.rename(columns={"level_0": "date", "level_1": "symbol"})
 
 
-def baseline_frames(frame: pd.DataFrame) -> dict[str, tuple[pd.DataFrame, pd.DataFrame]]:
-    """Each baseline's (returns, targets) on the common dates, as `run_*_baseline` builds them."""
+def common_build_date(frame: pd.DataFrame) -> pd.Timestamp:
+    """The one build date of every baseline: the first date with a momentum target."""
 
-    symbols = list(SYMBOLS)
-    momentum = prepare_momentum_targets(frame, symbols, lookback=LOOKBACK)
-    common = frame[frame["date"] >= momentum.index[0]]
-    returns = prepare_feature_matrix(common, symbols, "daily_return")
-    return {
-        "equal_weight": (returns, prepare_equal_weight_targets(returns, symbols)),
-        "inverse_volatility": (returns, prepare_inverse_volatility_targets(common, symbols)),
-        "momentum": (add_cash_returns(returns.loc[momentum.index]), momentum),
-    }
+    return prepare_momentum_targets(frame, list(SYMBOLS), lookback=LOOKBACK).index[0]
 
 
 def run_baselines(frame: pd.DataFrame, rate: float = COST_RATE) -> dict[str, BaselineResult]:
-    """The production baselines, run exactly as callers run them."""
+    """The production baselines, run exactly as callers run them, on one build date."""
 
     symbols = list(SYMBOLS)
-    momentum = prepare_momentum_targets(frame, symbols, lookback=LOOKBACK)
-    common = frame[frame["date"] >= momentum.index[0]].copy()
     shared = {
         "initial_wealth": INITIAL_WEALTH,
         "rebalance_every": REBALANCE_EVERY,
         "transaction_cost_rate": rate,
         "rebalance_offset": REBALANCE_OFFSET,
+        "build_date": common_build_date(frame),
     }
-    return {
-        "equal_weight": run_equal_weight_baseline(common, symbols, **shared),
-        "inverse_volatility": run_inverse_volatility_baseline(common, symbols, **shared),
+    results = {
+        "equal_weight": run_equal_weight_baseline(frame, symbols, **shared),
+        "inverse_volatility": run_inverse_volatility_baseline(frame, symbols, **shared),
         "momentum": run_momentum_baseline(frame, symbols, lookback=LOOKBACK, **shared),
     }
+    require_common_schedule(results)
+    return results
 
 
 # --- the attribution (pre-T5a behaviour, for explanation only) ---
 
 
-def legacy_transition(w_pre, target, r_next, cost_rate, cash_index) -> StepResult:
+def retired_legacy_transition(w_pre, target, r_next, cost_rate, cash_index) -> StepResult:
     """
-    The pre-T5a step, for the attribution only: one rate on the two-way
-    turnover of every column (the cash leg charged), netted additively.
+    RETIRED, ATTRIBUTION ONLY: the pre-T5a step, kept solely so the
+    attribution can reproduce the old engine and then change one rule at a
+    time. One rate on the two-way turnover of every column (the cash leg
+    charged), netted additively. No simulator uses it, and no module under
+    `src/` may import or reimplement it (tested).
     """
 
     pre = np.asarray(w_pre, dtype=float)
@@ -184,13 +190,18 @@ def free_first_trade(transition: Transition) -> Transition:
     return step
 
 
-# Each strategy's own pre-T5a rebalance phase: equal weight decided on
-# dates k, 2k, ..., the others on k - 1, 2k - 1, ... (spec 7 (a)).
-LEGACY_OFFSETS = {
-    "equal_weight": 0,
-    "inverse_volatility": REBALANCE_EVERY - 1,
-    "momentum": REBALANCE_EVERY - 1,
-}
+def baseline_frames(frame: pd.DataFrame) -> dict[str, tuple[pd.DataFrame, pd.DataFrame]]:
+    """Each baseline's (returns, targets) from the common build date onward."""
+
+    symbols = list(SYMBOLS)
+    momentum = prepare_momentum_targets(frame, symbols, lookback=LOOKBACK)
+    common = frame[frame["date"] >= momentum.index[0]]
+    returns = prepare_feature_matrix(common, symbols, "daily_return")
+    return {
+        "equal_weight": (returns, prepare_equal_weight_targets(returns, symbols)),
+        "inverse_volatility": (returns, prepare_inverse_volatility_targets(common, symbols)),
+        "momentum": (add_cash_returns(returns.loc[momentum.index]), momentum),
+    }
 
 
 def variant(
@@ -218,42 +229,37 @@ def variant(
         initial_wealth=INITIAL_WEALTH,
         transition=transition,
     )
-    return baseline_result(simulation, inputs.dates, inputs.constraints)
+    return baseline_result(simulation, inputs.dates, inputs.constraints, inputs.schedule)
 
 
-def attribution(frame: pd.DataFrame) -> list[dict[str, object]]:
-    """Each baseline at each step of STEPS, then at each cost multiplier."""
+def attribution(frame: pd.DataFrame, baseline: str = ATTRIBUTED) -> list[dict[str, object]]:
+    """One baseline at each step of STEPS, then at each cost multiplier (D2)."""
 
     lag = execution_lag()
-    rows = []
-    for name, (returns, targets) in baseline_frames(frame).items():
-        legacy_offset = LEGACY_OFFSETS[name]
-        settings = {
-            "legacy": (0, free_first_trade(legacy_transition), legacy_offset),
-            "lag": (lag, free_first_trade(legacy_transition), legacy_offset),
-            "cost_base": (lag, free_first_trade(portfolio_step), legacy_offset),
-            "build": (lag, portfolio_step, legacy_offset),
-            "schedule": (lag, portfolio_step, REBALANCE_OFFSET),
-        }
-        previous = None
-        for step in STEPS:
-            step_lag, transition, offset = settings[step]
-            result = variant(returns, targets, lag=step_lag, transition=transition, offset=offset)
-            rows.append(_row(name, step, result, previous))
-            previous = result
-        for offset in range(REBALANCE_EVERY):  # F7.2: one variant, a k-member family
-            result = variant(returns, targets, lag=lag, transition=portfolio_step, offset=offset)
-            rows.append(_row(name, f"offset_{offset}", result, None))
-        for multiplier in SENSITIVITY_MULTIPLIERS:
-            result = variant(
-                returns,
-                targets,
-                lag=lag,
-                transition=portfolio_step,
-                offset=REBALANCE_OFFSET,
-                rate=COST_RATE * multiplier,
-            )
-            rows.append(_row(name, f"cost_{multiplier:g}x", result, None))
+    returns, targets = baseline_frames(frame)[baseline]
+    offset = LEGACY_OFFSETS[baseline]
+    settings = {
+        "legacy": (0, free_first_trade(retired_legacy_transition)),
+        "lag": (lag, free_first_trade(retired_legacy_transition)),
+        "cost_base": (lag, free_first_trade(portfolio_step)),
+        "build": (lag, portfolio_step),
+    }
+    rows, previous = [], None
+    for step in STEPS:
+        step_lag, transition = settings[step]
+        result = variant(returns, targets, lag=step_lag, transition=transition, offset=offset)
+        rows.append(_row(baseline, step, result, previous))
+        previous = result
+    for multiplier in SENSITIVITY_MULTIPLIERS:
+        result = variant(
+            returns,
+            targets,
+            lag=lag,
+            transition=portfolio_step,
+            offset=offset,
+            rate=COST_RATE * multiplier,
+        )
+        rows.append(_row(baseline, f"cost_{multiplier:g}x", result, None))
     return rows
 
 
@@ -295,12 +301,15 @@ def write_summaries(
     results: dict[str, BaselineResult],
     root: Path,
     *,
-    generated_at: datetime,
+    clock: Callable[[], datetime],
     code: dict[str, object],
 ) -> list[Path]:
+    """One summary per baseline, each stamped with the time it was generated."""
+
     paths = []
     for name, result in results.items():
         policy = POLICIES[name]
+        generated_at = clock()
         record = backtest_summary.summary_record(
             result.simulation,
             constraints=result.constraints,
@@ -316,9 +325,10 @@ def write_summaries(
                 "cost_rate_basis": "D2 provisional single-stock all-in rate",
                 "cost_multiplier": 1.0,
                 "execution_lag": execution_lag(),
+                "build_date": str(result.build_date.date()),
                 "rebalance_every": REBALANCE_EVERY,
                 "rebalance_offset": REBALANCE_OFFSET,
-                "build": "from 100% cash at the first execution close, charged (D3)",
+                "build": "from 100% cash at the common first execution close, charged (D3)",
                 "constraint_set": "plain baselines: w_max 1.0, no turnover limit (D5)",
                 "git_dirty": code.get("git_dirty"),
             },
@@ -340,13 +350,12 @@ def main(
 
     frame = synthetic_feature_frame()
     results = run_baselines(frame)
-    paths = write_summaries(
-        results, args.health_inputs_root, generated_at=clock(), code=code_version()
-    )
+    paths = write_summaries(results, args.health_inputs_root, clock=clock, code=code_version())
     print("Synthetic engineering only: not a strategy comparison.")
     for path in paths:
         print(f"wrote {path}")
     if args.attribution:
+        print(f"Attribution of the {ATTRIBUTED} baseline only (synthetic panel):")
         print(pd.DataFrame(attribution(frame)).to_string(index=False))
     return 0
 

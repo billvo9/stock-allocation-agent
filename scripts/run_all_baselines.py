@@ -12,6 +12,7 @@ from stock_agent.config import (
 from stock_agent.evaluation.baseline import (
     BaselineResult,
     prepare_momentum_targets,
+    require_common_schedule,
     run_equal_weight_baseline,
     run_inverse_volatility_baseline,
     run_momentum_baseline,
@@ -110,24 +111,26 @@ def main() -> None:
         lookback=lookback,
     )
 
+    # D3 and D7: one common build date for every portfolio and benchmark, the first
+    # date with a momentum target; rebalance offsets count from it.
     comparison_start = momentum_targets.index[0]
 
-    comparison_features = features[features["date"] >= comparison_start].copy()
-
     equal_weight_result = run_equal_weight_baseline(
-        frame=comparison_features,
+        frame=features,
         symbols=symbols,
         initial_wealth=100_000,
         rebalance_every=5,
         transaction_cost_rate=0.001,
+        build_date=comparison_start,
     )
 
     inverse_vol_result = run_inverse_volatility_baseline(
-        frame=comparison_features,
+        frame=features,
         symbols=symbols,
         initial_wealth=100_000,
         rebalance_every=5,
         transaction_cost_rate=0.001,
+        build_date=comparison_start,
     )
 
     momentum_result = run_momentum_baseline(
@@ -139,16 +142,27 @@ def main() -> None:
         transaction_cost_rate=0.001,
         cash_symbol="CASH",
         cash_return=0.0,
+        build_date=comparison_start,
     )
 
     benchmark_results = {
         symbol: run_buy_and_hold_benchmark(
-            frame=comparison_features,
+            frame=features,
             symbol=symbol,
             initial_wealth=100_000,
+            build_date=comparison_start,
         )
         for symbol in benchmark_symbols
     }
+
+    require_common_schedule(
+        {
+            "Equal Weight": equal_weight_result,
+            "Inverse Volatility": inverse_vol_result,
+            "Momentum": momentum_result,
+        },
+        benchmark_results,
+    )
 
     equal_history = require_history(equal_weight_result)
     inverse_history = require_history(inverse_vol_result)

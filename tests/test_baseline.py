@@ -4,6 +4,7 @@ import pytest
 
 from stock_agent.evaluation.baseline import (
     CASH_SYMBOL,
+    ScheduleMismatchError,
     add_cash_returns,
     backtest_inputs,
     drift_weights,
@@ -12,6 +13,7 @@ from stock_agent.evaluation.baseline import (
     prepare_feature_matrix,
     prepare_inverse_volatility_targets,
     prepare_momentum_targets,
+    require_common_schedule,
     run_equal_weight_baseline,
     run_inverse_volatility_baseline,
     run_momentum_baseline,
@@ -1141,8 +1143,9 @@ def test_run_momentum_baseline_applies_positive_momentum_exposure():
 
 
 def test_run_momentum_baseline_refuses_a_cash_rate_before_group_c():
-    # OD8.14 rewrite: uninvested cash earns 0% (D4 (a), synthetic engineering only); a cash
-    # rate is group C and not approved, so it is refused rather than silently used.
+    # A D4 (a) consequence, not an OD8.14 rewrite: uninvested cash earns 0% (synthetic
+    # engineering only), and group C cash returns (D4 (b)) are not approved, so a nonzero
+    # cash return is refused rather than silently used.
     dates = pd.date_range(
         "2026-01-01",
         periods=5,
@@ -1161,7 +1164,7 @@ def test_run_momentum_baseline_refuses_a_cash_rate_before_group_c():
         },
     )
 
-    with pytest.raises(ValueError, match="group C"):
+    with pytest.raises(ValueError, match="group C cash returns are not approved"):
         run_momentum_baseline(
             frame=frame,
             symbols=symbols,
@@ -1219,6 +1222,8 @@ def test_rebalanced_backtest_records_return_and_wealth_history():
 
     assert result.history.portfolio_returns.iloc[0] == pytest.approx(0.01)
     assert result.history.portfolio_returns.iloc[1] == pytest.approx(0.02)
+
+    assert result.history.wealth.iloc[-1] == pytest.approx(result.final_wealth)
 
     assert list(result.history.wealth.index) == list(dates[1:])
 
@@ -1294,3 +1299,76 @@ def test_the_added_cash_account_earns_zero_and_is_never_charged():
     assert (inputs.returns[:, 2] == 0.0).all()
     assert list(inputs.cost_rate) == [0.001, 0.001, 0.0]
     assert all(target[2] == 0.0 for target in inputs.targets.values())
+
+
+def _common_frame():
+    dates = pd.date_range("2026-01-01", periods=12, freq="D")
+    rng = np.random.RandomState(4)
+    returns = {symbol: list(rng.normal(0.0, 0.01, 12)) for symbol in ["MU", "SNDK", "MRVL"]}
+    return dates, make_momentum_test_frame(dates, ["MU", "SNDK", "MRVL"], returns)
+
+
+def test_compared_runs_must_share_one_build_date():
+    # D3 and D7: on one frame, equal weight would build at the first date and momentum only
+    # after its look-back; the guard refuses that comparison.
+    dates, frame = _common_frame()
+    symbols = ["MU", "SNDK", "MRVL"]
+    equal = run_equal_weight_baseline(frame, symbols, rebalance_every=2, transaction_cost_rate=0.0)
+    momentum = run_momentum_baseline(
+        frame, symbols, lookback=3, rebalance_every=2, transaction_cost_rate=0.0
+    )
+    assert equal.build_date == dates[0] and momentum.build_date == dates[2]
+
+    with pytest.raises(ScheduleMismatchError, match="different dates"):
+        require_common_schedule({"equal_weight": equal, "momentum": momentum})
+
+
+def test_a_common_build_date_aligns_every_run_and_counts_offsets_from_it():
+    dates, frame = _common_frame()
+    symbols = ["MU", "SNDK", "MRVL"]
+    build = dates[3]
+    shared = {"rebalance_every": 2, "transaction_cost_rate": 0.001, "build_date": build}
+    runs = {
+        "equal_weight": run_equal_weight_baseline(frame, symbols, **shared),
+        "momentum": run_momentum_baseline(frame, symbols, lookback=3, **shared),
+    }
+    require_common_schedule(runs)
+    for run in runs.values():
+        assert run.build_date == build
+        assert run.history.wealth.index[0] == dates[4]
+        first = run.schedule.first_decision  # each run's own row of the common build date
+        offsets = [e.decision - first for e in run.simulation.executions]
+        assert offsets == [0, 2, 4, 6, 8]  # the build, then every 2 dates counted from it
+
+
+def test_compared_portfolios_must_share_one_rebalance_schedule():
+    dates, frame = _common_frame()
+    symbols = ["MU", "SNDK", "MRVL"]
+    shared = {"transaction_cost_rate": 0.0, "build_date": dates[3]}
+    runs = {
+        "every_2": run_equal_weight_baseline(frame, symbols, rebalance_every=2, **shared),
+        "every_3": run_equal_weight_baseline(frame, symbols, rebalance_every=3, **shared),
+    }
+
+    with pytest.raises(ScheduleMismatchError, match="different schedules"):
+        require_common_schedule(runs)
+
+
+def test_a_build_date_outside_the_inputs_is_refused():
+    dates, frame = _common_frame()
+
+    with pytest.raises(ValueError, match="build date"):
+        run_equal_weight_baseline(
+            frame, ["MU", "SNDK", "MRVL"], build_date=dates[0] - pd.Timedelta(days=1)
+        )
+
+
+def test_run_rebalanced_backtest_refuses_a_nonzero_cash_column():
+    # D4 (a): a cash column that earns anything but 0% is group C, which is not approved.
+    dates = pd.date_range("2026-01-01", periods=4, freq="D")
+    returns = pd.DataFrame({"A": [0.0, 0.01, 0.01, 0.01], CASH_SYMBOL: [0.0, 0.0, 0.0001, 0.0]})
+    returns.index = dates
+    targets = pd.DataFrame({"A": [0.5] * 4, CASH_SYMBOL: [0.5] * 4}, index=dates)
+
+    with pytest.raises(ValueError, match="group C cash returns are not approved"):
+        run_rebalanced_backtest(returns, targets, rebalance_every=2, transaction_cost_rate=0.0)
