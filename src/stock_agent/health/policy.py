@@ -57,7 +57,7 @@ from stock_agent.health.inputs import (
     FormatError,
     NotRead,
     common_findings,
-    load_latest,
+    load_latest_by,
     require,
     worst_finding,
 )
@@ -190,16 +190,15 @@ def _evaluation_findings(evaluation: Evaluation, *, allow_synthetic: bool) -> li
     return findings
 
 
-def _backtest(directory: Path | None) -> Artifact | NotRead:
-    loaded = load_latest(directory, backtest.ARTIFACT)
-    if isinstance(loaded, Artifact):
-        try:
-            _parse_optional(loaded.document)
-        except FormatError as error:
-            return NotRead(
-                HealthState.UNAVAILABLE, "unrecognized_format", f"{loaded.path}: {error}"
-            )
-    return loaded
+def _backtests(directory: Path | None) -> dict[str, Artifact] | NotRead:
+    """The newest backtest summary per policy, so no policy of a run is left out."""
+
+    loaded = load_latest_by(
+        directory, backtest.ARTIFACT, "policy", lambda item: _parse_optional(item.document)
+    )
+    if isinstance(loaded, NotRead):
+        return loaded
+    return {policy: artifact for policy, (artifact, _) in loaded.items()}
 
 
 def _parse_optional(document: dict[str, Any]) -> None:
@@ -220,21 +219,23 @@ def _parse_optional(document: dict[str, Any]) -> None:
 
 @dataclass(frozen=True)
 class _Sources:
-    backtest: Artifact | NotRead
+    backtests: dict[str, Artifact] | NotRead
     evaluation: Evaluation | NotRead
 
+    @property
+    def policies(self) -> dict[str, Artifact]:
+        return {} if isinstance(self.backtests, NotRead) else self.backtests
+
     def measured_at(self) -> datetime | None:
-        times = [
-            source.generated_at if isinstance(source, Artifact) else source.evaluated_at
-            for source in (self.backtest, self.evaluation)
-            if not isinstance(source, NotRead)
-        ]
+        times = [artifact.generated_at for artifact in self.policies.values()]
+        if isinstance(self.evaluation, Evaluation):
+            times.append(self.evaluation.evaluated_at)
         return max(times) if times else None
 
     def evidence(self, backtest_dir: Path | None, rl_runs: Path | None) -> str | None:
         parts = []
-        if isinstance(self.backtest, Artifact):
-            parts.append(str(self.backtest.path))
+        if len(self.policies) == 1:
+            parts.append(str(next(iter(self.policies.values())).path))
         elif backtest_dir is not None:
             parts.append(str(backtest_dir))
         if isinstance(self.evaluation, Evaluation):
@@ -246,8 +247,8 @@ class _Sources:
 
 def _not_read_lines(sources: _Sources) -> list[str]:
     lines = []
-    if isinstance(sources.backtest, NotRead):
-        lines.append(f"backtest summary: {sources.backtest.reason}: {sources.backtest.detail}")
+    if isinstance(sources.backtests, NotRead):
+        lines.append(f"backtest summary: {sources.backtests.reason}: {sources.backtests.detail}")
     if isinstance(sources.evaluation, NotRead):
         lines.append(f"RL evaluation: {sources.evaluation.reason}: {sources.evaluation.detail}")
     return lines
@@ -260,15 +261,15 @@ def _unavailable(sources: _Sources) -> list[Finding]:
             source.reason,
             "A policy input exists but could not be read, so this is not fully judged.",
         )
-        for source in (sources.backtest, sources.evaluation)
+        for source in (sources.backtests, sources.evaluation)
         if isinstance(source, NotRead) and source.state is HealthState.UNAVAILABLE
     ]
 
 
 def _context(sources: _Sources, *, allow_synthetic: bool) -> list[Finding]:
     findings = _unavailable(sources)
-    if isinstance(sources.backtest, Artifact):
-        findings += common_findings(sources.backtest, allow_synthetic=allow_synthetic)
+    for artifact in sources.policies.values():
+        findings += common_findings(artifact, allow_synthetic=allow_synthetic)
     if isinstance(sources.evaluation, Evaluation):
         findings += _evaluation_findings(sources.evaluation, allow_synthetic=allow_synthetic)
     return findings
@@ -294,21 +295,23 @@ def _make(check_id: str, finding: Finding, value, unit, threshold, lines, source
 
 
 def _violations(sources: _Sources, evidence, *, allow_synthetic: bool) -> Check:
-    counts, lines = [], []
-    if isinstance(sources.backtest, Artifact):
-        reported = sources.backtest.document.get("constraint_violations")
+    counts, lines, broken = [], [], []
+    for policy, artifact in sources.policies.items():
+        reported = artifact.document.get("constraint_violations")
         lines.append(
-            f"backtest {sources.backtest.run_id}, policy "
-            f"{sources.backtest.document.get('policy')}: constraint violations "
+            f"backtest {artifact.run_id}, policy {policy}: constraint violations "
             + ("not reported" if reported is None else str(reported))
         )
         if reported is not None:
             counts.append(reported)
+            if reported:
+                broken.append(policy)
     if isinstance(sources.evaluation, Evaluation):
         invalid = {
             name: method["invalid_targets"] for name, method in sources.evaluation.methods.items()
         }
         counts.append(sum(invalid.values()))
+        broken += [name for name, n in sorted(invalid.items()) if n]
         flagged = ", ".join(f"{name} {n}" for name, n in sorted(invalid.items()) if n) or "none"
         lines.append(f"{sources.evaluation.describe()}: invalid targets by method: {flagged}")
     lines += _not_read_lines(sources)
@@ -332,8 +335,8 @@ def _violations(sources: _Sources, evidence, *, allow_synthetic: bool) -> Check:
         Finding(
             HealthState.FAILED,
             CONSTRAINT_BREACHED,
-            f"{total} policy decisions broke a hard constraint. Simulated, not a track record; "
-            "nothing acts on this alert.",
+            f"{total} policy decisions broke a hard constraint ({', '.join(broken)}). Simulated, "
+            "not a track record; nothing acts on this alert.",
         )
         if total
         else Finding(HealthState.HEALTHY, None, "No policy decision broke a hard constraint.")
@@ -353,15 +356,15 @@ def _violations(sources: _Sources, evidence, *, allow_synthetic: bool) -> Check:
 
 def _fallbacks(sources: _Sources, evidence, *, allow_synthetic: bool) -> Check:
     counts, decisions, reasons, lines = [], 0, Counter(), []
-    if isinstance(sources.backtest, Artifact):
-        reported = sources.backtest.document.get("fallback_events")
+    for policy, artifact in sources.policies.items():
+        reported = artifact.document.get("fallback_events")
         lines.append(
-            f"backtest {sources.backtest.run_id}: fallback events "
+            f"backtest {artifact.run_id}, policy {policy}: fallback events "
             + ("not reported" if reported is None else str(reported))
         )
         if reported is not None:
             counts.append(reported)
-            reasons.update(sources.backtest.document.get("fallback_reasons") or {})
+            reasons.update(artifact.document.get("fallback_reasons") or {})
     if isinstance(sources.evaluation, Evaluation):
         guarded = {
             name: method
@@ -427,9 +430,9 @@ def _fallbacks(sources: _Sources, evidence, *, allow_synthetic: bool) -> Check:
 
 
 def _diagnostics(sources: _Sources, evidence, *, allow_synthetic: bool) -> Check:
-    threshold = "the newest backtest summary reports risk, turnover and drawdown"
-    source = sources.backtest
-    if isinstance(source, NotRead):
+    threshold = "the newest backtest summary of every policy reports risk, turnover and drawdown"
+    if isinstance(sources.backtests, NotRead):
+        source = sources.backtests
         finding = Finding(
             source.state,
             source.reason,
@@ -448,40 +451,49 @@ def _diagnostics(sources: _Sources, evidence, *, allow_synthetic: bool) -> Check
             sources,
             evidence,
         )
-    measures = source.document["measures"]
-    units = source.document.get("units") or {}
-    available = {name: measures.get(key) for name, key in DIAGNOSTICS.items()}
-    lines = [
-        f"{name} ({key}): "
-        + (
-            "not reported"
-            if available[name] is None
-            else f"{available[name]} {units.get(key, '(unit as defined by the producer)')}"
-        )
-        for name, key in DIAGNOSTICS.items()
-    ]
-    lines.append(f"{source.describe()}")
-    missing = [name for name, value in available.items() if value is None]
-    measured = (
+    lines, findings, fewest = [], [], len(DIAGNOSTICS)
+    for policy, artifact in sources.policies.items():
+        measures = artifact.document["measures"]
+        units = artifact.document.get("units") or {}
+        shown = [
+            f"{name} ({key}): "
+            + (
+                "not reported"
+                if measures.get(key) is None
+                else f"{measures[key]} {units.get(key, '(unit as defined by the producer)')}"
+            )
+            for name, key in DIAGNOSTICS.items()
+        ]
+        missing = [name for name, key in DIAGNOSTICS.items() if measures.get(key) is None]
+        fewest = min(fewest, len(DIAGNOSTICS) - len(missing))
+        lines.append(f"{policy}: " + "; ".join(shown) + f" ({artifact.describe()})")
+        if missing:
+            findings.append(
+                Finding(
+                    HealthState.INSUFFICIENT_EVIDENCE,
+                    "diagnostics_missing",
+                    f"The newest backtest of {policy} does not report {' or '.join(missing)}.",
+                )
+            )
+        findings += common_findings(artifact, allow_synthetic=allow_synthetic)
+        if artifact.document.get("transition_status") == TRANSITION_UNAPPROVED:
+            lines.append(f"{policy}: transition engineering only, not yet approved")
+    count = len(sources.policies)
+    findings.append(
         Finding(
-            HealthState.INSUFFICIENT_EVIDENCE,
-            "diagnostics_missing",
-            f"The newest backtest does not report {' or '.join(missing)}.",
-        )
-        if missing
-        else Finding(
-            HealthState.HEALTHY, None, "The newest backtest reports risk, turnover and drawdown."
+            HealthState.HEALTHY,
+            None,
+            "The newest backtest reports risk, turnover and drawdown."
+            if count == 1
+            else f"The newest backtests of all {count} policies report risk, turnover and drawdown.",
         )
     )
-    findings = [measured, *common_findings(source, allow_synthetic=allow_synthetic)]
-    if source.document.get("transition_status") == TRANSITION_UNAPPROVED:
-        lines.append("transition: engineering only, not yet approved")
-    finding = worst_finding(findings)
     return _make(
         "portfolio.diagnostics",
-        finding,
-        len(DIAGNOSTICS) - len(missing),
-        f"of {len(DIAGNOSTICS)} diagnostics reported (risk, turnover, drawdown)",
+        worst_finding(findings),
+        fewest,
+        f"of {len(DIAGNOSTICS)} diagnostics reported (risk, turnover, drawdown), fewest "
+        "across policies",
         threshold,
         lines,
         sources,
@@ -494,7 +506,7 @@ def policy_checks(
 ) -> list[Check]:
     """`portfolio.violations`, `portfolio.fallbacks` and `portfolio.diagnostics`."""
 
-    sources = _Sources(_backtest(backtest_dir), load_evaluation(rl_runs))
+    sources = _Sources(_backtests(backtest_dir), load_evaluation(rl_runs))
     evidence = sources.evidence(backtest_dir, rl_runs)
     common = {"allow_synthetic": allow_synthetic}
     return [

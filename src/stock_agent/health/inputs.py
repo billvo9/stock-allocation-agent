@@ -5,7 +5,9 @@ the worst-of rule that turns several findings into one check state.
 
 Location. A producer writes `<inputs>/<artifact>/<run_id>.json` (locally
 `reports/health_inputs/`, ignored by Git). Health reads the newest valid file
-per artifact by `generated_at` (ties: the larger `run_id`). CI reads only
+per artifact by `generated_at` (ties: the larger `run_id`), or, with
+`load_latest_by`, the newest per value of a field (backtest summaries: one
+per `policy`, so a run writing several policies is read whole). CI reads only
 the synthetic fixtures in `stock_agent.health.fixtures`.
 
 Envelope (every file is one strict-JSON object; extra fields are ignored):
@@ -42,7 +44,7 @@ from __future__ import annotations
 
 import math
 import re
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -153,6 +155,64 @@ def load_latest(directory: Path | None, artifact: str) -> Artifact | NotRead:
         )
     newest = max(readable, key=lambda item: (item.generated_at, item.run_id))
     return Artifact(**{**newest.__dict__, "unreadable": tuple(unreadable)})
+
+
+def load_latest_by(
+    directory: Path | None,
+    artifact: str,
+    key: str,
+    parse: Callable[[Artifact], Any],
+) -> dict[str, tuple[Artifact, Any]] | NotRead:
+    """
+    The newest readable file per value of the text field `key` (for example
+    each backtest's `policy`), by `generated_at` then `run_id`, with what
+    `parse` returned for it; sorted by that value. A file whose envelope,
+    `key` or `parse` fails is unreadable: it is named, every group is at least
+    degraded, and when no file is readable the result is unavailable. So
+    several producers writing in one run (several policies sharing one
+    `generated_at`) are all kept, never reduced to one.
+    """
+
+    if directory is None:
+        return NotRead(
+            HealthState.INSUFFICIENT_EVIDENCE,
+            "input_not_configured",
+            f"No health-inputs directory was configured for {artifact}.",
+        )
+    files = sorted(directory.glob("*.json")) if directory.is_dir() else []
+    if not files:
+        return NotRead(
+            HealthState.INSUFFICIENT_EVIDENCE,
+            "input_missing",
+            f"No {artifact} file in {directory} yet; its producer has not written one.",
+        )
+    readable: list[tuple[str, Artifact, Any]] = []
+    unreadable: list[str] = []
+    for path in files:
+        try:
+            loaded = _load(path, artifact)
+            group = require(loaded.document, key, "text")
+            readable.append((group, loaded, parse(loaded)))
+        except FormatError as error:
+            unreadable.append(f"{path.name} ({error})")
+    if not readable:
+        return NotRead(
+            HealthState.UNAVAILABLE,
+            "unrecognized_format",
+            f"No {artifact} file in {directory} could be read: {'; '.join(unreadable[:3])}",
+        )
+    newest: dict[str, tuple[Artifact, Any]] = {}
+    for group, loaded, parsed in readable:
+        current = newest.get(group)
+        if current is None or (loaded.generated_at, loaded.run_id) > (
+            current[0].generated_at,
+            current[0].run_id,
+        ):
+            newest[group] = (loaded, parsed)
+    return {
+        group: (Artifact(**{**loaded.__dict__, "unreadable": tuple(unreadable)}), parsed)
+        for group, (loaded, parsed) in sorted(newest.items())
+    }
 
 
 def require(document: dict[str, Any], key: str, kind: str, *, optional: bool = False) -> Any:

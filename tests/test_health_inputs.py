@@ -543,6 +543,68 @@ def test_a_malformed_backtest_is_unavailable(tmp_path, change):
     assert {check.state for check in checks.values()} == {HealthState.UNAVAILABLE}
 
 
+def policy_summary(policy: str, run_id: str, **measures) -> dict:
+    document = approved(fixtures.backtest_summary())
+    document |= {"policy": policy, "run_id": run_id}
+    document["measures"] |= measures
+    return document
+
+
+THREE_POLICIES = ("equal_weight", "inverse_volatility", "momentum")
+
+
+def test_every_policy_written_in_one_run_is_judged_and_the_worst_decides(tmp_path):
+    # One run writes three summaries with the same generated_at.
+    documents = [
+        policy_summary("equal_weight", "run-1-equal-weight"),
+        policy_summary("inverse_volatility", "run-1-inverse-volatility"),
+        policy_summary("momentum", "run-1-momentum", costs_bps=75.0),
+    ]
+    assert len({d["generated_at"] for d in documents}) == 1
+    checks = by_id(backtest.backtest_checks(inputs(tmp_path, *documents) / backtest.ARTIFACT))
+    costs = checks["portfolio.costs"]
+    assert (costs.state, costs.reason, costs.value) == (
+        HealthState.FAILED,
+        CONSTRAINT_BREACHED,
+        75.0,  # the largest measure across policies
+    )
+    assert costs.summary.startswith("momentum: ") and "2 of 3 policies healthy" in costs.summary
+    lines = costs.detail.splitlines()
+    for policy in THREE_POLICIES:
+        (line,) = [row for row in lines if f"policy {policy} " in row]
+        expected = "failed" if policy == "momentum" else "healthy"
+        assert line.startswith(f"{expected}: "), line  # each policy keeps its own state
+    turnover = checks["portfolio.turnover"]
+    assert turnover.state is HealthState.HEALTHY
+    assert turnover.summary == "All 3 policies are within their limits."
+    assert turnover.threshold == "each policy's declared max_turnover"
+
+
+def test_the_newest_summary_of_each_policy_is_used(tmp_path):
+    older = policy_summary("momentum", "run-0-momentum", costs_bps=75.0)
+    newer = policy_summary("momentum", "run-1-momentum")
+    newer["generated_at"] = "2025-01-02T00:00:00.000000Z"
+    alone = policy_summary("equal_weight", "run-0-equal-weight")  # not rerun since
+    checks = by_id(
+        backtest.backtest_checks(inputs(tmp_path, older, newer, alone) / backtest.ARTIFACT)
+    )
+    costs = checks["portfolio.costs"]
+    assert costs.state is HealthState.HEALTHY  # momentum's newer summary is within its limit
+    assert "run run-1-momentum" in costs.detail and "run-0-momentum" not in costs.detail
+    assert "policy equal_weight " in costs.detail  # the policy not rerun is still shown
+
+
+def test_one_policys_unreadable_file_degrades_without_hiding_the_others(tmp_path):
+    documents = [policy_summary(policy, f"run-{policy}") for policy in THREE_POLICIES]
+    documents[2]["measures"]["turnover"] = -1.0  # refused: measures are non-negative
+    checks = by_id(backtest.backtest_checks(inputs(tmp_path, *documents) / backtest.ARTIFACT))
+    turnover = checks["portfolio.turnover"]
+    assert (turnover.state, turnover.reason) == (HealthState.DEGRADED, "unreadable_inputs")
+    assert "policy equal_weight " in turnover.detail
+    assert "policy inverse_volatility " in turnover.detail
+    assert "run-momentum.json" in turnover.detail  # named as unreadable
+
+
 # --- synthetic inputs in the private scope -------------------------------------------
 
 

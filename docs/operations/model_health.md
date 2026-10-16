@@ -117,8 +117,8 @@ token, secret or other variable is read.
 | Registry | `registry.entries`, `registry.stages`, `registry.selection_history`, `registry.experiments` | local | the ML track's model registry, through its read API |
 | Forecasts | `forecast.coverage`, `forecast.calibration` | local | the newest registry export's forecast evaluations |
 | Forecast ledger | `forecast.ledger`, `forecast.ledger_backup`, `forecast.ledger_sessions` | local | the prospective ledger (the job's own reader), the owner's kept head copy, the rules calendar |
-| Portfolio | `portfolio.turnover`, `portfolio.costs`, `portfolio.concentration`, `portfolio.drawdown` | local | the newest backtest-summary input |
-| Policy safety | `portfolio.violations`, `portfolio.fallbacks`, `portfolio.diagnostics` | local | the newest backtest summary and the newest RL evaluation report |
+| Portfolio | `portfolio.turnover`, `portfolio.costs`, `portfolio.concentration`, `portfolio.drawdown` | local | the newest backtest summary per policy (the worst policy decides; each keeps its own line) |
+| Policy safety | `portfolio.violations`, `portfolio.fallbacks`, `portfolio.diagnostics` | local | the newest backtest summary per policy and the newest RL evaluation report |
 
 Thresholds are operator defaults written in the code next to each check and
 in the runbook; they are not owner-approved policy and change together. The
@@ -135,8 +135,9 @@ reports `insufficient_evidence` until an input exists. Worked examples:
 
 **Location.** Producers write `reports/health_inputs/<artifact>/<run_id>.json`
 (ignored by Git). The local monitor reads the newest file per artifact by
-`generated_at`; unreadable files beside a readable one are named and make the
-check at least degraded. CI reads only the synthetic fixtures.
+`generated_at` (backtest summaries: the newest per `policy`, so every policy a
+run writes is judged); unreadable files beside a readable one are named and
+make the check at least degraded. CI reads only the synthetic fixtures.
 
 **Envelope** (one strict-JSON object; extra fields are ignored):
 

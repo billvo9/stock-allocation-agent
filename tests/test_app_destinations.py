@@ -664,6 +664,31 @@ def test_the_lab_page_reads_a_real_local_monitor_summary(tmp_path):
     assert "risk, turnover and drawdown diagnostics" in text.lower()
 
 
+def test_every_policys_limits_and_fallbacks_reach_the_page(tmp_path):
+    from stock_agent.health import backtest, fixtures, policy
+
+    for name, costs in (("equal_weight", 12.5), ("inverse_volatility", 12.5), ("momentum", 75.0)):
+        document = fixtures.backtest_summary()
+        document |= {
+            "synthetic": False,
+            "transition_status": "approved",
+            "policy": name,
+            "run_id": f"run-1-{name}",
+            "constraint_violations": 0,
+            "fallback_events": 0,
+        }
+        document["measures"]["costs_bps"] = costs
+        fixtures.write_input(tmp_path / "inputs", document)
+    directory = tmp_path / "inputs" / backtest.ARTIFACT
+    checks = [*backtest.backtest_checks(directory), *policy.policy_checks(directory, None)]
+    app = _render_health(_write_summary(tmp_path / "latest.json", checks))
+    text = text_of(app)
+    assert "momentum: Estimated costs (75) breaches its limit (50)." in text
+    for name in ("equal_weight", "inverse_volatility", "momentum"):
+        assert f"policy {name}" in text, name  # each policy's own line, in the details
+    assert ("blocked", "Failed") in _pill_words(app)
+
+
 def test_checks_are_grouped_into_the_labs_areas_and_nothing_is_dropped():
     assert health_summary.section_of("ci.daily_health") == "code"
     assert health_summary.section_of("forecast.coverage") == "runs"

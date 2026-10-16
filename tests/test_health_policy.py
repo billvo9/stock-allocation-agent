@@ -203,3 +203,32 @@ def test_the_newest_rl_report_is_used(tmp_path):
 def test_a_malformed_optional_field_makes_the_backtest_unreadable(tmp_path, bad):
     checks = _checks(_backtest(tmp_path, **bad))
     assert checks["portfolio.diagnostics"].state is HealthState.UNAVAILABLE
+
+
+def test_every_policys_violations_and_fallbacks_are_shown_and_the_worst_decides(tmp_path):
+    for policy, violations, fallbacks in (
+        ("equal_weight", 0, 0),
+        ("inverse_volatility", 0, 1),
+        ("momentum", 3, 0),
+    ):
+        _backtest(
+            tmp_path,
+            policy=policy,
+            run_id=f"run-1-{policy}",  # the same generated_at for all three
+            constraint_violations=violations,
+            fallback_events=fallbacks,
+            fallback_reasons={"stale_inputs": fallbacks} if fallbacks else {},
+            measures={"volatility": 0.1} if policy != "momentum" else {},
+        )
+    checks = _checks(tmp_path / "backtest_summary")
+    violations = checks["portfolio.violations"]
+    assert (violations.state, violations.value) == (HealthState.FAILED, 3)
+    assert "(momentum)" in violations.summary
+    for policy in ("equal_weight", "inverse_volatility", "momentum"):
+        assert f"policy {policy}: constraint violations" in violations.detail
+        assert f"policy {policy}: fallback events" in checks["portfolio.fallbacks"].detail
+    fallbacks = checks["portfolio.fallbacks"]
+    assert (fallbacks.state, fallbacks.value) == (HealthState.DEGRADED, 1)
+    diagnostics = checks["portfolio.diagnostics"]
+    assert (diagnostics.state, diagnostics.value) == (HealthState.INSUFFICIENT_EVIDENCE, 2)
+    assert "The newest backtest of momentum does not report risk." in diagnostics.summary

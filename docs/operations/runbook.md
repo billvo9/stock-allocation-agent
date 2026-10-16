@@ -381,10 +381,13 @@ The scheduled private run (launchd steps, outputs, keeping it private) is in
 
 ## Policy limits and fallbacks (local monitor)
 
-Backtest summaries are read from `reports/health_inputs/backtest_summary/`
-and RL evaluation reports from `models/rl/<run_id>/evaluation_*.json`
-(`--rl-runs`). Backtests are simulated, never a track record. Measures come
-from the approved T5a formulas only and are never recomputed here.
+Backtest summaries are read from `reports/health_inputs/backtest_summary/`,
+the newest per `policy` (so every policy a run writes is judged), and RL
+evaluation reports from `models/rl/<run_id>/evaluation_*.json`
+(`--rl-runs`). Each check takes the worst policy's state; its detail keeps
+one line per policy with that policy's own state. Backtests are simulated,
+never a track record. Measures come from the approved T5a formulas only and
+are never recomputed here.
 
 <a id="portfolio-turnover"></a>
 ### Portfolio turnover (`portfolio.turnover`)
@@ -443,7 +446,7 @@ from the approved T5a formulas only and are never recomputed here.
 <a id="portfolio-diagnostics"></a>
 ### Risk, turnover and drawdown diagnostics (`portfolio.diagnostics`)
 
-- **What it means.** Which of risk (`volatility`), turnover and drawdown (`max_drawdown`) the newest backtest summary reports. Healthy with all three; insufficient evidence until the T5a engine writes summaries, or while a measure is not reported (the risk formula awaits approval).
+- **What it means.** Which of risk (`volatility`), turnover and drawdown (`max_drawdown`) the newest backtest summary of each policy reports. Healthy when every policy reports all three; insufficient evidence until the T5a engine writes summaries, or while a measure is not reported (the risk formula awaits approval).
 - **Likely causes.** No backtest summary yet; a formula not yet approved.
 - **Diagnose.** `ls -lt reports/health_inputs/backtest_summary/`.
 - **Safe retry.** Re-run the local monitor after the next backtest.
