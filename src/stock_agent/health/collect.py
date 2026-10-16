@@ -11,10 +11,14 @@ run_ci
     absolute path, the home directory or an email address. This is what the
     daily GitHub Actions workflow uploads (a public artifact).
 run_local
-    The same checks plus the private ones on the owner's machine: the CI
-    run list, the F1 fund store, the model registry, and the producers' health
-    inputs (training health, the registry export, backtest summaries under
-    `reports/health_inputs/` by default), each only when it exists (otherwise
+    The same checks plus the private ones on the owner's machine: the GitHub
+    run list (recorded with `gh run list` only when asked, `health.github`),
+    the F1 fund store, the prospective anchors, store and window (through
+    sources the private script passes in, `health.prospective`), the model
+    registry and the latest ML experiment run, the prospective forecast
+    ledger, the producers' health inputs (training health, the registry
+    export, backtest summaries under `reports/health_inputs/` by default) and
+    the newest RL evaluation report, each only when it exists (otherwise
     insufficient_evidence). The scope is `private`; evidence paths are
     absolute. It refuses to run inside GitHub Actions, and refuses an output
     directory inside the repository unless Git ignores it, so a private
@@ -48,12 +52,18 @@ from stock_agent.health import (
     data_quality,
     dependencies,
     forecast,
+    github,
+    ledger,
+    ml_runs,
+    policy,
+    prospective,
     registry,
     smoke,
     training,
     verification,
 )
 from stock_agent.health.context import code_state, in_github_actions, run_context
+from stock_agent.health.ledger import RulesCalendar
 from stock_agent.health.model import (
     Check,
     HealthState,
@@ -66,6 +76,7 @@ from stock_agent.health.model import (
     parse_timestamp,
     read_summary,
 )
+from stock_agent.health.prospective import ProspectiveSources
 from stock_agent.health.summary import build_summary, write_summary
 
 SUMMARY_FILE = "health_summary.json"
@@ -274,12 +285,22 @@ def run_ci(
 @dataclass(frozen=True)
 class PrivateInputs:
     ci_runs: Path | None = None
+    # Record the GitHub run list with `gh run list` (the one network step).
+    github: bool = False
     fund_store: Path | None = None
     # Producers' health inputs: <health_inputs>/<artifact>/<run_id>.json
     # (reports/health_inputs/ by agreement), the newest per artifact.
     health_inputs: Path | None = None
     registry: Path | None = None  # the registry root (reports/ml/registry)
     ml_artifacts: Path | None = None  # its artifacts root; default: the root's parent
+    ml_root: Path | None = None  # the experiment runner's root (reports/ml): ledger.jsonl
+    rl_runs: Path | None = None  # RL run directories (models/rl): evaluation reports
+    ledger: Path | None = None  # the prospective forecast ledger
+    ledger_head_backup: Path | None = None  # the owner's kept copy of its head hash
+    # The rules calendar and the prospective sources come from the private
+    # script: research code may not import the prospective side.
+    calendar: RulesCalendar | None = None
+    prospective: ProspectiveSources | None = None
 
     def artifact_directory(self, artifact: str) -> Path | None:
         return None if self.health_inputs is None else self.health_inputs / artifact
@@ -336,6 +357,25 @@ def _fund_store_checks(path: Path | None, *, as_of: datetime) -> list[Check]:
     )
 
 
+def _run_list(
+    environment: Environment, inputs: PrivateInputs, evidence_dir: Path
+) -> verification.RunList:
+    """The GitHub run list: recorded with gh when asked, else the owner's file, else none."""
+
+    if inputs.github:
+        return github.collect_runs(
+            environment.runner, now=environment.now, evidence_dir=evidence_dir
+        )
+    path = inputs.ci_runs
+    if path is not None and path.is_file():
+        return verification.RunList(
+            path.read_text(encoding="utf-8", errors="replace"),
+            datetime.fromtimestamp(path.stat().st_mtime, tz=UTC),
+            str(path),
+        )
+    return verification.RunList(None, None, None if path is None else str(path))
+
+
 def _previous(path: Path) -> HealthSummary | None:
     try:
         return read_summary(path)
@@ -362,21 +402,20 @@ def run_local(
     )
     _write_evidence(evidence_dir, evidence)
 
-    ci_runs = inputs.ci_runs
-    runs_text, runs_written = None, None
-    if ci_runs is not None and ci_runs.is_file():
-        runs_text = ci_runs.read_text(encoding="utf-8", errors="replace")
-        runs_written = datetime.fromtimestamp(ci_runs.stat().st_mtime, tz=UTC)
-    checks.append(
-        verification.main_runs_check(
-            runs_text,
-            measured_at=runs_written,
-            now=environment.now(),
-            evidence=None if ci_runs is None else str(ci_runs),
+    checks.extend(
+        verification.run_list_checks(
+            _run_list(environment, inputs, evidence_dir), now=environment.now()
         )
     )
     checks.extend(_fund_store_checks(inputs.fund_store, as_of=environment.now()))
+    checks.extend(prospective.prospective_checks(inputs.prospective, now=environment.now()))
     checks.extend(training.training_checks(inputs.artifact_directory(training.ARTIFACT)))
+    checks.append(
+        ml_runs.ml_runs_check(
+            inputs.ml_root,
+            data_classes=registry.data_classes(inputs.registry, inputs.ml_artifacts),
+        )
+    )
     checks.extend(
         registry.registry_checks(
             inputs.registry, artifacts_root=inputs.ml_artifacts, now=environment.now
@@ -384,7 +423,18 @@ def run_local(
     )
     forecasts = forecast.forecast_checks(inputs.artifact_directory(forecast.ARTIFACT))
     checks.extend(item for item in forecasts if isinstance(item, Check))
+    checks.extend(
+        ledger.ledger_checks(
+            inputs.ledger,
+            backup=inputs.ledger_head_backup,
+            calendar=inputs.calendar,
+            now=environment.now(),
+        )
+    )
     checks.extend(backtest.backtest_checks(inputs.artifact_directory(backtest.ARTIFACT)))
+    checks.extend(
+        policy.policy_checks(inputs.artifact_directory(backtest.ARTIFACT), inputs.rl_runs)
+    )
 
     latest = output_dir / LATEST_FILE
     summary = build_summary(

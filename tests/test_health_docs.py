@@ -13,7 +13,16 @@ from pathlib import Path
 import pytest
 import yaml
 
-from stock_agent.health import backtest, contracts, data_quality, forecast, registry
+from stock_agent.health import (
+    backtest,
+    contracts,
+    data_quality,
+    forecast,
+    ledger,
+    policy,
+    prospective,
+    registry,
+)
 from stock_agent.health.model import runbook_for
 
 REPO = Path(__file__).resolve().parents[1]
@@ -27,16 +36,21 @@ CHECK_IDS = [
     "ci.verify",
     "ci.tests",
     "ci.main_runs",
+    "ci.daily_health",
     "deps.pins",
     "deps.pip_check",
     *contracts._CONTRACTS,
     "smoke.data_monitors",
     "smoke.input_readers",
     *data_quality.CHECK_IDS,
+    *prospective.TITLES,
     "training.health",
+    "training.ml_runs",
     *registry.CHECKS,
     *forecast.CHECKS,
+    *ledger.TITLES,
     *backtest.MEASURES,
+    *policy.TITLES,
 ]
 
 
@@ -49,7 +63,7 @@ def sections() -> dict[str, str]:
 def test_every_check_has_a_runbook_entry_and_no_entry_is_orphaned():
     anchors = sections()
     expected = {runbook_for(check_id).split("#")[1] for check_id in CHECK_IDS}
-    assert len(CHECK_IDS) == len(set(CHECK_IDS)) == 25
+    assert len(CHECK_IDS) == len(set(CHECK_IDS)) == 36
     assert set(anchors) == expected
 
 
@@ -66,6 +80,34 @@ def test_the_runbook_promises_no_automatic_action():
     text = RUNBOOK.read_text(encoding="utf-8")
     assert "Alerts are informational." in text
     assert "Never make a check pass by changing what it measures." in text
+
+
+def test_the_runbook_says_where_to_look_how_to_reproduce_retry_and_fall_back():
+    headings = re.findall(r"^## (.+)$", RUNBOOK.read_text(encoding="utf-8"), re.MULTILINE)
+    for heading in (
+        "Where to look",
+        "Reproduce a failure",
+        "When to retry",
+        "When to disable a policy or rely on the fallback",
+    ):
+        assert heading in headings, heading
+
+
+def test_every_check_a_local_run_emits_has_a_runbook_entry(tmp_path):
+    from stock_agent.health import collect
+
+    def runner(argv, **kwargs):
+        import subprocess
+
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    environment = collect.Environment(
+        root=tmp_path, env={}, runner=runner, installed=lambda name: None, python="python"
+    )
+    summary, _ = collect.run_local(
+        environment, tmp_path / "out", verify=None, inputs=collect.PrivateInputs()
+    )
+    assert {check.check_id for check in summary.checks} == set(CHECK_IDS)
 
 
 def load_workflow() -> tuple[dict, str]:

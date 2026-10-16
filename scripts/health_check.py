@@ -7,20 +7,29 @@ Two commands:
            <output-dir>/health_summary.json and <output-dir>/evidence/. This is
            what the daily GitHub Actions workflow runs and uploads.
     local  private: the ci checks plus the owner's private stores and other
-           tracks' outputs, each only when its path is given. Writes
+           tracks' outputs, each only when it exists. Writes
            <output-dir>/latest.json, history/ and evidence/ under a private
-           directory (default ~/stock-agent-private/health). Refuses to run in
-           GitHub Actions and refuses an output directory Git would track.
+           directory (default ~/stock-agent-private/health), which the
+           Portfolio Lab's Model Health page reads. Refuses to run in GitHub
+           Actions and refuses an output directory Git would track. With
+           --github it records the latest GitHub Actions runs on main with
+           `gh run list` (the only network step; without it, or without gh,
+           those checks are insufficient evidence).
 
-Alerts are informational: this script never trades, retrains, promotes,
-deletes or changes configuration. Exit status: 0 the overall state is not
-failed, 1 it is failed, 2 the run was refused or the arguments are wrong.
+Real data and real forecast monitoring run only through `local`, on the
+owner's machine, manually or on a schedule the owner installs
+(docs/operations/model_health.md, "The private local monitoring path"). Alerts are informational: this script never trades,
+retrains, promotes, deletes or changes configuration. Exit status: 0 the
+overall state is not failed, 1 it is failed, 2 the run was refused or the
+arguments are wrong.
 
 Usage:
     .venv/bin/python scripts/health_check.py ci --output-dir OUT [--run-verify | --verify-log F]
     .venv/bin/python scripts/health_check.py local [--output-dir DIR] [--run-verify |
-        --verify-log F] [--ci-runs F] [--fund-store DIR] [--health-inputs DIR]
-        [--registry DIR [--ml-artifacts DIR]]
+        --verify-log F] [--github | --ci-runs F] [--fund-store DIR] [--health-inputs DIR]
+        [--registry DIR [--ml-artifacts DIR]] [--ml-root DIR] [--rl-runs DIR]
+        [--ledger FILE] [--ledger-head-backup FILE] [--prospective-store DIR]
+        [--anchors FILE]
 """
 
 from __future__ import annotations
@@ -30,10 +39,17 @@ import os
 import sys
 from pathlib import Path
 
+import pandas as pd
+
+from stock_agent.forecasting.prospective import ledger
+from stock_agent.forecasting.prospective.config import load_config
 from stock_agent.health import collect
+from stock_agent.health.ledger import RulesCalendar
 from stock_agent.health.model import HealthState
+from stock_agent.health.prospective import ProspectiveSources
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROSPECTIVE_CONFIG = PROJECT_ROOT / "configs" / "prospective" / "etf_prospective_v1.yaml"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -49,7 +65,13 @@ def _parser() -> argparse.ArgumentParser:
         verify.add_argument(
             "--verify-log", type=Path, help="a verify log this script recorded (dated inside)"
         )
-    local.add_argument("--ci-runs", type=Path, help="gh run list --json output (runbook)")
+    runs = local.add_mutually_exclusive_group()
+    runs.add_argument("--ci-runs", type=Path, help="gh run list --json output (runbook)")
+    runs.add_argument(
+        "--github",
+        action="store_true",
+        help="record the latest runs on main with `gh run list` (needs gh signed in)",
+    )
     local.add_argument("--fund-store", type=Path, help="a private F1 fund-store root")
     local.add_argument(
         "--health-inputs",
@@ -64,7 +86,75 @@ def _parser() -> argparse.ArgumentParser:
         help="the model-registry root (default reports/ml/registry)",
     )
     local.add_argument("--ml-artifacts", type=Path, help="its artifacts root (default: parent)")
+    local.add_argument(
+        "--ml-root",
+        type=Path,
+        default=PROJECT_ROOT / "reports" / "ml",
+        help="the experiment runner's root, holding ledger.jsonl (default reports/ml)",
+    )
+    local.add_argument(
+        "--rl-runs",
+        type=Path,
+        default=PROJECT_ROOT / "models" / "rl",
+        help="RL run directories with evaluation reports (default models/rl)",
+    )
+    local.add_argument(
+        "--ledger",
+        type=Path,
+        default=PROJECT_ROOT / ledger.DEFAULT_LEDGER,
+        help="the prospective forecast ledger (default data/raw/prospective_forecasts/...)",
+    )
+    local.add_argument(
+        "--ledger-head-backup",
+        type=Path,
+        help="a file outside the ledger whose first line is the head hash the job printed",
+    )
+    local.add_argument("--prospective-store", type=Path, help="the private prospective store")
+    local.add_argument(
+        "--anchors",
+        type=Path,
+        help="the private anchors CSV (default $STOCK_AGENT_ANCHORS, else data/raw/...)",
+    )
     return parser
+
+
+def _prospective(arguments, environment: collect.Environment):
+    """
+    The rules calendar and the prospective sources for the local run.
+
+    This script is a reviewed consumer of the prospective side
+    (tests/test_prospective_boundaries.py, SCRIPT_CONSUMERS): it imports only
+    the store's reader, the window constants and the rules calendar, and the
+    anchors loader, and passes them to the health checks, which never import
+    them. Nothing here reads a value; the checks keep counts and hashes only.
+    """
+
+    from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
+    from stock_agent.data.prospective.inference import load_inference_window
+    from stock_agent.data.prospective.window import H_END, WINDOW_START
+    from stock_agent.data.vendors.anchors import AnchorScope, anchors_path, load_anchors
+
+    calendar = RulesCalendar(sessions, CALENDAR_ID)
+    anchors_file = anchors_path(arguments.anchors, project_root=PROJECT_ROOT)
+
+    def anchors():
+        return load_anchors(
+            anchors_file,
+            AnchorScope.PROSPECTIVE,
+            project_root=PROJECT_ROOT,
+            today=pd.Timestamp(environment.now()),
+        )
+
+    sources = ProspectiveSources(
+        store_root=arguments.prospective_store,
+        assets=tuple(load_config(PROSPECTIVE_CONFIG).assets),
+        window_start=WINDOW_START,
+        h_end=H_END,
+        calendar=calendar,
+        load_window=load_inference_window,
+        load_anchors=anchors,
+    )
+    return calendar, sources
 
 
 def _verify(arguments, environment: collect.Environment, *, public: bool):
@@ -89,12 +179,20 @@ def main(argv: list[str] | None = None, environment: collect.Environment | None 
             output = arguments.output_dir.expanduser()
             collect.check_private_output(environment, output)
             verify = _verify(arguments, environment, public=False)
+            calendar, sources = _prospective(arguments, environment)
             inputs = collect.PrivateInputs(
                 ci_runs=arguments.ci_runs,
+                github=arguments.github,
                 fund_store=arguments.fund_store,
                 health_inputs=arguments.health_inputs,
                 registry=arguments.registry,
                 ml_artifacts=arguments.ml_artifacts,
+                ml_root=arguments.ml_root,
+                rl_runs=arguments.rl_runs,
+                ledger=arguments.ledger,
+                ledger_head_backup=arguments.ledger_head_backup,
+                calendar=calendar,
+                prospective=sources,
             )
             summary, path = collect.run_local(environment, output, verify=verify, inputs=inputs)
     except (collect.LocalRunRefused, collect.PublicSummaryRefused) as error:

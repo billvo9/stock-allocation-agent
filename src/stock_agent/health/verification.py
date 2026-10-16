@@ -12,8 +12,16 @@ never runs anything itself (the health script runs verify and passes the
 output in). A measurement older than `STALE_AFTER` is degraded: an old green
 result cannot vouch for today's code.
 
-CI runs on `main` come from a JSON file the owner writes with the GitHub CLI
-(the runbook gives the exact command). Nothing here contacts GitHub.
+CI runs on `main` come from a JSON run list: a file the owner writes with
+the GitHub CLI (the runbook gives the exact command), or the list the local
+monitor records itself with `gh run list` when asked to (`health.github`).
+Nothing here contacts GitHub. Two checks read the list:
+
+    ci.main_runs     the latest completed `CI` run on main
+    ci.daily_health  the latest completed `Model health` run on main (the daily
+                     smoke test); degraded when it is older than
+                     `DAILY_OVERDUE_AFTER`, because the schedule should have
+                     produced a newer one
 """
 
 from __future__ import annotations
@@ -292,6 +300,10 @@ RUN_FIELDS = (
 )
 MAIN_BRANCH = "main"
 CI_WORKFLOW = "CI"  # the `name:` of .github/workflows/ci.yml
+HEALTH_WORKFLOW = "Model health"  # the `name:` of .github/workflows/health.yml
+# The daily workflow runs once a day; two days without a completed run means
+# the schedule stopped (GitHub disables schedules in inactive repositories).
+DAILY_OVERDUE_AFTER = timedelta(hours=48)
 _FAILED = {"failure", "startup_failure"}
 _GITHUB_TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
 
@@ -342,6 +354,26 @@ def parse_ci_runs(text: str) -> tuple[CiRun, ...] | None:
 
 
 MAIN_RUNS_TITLE = "Latest CI run on main"
+DAILY_TITLE = "Latest daily health run"
+NOT_COLLECTED_DETAIL = (
+    "Pass --github to record the run list with the GitHub CLI, or write it yourself "
+    "(runbook) and pass --ci-runs."
+)
+
+
+@dataclass(frozen=True)
+class RunList:
+    """
+    A CI run list as the local monitor received it. `text` is None when no
+    list was collected; `reason` and `detail` then say why (for example the
+    GitHub CLI is not installed or not signed in).
+    """
+
+    text: str | None
+    measured_at: datetime | None
+    evidence: str | None
+    reason: str = "not_collected"
+    detail: str = NOT_COLLECTED_DETAIL
 
 
 def main_runs_check(
@@ -352,6 +384,8 @@ def main_runs_check(
     evidence: str | None,
     branch: str = MAIN_BRANCH,
     workflow: str = CI_WORKFLOW,
+    missing_reason: str = "not_collected",
+    missing_detail: str = NOT_COLLECTED_DETAIL,
 ) -> Check:
     """
     `ci.main_runs`: the conclusion of the latest completed run of `workflow` on
@@ -359,22 +393,100 @@ def main_runs_check(
     whatever command wrote it.
     """
 
+    return _latest_run_check(
+        text,
+        check_id="ci.main_runs",
+        title=MAIN_RUNS_TITLE,
+        measured_at=measured_at,
+        now=now,
+        evidence=evidence,
+        branch=branch,
+        workflow=workflow,
+        overdue_after=None,
+        missing_reason=missing_reason,
+        missing_detail=missing_detail,
+    )
+
+
+def daily_health_check(
+    text: str | None,
+    *,
+    measured_at: datetime | None,
+    now: datetime,
+    evidence: str | None,
+    missing_reason: str = "not_collected",
+    missing_detail: str = NOT_COLLECTED_DETAIL,
+) -> Check:
+    """
+    `ci.daily_health`: the latest completed run of the daily `Model health`
+    workflow on main (synthetic fixtures only). A success older than
+    `DAILY_OVERDUE_AFTER` is degraded: the schedule should have run since.
+    """
+
+    return _latest_run_check(
+        text,
+        check_id="ci.daily_health",
+        title=DAILY_TITLE,
+        measured_at=measured_at,
+        now=now,
+        evidence=evidence,
+        branch=MAIN_BRANCH,
+        workflow=HEALTH_WORKFLOW,
+        overdue_after=DAILY_OVERDUE_AFTER,
+        missing_reason=missing_reason,
+        missing_detail=missing_detail,
+    )
+
+
+def run_list_checks(runs: RunList, *, now: datetime) -> list[Check]:
+    """`ci.main_runs` and `ci.daily_health` from one run list."""
+
     common = {
-        "check_id": "ci.main_runs",
+        "measured_at": runs.measured_at,
+        "now": now,
+        "evidence": runs.evidence,
+        "missing_reason": runs.reason,
+        "missing_detail": runs.detail,
+    }
+    return [main_runs_check(runs.text, **common), daily_health_check(runs.text, **common)]
+
+
+def _latest_run_check(
+    text: str | None,
+    *,
+    check_id: str,
+    title: str,
+    measured_at: datetime | None,
+    now: datetime,
+    evidence: str | None,
+    branch: str,
+    workflow: str,
+    overdue_after: timedelta | None,
+    missing_reason: str,
+    missing_detail: str,
+) -> Check:
+    common = {
+        "check_id": check_id,
         "area": Area.CI,
-        "title": MAIN_RUNS_TITLE,
+        "title": title,
         "unit": None,
-        "threshold": "the latest completed CI run on main succeeded",
+        "threshold": f"the latest completed {workflow} run on {branch} succeeded"
+        + (
+            f", less than {overdue_after.total_seconds() / 3600:g} hours ago"
+            if overdue_after
+            else ""
+        ),
         "evidence": evidence,
     }
     if text is None or measured_at is None:
         return Check(
             state=HealthState.INSUFFICIENT_EVIDENCE,
-            reason="not_collected",
+            reason=missing_reason,
             measured_at=None,
             value=None,
-            summary="No list of CI runs was given, so the latest CI result is not shown here.",
-            detail="Write the run list with the GitHub CLI (runbook) and pass --ci-runs.",
+            summary=f"No list of GitHub runs was collected, so the latest {workflow} result "
+            "is not shown here.",
+            detail=missing_detail,
             **common,
         )
     runs = parse_ci_runs(text)
@@ -405,6 +517,7 @@ def main_runs_check(
     latest = completed[0]
     failures = sum(run.conclusion in _FAILED for run in completed)
     stamp = latest.created_at.strftime("%Y-%m-%d %H:%M UTC")
+    age = now - latest.created_at
     detail = (
         f"run {latest.run_id} on {latest.head_sha[:12]} created {stamp}: "
         f"{latest.conclusion}; {failures} of the last {len(completed)} completed {workflow} "
@@ -413,16 +526,22 @@ def main_runs_check(
     )
     if latest.conclusion in _FAILED:
         state, reason = HealthState.FAILED, "ci_failed"
-        summary = f"The latest CI run on main failed ({stamp})."
+        summary = f"The latest {workflow} run on {branch} failed ({stamp})."
     elif latest.conclusion != "success":
         state, reason = HealthState.DEGRADED, "ci_inconclusive"
-        summary = f"The latest CI run on main ended '{latest.conclusion}' ({stamp})."
+        summary = f"The latest {workflow} run on {branch} ended '{latest.conclusion}' ({stamp})."
     elif now - measured_at > STALE_AFTER:
         state, reason = HealthState.DEGRADED, "stale_evidence"
-        summary = "The latest listed CI run succeeded, but the list itself is old."
+        summary = f"The latest listed {workflow} run succeeded, but the list itself is old."
+    elif overdue_after is not None and age > overdue_after:
+        state, reason = HealthState.DEGRADED, "daily_run_overdue"
+        summary = (
+            f"The latest {workflow} run succeeded, but it is {age.days} days old: the daily "
+            "schedule has not completed a run since."
+        )
     else:
         state, reason = HealthState.HEALTHY, None
-        summary = f"The latest CI run on main succeeded ({stamp})."
+        summary = f"The latest {workflow} run on {branch} succeeded ({stamp})."
     return Check(
         state=state,
         reason=reason,

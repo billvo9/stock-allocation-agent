@@ -663,8 +663,23 @@ def test_the_launcher_binds_to_localhost_without_usage_statistics():
 
 ALLOWED_THIRD_PARTY = {"numpy", "pandas", "plotly", "streamlit"}
 DESTINATIONS = [f"destinations/{path.name}" for path in (PACKAGE / "destinations").glob("*.py")]
-APP_PROJECT_PREFIXES = ("stock_agent.app", "stock_agent.ui", "stock_agent.portfolio")
+# The Model Health page reads summaries with the health center's strict reader
+# and view model (standard library only); no other health module, and never a
+# collector (which reads private stores).
+HEALTH_MODULES = ("stock_agent.health.model", "stock_agent.health.view")
+APP_PROJECT_PREFIXES = (
+    "stock_agent.app",
+    "stock_agent.ui",
+    "stock_agent.portfolio",
+    *HEALTH_MODULES,
+)
+# Loaded with them: the health package itself (a docstring only).
+APP_PROJECT_PACKAGES = {"stock_agent", "stock_agent.health"}
 FORBIDDEN = (
+    "stock_agent.health.collect",
+    "stock_agent.health.github",
+    "stock_agent.health.ledger",
+    "stock_agent.health.prospective",
     "stock_agent.dashboard",
     "stock_agent.model_diagnostics",
     "stock_agent.model_validation",
@@ -732,10 +747,21 @@ def test_rendering_the_app_loads_no_forbidden_module():
     )
     assert not sorted(m for m in loaded if m.startswith(FORBIDDEN))
     project = sorted(m for m in loaded if m.startswith("stock_agent"))
-    outside = [m for m in project if m != "stock_agent" and not m.startswith(APP_PROJECT_PREFIXES)]
+    outside = [
+        m
+        for m in project
+        if m not in APP_PROJECT_PACKAGES and not m.startswith(APP_PROJECT_PREFIXES)
+    ]
     assert not outside, outside
     for module in ("explore", "overview", "builder", "experiments", "model_health", "evidence"):
         assert f"stock_agent.app.{module}" in loaded, module
+    assert {*HEALTH_MODULES, "stock_agent.app.health_summary"} <= loaded
+
+
+def test_the_health_package_init_imports_nothing():
+    # The app may load `stock_agent.health` only because its __init__ runs no import.
+    source = (SOURCE / "stock_agent" / "health" / "__init__.py").read_text(encoding="utf-8")
+    assert not [n for n in ast.parse(source).body if isinstance(n, ast.Import | ast.ImportFrom)]
 
 
 PORTFOLIO_FORBIDDEN = ("stock_agent.app", "stock_agent.ui", "stock_agent.dashboard")

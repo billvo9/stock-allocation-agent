@@ -5,8 +5,10 @@ today, as machine-readable summaries and a page that reads them. The
 operator guide for each check is the [runbook](runbook.md).
 
 Code: `src/stock_agent/health/`. Scripts: `scripts/health_check.py` (build a
-summary), `scripts/run_model_health.py` (view it). Workflow:
-`.github/workflows/health.yml`. Tests: `tests/test_health_*.py`.
+summary), `scripts/run_portfolio_lab.py` (the Lab's Model Health page) and
+`scripts/run_model_health.py` (the technical page). Workflow:
+`.github/workflows/health.yml`. Tests: `tests/test_health_*.py` and the
+Model Health tests in `tests/test_app_destinations.py`.
 
 ## Principles
 
@@ -23,8 +25,19 @@ summary), `scripts/run_model_health.py` (view it). Workflow:
   models are read only by the local monitor on the owner's Mac, whose
   summaries never leave it. CI cannot inspect the owner's Mac and nothing
   here pretends otherwise.
-- **No network.** Nothing in `stock_agent.health` makes a request. The CI
-  run list is a file the owner writes with the GitHub CLI.
+- **No network, with one opt-in exception.** Nothing in `stock_agent.health`
+  makes a request itself. The local monitor, when run with `--github`,
+  records the latest GitHub Actions runs with the owner's GitHub CLI
+  (`gh run list`, read-only public run metadata; `health.github`). Without
+  it, or without a working `gh`, the run checks are `insufficient_evidence`.
+  The Portfolio Lab never makes a network call.
+- **The prospective boundary holds.** Research code may not import the
+  prospective store, its rules calendar or its collector
+  (`tests/test_prospective_boundaries.py`). The health checks for the
+  prospective track therefore receive the store's reader, the rules
+  calendar and the anchors loader from `scripts/health_check.py`, a reviewed
+  consumer, and keep only counts, dates, ids and hashes: never a close or
+  an amount.
 - **Point-in-time.** Data monitors judge a store as of the run time and
   count only batches retrieved by then; freshness is measured against the
   lockbox cap, never against today.
@@ -94,15 +107,18 @@ token, secret or other variable is read.
 | Area | Check | Where | Source |
 |---|---|---|---|
 | CI and tests | `ci.verify`, `ci.tests` | CI and local | `scripts/verify.py` output (run, or an existing log) |
-| | `ci.main_runs` | local | `gh run list` output written by the owner |
+| | `ci.main_runs`, `ci.daily_health` | local | `gh run list` for `ci.yml` and `health.yml` on `main` (`--github`), or a list the owner wrote (`--ci-runs`) |
 | Dependencies | `deps.pins`, `deps.pip_check` | CI and local | `requirements.txt`, the running interpreter, `pip check` |
 | Contracts | `contract.publication`, `contract.fund_data`, `contract.generators` | CI and local | probes on synthetic fixtures in a temporary directory |
 | Self-tests | `smoke.data_monitors`, `smoke.input_readers` | CI and local | the monitors and readers on planted synthetic defects |
 | Data quality | `data.freshness`, `data.coverage`, `data.missing_sessions`, `data.vendor_discrepancy` | local | a private F1 fund store |
-| Training | `training.health` | local | the newest training-health input |
+| Vendor basis | `data.anchors`, `data.store_batches`, `data.window_coverage` | local | the anchors file, and the prospective store through its reader (passed in by the script) |
+| Training | `training.health`, `training.ml_runs` | local | the newest training-health input; the experiment runner's `reports/ml/ledger.jsonl` |
 | Registry | `registry.entries`, `registry.stages`, `registry.selection_history`, `registry.experiments` | local | the ML track's model registry, through its read API |
 | Forecasts | `forecast.coverage`, `forecast.calibration` | local | the newest registry export's forecast evaluations |
+| Forecast ledger | `forecast.ledger`, `forecast.ledger_backup`, `forecast.ledger_sessions` | local | the prospective ledger (the job's own reader), the owner's kept head copy, the rules calendar |
 | Portfolio | `portfolio.turnover`, `portfolio.costs`, `portfolio.concentration`, `portfolio.drawdown` | local | the newest backtest-summary input |
+| Policy safety | `portfolio.violations`, `portfolio.fallbacks`, `portfolio.diagnostics` | local | the newest backtest summary and the newest RL evaluation report |
 
 Thresholds are operator defaults written in the code next to each check and
 in the runbook; they are not owner-approved policy and change together. The
@@ -165,6 +181,30 @@ never as a failure of the run itself.
   `{turnover, costs_bps, max_weight, max_drawdown}`, optional `units`.
   Measures come from the approved T5a formulas only; health compares stored
   numbers and never recomputes turnover, cost or drawdown (OD8).
+  Optional additions read by the policy checks (a summary without them
+  leaves those checks `insufficient_evidence`): `constraint_violations` and
+  `fallback_events` (integers >= 0), `fallback_reasons` `{reason: int}`, and
+  `measures.volatility` (the risk measure, once its formula is approved).
+
+Other inputs the local monitor reads where their producers write them:
+
+- **RL evaluation reports** (`scripts/evaluate_rl.py`):
+  `models/rl/<run_id>/evaluation_<fold>_<n>.json`, schema
+  `rl_engineering_report`; the newest by `evaluated_at`. Health reads each
+  method's `decisions`, `invalid_targets`, `fallback_decisions` and
+  `fallback_reasons`, and the report's `label` (transition status). They
+  come from synthetic scenarios, so in the private scope they are at most
+  `insufficient_evidence`; a violation or a fallback still shows.
+- **The experiment runner's ledger** (`reports/ml/ledger.jsonl`): one line
+  per attempt, failures included.
+- **The prospective forecast ledger** (`data/raw/prospective_forecasts/`
+  `ledger.jsonl`), read with the job's own verifying reader, and the
+  owner's kept copy of its head hash (`--ledger-head-backup`: a file whose
+  first line is the hash the job printed after its last append).
+- **The prospective store and anchors**, through the sources the script
+  passes in: the anchors file in the prospective scope (sha256, counts), and
+  `load_inference_window` over the window from `WINDOW_START` to the last
+  complete session (batches used, revisions, missing closes).
 
 ## The daily workflow
 
@@ -199,35 +239,49 @@ deferred), so deterioration alerts come from the local monitor only.
 
 ## The private local monitoring path
 
+Real data and real forecast monitoring run only here, on the owner's Mac:
 `scripts/health_check.py local` runs the CI checks plus every private check
-whose input is given, on the owner's Mac:
+whose input exists. The GitHub workflow never runs it (it refuses to run in
+GitHub Actions).
 
 ```bash
-.venv/bin/python scripts/health_check.py local --run-verify --ci-runs ~/stock-agent-private/health/ci_runs.json --fund-store PATH_TO_FUND_STORE
+.venv/bin/python scripts/health_check.py local --run-verify --github --ledger-head-backup ~/stock-agent-private/ledger_head.txt
 ```
 
-- Inputs: the model registry (`--registry`, default `reports/ml/registry`)
-  and the producers' health inputs (`--health-inputs`, default
-  `reports/health_inputs`) are read from their default places; the CI run
-  list and the fund store only when given.
-- Output (default `~/stock-agent-private/health`): `latest.json` (replaced
-  atomically), `history/<stamp>.json` (write-once) and `evidence/<stamp>/`.
-  Nothing is ever deleted; pruning old history is the owner's choice.
-- It refuses to run inside GitHub Actions, and refuses an output directory
-  inside the repository unless Git ignores it (`reports/` is ignored), so a
-  private summary cannot be committed by accident. Keep the directory
-  private (`chmod 700`).
+- **Inputs read from their default places:** the model registry
+  (`--registry`, default `reports/ml/registry`), the experiment ledger
+  (`--ml-root`, default `reports/ml`), the producers' health inputs
+  (`--health-inputs`, default `reports/health_inputs`), the RL runs
+  (`--rl-runs`, default `models/rl`), the forecast ledger (`--ledger`,
+  default `data/raw/prospective_forecasts/ledger.jsonl`) and the anchors
+  file (`--anchors`, default `$STOCK_AGENT_ANCHORS`, else
+  `data/raw/issuer_sources/anchors.csv`). Only when given: the F1 fund store
+  (`--fund-store`), the prospective store (`--prospective-store`) and the
+  kept head copy (`--ledger-head-backup`). A missing input is
+  `insufficient_evidence`, never assumed.
+- **GitHub runs:** `--github` records the latest `CI` and `Model health`
+  runs on `main` with `gh run list` (one call per workflow) into the run's
+  evidence (`ci_runs.json`); `--ci-runs FILE` reads a list written by hand
+  instead. Without either, or when `gh` is not installed or not signed in,
+  `ci.main_runs` and `ci.daily_health` are `insufficient_evidence`
+  (`gh_unavailable`).
+- **Output** (default `~/stock-agent-private/health`, outside the
+  repository): `latest.json` (replaced atomically; the Lab reads it),
+  `history/<stamp>.json` (write-once) and `evidence/<stamp>/`. Nothing is
+  ever deleted; pruning old history is the owner's choice.
+- It refuses an output directory inside the repository unless Git ignores
+  it (`reports/` is ignored), so a private summary cannot be committed by
+  accident. Keep the directory private (`chmod 700`).
 - Each run compares with the previous `latest.json` and raises
-  deterioration alerts.
-- `--run-verify` runs the full gates (about three minutes); the recorded log
+  deterioration alerts (a falling ledger entry count among them).
+- `--run-verify` runs the full gates (several minutes); the recorded log
   starts with `health_check: verify.py finished at <UTC>`, and its age is read
-  from that line. `--verify-log` accepts such a log (an evidence
-  `verify.log`); a log without the line is `unavailable`
-  (`verify_time_unknown`), never dated by its file time. Without either,
-  `ci.verify` and `ci.tests` are `insufficient_evidence`.
-- Producer inputs marked `synthetic: true`, and a registry of synthetic
-  versions only, are at most `insufficient_evidence` (`synthetic_input`) here;
-  only the CI smoke checks read synthetic fixtures as such.
+  from that line. `--verify-log` accepts such a log; a log without the line
+  is `unavailable` (`verify_time_unknown`). Without either, `ci.verify` and
+  `ci.tests` are `insufficient_evidence`.
+- Producer inputs marked `synthetic: true`, a registry of synthetic versions
+  only, a synthetic forecast ledger and RL evaluation reports are at most
+  `insufficient_evidence` (`synthetic_input`) here.
 
 ### Scheduling it (owner steps; nothing here installs them)
 
@@ -245,13 +299,15 @@ step. Replace `YOU` and the paths, then:
    #!/bin/zsh
    set -u
    cd /Users/YOU/Desktop/OMSA/stock-allocation-agent || exit 2
-   gh run list --repo billvo9/stock-allocation-agent --workflow ci.yml --branch main --limit 20 \
-     --json databaseId,status,conclusion,headSha,headBranch,workflowName,createdAt,url,event \
-     > ~/stock-agent-private/health/ci_runs.json
-   .venv/bin/python scripts/health_check.py local --run-verify \
-     --ci-runs ~/stock-agent-private/health/ci_runs.json \
+   .venv/bin/python scripts/health_check.py local --run-verify --github \
+     --ledger-head-backup /Users/YOU/stock-agent-private/ledger_head.txt \
+     --prospective-store /Users/YOU/stock-agent-private/prospective_store \
      --fund-store /Users/YOU/stock-agent-private/funds
    ```
+
+   Leave out an option whose input does not exist yet; its check then says
+   so. `gh` must be on the job's `PATH` (for Homebrew, add
+   `export PATH=/opt/homebrew/bin:$PATH` before the command).
 
    ```bash
    chmod 700 ~/stock-agent-private/health/run.sh
@@ -304,39 +360,64 @@ step. Replace `YOU` and the paths, then:
 
 Notes: launchd runs a missed calendar job when the Mac wakes. The monitor
 checks whatever is checked out in that directory; the summary records the
-commit and whether the tree had uncommitted changes. `gh` uses the owner's own
-login; without it, `ci.main_runs` reports `unavailable` and the rest runs.
+commit and whether the tree had uncommitted changes. `gh` uses the owner's
+own login; without it, the GitHub run checks are `insufficient_evidence`
+(`gh_unavailable`) and the rest runs. 07:30 local time follows the daily
+workflow (06:17 UTC), so the latest daily run is normally listed.
 
 ## Viewing
 
-```bash
-.venv/bin/python scripts/run_model_health.py
-```
+**The Portfolio Lab** (`.venv/bin/python scripts/run_portfolio_lab.py`,
+Model Health destination) is the operator view. The launcher passes the
+local monitor's `latest.json` (`--health-summary`) and the newest
+downloaded CI summary (`--ci-health-summary`, default
+`reports/health/ci/*/health_summary.json`) in environment variables; the
+page reads them with the strict reader and the view model above
+(`stock_agent.health.model`, `stock_agent.health.view`; the app imports no
+other health module, tested) and makes no network call. Progressive
+disclosure:
 
-The page binds to 127.0.0.1 with usage statistics off and has two tabs: the
-newest downloaded CI summary (`reports/health/ci/*/health_summary.json`, or
-`--ci-summary`) and the local monitor's `latest.json` (or
-`--local-summary`). It leads with the state in words and one next action,
-then the real test counts, gate results and latest CI run read from the
-summary, then each area's checks in plain words; exact values, thresholds,
-reason codes, evidence and runbook links are inside each check's expander.
-The scope note and the informational-only caveat are always visible. A
-missing summary is shown with the exact command that creates it.
+1. the overall state in words, the headline and the one next step, the
+   informational-only caveat and the scope note;
+2. "At a glance": each area with its worst state and one sentence (code
+   and tests; training and evaluation runs; models, versions and evidence
+   stage; the prospective forecast ledger; data quality and vendor basis;
+   policy limits and fallbacks; risk, turnover and drawdown diagnostics);
+3. each area's checks, worst first, and an "Exact measurements" expander
+   with every value, threshold, time, reason code, evidence, runbook link
+   and detail (for example each model version's stage and blockers, or the
+   ledger head hash);
+4. alerts, checks that do not apply, provenance, and the latest daily
+   workflow summary.
+
+A missing summary shows "Not yet collected" with the command that creates
+it; a refused summary shows why and nothing from it. Producer text is shown
+literally (no markdown, links or HTML).
+
+![The Lab's Model Health page at desktop width](img/model_health_lab_desktop.jpg)
+
+![The same page at phone width](img/model_health_lab_phone.jpg)
+
+![An area's exact measurements: each model version's stage and blockers](img/model_health_lab_stages.jpg)
+
+Captured on 2026-10-15. The first two show a real local run on this
+repository (`health_check.py local --github`, no verify log): the GitHub
+runs were recorded live and every other area is insufficient evidence,
+because no private store, registry, ledger or backtest exists yet. The
+third shows a summary built from the synthetic fixtures (two synthetic
+registry versions), with local paths shortened to `~/demo`.
+
+**The technical page** (`.venv/bin/python scripts/run_model_health.py`)
+binds to 127.0.0.1 with usage statistics off and has two tabs, the
+downloaded CI summary (`--ci-summary`) and the local monitor's
+`latest.json` (`--local-summary`), with every field of every check.
 
 ![The CI tab: healthy, with the real test count and gates](img/model_health_ci.jpg)
 
 ![The local monitor: ten checks healthy, fifteen waiting for evidence](img/model_health_local.jpg)
 
-Both captured on 2026-10-14 from real summaries of this branch (before its
-first commit): the CI-mode summary from that tree's own `verify.py` output,
-and the local monitor with the `gh run list` of `ci.yml` on `main`, the
-default registry and health-inputs locations (nothing written there yet) and
-no private store configured.
-
-Integration: the Portfolio Lab's Model Health destination calls
-`stock_agent.health.page.render(page.sources_from_environment(os.environ))`
-(or passes its own `page.Source` list) once the Lab's navigation is on
-`main`.
+Both captured on 2026-10-14 (before the Lab integration and the newer
+checks).
 
 ## Learning Notes
 

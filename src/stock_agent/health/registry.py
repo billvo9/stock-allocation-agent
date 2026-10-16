@@ -12,7 +12,10 @@ registry.stages             each version's computed stage. The value is the numb
                             of versions above the floor stage, so a stage that drops
                             (an artifact altered or deleted) raises a deterioration
                             alert. The upper stages are fail-closed pending owner
-                            rules, so the floor is the expected stage today
+                            rules, so the floor is the expected stage today. The
+                            detail lists every version (up to `SHOWN_VERSIONS`) with
+                            its scope, data class, stage and the reasons that block
+                            its next stage, as the registry's assessment states them
 registry.selection_history  activation and rollback events (which version is each
                             scope's reference). The active version of every scope
                             must still verify (`active_unverified` fails)
@@ -42,6 +45,7 @@ from stock_agent.health.model import Area, Better, Check, HealthState
 from stock_agent.registry import STAGES, RegistryError, open_registry
 
 FLOOR = STAGES[0]
+SHOWN_VERSIONS = 50
 CHECKS = {
     "registry.entries": (Area.REGISTRY, "Registry entries and artifacts"),
     "registry.stages": (Area.REGISTRY, "Computed stages"),
@@ -113,7 +117,20 @@ def _entries_check(entries, unverified: list[str], **common) -> Check:
     )
 
 
-def _stages_check(assessments, **common) -> Check:
+def _version_line(entry, assessment) -> str:
+    """One version's stage and, when it is not the top stage, what blocks the next one."""
+
+    line = f"{assessment.ref} ({entry.research_scope}, {entry.data_class}): {assessment.stage}"
+    if assessment.next_stage is None:
+        return line
+    blockers = [
+        blocker.reason + (f" ({blocker.detail})" if blocker.detail else "")
+        for blocker in assessment.blockers
+    ]
+    return line + f"; {assessment.next_stage} blocked by: " + ("; ".join(blockers) or "none")
+
+
+def _stages_check(entries, assessments, **common) -> Check:
     if not assessments:
         return _make(
             "registry.stages",
@@ -131,11 +148,22 @@ def _stages_check(assessments, **common) -> Check:
         blocker.reason for assessment in assessments for blocker in assessment.blockers
     )
     above = sum(count for stage, count in stages.items() if stage != FLOOR)
-    detail = (
-        "by stage: "
-        + ", ".join(f"{stage} {stages[stage]}" for stage in STAGES if stages[stage])
-        + "; blockers to the next stage: "
-        + (", ".join(f"{reason} {n}" for reason, n in blockers.most_common(5)) or "none")
+    by_ref = {str(entry.ref): entry for entry in entries}
+    versions = [
+        _version_line(by_ref[str(assessment.ref)], assessment)
+        for assessment in sorted(assessments, key=lambda item: str(item.ref))
+    ]
+    shown = versions[:SHOWN_VERSIONS]
+    if len(versions) > SHOWN_VERSIONS:
+        shown.append(f"and {len(versions) - SHOWN_VERSIONS} more versions")
+    detail = "\n".join(
+        [
+            "by stage: "
+            + ", ".join(f"{stage} {stages[stage]}" for stage in STAGES if stages[stage]),
+            "blockers to the next stage: "
+            + (", ".join(f"{reason} {n}" for reason, n in blockers.most_common(5)) or "none"),
+            *shown,
+        ]
     )
     return _make(
         "registry.stages",
@@ -275,6 +303,17 @@ def _cap_synthetic(checks: list[Check], entries) -> list[Check]:
     ]
 
 
+def data_classes(root: Path | None, artifacts_root: Path | None = None) -> dict[str, str]:
+    """Each registered version's data class (`model@vN` -> class); {} when unreadable."""
+
+    if root is None or not root.is_dir():
+        return {}
+    try:
+        return {str(e.ref): e.data_class for e in open_registry(root, artifacts_root).entries()}
+    except (RegistryError, OSError):
+        return {}
+
+
 def registry_checks(
     root: Path | None,
     *,
@@ -330,7 +369,7 @@ def registry_checks(
     unverified = [ref for ref, ok in verified.items() if not ok]
     checks = [
         _entries_check(entries, unverified, **common),
-        _stages_check(assessments, **common),
+        _stages_check(entries, assessments, **common),
         _history_check(reader, events, verified, **common),
         _experiments_check(entries, **common),
     ]

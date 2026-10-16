@@ -53,9 +53,11 @@ STORE_SIDE = (
 # in the change that introduces it, after review. They may import only these names,
 # with `from ... import name` (a whole-module import would reach `read_batch`).
 INFERENCE_CONSUMERS: set[str] = set()
-# The forecast job's scripts, by path relative to the repository root (reviewed in PR #74):
-# the same rule, so a script reaches the store only through the loader.
-SCRIPT_CONSUMERS = {"scripts/forecast_prospective.py"}
+# The forecast job's scripts, by path relative to the repository root (reviewed in PR #74),
+# and the private Model Health run, which passes the loader, the window constants and the
+# rules calendar to research-side checks that never import them: the same rule, so a
+# script reaches the store only through the loader.
+SCRIPT_CONSUMERS = {"scripts/forecast_prospective.py", "scripts/health_check.py"}
 CONSUMER_NAMES = {
     "stock_agent.data.prospective.inference": {
         "InferenceWindow",

@@ -587,9 +587,11 @@ the owner's answers and messages in session:
     - No real forecast may be recorded until all of these are approved.
 - Pending:
   - the rest of OD3;
-  - OD8 groups B-D (group B is the D1-D8 open-decision packet,
-    `docs/research/t5a_open_decisions.md`, with D6 corrected);
-  - D9 (the Builder's buy-and-hold mix);
+  - OD8 groups C-D (cash returns and benchmarks; statistics and
+    reporting). Group B, the D1-D8 packet, was approved on 2026-10-15
+    (above); its D5 clause on constraint sets for learned policies awaits
+    confirmation;
+  - D9 (the Builder's buy-and-hold mix), separate from group B;
   - OD9's `signal_cutoff_at` for decisions and the production
     availability rule beyond descriptive display;
   - OD10-OD15 (OD13's sub-decisions are proposed);
