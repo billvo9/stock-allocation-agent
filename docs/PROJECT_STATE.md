@@ -539,6 +539,52 @@ the owner's answers and messages in session:
   - Target: "Risk and return". Forecast volatility and total return, each
     with an 80% band, with the return forecast shown next to the
     historical-average null.
+- 2026-10-15, Wave 2 brief (owner, verbatim where quoted):
+  - T5a: the owner approved D1-D8, "provided they exactly match the
+    current `docs/research/t5a_open_decisions.md` packet". The approval is
+    recorded verbatim against each D identifier in that packet (commit
+    `8b5e564`).
+    - D4 (a) holds for synthetic engineering only.
+    - One D5 clause ("Stricter constraints are explicitly registered for
+      learned policies") awaits confirmation. Until then, constraint sets
+      apply identically to every compared policy.
+    - "Keep D9 separate for later owner review."
+  - The prospective window: "My intended 63-return input window is 64
+    consecutive closes ending at the forecast close. For the initial
+    October 14 endpoint this means July 16 through October 14, 2026, used
+    only as inputs to frozen models, not for research training, tuning or
+    sealed-holdout evaluation." "This clarifies the window definition; it
+    does not authorize retroactive forecast records or unrestricted
+    sealed-period access."
+  - Still to be decided before any real forecast is recorded, each
+    escalated to the owner:
+    - "Confirm the exact registration, first eligible decision time,
+      burn-in and prospective confirmation rules. No forecast should be
+      backdated, and no paper-trading activation should be inferred
+      merely because logging code exists."
+    - "Before freezing a real model, review the current treatment of
+      zero-realized-volatility outcomes ... Escalate the target-formula
+      decision for approval."
+    - "Verify the 2025-2027 NYSE calendar against authoritative exchange
+      information and document any unresolved holidays."
+  - Data: "Do not store vendor data until I explicitly approve that step."
+    The owner runs the read-only audit locally.
+  - Monitoring: "The GitHub health workflow must use only public or
+    synthetic-safe information. Private local data and real forecast
+    monitoring need a separate safe local process."
+  - Not authorized: "Do not make changes to live investment decisions,
+    model promotion claims, training targets, historical lockbox access,
+    data purchases, source terms or reward formulas outside the
+    authorizations above."
+  - Activation boundary (lead reconciliation, not an owner decision):
+    - Decided: H_end, the window definition, the prospective path, the
+      hand-filled anchors, the owner-run audit and collection, and the
+      forecast targets.
+    - Not decided: the registration rules, the first eligible decision
+      time, burn-in, the confirmation rules, the zero-volatility target
+      treatment, storing any batch, and OD16 activation (recording a real
+      forecast, paper trading).
+    - No real forecast may be recorded until all of these are approved.
 - Pending:
   - the rest of OD3;
   - OD8 groups B-D (group B is the D1-D8 open-decision packet,
@@ -547,8 +593,11 @@ the owner's answers and messages in session:
   - OD9's `signal_cutoff_at` for decisions and the production
     availability rule beyond descriptive display;
   - OD10-OD15 (OD13's sub-decisions are proposed);
-  - OD16's remaining activation and transition rules (H_end = 2026-10-14
-    and the prospective track were decided on 2026-10-14, above);
+  - OD16: activation (recording any real forecast, paper trading) and
+    the transition rules. The registration, first-eligible-decision,
+    burn-in and confirmation rules and the zero-volatility target
+    treatment are pending (2026-10-15, above). H_end = 2026-10-14 and
+    the prospective window are decided.
   - OD17.
 
 Owner decision (2026-10-11, T4 phase B/C): "I explicitly authorize you to
