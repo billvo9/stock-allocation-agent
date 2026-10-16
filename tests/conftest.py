@@ -63,6 +63,20 @@ def _hermetic_forecast_ledger(tmp_path_factory):
         yield
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _hermetic_stock_lab_store(tmp_path_factory):
+    """
+    No test reads or writes the owner's private Stock Lab store: the Lab's
+    Stock Probability page opens the store in this directory, where no store
+    exists unless a test writes one.
+    """
+
+    with pytest.MonkeyPatch.context() as patch:
+        home = tmp_path_factory.mktemp("no-stock-lab-store")
+        patch.setenv("STOCK_AGENT_STOCK_LAB_HOME", str(home))
+        yield
+
+
 @pytest.fixture(scope="session")
 def prospective_frozen(tmp_path_factory):
     """One synthetic F1 store, frozen bundle and registry (forecast_prospective_helpers)."""

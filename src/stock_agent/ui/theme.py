@@ -81,6 +81,14 @@ CANDIDATE_COLOURS = {
 }
 CANDIDATE_FALLBACK = ("#8C2D04", "#2B5C8A")
 
+# The Stock Lab's direction categories: Okabe-Ito blue and vermillion (a
+# colour-blind-safe pair, never red and green) and a warm grey, each at least
+# 3:1 on the Lab's chart surface, and always paired with a marker or pattern
+# so colour never carries the category alone.
+DIRECTION_COLOURS = {"increase": "#0072B2", "stable": "#6E675C", "decrease": "#C04F00"}
+DIRECTION_MARKERS = {"increase": "triangle-up", "stable": "circle", "decrease": "triangle-down"}
+DIRECTION_PATTERNS = {"increase": "", "stable": ".", "decrease": "/"}
+
 SPACE = {"xs": 4, "sm": 8, "md": 12, "lg": 16, "xl": 24, "xxl": 32}
 RADIUS = {"control": "8px", "card": "12px", "pill": "999px"}
 MOTION = {"fast_ms": 120, "appear_ms": 200, "easing": "cubic-bezier(0.2, 0, 0, 1)"}
