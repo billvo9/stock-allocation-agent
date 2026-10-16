@@ -5,13 +5,17 @@ runner's attempt ledger: `<ml-root>/ledger.jsonl` (default
 (`forecasting.experiment.run_experiment`).
 
 training.ml_runs
-    The newest attempt by `started_at`: completed is healthy, failed is
-    failed (`ml_run_failed`), completed from a tree with uncommitted changes
-    is degraded (`dirty_tree`: it may not reproduce). No ledger is
-    insufficient_evidence; a ledger with no readable line is unavailable;
-    unreadable lines beside readable ones are degraded. In the private scope
-    a run whose registered versions are all synthetic (their data class in
-    the registry) is at most insufficient_evidence (`synthetic_input`).
+    The newest attempt by `started_at`: completed from a clean tree is
+    healthy, failed is failed (`ml_run_failed`), completed from a tree with
+    uncommitted changes is degraded (`dirty_tree`: it may not reproduce), and
+    a run that does not record its tree state is insufficient_evidence
+    (`tree_state_unknown`). No ledger is insufficient_evidence; a ledger with
+    no readable line is unavailable; unreadable lines beside readable ones are
+    degraded. In the private scope a run is healthy only when the registry
+    shows every version it registered as non-synthetic: a synthetic version
+    caps it at insufficient_evidence (`synthetic_input`), and so does a
+    version the registry cannot show (`data_class_unknown`: the registry is
+    missing or refused, or nothing was registered).
 
 The value is the newest attempt's status; the detail counts every attempt.
 Nothing is re-run or recomputed.
@@ -162,6 +166,15 @@ def ml_runs_check(
                 "uncommitted changes, so it may not reproduce.",
             )
         )
+    elif latest.git_dirty is None:
+        findings.append(
+            Finding(
+                HealthState.INSUFFICIENT_EVIDENCE,
+                "tree_state_unknown",
+                f"The latest ML experiment run ({latest.experiment}) does not record whether its "
+                "tree was clean, so it is not judged.",
+            )
+        )
     if unreadable > 0:
         findings.append(
             Finding(
@@ -170,9 +183,20 @@ def ml_runs_check(
                 f"{unreadable} ledger lines could not be read; the newest readable attempt was used.",
             )
         )
-    classes = {(data_classes or {}).get(ref) for ref in latest.registered}
-    if latest.registered and classes == {"synthetic"} and not allow_synthetic:
-        findings.append(SYNTHETIC_FINDING)
+    if not allow_synthetic:
+        classes = {(data_classes or {}).get(ref) for ref in latest.registered}
+        if not latest.registered or None in classes:
+            # Without the registry's data class, a synthetic run cannot be told apart.
+            findings.append(
+                Finding(
+                    HealthState.INSUFFICIENT_EVIDENCE,
+                    "data_class_unknown",
+                    "The registry does not show the data class of this run's versions, so it "
+                    "says nothing yet about real models.",
+                )
+            )
+        elif "synthetic" in classes:
+            findings.append(SYNTHETIC_FINDING)
     findings.append(
         Finding(
             HealthState.HEALTHY,

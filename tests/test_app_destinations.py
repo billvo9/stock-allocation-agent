@@ -9,6 +9,7 @@ the Builder too (test_app_builder.py).
 
 from __future__ import annotations
 
+import html
 import importlib.util
 import json
 import os
@@ -112,7 +113,7 @@ def text_of(app: AppTest) -> str:
             *app.success,
         )
     ]
-    parts += [h.proto.body for h in app.get("html") if "<style>" not in h.proto.body]
+    parts += [html.unescape(h.proto.body) for h in app.get("html") if "<style>" not in h.proto.body]
     parts += [frame.value.to_csv(index=False) for frame in app.dataframe]
     parts += [table.value.to_csv() for table in app.table]
     parts += [f"{metric.label} {metric.value}" for metric in app.metric]
@@ -401,7 +402,10 @@ def test_model_health_shows_each_overall_state_in_words_with_its_next_step(tmp_p
     pills = _pill_words(app)
     assert pills[0] == (theme.status_slug(STATE_LEVELS[overall]), STATE_WORDS[overall])
     assert view.headline in text
-    assert wording.HEALTH_NEXT.format(action=view.next_action) in text
+    assert view.next_action in text and (pills[1][1], wording.HEALTH_NEXT_TITLE) == (
+        wording.HEALTH_NEXT_WORD,
+        wording.HEALTH_NEXT_TITLE,
+    )
     assert view.caveat in text  # informational only, always shown
     # Each area in words, then each check with its own sentence.
     assert (theme.status_slug(STATE_LEVELS[first]), STATE_WORDS[first]) in pills
@@ -435,7 +439,8 @@ def test_a_summary_with_nothing_measured_shows_nothing_green(tmp_path):
         for check_id in ("ci.verify", "data.anchors", "forecast.ledger", "portfolio.diagnostics")
     ]
     app = _render_health(_write_summary(tmp_path / "latest.json", checks))
-    pills = [pill for pill in _pill_words(app) if pill[1] != wording.HEALTH_EMPTY_BADGE]
+    shown = {wording.HEALTH_EMPTY_BADGE, wording.HEALTH_NEXT_WORD}  # the page's own badges
+    pills = [pill for pill in _pill_words(app) if pill[1] not in shown]
     assert pills and all(word == "Insufficient evidence" for _, word in pills)
     assert "valid" not in {level for level, _ in _pill_words(app)}
     assert "Healthy" not in text_of(app)
@@ -527,17 +532,90 @@ def test_the_daily_github_summary_is_shown_or_its_download_command(tmp_path):
     assert "This summary is 3 days old" in text
 
 
-def test_text_from_a_summary_is_shown_literally(tmp_path):
+PLANTED = "See [a link](http://evil.example/a) or http://evil.example/b and <b>bold</b>."
+MARKDOWN_ELEMENTS = ("markdown", "caption", "info", "warning", "error", "success", "subheader")
+
+
+def _all_html(app: AppTest) -> str:
+    return " ".join(h.proto.body for h in app.get("html") if "<style>" not in h.proto.body)
+
+
+def test_producer_text_is_escaped_html_and_never_a_link(tmp_path):
     planted = _health_check(
         "ci.verify",
-        HealthState.DEGRADED,
-        summary="See [a link](https://example.com) and **bold** <b>html</b>.",
+        HealthState.DEGRADED,  # degraded: it is quoted in the next step and an alert too
+        title=f"Title {PLANTED}",
+        summary=PLANTED,
+        threshold=PLANTED,
+        unit=None,
+        value=PLANTED,
+        evidence=PLANTED,
+        detail=PLANTED,
     )
     app = _render_health(_write_summary(tmp_path / "latest.json", [planted]))
-    html = " ".join(h.proto.body for h in app.get("html"))
-    assert "<b>html</b>" not in html and "&lt;b&gt;html&lt;/b&gt;" in html
-    for element in (*app.markdown, *app.info, *app.warning):
-        assert "](https://example.com)" not in element.value
+    # Markdown would autolink a URL even with its punctuation escaped, so producer text
+    # never reaches a markdown element at all.
+    for kind in MARKDOWN_ELEMENTS:
+        for element in getattr(app, kind):
+            assert "evil.example" not in element.value, (kind, element.value)
+    rendered = _all_html(app)
+    assert rendered.count("http://evil.example/b") >= 5  # summary, next step, alert, ...
+    assert not re.search(r"<a\b[^>]*evil", rendered)  # no anchor anywhere points there
+    assert "<b>bold</b>" not in rendered and "&lt;b&gt;bold&lt;/b&gt;" in rendered
+    anchors = re.findall(r'<a\b[^>]*href="([^"]+)"', rendered)
+    assert anchors == [view_runbook_url("ci.verify")]  # the runbook link only
+    assert PLANTED in [code.proto.code_text for code in app.get("code")]  # detail, literal
+
+
+def view_runbook_url(check_id: str) -> str:
+    from stock_agent.health.model import runbook_for
+    from stock_agent.health.view import RUNBOOK_BASE_URL
+
+    return html.escape(RUNBOOK_BASE_URL + runbook_for(check_id), quote=True)
+
+
+def test_a_refused_summary_path_and_reason_are_escaped_html(tmp_path):
+    directory = tmp_path / "http:" / "evil.example"
+    directory.mkdir(parents=True)
+    path = directory / "latest.json"
+    path.write_text("{not json", encoding="utf-8")
+    app = _render_health(str(path))
+    for kind in MARKDOWN_ELEMENTS:
+        for element in getattr(app, kind):
+            assert "evil.example" not in element.value, (kind, element.value)
+    assert not re.search(r"<a\b[^>]*evil", _all_html(app))
+    assert "was refused (invalid_json)" in text_of(app)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads unreadable files")
+def test_an_unreadable_summary_is_shown_as_refused_not_a_crash(tmp_path):
+    path = Path(
+        _write_summary(tmp_path / "latest.json", [_health_check("ci.verify", HealthState.HEALTHY)])
+    )
+    path.chmod(0)
+    try:
+        app = _render_health(str(path))
+    finally:
+        path.chmod(0o600)
+    text = text_of(app)
+    assert "was refused (unreadable)" in text and "PermissionError" in text
+    assert "valid" not in {level for level, _ in _pill_words(app)}
+
+
+def test_degraded_and_unavailable_have_distinct_colours(tmp_path):
+    levels = {state: STATE_LEVELS[state] for state in HealthState}
+    assert len(set(levels.values())) == 5  # one treatment per state, the word beside it
+    for level in levels.values():
+        tones = theme.STATUS[level]
+        assert theme.contrast_ratio(tones["fg"], tones["bg"]) >= 4.5, level
+    checks = [
+        _health_check("ci.verify", HealthState.DEGRADED),
+        _health_check("ci.tests", HealthState.UNAVAILABLE),
+    ]
+    pills = _pill_words(_render_health(_write_summary(tmp_path / "latest.json", checks)))
+    slug = {word: level for level, word in pills}
+    assert slug["Degraded"] != slug["Unavailable"]
+    assert slug["Unavailable"] == theme.status_slug("UNAVAILABLE")
 
 
 def test_the_lab_page_reads_a_real_local_monitor_summary(tmp_path):
@@ -786,6 +864,13 @@ def _pending_paragraph() -> str:
     return " ".join(text[start:end].split())
 
 
+def _waits_for(decision: str, pending: str) -> bool:
+    """The whole decision tag is listed: "D9" is not found inside "OD9's"."""
+
+    pattern = rf"(?<![A-Za-z0-9]){re.escape(decision)}(?![A-Za-z0-9])"
+    return re.search(pattern, pending) is not None
+
+
 def test_every_pending_item_still_waits_for_a_pending_decision():
     import datetime
 
@@ -793,10 +878,26 @@ def test_every_pending_item_still_waits_for_a_pending_decision():
     pending = _pending_paragraph()
     for _, title, _, decision in wording.PENDING:
         if decision is not None:
-            assert decision in pending, (
+            assert _waits_for(decision, pending), (
                 f"'{title}' waits for {decision}, which docs/PROJECT_STATE.md no longer lists "
                 "as pending: update wording.PENDING and PENDING_AS_OF."
             )
+
+
+def test_a_decision_taken_off_the_pending_list_is_caught():
+    pending = _pending_paragraph()
+    for _, title, _, decision in wording.PENDING:
+        if decision is None:
+            continue
+        # The bullet that names the decision, removed as it would be once decided.
+        bullets = [b for b in pending.split(" - ") if _waits_for(decision, b)]
+        assert bullets, (title, decision)
+        without = pending
+        for bullet in bullets:
+            without = without.replace(bullet, "")
+        assert not _waits_for(decision, without), (title, decision)
+    assert not _waits_for("D9", "OD9's signal_cutoff_at for decisions")
+    assert _waits_for("D9", "- D9 (the Builder's buy-and-hold mix)")
 
 
 def test_the_sealed_date_is_the_owners_lockbox_and_no_demo_data_reaches_it():

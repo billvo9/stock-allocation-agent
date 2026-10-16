@@ -70,10 +70,44 @@ def test_no_ledger_path_is_insufficient_evidence_everywhere():
 
 
 def test_a_ledger_not_written_yet_is_insufficient_evidence(tmp_path):
-    checks = _checks(tmp_path / "ledger.jsonl", backup=_kept(tmp_path, "a" * 64))
+    # The genesis hash is what the job reports for a ledger with no entry.
+    checks = _checks(tmp_path / "ledger.jsonl", backup=_kept(tmp_path, job_ledger.GENESIS))
     assert {c.state for c in checks.values()} == {INSUFFICIENT}
     assert checks["forecast.ledger"].reason == "input_missing"
     assert "activation decision" in checks["forecast.ledger"].detail
+
+
+def test_a_deleted_ledger_with_a_kept_head_fails(tmp_path):
+    path = _ledger(tmp_path)
+    head = job_ledger.head(job_ledger.read_ledger(path))
+    backup = _kept(tmp_path, head)
+    path.unlink()  # the whole file gone: the chain alone would say "not written yet"
+    checks = _checks(path, backup=backup)
+    assert (checks["forecast.ledger"].state, checks["forecast.ledger"].reason) == (
+        HealthState.FAILED,
+        "ledger_deleted",
+    )
+    assert "deleted or moved" in checks["forecast.ledger"].summary
+    assert (checks["forecast.ledger_backup"].state, checks["forecast.ledger_backup"].reason) == (
+        HealthState.FAILED,
+        "head_not_in_ledger",
+    )
+    sessions = checks["forecast.ledger_sessions"]
+    assert (sessions.state, sessions.reason) == (HealthState.UNAVAILABLE, "ledger_deleted")
+    assert all(check.state is not HealthState.HEALTHY for check in checks.values())
+
+
+def test_a_genesis_kept_head_is_the_head_of_an_empty_ledger(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    path.write_text("", encoding="utf-8")
+    genesis = _kept(tmp_path, job_ledger.GENESIS)
+    backup = _checks(path, backup=genesis)["forecast.ledger_backup"]
+    assert (backup.state, backup.value) == (HealthState.HEALTHY, 0)
+    # Once records exist, a genesis copy is simply behind, never a deletion.
+    _append(path, "forecast", "2026-10-14")
+    _append(path, "forecast", "2026-10-15")
+    behind = _checks(path, backup=genesis)["forecast.ledger_backup"]
+    assert (behind.state, behind.reason, behind.value) == (HealthState.DEGRADED, "backup_behind", 2)
 
 
 def test_an_empty_ledger_has_no_entry_and_no_forecast(tmp_path):

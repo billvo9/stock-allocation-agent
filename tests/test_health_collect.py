@@ -562,6 +562,7 @@ def test_a_point_only_export_is_listed_as_not_applicable(root, tmp_path):
 def test_the_local_script_wires_the_private_inputs(root, tmp_path):
     script = _script()
     out = tmp_path / "out"
+    (tmp_path / "kept.txt").write_text("0" * 64 + "\n", encoding="utf-8")  # the genesis head
     arguments = [
         "local",
         "--output-dir",
@@ -587,7 +588,7 @@ def test_the_local_script_wires_the_private_inputs(root, tmp_path):
     summary = read_summary(out / "latest.json")
     reasons = {check.check_id: check.reason for check in summary.checks}
     assert reasons["forecast.ledger"] == "input_missing"
-    assert reasons["forecast.ledger_backup"] == "input_missing"  # configured, ledger absent
+    assert reasons["forecast.ledger_backup"] == "input_missing"  # genesis head, no ledger yet
     assert reasons["data.anchors"] == "anchors_missing"
     assert reasons["data.store_batches"] == "store_missing"
     assert reasons["data.window_coverage"] == "store_missing"

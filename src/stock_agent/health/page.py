@@ -39,7 +39,7 @@ CI_SUMMARY_VARIABLE = "STOCK_AGENT_HEALTH_CI_SUMMARY"
 LOCAL_SUMMARY_VARIABLE = "STOCK_AGENT_HEALTH_LOCAL_SUMMARY"
 CREATE_CI = (
     "RUN=$(gh run list --repo billvo9/stock-allocation-agent --workflow health.yml "
-    "--limit 1 --json databaseId --jq '.[0].databaseId')\n"
+    "--branch main --status completed --limit 1 --json databaseId --jq '.[0].databaseId')\n"
     'gh run download "$RUN" --repo billvo9/stock-allocation-agent --name model-health '
     '--dir "reports/health/ci/$RUN"'
 )

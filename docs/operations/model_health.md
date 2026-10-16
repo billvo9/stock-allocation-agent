@@ -262,8 +262,9 @@ GitHub Actions).
 - **GitHub runs:** `--github` records the latest `CI` and `Model health`
   runs on `main` with `gh run list` (one call per workflow) into the run's
   evidence (`ci_runs.json`); `--ci-runs FILE` reads a list written by hand
-  instead. Without either, or when `gh` is not installed or not signed in,
-  `ci.main_runs` and `ci.daily_health` are `insufficient_evidence`
+  instead. Without either, `ci.main_runs` and `ci.daily_health` are
+  `insufficient_evidence` (`not_collected`); with `--github` when `gh` is not
+  installed, not signed in or offline, they are `insufficient_evidence`
   (`gh_unavailable`).
 - **Output** (default `~/stock-agent-private/health`, outside the
   repository): `latest.json` (replaced atomically; the Lab reads it),
@@ -361,8 +362,10 @@ step. Replace `YOU` and the paths, then:
 Notes: launchd runs a missed calendar job when the Mac wakes. The monitor
 checks whatever is checked out in that directory; the summary records the
 commit and whether the tree had uncommitted changes. `gh` uses the owner's
-own login; without it, the GitHub run checks are `insufficient_evidence`
-(`gh_unavailable`) and the rest runs. 07:30 local time follows the daily
+own login. Without `--github` (or `--ci-runs`) the GitHub run checks are
+`insufficient_evidence` (`not_collected`); with `--github` but no working
+`gh` (not installed, not signed in, offline) they are `insufficient_evidence`
+(`gh_unavailable`). The rest runs either way. 07:30 local time follows the daily
 workflow (06:17 UTC), so the latest daily run is normally listed.
 
 ## Viewing

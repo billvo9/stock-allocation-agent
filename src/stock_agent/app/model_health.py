@@ -16,22 +16,39 @@ Progressive disclosure:
 
 The page lays out what the summaries say (`health_summary`) and computes
 nothing. With no summary it says "Not yet collected" and gives the command
-that creates one; a refused summary is shown as refused, with nothing from
-it. A state is always written in words beside its colour, and a check that
-was never measured is never shown as healthy: the summary reader refuses
-such a check. Text from a summary is shown literally (`prose.literal`).
+that creates one; a refused or unreadable summary is shown as refused, with
+nothing from it. A state is always written in words beside its colour, and a
+check that was never measured is never shown as healthy: the summary reader
+refuses such a check.
+
+Text a summary carries (sentences, values, details, paths, alert messages)
+is written by producers, so it never goes through markdown, which would
+turn a URL into a link: it is rendered as escaped HTML (`status_list`,
+`_text`, `_measurements`) or as a code block. Only the Lab's own copy and
+the view's fixed phrases are markdown.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from html import escape
 
 import streamlit as st
 
 from stock_agent.app import wording
 from stock_agent.app.health_summary import HealthPage, Loaded, Section
-from stock_agent.app.prose import literal, say, section
+from stock_agent.app.prose import say, section
 from stock_agent.ui import components as ui
+
+# The theme's tokens (ui.theme), so the measurement list matches the Lab's type.
+LINK_STYLE = "color: var(--sa-accent)"
+CODE_STYLE = "font-family: var(--sa-mono); font-size: 0.85em"
+
+
+def _text(text: object, *, where=None) -> None:
+    """One plain line of text as escaped HTML: never markdown, so never a link."""
+
+    (where or st).html(f'<p class="sa-list__text">{escape(str(text))}</p>')
 
 
 def _where(loaded: Loaded) -> str:
@@ -41,16 +58,17 @@ def _where(loaded: Loaded) -> str:
 
 
 def _refused(loaded: Loaded, label: str) -> None:
-    ui.notice(
-        "blocking",
-        literal(
-            wording.HEALTH_REFUSED.format(
-                label=label,
-                path=loaded.path,
-                reason=loaded.refused_reason,
-                detail=str(loaded.refused_detail).rstrip("."),
+    ui.status_list(
+        [
+            ui.Item(
+                "INVALID/BLOCKED",
+                wording.HEALTH_REFUSED_WORD,
+                wording.HEALTH_REFUSED_TITLE.format(label=label, reason=loaded.refused_reason),
+                wording.HEALTH_REFUSED_TEXT.format(
+                    path=loaded.path, detail=str(loaded.refused_detail).rstrip(".")
+                ),
             )
-        ),
+        ]
     )
 
 
@@ -59,7 +77,7 @@ def _not_collected(loaded: Loaded) -> None:
         ui.pill("NOTICE", wording.HEALTH_EMPTY_BADGE)
         say(f"**{wording.HEALTH_EMPTY_TITLE}**")
         say(wording.HEALTH_EMPTY)
-        st.caption(literal(_where(loaded)))
+        _text(_where(loaded))
         say(wording.HEALTH_CREATE, "caption")
         st.code(wording.HEALTH_CREATE_COMMAND, language="bash", wrap_lines=True)
         say(wording.HEALTH_LATER, "caption")
@@ -69,13 +87,24 @@ def _status(loaded: Loaded) -> None:
     view = loaded.view
     with ui.card("health-status"):
         ui.pills([(view.level, view.state_word)])
-        st.subheader(literal(view.headline), anchor=False)
-        st.markdown(literal(view.summary))
-        ui.notice(view.notice, literal(wording.HEALTH_NEXT.format(action=view.next_action)))
+        # The headline, counts, caveat, age warning and scope note are the view's
+        # fixed phrases; the next step quotes a check's sentence, so it is escaped HTML.
+        st.subheader(view.headline, anchor=False)
+        st.markdown(view.summary)
+        ui.status_list(
+            [
+                ui.Item(
+                    view.level,
+                    wording.HEALTH_NEXT_WORD,
+                    wording.HEALTH_NEXT_TITLE,
+                    view.next_action,
+                )
+            ]
+        )
         if view.age_warning:
-            ui.notice("warning", literal(view.age_warning))
-        ui.notice("notice", literal(view.caveat))
-        st.caption(literal(view.scope_note))
+            ui.notice("warning", view.age_warning)
+        ui.notice("notice", view.caveat)
+        st.caption(view.scope_note)
 
 
 def _glance(sections: tuple[Section, ...]) -> None:
@@ -87,25 +116,32 @@ def _glance(sections: tuple[Section, ...]) -> None:
 
 
 def _measurements(check) -> str:
+    """One check's exact measurements as escaped HTML."""
+
     fields = wording.HEALTH_MEASURED_FIELDS
-    # Reason codes and check ids match strict patterns; the runbook URL is the
-    # view's base plus a validated anchor.
-    return (
-        f"**{literal(check.title)}**\n\n"
-        f"- **{fields['value']}:** {literal(check.value)}\n"
-        f"- **{fields['threshold']}:** {literal(check.threshold)}\n"
-        f"- **{fields['measured']}:** {literal(check.measured)}\n"
-        f"- **{fields['reason']}:** `{check.reason}`\n"
-        f"- **{fields['check_id']}:** `{check.check_id}`\n"
-        f"- **{fields['evidence']}:** {literal(check.evidence)}\n"
-        f"- **{fields['runbook']}:** [{check.check_id}]({check.runbook_url})"
+    # The only link is the runbook: the view's fixed base URL plus an anchor the
+    # summary reader validated against a strict pattern.
+    runbook = (
+        f'<a href="{escape(check.runbook_url, quote=True)}" target="_blank" '
+        f'rel="noopener noreferrer" style="{LINK_STYLE}">{escape(check.check_id)}</a>'
     )
+    rows = (
+        (fields["value"], escape(check.value)),
+        (fields["threshold"], escape(check.threshold)),
+        (fields["measured"], escape(check.measured)),
+        (fields["reason"], f'<code style="{CODE_STYLE}">{escape(check.reason)}</code>'),
+        (fields["check_id"], f'<code style="{CODE_STYLE}">{escape(check.check_id)}</code>'),
+        (fields["evidence"], escape(check.evidence)),
+        (fields["runbook"], runbook),
+    )
+    items = "".join(f"<li><strong>{escape(label)}:</strong> {value}</li>" for label, value in rows)
+    return f'<p class="sa-list__title">{escape(check.title)}</p><ul>{items}</ul>'
 
 
 def _area(item: Section) -> None:
     with ui.card(f"health-area-{item.key}"):
         ui.pill(item.level, item.state_word)
-        st.markdown(f"#### {literal(item.title)}")
+        st.markdown(f"#### {item.title}")  # the Lab's own area title
         ui.status_list(
             [
                 ui.Item(check.level, check.state_word, check.title, check.summary)
@@ -114,7 +150,7 @@ def _area(item: Section) -> None:
         )
         with st.expander(wording.HEALTH_MEASUREMENTS.format(title=item.title)):
             for check in item.checks:
-                st.markdown(_measurements(check))
+                st.html(_measurements(check))
                 st.code(check.detail, language=None, wrap_lines=True)
 
 
@@ -123,14 +159,24 @@ def _after(loaded: Loaded) -> None:
     section(wording.HEALTH_ALERTS_TITLE, wording.HEALTH_ALERTS_CAPTION)
     if not view.alerts:
         say(wording.HEALTH_NO_ALERTS, "caption")
-    for alert in view.alerts:
-        ui.notice(alert.notice, literal(f"{alert.kind_word}: {alert.message}"))
+    if view.alerts:
+        ui.status_list(
+            [
+                ui.Item(ui.NOTICES[alert.notice][2], alert.kind_word, alert.message)
+                for alert in view.alerts
+            ]
+        )
     if view.not_applicable:
         section(wording.HEALTH_NOT_APPLICABLE_TITLE, wording.HEALTH_NOT_APPLICABLE_CAPTION)
-        st.markdown("\n".join(f"- {literal(line)}" for line in view.not_applicable))
+        ui.status_list(
+            [
+                ui.Item("FUTURE", wording.HEALTH_NOT_APPLICABLE_WORD, line)
+                for line in view.not_applicable
+            ]
+        )
     section(wording.HEALTH_PROVENANCE_TITLE)
     for line in view.provenance:
-        st.caption(literal(line))
+        _text(line)
 
 
 def _daily(loaded: Loaded) -> None:
@@ -142,7 +188,7 @@ def _daily(loaded: Loaded) -> None:
         with ui.state_card("health-ci-empty"):
             ui.pill("NOTICE", wording.HEALTH_EMPTY_BADGE)
             say(wording.HEALTH_CI_MISSING)
-            st.caption(literal(_where(loaded)))
+            _text(_where(loaded))
             st.code(wording.HEALTH_CI_DOWNLOAD, language="bash", wrap_lines=True)
         return
     view = loaded.view
@@ -159,7 +205,7 @@ def _daily(loaded: Loaded) -> None:
             ]
         )
         if view.age_warning:
-            ui.notice("warning", literal(view.age_warning))
+            ui.notice("warning", view.age_warning)
 
 
 def render(load: Callable[[], HealthPage] | None = None) -> None:

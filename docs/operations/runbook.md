@@ -125,7 +125,7 @@ The scheduled private run (launchd steps, outputs, keeping it private) is in
 <a id="ci-main-runs"></a>
 ### Latest CI run on main (`ci.main_runs`)
 
-- **What it means.** The latest completed `CI` workflow run on `main`, from the run list the local monitor records with `--github` (or a list passed with `--ci-runs`). Healthy on `success`; failed on `failure`; degraded on another conclusion or a list older than 7 days; insufficient evidence without a list (`gh_unavailable` when gh could not run).
+- **What it means.** The latest completed `CI` workflow run on `main`, from the run list the local monitor records with `--github` (or a list passed with `--ci-runs`). Healthy on `success`; failed on `failure`; degraded on another conclusion or a list older than 7 days; insufficient evidence without a list (`not_collected`, or `gh_unavailable` when gh could not run).
 - **Likely causes.** A merge that broke `main`; a runner or network failure; Actions disabled.
 - **Diagnose.** `gh run list --repo billvo9/stock-allocation-agent --workflow ci.yml --branch main --limit 5`, then `gh run view <run id> --log-failed`.
 - **Safe retry.** Re-run the local monitor. Re-running the workflow (`gh run rerun <run id> --failed`) is the owner's call, for a clearly transient failure.
@@ -259,7 +259,7 @@ The scheduled private run (launchd steps, outputs, keeping it private) is in
 <a id="data-store-batches"></a>
 ### Prospective batches and spot checks (`data.store_batches`)
 
-- **What it means.** The batches the prospective store's reader uses for the window, each with its retrieval time, request and the anchors file its spot check used. Degraded when a later batch serves a different value for the same fund and date (`vendor_revisions`, values never shown); unavailable when the reader refuses the store; insufficient evidence before anything is stored.
+- **What it means.** The batches the prospective store's reader uses for the window, each with its retrieval time, request and the anchors file its spot check used. Degraded when a batch records no anchors file (`spot_check_not_recorded`) or a later batch serves a different value for the same fund and date (`vendor_revisions`, values never shown); unavailable when the reader refuses the store; insufficient evidence before anything is stored or with no fund named (`no_assets`).
 - **Likely causes.** A vendor revision; an edited or foreign file in the store (`store_refused`).
 - **Diagnose.** The detail names the batches and the revised fund-dates; `ls -la` the store root (`--prospective-store`).
 - **Safe retry.** Re-run the local monitor. Nothing is ever deleted or repaired in the store.
@@ -288,8 +288,8 @@ The scheduled private run (launchd steps, outputs, keeping it private) is in
 <a id="training-ml-runs"></a>
 ### Latest ML experiment run (`training.ml_runs`)
 
-- **What it means.** The newest attempt in the experiment runner's ledger (`reports/ml/ledger.jsonl`): healthy when completed from a clean tree; degraded from a dirty tree; failed when it failed; synthetic-only versions are insufficient evidence in the local monitor.
-- **Likely causes.** A config or data error (the detail quotes the error); uncommitted changes when it ran.
+- **What it means.** The newest attempt in the experiment runner's ledger (`reports/ml/ledger.jsonl`): healthy when completed from a clean tree; degraded from a dirty tree; failed when it failed; insufficient evidence when the attempt does not record its tree state (`tree_state_unknown`). In the local monitor it is healthy only when the registry shows every version the run registered as non-synthetic: synthetic versions (`synthetic_input`) or versions the registry cannot show (`data_class_unknown`) are insufficient evidence.
+- **Likely causes.** A config or data error (the detail quotes the error); uncommitted changes when it ran; the registry missing or refused (`registry.entries` says which).
 - **Diagnose.** `tail -3 reports/ml/ledger.jsonl`, then re-run the experiment's config locally.
 - **Safe retry.** Re-run the experiment from a clean tree: a new run is a new, counted variant.
 - **Fallback.** Nothing is registered from a failed run; earlier versions keep their stages.
@@ -355,7 +355,7 @@ The scheduled private run (launchd steps, outputs, keeping it private) is in
 <a id="forecast-ledger"></a>
 ### Forecast ledger integrity (`forecast.ledger`)
 
-- **What it means.** The hash chain of `data/raw/prospective_forecasts/ledger.jsonl` (`--ledger`) verifies with the forecast job's own reader. The detail names the entry counts, the head hash and the as-of sessions. Failed on an edited, inserted, removed or reordered line, an incomplete last line or a symlink; unavailable when unreadable; insufficient evidence before the first record. Fewer entries than the previous summary raise a deterioration alert.
+- **What it means.** The hash chain of `data/raw/prospective_forecasts/ledger.jsonl` (`--ledger`) verifies with the forecast job's own reader. The detail names the entry counts, the head hash and the as-of sessions. Failed on an edited, inserted, removed or reordered line, an incomplete last line or a symlink, and when the file is missing although the kept head shows it held records (`ledger_deleted`); unavailable when unreadable; insufficient evidence before the first record. Fewer entries than the previous summary raise a deterioration alert.
 - **Likely causes.** A hand edit; a copy that cut the file; a crash mid-write.
 - **Diagnose.** `.venv/bin/python scripts/forecast_prospective.py report`; the error names the first bad line.
 - **Safe retry.** Re-run once (a write may have been in progress). Never edit the ledger to repair it; restoring it from a backup is the owner's step.
@@ -364,8 +364,8 @@ The scheduled private run (launchd steps, outputs, keeping it private) is in
 <a id="forecast-ledger-backup"></a>
 ### Kept copy of the ledger head (`forecast.ledger_backup`)
 
-- **What it means.** The head hash the owner keeps outside the ledger (`--ledger-head-backup`, first line of the file) against the ledger. Healthy when it is the head; degraded when an earlier entry (copy the new head); failed when the ledger no longer holds it (lines removed or the file rewritten); insufficient evidence when not configured.
-- **Likely causes.** The kept copy was not refreshed after the last record; the ledger lost its tail.
+- **What it means.** The head hash the owner keeps outside the ledger (`--ledger-head-backup`, first line of the file) against the ledger. Healthy when it is the head (the genesis hash, all zeros, for an empty ledger); degraded when an earlier entry (copy the new head); failed when the ledger no longer holds it (lines removed, the file rewritten, or the file deleted); insufficient evidence when not configured.
+- **Likely causes.** The kept copy was not refreshed after the last record; the ledger lost its tail or was deleted or moved.
 - **Diagnose.** `.venv/bin/python scripts/forecast_prospective.py report --expect-head <kept hash>`.
 - **Safe retry.** After copying the head printed by the job's last append.
 - **Fallback.** As for `forecast.ledger` when failed.

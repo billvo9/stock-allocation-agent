@@ -24,10 +24,11 @@ data.store_batches
     the last complete session; for each fund and session the newest covering
     batch): each batch's id, retrieval time, request and the anchors file its
     spot check used (a batch is stored only after its distributions pass that
-    check). Revisions between batches (a vendor
-    serving a different value for the same fund and date) are degraded, a
-    vendor-basis warning; no batch yet is insufficient_evidence (storing
-    awaits the owner's approval).
+    check). A batch recording no anchors file has no spot-check evidence and
+    is degraded (`spot_check_not_recorded`). Revisions between batches (a
+    vendor serving a different value for the same fund and date) are
+    degraded, a vendor-basis warning; no batch yet is insufficient_evidence
+    (storing awaits the owner's approval).
 data.window_coverage
     Coverage of the window: closes present over fund-sessions expected, per
     fund, with the reason for each missing close (`no_batch`,
@@ -35,7 +36,9 @@ data.window_coverage
     (a forecast for that fund would be refused, never filled).
 
 A refusal by the store's reader (an edited batch, a foreign entry) makes
-both store checks unavailable (`store_refused`), as for the F1 store. The
+both store checks unavailable (`store_refused`), as for the F1 store. With no
+asset named, every check is insufficient_evidence (`no_assets`), never a
+healthy "0 of 0". The
 last complete session is the last rules-calendar session whose close is
 available (18:00 America/New_York, the descriptive convention, not a vendor
 publication time).
@@ -54,7 +57,7 @@ import pandas as pd
 from stock_agent.calendars.nyse import CalendarRefused
 from stock_agent.data.funds.schema import FundDataRefused
 from stock_agent.forecasting.prospective.window import local_instant
-from stock_agent.health.inputs import Finding
+from stock_agent.health.inputs import Finding, worst_finding
 from stock_agent.health.ledger import RulesCalendar
 from stock_agent.health.model import Area, Better, Check, HealthState
 
@@ -153,6 +156,17 @@ def anchors_check(sources: ProspectiveSources | None, *, now: datetime) -> tuple
         return refused, None
     path = getattr(anchors, "path", None)
     evidence = None if path is None else str(path)
+    if not sources.assets:
+        no_assets = _not_judged(
+            check_id,
+            HealthState.INSUFFICIENT_EVIDENCE,
+            "no_assets",
+            "No prospective fund was named, so the anchors are not judged.",
+            "The registered prospective config lists no asset.",
+            evidence,
+            measured_at=now,
+        )
+        return no_assets, anchors.sha256
     if anchors.sha256 is None:
         missing = _check(
             check_id,
@@ -244,6 +258,14 @@ def _load(sources: ProspectiveSources | None, now: datetime) -> _Window:
             detail="No --prospective-store was given to this run.",
         )
     root = sources.store_root
+    if not sources.assets:
+        return _Window(
+            None,
+            state=HealthState.INSUFFICIENT_EVIDENCE,
+            reason="no_assets",
+            summary="No prospective fund was named, so the store is not judged.",
+            detail="The registered prospective config lists no asset.",
+        )
     if not root.exists() and not root.is_symlink():
         return _Window(
             None,
@@ -323,8 +345,7 @@ def _batches_check(loaded: _Window, sources, anchors_sha256, *, now, evidence) -
             detail=f"window {loaded.sessions[0]:%Y-%m-%d} to {loaded.sessions[-1]:%Y-%m-%d}",
             evidence=evidence,
         )
-    lines = []
-    checked = Counter()
+    lines, unchecked = [], []
     for row in batches.sort_values("retrieved_at").itertuples(index=False):
         sha = row.anchors_sha256 if isinstance(row.anchors_sha256, str) else None
         if sha is None:
@@ -333,7 +354,8 @@ def _batches_check(loaded: _Window, sources, anchors_sha256, *, now, evidence) -
             spot = f"spot-checked against the current anchors file {sha[:12]}"
         else:
             spot = f"spot-checked against an earlier anchors file {sha[:12]}"
-        checked[sha is not None] += 1
+        if sha is None:
+            unchecked.append(str(row.batch_id))
         lines.append(
             f"{row.batch_id}: retrieved {_stamp(row.retrieved_at)} UTC, request "
             f"{_stamp(row.request_start)[:10]} to {_stamp(row.request_end)[:10]}, {spot}"
@@ -344,25 +366,39 @@ def _batches_check(loaded: _Window, sources, anchors_sha256, *, now, evidence) -
         + (", ".join(f"{change} {n}" for change, n in sorted(changes.items())) or "none")
         + (" (values are never shown)" if changes else "")
     )
+    findings = []
+    if unchecked:
+        findings.append(
+            Finding(
+                HealthState.DEGRADED,
+                "spot_check_not_recorded",
+                f"{len(unchecked)} batches record no anchors file, so their distribution spot "
+                f"check is not evidenced: {', '.join(unchecked[:3])}.",
+            )
+        )
     if len(revisions):
         by_fund = Counter(revisions["fund_id"])
         lines.append(
             "revised fund-dates per fund: "
             + ", ".join(f"{fund} {n}" for fund, n in sorted(by_fund.items()))
         )
-        finding = Finding(
-            HealthState.DEGRADED,
-            "vendor_revisions",
-            f"{len(revisions)} stored values differ between batches: the vendor revised its data, "
-            "so the newest batch is used and the difference is listed.",
+        findings.append(
+            Finding(
+                HealthState.DEGRADED,
+                "vendor_revisions",
+                f"{len(revisions)} stored values differ between batches: the vendor revised its "
+                "data, so the newest batch is used and the difference is listed.",
+            )
         )
-    else:
-        finding = Finding(
+    findings.append(
+        Finding(
             HealthState.HEALTHY,
             None,
             f"{len(batches)} batches cover the window, each stored after its distribution "
             "spot check; no value differs between batches.",
         )
+    )
+    finding = worst_finding(findings)
     return _check(
         check_id,
         state=finding.state,

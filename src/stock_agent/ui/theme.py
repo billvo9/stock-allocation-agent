@@ -52,6 +52,9 @@ STATUS = {
     "INVALID/BLOCKED": {"fg": "#99202C", "bg": "#F7E5E6", "border": "#E2B2B7"},
     "NOTICE": {"fg": "#26505D", "bg": "#E5EDEF", "border": "#BBCED4"},
     "FUTURE": {"fg": "#57524A", "bg": "#F1EDE6", "border": "#CBC3B5"},
+    # A measurement that could not be taken (Model Health): its own hue, so it is
+    # never read as the amber of a measured warning.
+    "UNAVAILABLE": {"fg": "#5B3A8C", "bg": "#EFEAF6", "border": "#CFC1E3"},
 }
 
 TYPE = {
@@ -237,7 +240,7 @@ def _variables(colours=COLOURS, radius=RADIUS, mono=TYPE["mono"]) -> str:
 
 
 def status_slug(level: str) -> str:
-    """CSS modifier for a status level: valid, warning, blocked, notice, future."""
+    """CSS modifier for a status level: valid, warning, blocked, notice, future, unavailable."""
 
     return level.split("/")[-1].lower()
 

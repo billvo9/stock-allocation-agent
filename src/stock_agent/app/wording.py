@@ -281,10 +281,13 @@ HEALTH_LATER = (
     "Then start the lab with scripts/run_portfolio_lab.py, which finds the newest summary. "
     "The scheduled run is described in docs/operations/model_health.md."
 )
-HEALTH_REFUSED = "The {label} at {path} was refused ({reason}): {detail}. Nothing from it is shown."
+HEALTH_REFUSED_WORD = "Refused"
+HEALTH_REFUSED_TITLE = "The {label} was refused ({reason})"
+HEALTH_REFUSED_TEXT = "{path}: {detail}. Nothing from it is shown."
 HEALTH_LOCAL_LABEL = "local health summary"
 HEALTH_CI_LABEL = "daily workflow summary"
-HEALTH_NEXT = "Next step: {action}"
+HEALTH_NEXT_WORD = "Next step"
+HEALTH_NEXT_TITLE = "What to do now"
 HEALTH_GLANCE_TITLE = "At a glance"
 HEALTH_GLANCE_CAPTION = "Each area takes the state of its worst check. Open an area for details."
 HEALTH_MEASUREMENTS = "Exact measurements: {title}"
@@ -301,6 +304,7 @@ HEALTH_ALERTS_TITLE = "Alerts"
 HEALTH_ALERTS_CAPTION = "Informational only: nothing acts on an alert."
 HEALTH_NO_ALERTS = "No alerts."
 HEALTH_NOT_APPLICABLE_TITLE = "Not applicable"
+HEALTH_NOT_APPLICABLE_WORD = "Not applicable"
 HEALTH_NOT_APPLICABLE_CAPTION = (
     "Checks that do not apply to what was measured. They never count towards the state."
 )
@@ -314,7 +318,7 @@ HEALTH_CI_SCOPE = (
 HEALTH_CI_MISSING = "No downloaded summary of the daily workflow was found. Download the latest:"
 HEALTH_CI_DOWNLOAD = (
     "RUN=$(gh run list --repo billvo9/stock-allocation-agent --workflow health.yml "
-    "--limit 1 --json databaseId --jq '.[0].databaseId')\n"
+    "--branch main --status completed --limit 1 --json databaseId --jq '.[0].databaseId')\n"
     'gh run download "$RUN" --repo billvo9/stock-allocation-agent --name model-health '
     '--dir "reports/health/ci/$RUN"'
 )

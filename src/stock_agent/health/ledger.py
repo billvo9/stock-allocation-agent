@@ -16,9 +16,12 @@ forecast.ledger
 forecast.ledger_backup
     The head hash the owner keeps outside the ledger (`--ledger-head-backup`,
     a file whose first line is the 64-hex hash the job printed). Equal to the
-    head is healthy; an earlier entry's hash is degraded (copy the new head);
-    a hash the ledger no longer holds is failed (lines were removed or the
-    file was rewritten, which the chain alone cannot show). Not configured is
+    head is healthy (the genesis hash for an empty ledger); an earlier entry's
+    hash is degraded (copy the new head); a hash the ledger no longer holds is
+    failed (lines were removed or the file was rewritten, which the chain
+    alone cannot show). A missing ledger with a kept head past genesis was
+    deleted or moved: `forecast.ledger` and this check fail
+    (`ledger_deleted`, `head_not_in_ledger`). Not configured is
     insufficient_evidence, never healthy.
 forecast.ledger_sessions
     Missing expected dates: rules-calendar sessions from the first recorded
@@ -46,6 +49,7 @@ import pandas as pd
 
 from stock_agent.calendars.nyse import CalendarRefused
 from stock_agent.forecasting.prospective.ledger import (
+    GENESIS,
     LedgerEntry,
     LedgerError,
     head,
@@ -65,6 +69,7 @@ KINDS = ("forecast", "score", "refusal")
 DEADLINE_LOCAL = "09:30"
 TIMEZONE = "America/New_York"
 SHOWN_DATES = 20
+DELETED = "ledger_deleted"
 _HASH = re.compile(r"[0-9a-f]{64}")
 
 Sessions = Callable[[pd.Timestamp, pd.Timestamp], pd.DatetimeIndex]
@@ -84,6 +89,7 @@ class _Read:
     state: HealthState | None = None
     reason: str | None = None
     detail: str = ""
+    summary: str | None = None
 
 
 def _read(path: Path | None) -> _Read:
@@ -164,7 +170,7 @@ def _finish(findings: list[Finding], records, allow_synthetic: bool) -> Finding:
 def _integrity(read: _Read, *, now: datetime, evidence: str | None, allow_synthetic: bool) -> Check:
     check_id = "forecast.ledger"
     if read.entries is None:
-        summary = {
+        summary = read.summary or {
             HealthState.FAILED: "The forecast ledger failed its integrity check, so none of its "
             "records can be trusted.",
             HealthState.UNAVAILABLE: "The forecast ledger could not be read.",
@@ -264,13 +270,14 @@ def _kept_hash(path: Path) -> str | _Read:
 def _backup(
     read: _Read,
     backup: Path | None,
+    kept: str | _Read | None,
     *,
     now: datetime,
     evidence: str | None,
     allow_synthetic: bool,
 ) -> Check:
     check_id = "forecast.ledger_backup"
-    threshold = "the kept copy equals the ledger head"
+    threshold = "the kept copy equals the ledger head (the genesis hash for an empty ledger)"
     unit = "entries recorded after the kept head"
     if backup is None:
         return _check(
@@ -288,6 +295,24 @@ def _backup(
             evidence=evidence,
         )
     shown = f"{evidence}; kept head {backup}"
+    if isinstance(kept, _Read):
+        return _not_judged(
+            check_id, kept, evidence=shown, summary="The kept copy of the ledger head is unusable."
+        )
+    if read.reason == DELETED:
+        return _check(
+            check_id,
+            state=HealthState.FAILED,
+            reason="head_not_in_ledger",
+            measured_at=now,
+            value=None,
+            unit=None,
+            threshold=threshold,
+            summary="The ledger is gone, but its kept head shows it held records: it was "
+            "deleted or moved.",
+            detail=f"kept {kept}\nledger: {read.detail}",
+            evidence=shown,
+        )
     if read.entries is None:
         not_read = _Read(
             None,
@@ -299,15 +324,13 @@ def _backup(
             check_id,
             not_read,
             evidence=shown,
-            summary="The kept head cannot be compared while the ledger is not readable.",
-        )
-    kept = _kept_hash(backup)
-    if isinstance(kept, _Read):
-        return _not_judged(
-            check_id, kept, evidence=shown, summary="The kept copy of the ledger head is unusable."
+            summary="The kept head cannot be compared while the ledger is not readable."
+            if read.state is HealthState.FAILED
+            else "No ledger yet; the kept head is the empty ledger's genesis hash.",
         )
     entries = read.entries
-    hashes = [entry.entry_sha256 for entry in entries]
+    # The genesis hash is the head of an empty ledger and the start of every chain.
+    hashes = [GENESIS, *(entry.entry_sha256 for entry in entries)]
     records = _records(entries)
     if kept not in hashes:
         finding = Finding(
@@ -473,11 +496,23 @@ def ledger_checks(
     """`forecast.ledger`, `forecast.ledger_backup` and `forecast.ledger_sessions`."""
 
     read = _read(path)
+    kept = None if backup is None else _kept_hash(backup)
+    if read.reason == "input_missing" and isinstance(kept, str) and kept != GENESIS:
+        # A kept head past genesis proves the ledger held records: a missing file is a
+        # deletion, as a removed tail line is a truncation.
+        read = _Read(
+            None,
+            HealthState.FAILED,
+            DELETED,
+            f"{path} does not exist, but the kept head {kept[:12]}... shows it held records.",
+            "The forecast ledger is missing, but its kept head shows it held records: it was "
+            "deleted or moved.",
+        )
     evidence = None if path is None else str(path)
     common = {"now": now, "evidence": evidence, "allow_synthetic": allow_synthetic}
     return [
         _integrity(read, **common),
-        _backup(read, backup, **common),
+        _backup(read, backup, kept, **common),
         _sessions(read, calendar, **common),
     ]
 

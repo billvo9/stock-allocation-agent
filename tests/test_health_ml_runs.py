@@ -97,6 +97,29 @@ def test_a_run_of_synthetic_versions_is_capped_in_the_private_scope(tmp_path):
     )
 
 
+def test_a_run_that_does_not_record_its_tree_state_is_not_judged(tmp_path):
+    record = _attempt("2026-10-14T10:00:00+00:00")
+    del record["git_dirty"]
+    check = ml_runs_check(_ledger(tmp_path, record), data_classes={"etf.ridge@v1": "research"})
+    assert (check.state, check.reason) == (INSUFFICIENT, "tree_state_unknown")
+    assert "tree unknown" in check.detail
+
+
+@pytest.mark.parametrize("classes", [None, {}, {"other@v1": "research"}])
+def test_without_the_registrys_data_class_a_run_is_never_healthy(tmp_path, classes):
+    # The registry missing or refused gives no data classes: the run may be synthetic.
+    root = _ledger(tmp_path, _attempt("2026-10-14T10:00:00+00:00"))
+    check = ml_runs_check(root, data_classes=classes)
+    assert (check.state, check.reason) == (INSUFFICIENT, "data_class_unknown")
+    allowed = ml_runs_check(root, data_classes=classes, allow_synthetic=True)
+    assert allowed.state is HealthState.HEALTHY  # outside the private scope it does not matter
+
+
+def test_a_run_that_registered_nothing_is_never_healthy_in_the_private_scope(tmp_path):
+    root = _ledger(tmp_path, _attempt("2026-10-14T10:00:00+00:00", registered=[]))
+    assert ml_runs_check(root, data_classes={}).reason == "data_class_unknown"
+
+
 def test_unreadable_lines_degrade_and_an_unreadable_ledger_is_unavailable(tmp_path):
     mixed = _ledger(tmp_path / "a", _attempt("2026-10-14T10:00:00+00:00"), raw_lines=["{oops"])
     check = ml_runs_check(mixed, data_classes={"etf.ridge@v1": "research"})

@@ -7,6 +7,7 @@ amount or close ever copied into a check.
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -214,3 +215,17 @@ def test_the_last_complete_session_waits_for_the_close():
     assert last_complete_session(CALENDAR, WINDOW_START, AFTER_H_END_CLOSE) == H_END
     before = datetime(2026, 10, 14, 21, 59, tzinfo=UTC)  # 17:59 New York
     assert last_complete_session(CALENDAR, WINDOW_START, before) < H_END
+
+
+def test_a_batch_that_records_no_anchors_file_is_not_healthy(tmp_path):
+    root = stored(tmp_path / "prospective", dataclasses.replace(batch(), anchors_sha256=None))
+    batches = _checks(_sources(root))["data.store_batches"]
+    assert (batches.state, batches.reason) == (HealthState.DEGRADED, "spot_check_not_recorded")
+    assert "no anchors file recorded" in batches.detail
+
+
+def test_no_named_asset_is_insufficient_evidence_never_zero_of_zero(tmp_path):
+    root = stored(tmp_path / "prospective", batch())
+    sources = dataclasses.replace(_sources(root, anchors=_anchors_file(tmp_path)), assets=())
+    for check in _checks(sources).values():
+        assert (check.state, check.reason) == (INSUFFICIENT, "no_assets"), check.check_id

@@ -44,12 +44,13 @@ STATE_WORDS = {
     HealthState.UNAVAILABLE: "Unavailable",
     HealthState.FAILED: "Failed",
 }
-# The design system's status treatments; the state is always also written out.
+# The design system's status treatments, one per state; the state is always also
+# written out.
 STATE_LEVELS = {
     HealthState.HEALTHY: "VALID",
     HealthState.INSUFFICIENT_EVIDENCE: "NOTICE",
     HealthState.DEGRADED: "WARNING",
-    HealthState.UNAVAILABLE: "WARNING",
+    HealthState.UNAVAILABLE: "UNAVAILABLE",
     HealthState.FAILED: "INVALID/BLOCKED",
 }
 NOTICE_LEVELS = {
@@ -254,12 +255,19 @@ def _facts(summary: HealthSummary) -> tuple[Fact, ...]:
     total = len(summary.checks)
     healthy = sum(check.state is HealthState.HEALTHY for check in summary.checks)
     facts = [
-        _fact(summary, "ci.tests", "Tests passed", lambda c: f"{c.value:,}"),
+        # A summary is producer-written: a value or unit of an unexpected shape is shown
+        # as stored, never allowed to break the page.
+        _fact(
+            summary,
+            "ci.tests",
+            "Tests passed",
+            lambda c: value_text(c).removesuffix(" tests passed"),
+        ),
         _fact(
             summary,
             "ci.verify",
             "Quality gates passed",
-            lambda c: f"{c.value} {c.unit.removesuffix(' gates passed')}",
+            lambda c: f"{c.value} {(c.unit or '').removesuffix(' gates passed')}".strip(),
         ),
         _fact(summary, "ci.main_runs", "Latest CI on main", lambda c: str(c.value)),
         Fact("Checks healthy", f"{healthy} of {total}", _counts(summary.checks) or "no checks"),
