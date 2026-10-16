@@ -93,7 +93,7 @@ def test_training_writes_the_agreed_health_input(run_dir):
     assert record["code_sha"] == SHA and record["synthetic"] is True
     assert record["git_dirty"] is False
     assert record["status"] == "completed" and record["seeds"] == 2
-    assert record["transition_status"] == "engineering_only_unapproved_transition"
+    assert record["transition_status"] == "approved"
     assert record["scenario_version"] == "1.1.0"
     assert len(record["checks"]) == 8
 
@@ -110,7 +110,7 @@ def test_training_writes_every_artifact_with_its_label(run_dir):
     assert run_dir.name.startswith("20261014T120000Z-")
     for name in ("run.json", "training_health.json", "cem_baseline.json"):
         record = json.loads((run_dir / name).read_text())
-        assert record["label"] == "engineering_only_unapproved_transition"
+        assert record["label"] == "approved_transition"
     for seed in (0, 1):
         assert (run_dir / f"seed_{seed}" / "best_dev.zip").exists()
         assert (run_dir / f"seed_{seed}" / "checkpoint.json").exists()
@@ -143,6 +143,7 @@ def evaluated(run_dir):
 
 
 def test_evaluation_writes_an_engineering_report_and_withholds_tables(evaluated):
+    # The transition is approved, but tables stay withheld until the registered comparison.
     report = json.loads((evaluated / "evaluation_test_1.json").read_text())
     assert report["fold_role"] == "test" and report["fairness"] == "passed"
     assert report["fold_evaluation_number"] == 1

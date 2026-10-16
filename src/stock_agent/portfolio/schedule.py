@@ -3,36 +3,37 @@ T5a schedule contract: when decisions are taken and when they execute
 (D1 execution lag, D6 deferral, D7 rebalance offsets; spec F1.1, F1.3,
 F7.1 and F7.2).
 
-STATUS: INTERFACE ONLY. OD8 group B (D1-D8 in
-`docs/research/t5a_open_decisions.md`) awaits the owner's approval, so every
-function body raises `NotImplementedError`.
+STATUS: APPROVED by the owner on 2026-10-15 (D1-D8 in
+`docs/research/t5a_open_decisions.md`).
 
 Sessions are integer positions on the trading calendar (0, 1, 2, ...); the
 caller maps positions to calendar sessions, so nothing here reads a clock.
-Proposed semantics, PENDING approval:
 
 - A decision at session d uses only information available at the close
   of d. It executes at the close of d + lag; the new holdings first earn
-  the return dated d + lag + 1 (D1).
+  the return dated d + lag + 1 (D1). The lag is bound to the label's
+  `entry_lag` (`execution_lag`).
 - `first_decision` is the one common build decision: every compared
   portfolio and benchmark builds from 100% cash at first_decision + lag
   (D3, F7.1).
 - Later rebalance decisions are the sessions d > first_decision with
   (d - first_decision) mod every == offset, with one registered offset
-  shared by every compared portfolio (D7).
+  shared by every compared portfolio (D7). All k offsets form one variant
+  with a k-member sensitivity family (F7.2, `offset_family`).
 - If a held or targeted asset has no close at the execution session, the
   whole rebalance waits for the next session where all of them have one
-  (D6). Open sub-question: a newer decision arriving meanwhile is
-  recommended to supersede the deferred target.
+  (D6, `unexecutable_missing_close`). A newer target decided meanwhile
+  supersedes the deferred one (`superseded_deferred_target`).
 """
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 
+from stock_agent.features.training import MODEL_LABEL_SPEC
 from stock_agent.portfolio.descriptive import DISTRIBUTION_IN_GAP
-from stock_agent.portfolio.transition import PENDING_APPROVAL
 
 BUILD = "build"
 REBALANCE = "rebalance"
@@ -41,8 +42,7 @@ EXECUTION_KINDS = frozenset({BUILD, REBALANCE})
 # Schedule and engine reasons (machine-readable).
 UNEXECUTABLE_MISSING_CLOSE = "unexecutable_missing_close"  # deferred (D6)
 NO_EXECUTION_SESSION = "no_execution_session"  # no close with a following session (F1 edge)
-# D6 open sub-question: the recommended answer, pending like the rest of D6.
-SUPERSEDED_DEFERRED_TARGET = "superseded_deferred_target"  # a newer target replaced it
+SUPERSEDED_DEFERRED_TARGET = "superseded_deferred_target"  # a newer target replaced it (D6)
 REASONS = frozenset(
     {
         UNEXECUTABLE_MISSING_CLOSE,
@@ -86,7 +86,8 @@ class ScheduleSpec:
 class ScheduledExecution:
     """
     One decision and where it executes. `execution` is None when it cannot
-    execute inside the data; `reason` then says why.
+    execute inside the data; `reason` then says why. An executed decision
+    may carry `UNEXECUTABLE_MISSING_CLOSE` when it ran later than planned.
     """
 
     decision: int
@@ -105,25 +106,49 @@ class ScheduledExecution:
             raise ValueError("an unexecuted decision needs a reason")
 
 
+def _sessions(n_sessions: int) -> int:
+    if isinstance(n_sessions, bool) or not isinstance(n_sessions, int) or n_sessions < 0:
+        raise ValueError("n_sessions must be a non-negative int")
+    return n_sessions
+
+
 def execution_lag() -> int:
     """
     The registered execution lag L (D1, F1.3), bound to
     `MODEL_LABEL_SPEC.entry_lag` so backtests and labels agree.
     """
 
-    raise NotImplementedError(PENDING_APPROVAL)
+    return MODEL_LABEL_SPEC.entry_lag
 
 
 def decision_sessions(spec: ScheduleSpec, n_sessions: int) -> tuple[int, ...]:
     """The build decision and every rebalance decision among sessions 0..n_sessions-1."""
 
-    raise NotImplementedError(PENDING_APPROVAL)
+    n_sessions = _sessions(n_sessions)
+    first = spec.first_decision
+    if first >= n_sessions:
+        return ()
+    later = (d for d in range(first + 1, n_sessions) if (d - first) % spec.every == spec.offset)
+    return (first, *later)
 
 
 def execution_plan(spec: ScheduleSpec, n_sessions: int) -> tuple[ScheduledExecution, ...]:
-    """Every decision of `decision_sessions` with its execution session and kind."""
+    """
+    Every decision of `decision_sessions` with its planned execution session
+    and kind, before any deferral. A decision executes only at a close with a
+    following session, so one planned at or after the last session records
+    `NO_EXECUTION_SESSION`.
+    """
 
-    raise NotImplementedError(PENDING_APPROVAL)
+    plan = []
+    for decision in decision_sessions(spec, n_sessions):
+        kind = BUILD if decision == spec.first_decision else REBALANCE
+        execution = decision + spec.lag
+        if execution <= n_sessions - 2:
+            plan.append(ScheduledExecution(decision, execution, kind))
+        else:
+            plan.append(ScheduledExecution(decision, None, kind, NO_EXECUTION_SESSION))
+    return tuple(plan)
 
 
 def offset_family(spec: ScheduleSpec) -> tuple[ScheduleSpec, ...]:
@@ -132,7 +157,7 @@ def offset_family(spec: ScheduleSpec) -> tuple[ScheduleSpec, ...]:
     with a k-member sensitivity family, never k independent trials (F7.2).
     """
 
-    raise NotImplementedError(PENDING_APPROVAL)
+    return tuple(dataclasses.replace(spec, offset=offset) for offset in range(spec.every))
 
 
 def next_executable_session(
@@ -148,4 +173,8 @@ def next_executable_session(
     `has_close(session, asset)` reports whether the asset closed then.
     """
 
-    raise NotImplementedError(PENDING_APPROVAL)
+    n_sessions = _sessions(n_sessions)
+    for session in range(planned, n_sessions - 1):
+        if all(has_close(session, asset) for asset in involved):
+            return session
+    return None

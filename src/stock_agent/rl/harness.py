@@ -9,11 +9,15 @@ observation builder for every method, runs each method through
 everything but the policy: scenario fingerprint, window, configuration,
 transition and reward identity, booked sessions and cost rates.
 
-Publication rule. Until the injected transition is owner-approved, results
-are engineering facts only: `engineering_report` contains no performance
-figure, and `comparison_table` raises `UnapprovedTransitionError`. Once it
-is approved, the table reports the mean episode log growth (the sum of the
-D8 rewards) and trade and fallback counts per method and scenario. Risk and
+Publication rule. A comparison table needs two things: an owner-approved
+transition (else `UnapprovedTransitionError`) and an explicit release
+(`release_tables=True`, else `ComparisonWithheldError`). The transition is
+approved (T5a, 2026-10-15), but no caller releases tables yet: the registered
+comparison (baselines against PPO, with every test-fold look counted) will
+do so deliberately under its own protocol. Until then results are
+engineering facts only, and `engineering_report` contains no performance
+figure. A released table reports the mean episode log growth (the sum of
+the D8 rewards) and trade and fallback counts per method and scenario. Risk and
 performance metrics (drawdown, CAGR, Sharpe) are owner-gated formulas and
 join the table only from the approved modules (`portfolio.descriptive`,
 T5c); the episodes' engineering diagnostics never do. Learned methods
@@ -58,6 +62,17 @@ class FairnessError(AssertionError):
 
 class UnapprovedTransitionError(RuntimeError):
     """Comparison tables need an owner-approved transition."""
+
+
+class ComparisonWithheldError(RuntimeError):
+    """Comparison tables are released only by the registered comparison protocol."""
+
+
+WITHHELD_UNAPPROVED = "withheld: the injected transition is not owner-approved"
+WITHHELD_UNRELEASED = (
+    "withheld: tables are released only by the registered comparison protocol "
+    "(a separate, later change)"
+)
 
 
 @dataclass(frozen=True)
@@ -133,6 +148,11 @@ class ComparisonRun:
     transition_info: TransitionInfo
     env_config: EnvConfig
     unavailable: dict[str, str] = field(default_factory=dict)
+    release_tables: bool = False
+
+    @property
+    def tables_released(self) -> bool:
+        return self.transition_info.approved and self.release_tables
 
     def _header(self) -> dict[str, object]:
         return {
@@ -181,8 +201,10 @@ class ComparisonRun:
             **self._header(),
             "fairness": "passed",
             "comparison_tables": "available"
+            if self.tables_released
+            else WITHHELD_UNRELEASED
             if self.transition_info.approved
-            else "withheld: the injected transition is not owner-approved",
+            else WITHHELD_UNAPPROVED,
             "methods": methods,
             "unavailable": dict(self.unavailable),
         }
@@ -191,6 +213,10 @@ class ComparisonRun:
         if not self.transition_info.approved:
             raise UnapprovedTransitionError(
                 "Strategy comparison tables are withheld until the owner approves the transition."
+            )
+        if not self.release_tables:
+            raise ComparisonWithheldError(
+                "Strategy comparison tables are released only by the registered comparison."
             )
         scenarios = sorted({scenario for scenario, _ in self.fold.episodes()})
         rows = []
@@ -239,6 +265,7 @@ def run_comparison(
     transition_info: TransitionInfo,
     env_config: EnvConfig | None = None,
     loader: ScenarioLoader = generate_scenario,
+    release_tables: bool = False,
 ) -> ComparisonRun:
     env_config = env_config or EnvConfig()
     data = {episode: loader(*episode) for episode in fold.episodes()}
@@ -270,4 +297,5 @@ def run_comparison(
         transition_info=transition_info,
         env_config=env_config,
         unavailable=unavailable,
+        release_tables=release_tables,
     )

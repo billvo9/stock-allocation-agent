@@ -1,3 +1,33 @@
+"""
+Rule baselines (equal weight, inverse volatility, momentum) on the approved
+T5a engine (D1-D8, owner approval 2026-10-15).
+
+Every baseline runs through `portfolio.engine.simulate`, so `portfolio_step`
+is the single source of its costs, returns and drift:
+
+- D1: the target decided at the close of date d trades at the close of
+  d + 1 (the label's `entry_lag`) and first earns the return dated d + 2.
+- D2: the cost is `transaction_cost_rate` per unit of traded notional on
+  every risky asset, from the drifted weights, applied multiplicatively;
+  the cash account is the free funding leg. 10 bp is the provisional
+  single-stock rate.
+- D3: every run builds from 100% cash at the first execution close and pays
+  for it; there is no exit charge. The build decision is `build_date` (by
+  default the first date); every portfolio and benchmark in a comparison
+  shares one (`require_common_schedule`), and rebalance offsets count from
+  it (D7).
+- D5: the plain-baseline constraint set, w_max = 1 and no turnover limit.
+- D7: rebalance decisions are the dates d after the build decision b with
+  (d - b) mod k == offset, one registered offset (default 0) shared by every
+  compared baseline.
+- D4 (a): a cash account earning 0% is added when the inputs have none;
+  uninvested cash earns 0% for synthetic engineering only, and group C cash
+  returns (D4 (b)) are not approved, so a nonzero cash return is refused.
+
+`total_turnover` is the summed one-way turnover (F2.4) of every execution,
+the build included.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,14 +38,18 @@ import pandas as pd
 from stock_agent.agents.equal_weight import equal_weight
 from stock_agent.agents.inverse_volatility import inverse_volatility
 from stock_agent.agents.momentum import momentum_weights
-from stock_agent.environment.portfolio_math import (
-    calculate_drawdown,
-    calculate_portfolio_return,
-    calculate_transaction_cost,
-    calculate_turnover,
-    update_wealth,
-)
 from stock_agent.evaluation.results import BacktestHistory
+from stock_agent.portfolio.backtest_summary import max_drawdown
+from stock_agent.portfolio.engine import UNINVESTED_CASH_RETURN, SimulationResult, simulate
+from stock_agent.portfolio.schedule import ScheduleSpec, decision_sessions, execution_lag
+from stock_agent.portfolio.transition import Constraints, Transition, portfolio_step
+
+CASH_SYMBOL = "CASH"
+CASH_RETURN_REFUSAL = "Uninvested cash earns 0% (D4 (a)): group C cash returns are not approved."
+
+
+class ScheduleMismatchError(ValueError):
+    """Compared runs do not share one build date and one rebalance schedule (D3, D7)."""
 
 
 def prepare_feature_matrix(
@@ -51,29 +85,37 @@ def drift_weights(
     asset_returns: np.ndarray,
 ) -> np.ndarray:
     """
-    Update portfolio weights after asset returns occur.
+    Update portfolio weights after asset returns occur: the drift identity
+    w * (1 + r) / (1 + w . r) (F1.2), computed by `portfolio_step` with no
+    trade, so drift has one definition.
     """
     if weights.shape != asset_returns.shape:
         raise ValueError("Weights and asset returns must have the same shape.")
 
-    post_return_values = weights * (1.0 + asset_returns)
+    step = portfolio_step(weights, None, asset_returns, np.zeros_like(weights), 0)
 
-    portfolio_total = np.sum(post_return_values)
-
-    if portfolio_total <= 0:
-        raise ValueError("Portfolio value after asset returns must be positive.")
-
-    return post_return_values / portfolio_total
+    return np.array(step.w_next)
 
 
 @dataclass(frozen=True)
 class BaselineResult:
+    """
+    A baseline run. When the result came from the engine, `simulation` is
+    its full record (executions, steps, feasibility), `constraints` the
+    registered D5 set, `schedule` the registered schedule and `build_date`
+    the build decision's date.
+    """
+
     initial_wealth: float
     final_wealth: float
     cumulative_return: float
     max_drawdown: float
     total_turnover: float
     history: BacktestHistory | None = None
+    simulation: SimulationResult | None = None
+    constraints: Constraints | None = None
+    schedule: ScheduleSpec | None = None
+    build_date: pd.Timestamp | None = None
 
 
 def update_peak_and_drawdown(
@@ -81,13 +123,17 @@ def update_peak_and_drawdown(
     peak_wealth: float,
 ) -> tuple[float, float]:
     """
-    Update running peak wealth and calculate current drawdown.
+    Update running peak wealth and calculate current drawdown
+    (F6.5: 1 - W / peak, a positive fraction).
     """
+    if wealth <= 0 or peak_wealth <= 0:
+        raise ValueError("Wealth and peak wealth must be positive.")
+
     new_peak = max(peak_wealth, wealth)
     drawdown = 0.0
 
     if peak_wealth > wealth:
-        drawdown = calculate_drawdown(wealth, peak_wealth)
+        drawdown = 1.0 - wealth / peak_wealth
 
     return (new_peak, drawdown)
 
@@ -151,16 +197,38 @@ def prepare_inverse_volatility_targets(
     return targets
 
 
-def run_rebalanced_backtest(
+@dataclass(frozen=True, eq=False)
+class BacktestInputs:
+    """
+    A backtest in the engine's layout: `returns` (date x asset, cash
+    included, row 0 unused), the targets decided on the schedule's dates,
+    the cost-rate vector (cash 0), and the plain-baseline constraint set.
+    """
+
+    dates: pd.Index
+    columns: tuple[str, ...]
+    returns: np.ndarray
+    targets: dict[int, np.ndarray]
+    cost_rate: np.ndarray
+    constraints: Constraints
+    schedule: ScheduleSpec
+
+
+def backtest_inputs(
     returns: pd.DataFrame,
     target_weights: pd.DataFrame,
-    initial_wealth: float = 100_000.0,
-    rebalance_every: int = 5,
-    transaction_cost_rate: float = 0.001,
-    first_rebalance_step: int | None = None,
-) -> BaselineResult:
-    if initial_wealth <= 0:
-        raise ValueError("Initial wealth must be positive.")
+    *,
+    rebalance_every: int,
+    transaction_cost_rate: float,
+    rebalance_offset: int = 0,
+    cash_symbol: str = CASH_SYMBOL,
+    build_date: pd.Timestamp | None = None,
+) -> BacktestInputs:
+    """
+    Validate a date x symbol backtest and lay it out for
+    `portfolio.engine.simulate`. The build is decided at `build_date` (the
+    first date by default); earlier rows are never traded or earned.
+    """
 
     if rebalance_every <= 0:
         raise ValueError("Rebalance interval must be positive.")
@@ -174,115 +242,172 @@ def run_rebalanced_backtest(
     if list(returns.columns) != list(target_weights.columns):
         raise ValueError("Returns and target weights must have matching symbols.")
 
-    if len(returns) < 2:
-        raise ValueError("Backtest requires at least two dates.")
+    if build_date is None:
+        first = 0
+    elif build_date in returns.index:
+        first = int(returns.index.get_loc(build_date))
+    else:
+        raise ValueError(f"The build date {build_date} is not a date of these inputs.")
 
-    if first_rebalance_step is None:
-        first_rebalance_step = rebalance_every
-
-    if first_rebalance_step <= 0:
-        raise ValueError("First rebalance step must be positive.")
-
-    current_weights = target_weights.iloc[0].to_numpy(dtype=float)
-
-    wealth = initial_wealth
-    peak_wealth = initial_wealth
-    max_drawdown = 0.0
-    total_turnover = 0.0
-
-    realized_dates = []
-    net_portfolio_returns = []
-
-    wealth_dates = [returns.index[0]]
-    wealth_values = [initial_wealth]
-
-    for step in range(1, len(returns)):
-        transaction_cost = 0.0
-
-        should_rebalance = (
-            step >= first_rebalance_step and (step - first_rebalance_step) % rebalance_every == 0
+    if len(returns) - first < 3:
+        raise ValueError(
+            "Backtest requires at least three dates from the build: a decision, its "
+            "execution close and one earned return."
         )
 
-        if should_rebalance:
-            rebalance_target_weights = target_weights.iloc[step - 1].to_numpy(dtype=float)
+    returns = returns.astype(float)
+    target_weights = target_weights.astype(float)
 
-            turnover = calculate_turnover(
-                current_weights=current_weights,
-                target_weights=rebalance_target_weights,
-            )
+    if not np.isfinite(returns.to_numpy()[1:]).all():
+        raise ValueError("Returns contain missing values; the engine handles gaps directly.")
 
-            transaction_cost = calculate_transaction_cost(
-                turnover=turnover,
-                transaction_cost_rate=transaction_cost_rate,
-            )
+    if cash_symbol in returns.columns:
+        if not (returns[cash_symbol].iloc[1:] == UNINVESTED_CASH_RETURN).all():
+            raise ValueError(CASH_RETURN_REFUSAL)
+    else:
+        returns = returns.assign(**{cash_symbol: UNINVESTED_CASH_RETURN})
+        target_weights = target_weights.assign(**{cash_symbol: 0.0})
 
-            total_turnover += turnover
-
-            current_weights = rebalance_target_weights.copy()
-
-        asset_returns = returns.iloc[step].to_numpy(dtype=float)
-
-        portfolio_return = calculate_portfolio_return(
-            asset_weights=current_weights,
-            asset_returns=asset_returns,
-        )
-
-        net_portfolio_return = portfolio_return - transaction_cost
-
-        wealth = update_wealth(
-            current_wealth=wealth,
-            portfolio_return=portfolio_return,
-            transaction_cost=transaction_cost,
-        )
-
-        realized_dates.append(returns.index[step])
-
-        net_portfolio_returns.append(net_portfolio_return)
-
-        wealth_dates.append(returns.index[step])
-
-        wealth_values.append(wealth)
-
-        current_weights = drift_weights(
-            current_weights,
-            asset_returns,
-        )
-
-        peak_wealth, current_drawdown = update_peak_and_drawdown(
-            wealth=wealth,
-            peak_wealth=peak_wealth,
-        )
-
-        max_drawdown = max(
-            max_drawdown,
-            current_drawdown,
-        )
-
-    cumulative_return = wealth / initial_wealth - 1.0
-
-    history = BacktestHistory(
-        portfolio_returns=pd.Series(
-            data=net_portfolio_returns,
-            index=realized_dates,
-            name="portfolio_return",
-            dtype=float,
-        ),
-        wealth=pd.Series(
-            data=wealth_values,
-            index=wealth_dates,
-            name="wealth",
-            dtype=float,
-        ),
+    columns = tuple(returns.columns)
+    cash = columns.index(cash_symbol)
+    schedule = ScheduleSpec(
+        every=rebalance_every,
+        offset=rebalance_offset,
+        lag=execution_lag(),
+        first_decision=first,
     )
+    weights = target_weights.to_numpy(dtype=float)
+    cost_rate = np.full(len(columns), float(transaction_cost_rate))
+    cost_rate[cash] = 0.0
+
+    return BacktestInputs(
+        dates=returns.index,
+        columns=columns,
+        returns=returns.to_numpy(dtype=float),
+        targets={d: weights[d].copy() for d in decision_sessions(schedule, len(returns))},
+        cost_rate=cost_rate,
+        constraints=Constraints(cash),
+        schedule=schedule,
+    )
+
+
+def baseline_result(
+    simulation: SimulationResult,
+    dates: pd.Index,
+    constraints: Constraints | None = None,
+    schedule: ScheduleSpec | None = None,
+) -> BaselineResult:
+    """A `BaselineResult` from a complete engine run over `dates`."""
+
+    if simulation.status != "complete" or any(value is None for value in simulation.wealth):
+        raise ValueError("A baseline needs a complete run with wealth at every date.")
+
+    wealth = pd.Series(
+        data=list(simulation.wealth),
+        index=dates[list(simulation.sessions)],
+        name="wealth",
+        dtype=float,
+    )
+
+    portfolio_returns = pd.Series(
+        data=[step.net_return for step in simulation.steps],
+        index=dates[[end for _, end in simulation.spans]],
+        name="portfolio_return",
+        dtype=float,
+    )
+
+    initial_wealth = float(wealth.iloc[0])
+    final_wealth = float(wealth.iloc[-1])
 
     return BaselineResult(
         initial_wealth=initial_wealth,
-        final_wealth=wealth,
-        cumulative_return=cumulative_return,
-        max_drawdown=max_drawdown,
-        total_turnover=total_turnover,
-        history=history,
+        final_wealth=final_wealth,
+        cumulative_return=final_wealth / initial_wealth - 1.0,
+        max_drawdown=max_drawdown(list(wealth)),
+        total_turnover=float(sum(step.turnover_one_way for step in simulation.steps)),
+        history=BacktestHistory(portfolio_returns=portfolio_returns, wealth=wealth),
+        simulation=simulation,
+        constraints=constraints,
+        schedule=schedule,
+        build_date=None if schedule is None else dates[schedule.first_decision],
     )
+
+
+def require_common_schedule(
+    portfolios: dict[str, BaselineResult],
+    benchmarks: dict[str, BaselineResult] | None = None,
+) -> None:
+    """
+    D3 and D7: every compared portfolio and benchmark builds at one common
+    build date and first execution close, and every portfolio rebalances on
+    one registered schedule (the same k and offset). Buy-and-hold benchmarks
+    share the build only. Raises `ScheduleMismatchError` otherwise.
+    """
+
+    runs = {**portfolios, **(benchmarks or {})}
+    if not portfolios:
+        raise ScheduleMismatchError("A comparison needs at least one portfolio.")
+    missing = sorted(name for name, run in runs.items() if run.schedule is None)
+    if missing:
+        raise ScheduleMismatchError(f"No engine schedule recorded for {missing}.")
+
+    def first_close(run: BaselineResult) -> pd.Timestamp:
+        return run.history.wealth.index[0]
+
+    builds = {(run.build_date, first_close(run)) for run in runs.values()}
+    if len(builds) > 1:
+        detail = {name: (str(run.build_date), str(first_close(run))) for name, run in runs.items()}
+        raise ScheduleMismatchError(f"Runs build on different dates: {detail}")
+    phases = {(run.schedule.every, run.schedule.offset) for run in portfolios.values()}
+    if len(phases) > 1:
+        detail = {
+            name: (run.schedule.every, run.schedule.offset) for name, run in portfolios.items()
+        }
+        raise ScheduleMismatchError(f"Portfolios rebalance on different schedules: {detail}")
+
+
+def run_rebalanced_backtest(
+    returns: pd.DataFrame,
+    target_weights: pd.DataFrame,
+    initial_wealth: float = 100_000.0,
+    rebalance_every: int = 5,
+    transaction_cost_rate: float = 0.001,
+    rebalance_offset: int = 0,
+    *,
+    cash_symbol: str = CASH_SYMBOL,
+    build_date: pd.Timestamp | None = None,
+    transition: Transition = portfolio_step,
+) -> BaselineResult:
+    """
+    Simulate `target_weights` (row d: the target decided at the close of
+    date d) on `returns` (row t: each asset's return dated t) through the
+    approved engine. See the module docstring for the rules.
+    """
+
+    if initial_wealth <= 0:
+        raise ValueError("Initial wealth must be positive.")
+
+    inputs = backtest_inputs(
+        returns,
+        target_weights,
+        rebalance_every=rebalance_every,
+        transaction_cost_rate=transaction_cost_rate,
+        rebalance_offset=rebalance_offset,
+        cash_symbol=cash_symbol,
+        build_date=build_date,
+    )
+
+    simulation = simulate(
+        inputs.returns,
+        inputs.targets,
+        lag=inputs.schedule.lag,
+        cost_rate=inputs.cost_rate,
+        constraints=inputs.constraints,
+        initial_wealth=initial_wealth,
+        transition=transition,
+    )
+
+    return baseline_result(simulation, inputs.dates, inputs.constraints, inputs.schedule)
 
 
 def run_inverse_volatility_baseline(
@@ -291,6 +416,8 @@ def run_inverse_volatility_baseline(
     initial_wealth: float = 100_000.0,
     rebalance_every: int = 5,
     transaction_cost_rate: float = 0.001,
+    rebalance_offset: int = 0,
+    build_date: pd.Timestamp | None = None,
 ) -> BaselineResult:
     returns = prepare_feature_matrix(
         frame=frame,
@@ -303,14 +430,14 @@ def run_inverse_volatility_baseline(
         symbols=symbols,
     )
 
-    # Your part:
     return run_rebalanced_backtest(
         returns=returns,
         target_weights=target_weights,
         initial_wealth=initial_wealth,
         rebalance_every=rebalance_every,
         transaction_cost_rate=transaction_cost_rate,
-        first_rebalance_step=rebalance_every,
+        rebalance_offset=rebalance_offset,
+        build_date=build_date,
     )
 
 
@@ -341,6 +468,8 @@ def run_equal_weight_baseline(
     initial_wealth: float = 100_000.0,
     rebalance_every: int = 5,
     transaction_cost_rate: float = 0.001,
+    rebalance_offset: int = 0,
+    build_date: pd.Timestamp | None = None,
 ) -> BaselineResult:
     returns = prepare_feature_matrix(
         frame=frame,
@@ -359,7 +488,8 @@ def run_equal_weight_baseline(
         initial_wealth=initial_wealth,
         rebalance_every=rebalance_every,
         transaction_cost_rate=transaction_cost_rate,
-        first_rebalance_step=rebalance_every + 1,
+        rebalance_offset=rebalance_offset,
+        build_date=build_date,
     )
 
 
@@ -434,9 +564,14 @@ def run_momentum_baseline(
     initial_wealth: float = 100_000.0,
     rebalance_every: int = 5,
     transaction_cost_rate: float = 0.001,
-    cash_symbol: str = "CASH",
-    cash_return: float = 0.0,
+    cash_symbol: str = CASH_SYMBOL,
+    cash_return: float = UNINVESTED_CASH_RETURN,
+    rebalance_offset: int = 0,
+    build_date: pd.Timestamp | None = None,
 ) -> BaselineResult:
+    if cash_return != UNINVESTED_CASH_RETURN:
+        raise ValueError(CASH_RETURN_REFUSAL)
+
     returns = prepare_feature_matrix(
         frame=frame,
         symbols=symbols,
@@ -466,5 +601,7 @@ def run_momentum_baseline(
         initial_wealth=initial_wealth,
         rebalance_every=rebalance_every,
         transaction_cost_rate=transaction_cost_rate,
-        first_rebalance_step=rebalance_every,
+        rebalance_offset=rebalance_offset,
+        cash_symbol=cash_symbol,
+        build_date=build_date,
     )

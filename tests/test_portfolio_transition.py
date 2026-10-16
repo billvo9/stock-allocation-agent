@@ -1,18 +1,16 @@
 """
 The T5a engine contract (`portfolio.transition`, `portfolio.schedule`,
-`portfolio.engine`, `environment.reward.log_growth_reward`).
+`portfolio.engine`, `environment.reward.log_growth_reward`), approved by the
+owner on 2026-10-15 (D1-D8, `docs/research/t5a_open_decisions.md`).
 
 Two kinds of test:
 
-- Structure (passing now): data types validate their inputs, the
-  `Transition` seam has the F8.1 signature, nothing imports the product
-  front ends, and every economic function still refuses to run.
-- Economics (strict xfails, `raises=NotImplementedError`): the packet's
-  hand examples, seeded invariants, shares-ledger conservation, adversarial
-  timing and replay equivalence against the reference oracle. They wait for
-  the owner's OD8 group B approval (D1-D8). Any other exception, or an
-  unexpected pass, fails the suite, so the stubs cannot be filled in without
-  flipping these tests deliberately.
+- Structure: data types validate their inputs, the `Transition` seam has
+  the F8.1 signature, and nothing imports the product front ends.
+- Economics: the packet's hand examples, seeded invariants, shares-ledger
+  conservation, adversarial timing and replay equivalence against the
+  reference oracle. Until the approval these were strict xfails; they now
+  pass against the implementation.
 """
 
 from __future__ import annotations
@@ -27,7 +25,8 @@ import numpy as np
 import pytest
 from reference import t5a_reference as oracle
 from reference import timing
-from reference.replay import ReplayPath, ReplayScenario, oracle_runner, replay
+from reference.replay import ReplayScenario, oracle_runner, replay
+from t5a_runners import engine_runner
 
 from stock_agent.environment.reward import log_growth_reward
 from stock_agent.features.training import MODEL_LABEL_SPEC
@@ -37,7 +36,6 @@ from stock_agent.portfolio.transition import (
     CAP,
     NO_TARGET,
     NO_TRADE,
-    PENDING_APPROVAL,
     TRADED,
     TURNOVER_LIMIT,
     Constraints,
@@ -54,8 +52,6 @@ PACKAGE = Path(__file__).resolve().parents[1] / "src" / "stock_agent"
 NAN = float("nan")
 TOLERANCE = 1e-12
 
-PENDING = pytest.mark.xfail(strict=True, raises=NotImplementedError, reason=PENDING_APPROVAL)
-
 
 def _step(**overrides):
     fields = {
@@ -71,26 +67,8 @@ def _step(**overrides):
     return StepResult(**{**fields, **overrides})
 
 
-def engine_runner(scenario: ReplayScenario) -> ReplayPath:
-    """The engine behind the replay harness's `EpisodeRunner` seam."""
-
-    result = engine.simulate(
-        np.asarray(scenario.returns, dtype=float),
-        {
-            d: None if target is None else np.asarray(target, dtype=float)
-            for d, target in scenario.targets.items()
-        },
-        lag=scenario.lag,
-        cost_rate=np.asarray(scenario.cost_rate, dtype=float),
-        constraints=Constraints(scenario.cash_index, scenario.w_max, scenario.tau_max),
-        initial_wealth=scenario.initial_wealth,
-        has_close=scenario.has_close,
-    )
-    return ReplayPath(tuple(result.sessions), tuple(result.wealth), result.status, result.reason)
-
-
 # ======================================================================
-# Structure (passing now)
+# Structure
 # ======================================================================
 
 
@@ -173,7 +151,7 @@ def test_a_simulation_result_states_why_it_stopped():
 
 
 SPEC = schedule.ScheduleSpec(every=1, offset=0, lag=1)
-UNAPPROVED = {
+APPROVED = {
     "portfolio_step": lambda: portfolio_step(
         np.array([0.5, 0.5]), None, np.zeros(2), np.zeros(2), 1
     ),
@@ -201,10 +179,16 @@ UNAPPROVED = {
 }
 
 
-@pytest.mark.parametrize("name", sorted(UNAPPROVED))
-def test_no_unapproved_formula_runs(name):
-    with pytest.raises(NotImplementedError, match="awaiting OD8 group B approval"):
-        UNAPPROVED[name]()
+@pytest.mark.parametrize("name", sorted(APPROVED))
+def test_every_approved_function_runs(name):
+    # Until 2026-10-15 each of these raised NotImplementedError (OD8 group B pending).
+    APPROVED[name]()
+
+
+def test_no_interface_stub_is_left_in_the_engine():
+    for name in ("transition", "schedule", "engine"):
+        source = (PACKAGE / "portfolio" / f"{name}.py").read_text(encoding="utf-8")
+        assert "NotImplementedError" not in source, name
 
 
 def _imports(path: Path) -> set[str]:
@@ -217,7 +201,7 @@ def _imports(path: Path) -> set[str]:
     return imported
 
 
-@pytest.mark.parametrize("name", ["transition", "schedule", "engine"])
+@pytest.mark.parametrize("name", ["transition", "schedule", "engine", "backtest_summary"])
 def test_the_engine_never_imports_a_front_end_or_a_learner(name):
     imported = _imports(PACKAGE / "portfolio" / f"{name}.py")
     forbidden = ("app", "ui", "dashboard", "rl", "model_diagnostics", "publication", "environment")
@@ -226,7 +210,7 @@ def test_the_engine_never_imports_a_front_end_or_a_learner(name):
 
 
 # ======================================================================
-# Economics (strict xfails until OD8 group B is approved)
+# Economics (approved 2026-10-15)
 # ======================================================================
 
 # --- hand examples (packet D2, D3; spec T2.1-T2.5, T8.1) ---
@@ -248,7 +232,6 @@ def _assert_matches_ledger(step, w_pre, target, r_next, cost_rate, cash_index):
         assert getattr(step, name) == pytest.approx(ledger[name], rel=0, abs=TOLERANCE), name
 
 
-@PENDING
 def test_t8_1_the_rebalance_example():
     step = portfolio_step(*REBALANCE)
     assert step.cost == pytest.approx(0.0003, abs=1e-15)
@@ -262,7 +245,6 @@ def test_t8_1_the_rebalance_example():
     _assert_matches_ledger(step, *REBALANCE)
 
 
-@PENDING
 def test_t2_1_selling_into_cash_charges_the_risky_leg_only():
     step = portfolio_step(
         np.array([1.0, 0.0]), np.array([0.0, 1.0]), np.zeros(2), np.array([0.001, 0.0]), 1
@@ -270,7 +252,6 @@ def test_t2_1_selling_into_cash_charges_the_risky_leg_only():
     assert 100_000 * (1 + step.net_return) == pytest.approx(99_900.0, abs=1e-9)
 
 
-@PENDING
 def test_t2_2_the_build_from_cash_costs_and_turns_over_fully():
     step = portfolio_step(
         np.array([0.0, 0.0, 1.0]),
@@ -284,7 +265,6 @@ def test_t2_2_the_build_from_cash_costs_and_turns_over_fully():
     assert step.traded_notional == pytest.approx(1.0, abs=1e-15)
 
 
-@PENDING
 def test_t2_3_costs_multiply():
     step = portfolio_step(
         np.array([0.0, 1.0]), np.array([1.0, 0.0]), np.array([0.10, 0.0]), np.array([0.001, 0.0]), 1
@@ -292,7 +272,6 @@ def test_t2_3_costs_multiply():
     assert 1 + step.net_return == pytest.approx(1.0989, abs=TOLERANCE)
 
 
-@PENDING
 def test_t2_5_cross_class_moves():
     rates = CostModel({"VTI": 0.0005, "SHV": 0.0002, "AGG": 0.0005, "CASH": 0.0}).rates_for(
         ["VTI", "SHV", "AGG", "CASH"]
@@ -304,7 +283,6 @@ def test_t2_5_cross_class_moves():
     assert to_agg.cost * 1e4 == pytest.approx(2.0, abs=TOLERANCE)
 
 
-@PENDING
 def test_cost_rates_follow_the_asset_order_and_the_sensitivity_multiplier():
     model = CostModel({"VTI": 0.0005, "SHV": 0.0002, "CASH": 0.0}, multiplier=2.0)
     np.testing.assert_allclose(model.rates_for(["SHV", "VTI", "CASH"]), [0.0004, 0.001, 0.0])
@@ -318,7 +296,6 @@ def test_cost_rates_follow_the_asset_order_and_the_sensitivity_multiplier():
 # --- D5: the feasibility map ---
 
 
-@PENDING
 def test_d5_the_turnover_limit_trades_part_way_and_says_so():
     record = feasible_target(
         np.array([0.30, 0.50, 0.20]), np.array([0.70, 0.10, 0.20]), Constraints(2, tau_max=0.25)
@@ -329,7 +306,6 @@ def test_d5_the_turnover_limit_trades_part_way_and_says_so():
     assert record.distance_one_way == pytest.approx(0.15, abs=TOLERANCE)
 
 
-@PENDING
 def test_d5_the_cap_sends_the_excess_to_cash_and_says_so():
     record = feasible_target(
         np.array([0.70, 0.20, 0.10]), np.array([0.0, 0.0, 1.0]), Constraints(2, w_max=0.5)
@@ -339,7 +315,6 @@ def test_d5_the_cap_sends_the_excess_to_cash_and_says_so():
     assert record.distance_one_way == pytest.approx(0.20, abs=TOLERANCE)
 
 
-@PENDING
 def test_d5_both_constraints_apply_in_order_like_the_oracle():
     requested, w_pre = np.array([0.70, 0.20, 0.10]), np.array([0.2, 0.2, 0.6])
     record = feasible_target(requested, w_pre, Constraints(2, w_max=0.5, tau_max=0.1))
@@ -348,7 +323,6 @@ def test_d5_both_constraints_apply_in_order_like_the_oracle():
     assert record.binding == (CAP, TURNOVER_LIMIT)
 
 
-@PENDING
 def test_d5_a_target_inside_the_set_passes_unchanged():
     requested = np.array([0.3, 0.3, 0.4])
     record = feasible_target(requested, np.array([0.2, 0.4, 0.4]), Constraints(2, 0.5, 0.5))
@@ -356,7 +330,6 @@ def test_d5_a_target_inside_the_set_passes_unchanged():
     assert record.binding == () and record.distance_one_way == 0.0
 
 
-@PENDING
 @pytest.mark.parametrize(
     "requested", [[0.6, 0.6, -0.2], [0.5, 0.5, 0.1], [NAN, 0.5, 0.5], [0.5, 0.5]]
 )
@@ -389,7 +362,6 @@ def _random_step(rng):
     return w_pre, target, r_next, rates, cash
 
 
-@PENDING
 @pytest.mark.parametrize("seed", range(4))
 def test_f8_1_invariants_hold_on_random_steps(seed):
     rng = np.random.RandomState(seed)  # legacy stream: stable across numpy versions
@@ -411,7 +383,6 @@ def test_f8_1_invariants_hold_on_random_steps(seed):
         _assert_matches_ledger(step, w_pre, target, r_next, rates, cash)
 
 
-@PENDING
 @pytest.mark.parametrize("seed", range(3))
 def test_an_all_cash_portfolio_earns_the_cash_return(seed):
     rng = np.random.RandomState(100 + seed)
@@ -424,7 +395,6 @@ def test_an_all_cash_portfolio_earns_the_cash_return(seed):
             np.testing.assert_array_equal(step.w_next, all_cash)
 
 
-@PENDING
 def test_a_missing_return_on_a_held_asset_raises_and_on_an_unheld_one_does_not():
     r_next = np.array([NAN, 0.01, 0.0])
     with pytest.raises(ValueError):
@@ -433,7 +403,6 @@ def test_a_missing_return_on_a_held_asset_raises_and_on_an_unheld_one_does_not()
     assert step.w_next[0] == 0.0 and np.isfinite(step.w_next).all()
 
 
-@PENDING
 def test_a_cost_of_one_or_more_raises():
     # Spec 2(f): C >= 1 would wipe out (or overdraw) wealth, so it is an error.
     with pytest.raises(ValueError):
@@ -442,7 +411,6 @@ def test_a_cost_of_one_or_more_raises():
         )
 
 
-@PENDING
 def test_a_dust_trade_is_no_trade():
     # Spec 2(f): a target within 1e-12 of the drifted weights in every component is no trade.
     w_pre = np.array([0.3, 0.5, 0.2])
@@ -472,7 +440,6 @@ def _random_path(seed, sessions=30):
     return returns, targets, rates, cash
 
 
-@PENDING
 @pytest.mark.parametrize("seed", range(6))
 def test_chained_steps_conserve_wealth_against_the_shares_ledger(seed):
     returns, targets, rates, cash = _random_path(seed)
@@ -497,12 +464,10 @@ def test_chained_steps_conserve_wealth_against_the_shares_ledger(seed):
 # --- the schedule (D1, D7; spec T1.3, T7.1-T7.3) ---
 
 
-@PENDING
 def test_t1_3_the_execution_lag_is_bound_to_the_label_entry_lag():
     assert schedule.execution_lag() == MODEL_LABEL_SPEC.entry_lag == 1
 
 
-@PENDING
 def test_t7_1_offsets_share_the_build_decision_and_phase_the_rebalances():
     assert schedule.decision_sessions(schedule.ScheduleSpec(2, 0, 1), 8) == (0, 2, 4, 6)
     assert schedule.decision_sessions(schedule.ScheduleSpec(2, 1, 1), 8) == (0, 1, 3, 5, 7)
@@ -518,7 +483,6 @@ def test_t7_1_offsets_share_the_build_decision_and_phase_the_rebalances():
     ]
 
 
-@PENDING
 def test_t7_2_all_offsets_form_one_family():
     spec = schedule.ScheduleSpec(every=5, offset=2, lag=1, first_decision=3)
     family = schedule.offset_family(spec)
@@ -527,7 +491,6 @@ def test_t7_2_all_offsets_form_one_family():
     assert spec in family
 
 
-@PENDING
 def test_d6_deferral_finds_the_first_session_every_involved_asset_closes():
     closes = {(2, 0): False, (3, 0): False}
 
@@ -543,7 +506,6 @@ def test_d6_deferral_finds_the_first_session_every_involved_asset_closes():
 # --- the engine: timing, build, gaps, offsets (D1, D3, D6, D7) ---
 
 
-@PENDING
 def test_t1_1_the_engine_executes_the_switch_at_the_next_close():
     assert timing.final_wealth(engine_runner, timing.switch_scenario(0.10)) == pytest.approx(
         0.950, abs=TOLERANCE
@@ -551,7 +513,6 @@ def test_t1_1_the_engine_executes_the_switch_at_the_next_close():
     assert not timing.earns_before_execution(engine_runner)
 
 
-@PENDING
 def test_a_same_close_engine_is_detected():
     def same_close(scenario):
         return engine_runner(dataclasses.replace(scenario, lag=0))
@@ -560,7 +521,6 @@ def test_a_same_close_engine_is_detected():
     assert timing.earns_before_execution(same_close)
 
 
-@PENDING
 def test_t1_2_the_engine_reproduces_the_label_tie():
     result = engine.simulate(
         np.array([[NAN, NAN], [0.10, 0.0], [0.10, 0.0], [-0.10, 0.0]]),
@@ -573,7 +533,6 @@ def test_t1_2_the_engine_reproduces_the_label_tie():
     assert result.wealth[-1] - 1 == pytest.approx(108.9 / 110 - 1, abs=TOLERANCE)
 
 
-@PENDING
 def test_t1_4_a_decision_on_the_final_session_is_not_executed():
     result = engine.simulate(
         np.array([[NAN] * 2, [0.01, 0.0], [0.02, 0.0]]),
@@ -589,7 +548,6 @@ def test_t1_4_a_decision_on_the_final_session_is_not_executed():
     assert len(result.steps) == 1
 
 
-@PENDING
 def test_d3_the_engine_builds_from_cash_at_a_cost():
     result = engine.simulate(
         np.array([[NAN] * 3, [0.0] * 3, [0.0] * 3]),
@@ -611,7 +569,6 @@ def _gap_returns():
     )
 
 
-@PENDING
 def test_d6_the_engine_values_across_a_gap_and_defers_the_rebalance():
     result = engine.simulate(
         _gap_returns(),
@@ -629,7 +586,6 @@ def test_d6_the_engine_values_across_a_gap_and_defers_the_rebalance():
     )
 
 
-@PENDING
 def test_d6_the_engine_stops_on_an_unavailable_return_of_a_held_asset():
     returns = _gap_returns()
     returns[4, 0] = NAN
@@ -653,7 +609,6 @@ def _new_asset_gap_returns():
     return np.array([[NAN] * 3, [0.0] * 3, [NAN, 0.01, 0.0], [0.05, 0.01, 0.0], [0.02, 0.01, 0.0]])
 
 
-@PENDING
 def test_d6_a_trade_waits_for_the_close_of_an_asset_it_buys():
     result = engine.simulate(
         _new_asset_gap_returns(),
@@ -669,7 +624,6 @@ def test_d6_a_trade_waits_for_the_close_of_an_asset_it_buys():
     assert result.wealth[-1] == pytest.approx(1.01**2 * (0.5 * 1.02 + 0.5 * 1.01), abs=TOLERANCE)
 
 
-@PENDING
 def test_the_engine_computes_every_step_through_the_injected_transition():
     """
     F8.1, one function: the engine calls `transition` for every valued span
@@ -722,7 +676,6 @@ def test_the_engine_computes_every_step_through_the_injected_transition():
         np.testing.assert_allclose(r_next, returns[k + 2], rtol=0, atol=1e-15)
 
 
-@PENDING
 def test_d6_a_newer_decision_supersedes_a_deferred_target():
     # Open D6 sub-question, recommended answer: the newer target replaces the deferred one.
     returns = _gap_returns()
@@ -743,7 +696,6 @@ def test_d6_a_newer_decision_supersedes_a_deferred_target():
     assert result.wealth[-1] == pytest.approx(at_t3 * (1 + 0.4 * 0.02 - 0.6 * 0.01), abs=TOLERANCE)
 
 
-@PENDING
 def test_t7_3_the_offset_example():
     returns = np.array([[NAN] * 3, [0.0] * 3] + [[r, 0.0, 0.0] for r in [0.10, -0.10] * 3])
     ends = {}
@@ -765,7 +717,6 @@ def test_t7_3_the_offset_example():
 # --- causality: no decision sees the return its holdings will earn ---
 
 
-@PENDING
 def test_collect_targets_shows_each_decision_only_its_own_past():
     returns = _random_path(5, sessions=12)[0]
     cash = 0
@@ -790,7 +741,6 @@ def test_collect_targets_shows_each_decision_only_its_own_past():
 # --- replay equivalence: the engine and the oracle give one wealth path ---
 
 
-@PENDING
 @pytest.mark.parametrize("seed", range(4))
 def test_the_engine_replays_the_oracle(seed):
     returns, targets, rates, cash = _random_path(seed, sessions=25)
@@ -810,7 +760,6 @@ def test_the_engine_replays_the_oracle(seed):
     assert reports["engine"].equivalent, reports["engine"]
 
 
-@PENDING
 def test_the_engine_replays_the_oracle_across_a_gap():
     scenario = ReplayScenario(
         _gap_returns(), {0: [0.5, 0.5, 0.0], 1: [0.2, 0.8, 0.0]}, 2, [0.001, 0.0005, 0.0], lag=1
@@ -821,7 +770,6 @@ def test_the_engine_replays_the_oracle_across_a_gap():
     assert reports["engine"].equivalent, reports["engine"]
 
 
-@PENDING
 def test_the_engine_replays_the_oracle_when_a_bought_asset_has_no_close():
     scenario = ReplayScenario(
         _new_asset_gap_returns(),
@@ -839,7 +787,6 @@ def test_the_engine_replays_the_oracle_when_a_bought_asset_has_no_close():
 # --- D8: the reward ---
 
 
-@PENDING
 def test_d8_the_reward_is_log_growth_and_counts_costs_once():
     step = portfolio_step(*REBALANCE)
     reward = log_growth_reward(step)

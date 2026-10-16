@@ -17,8 +17,10 @@ Every evaluation is write-once and counted: it writes
 finiteness, fallbacks, provenance; no performance figure), where n numbers
 that fold's evaluations, and appends one line to <run-dir>/evaluations.jsonl,
 so every look at the test fold is on record. The strategy comparison table,
-comparison_<fold>_<n>.json, is written only when the run's transition is
-owner-approved; until then it is withheld.
+comparison_<fold>_<n>.json, is written only when the comparison harness has
+released it: an owner-approved transition and the registered comparison
+protocol. The transition is approved (T5a, 2026-10-15); the protocol is a
+separate, later change, so this script writes no table.
 
 Checkpoints from another scenario generator or config are refused; a
 different code SHA warns and is recorded in the report's provenance.
@@ -74,6 +76,12 @@ def main(
 
     run = _read(args.run_dir / "run.json")
     config = run_config_from_dict(run["config"])
+    if run["transition_key"] not in TRANSITIONS:
+        raise ValueError(
+            f"The run was trained on transition {run['transition_key']!r}, which this code no "
+            "longer provides (the engineering stand-in was retired when T5a was approved on "
+            "2026-10-15). Retrain it on the approved transition."
+        )
     transition, transition_info = TRANSITIONS[run["transition_key"]]
     if transition_info.to_dict() != run["transition"]:
         raise ValueError("The run was trained with a different transition than this code provides.")
@@ -152,7 +160,7 @@ def main(
     }
     name = f"evaluation_{fold.role}_{number}.json"
     _write_once(args.run_dir / name, report)
-    if transition_info.approved:
+    if comparison.tables_released:
         _write_once(
             args.run_dir / f"comparison_{fold.role}_{number}.json", comparison.comparison_table()
         )

@@ -1,10 +1,10 @@
 """
 Train PPO, and the linear-softmax CEM baseline, on the synthetic scenarios.
 
-ENGINEERING ONLY until the owner approves decisions D1-D8 and Track A's
-`portfolio_step` merges: the only transition available is the labelled
-stand-in for the proposed rules, and every artifact carries the label
-`engineering_only_unapproved_transition`. A completed run is an engineering
+Every run uses the owner-approved T5a transition (`portfolio_step`, D1-D8
+approved 2026-10-15), so every artifact carries the transition status
+`approved`. The scenarios are synthetic and uninvested cash earns 0%
+(D4 (a), synthetic engineering only): a completed run is an engineering
 result, not evidence that any policy is a good investment.
 
 Usage (from the repository root, with the optional RL dependencies
@@ -39,7 +39,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from stock_agent.rl import reference_transition
 from stock_agent.rl.config import load_run_config
 from stock_agent.rl.health import (
     failed_health_input_record,
@@ -52,6 +51,7 @@ from stock_agent.rl.observation import ObservationBuilder, fit_normalizer
 from stock_agent.rl.ppo import library_versions, train_ppo_seed
 from stock_agent.rl.reward import REWARD_INFO
 from stock_agent.rl.scenarios import ASSET_NAMES, CASH_INDEX, GENERATOR_VERSION
+from stock_agent.rl.transition import APPROVED_TRANSITION, portfolio_step
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / "models" / "rl"
@@ -60,10 +60,7 @@ RUN_SCHEMA = "rl_run"
 RUN_SCHEMA_VERSION = "1.0.0"
 
 TRANSITIONS = {
-    "proposed_reference": (
-        reference_transition.proposed_portfolio_step,
-        reference_transition.TRANSITION_INFO,
-    ),
+    "approved": (portfolio_step, APPROVED_TRANSITION),
 }
 
 
@@ -96,7 +93,7 @@ def main(
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--health-inputs-root", type=Path, default=DEFAULT_HEALTH_INPUTS_ROOT)
-    parser.add_argument("--transition", choices=sorted(TRANSITIONS), default="proposed_reference")
+    parser.add_argument("--transition", choices=sorted(TRANSITIONS), default="approved")
     args = parser.parse_args(argv)
 
     config = load_run_config(args.config)

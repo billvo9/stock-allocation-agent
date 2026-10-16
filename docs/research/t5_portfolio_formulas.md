@@ -1,6 +1,6 @@
 # T5 portfolio readiness: financial-formula specification
 
-**Status: every formula in this document is PENDING OD8 OWNER APPROVAL, except group A (F5.1–F5.4, F6.5, F6.6, the F4.1 fee rule and the OD8.13 label), approved on 2026-10-14 with the decisions recorded in section 9.** This is a specification for review, not an implementation. No execution, transaction-cost, cash-return, benchmark, performance-metric or reward code changes until the owner approves the relevant formulas under OD8 (`docs/product/vision_and_prd.md`, section 13), and each approval is recorded with its date and quotation.
+**Status: every formula in this document is PENDING OD8 OWNER APPROVAL, except group A (F5.1–F5.4, F6.5, F6.6, the F4.1 fee rule and the OD8.13 label), approved on 2026-10-14, and group B (F1.1–F1.3, F2.1–F2.6, F7.1–F7.2, F8.1; T5a D1–D8), approved on 2026-10-15. Both decision records are in section 9.** This is a specification for review, not an implementation. No execution, transaction-cost, cash-return, benchmark, performance-metric or reward code changes until the owner approves the relevant formulas under OD8 (`docs/product/vision_and_prd.md`, section 13), and each approval is recorded with its date and quotation.
 
 - Written 2026-10-12 against `main` at `ad99749`. Code line references are as of that commit.
 - Every numerical example is synthetic and was checked by a scratch Python run.
@@ -61,9 +61,9 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 - **Verdict:** this does not use r_{t+1}, but it is infeasible: the signal's close is the trade price. It disagrees with the label, and it leaks for inputs published after the close.
 
 **(b) Proposed.**
-- **F1.1** A decision at d (inputs available at d's cutoff) trades at the close of d+L, with L = 1. The new holdings first earn r_{d+2}. *Status: PENDING OD8 OWNER APPROVAL.*
-- **F1.2** Drift: w̃_{i,t} = w_{i,t−1}(1+r_{i,t})/(1+R_{p,t}). *Status: PENDING OD8 OWNER APPROVAL.*
-- **F1.3** `EXECUTION_LAG` is bound to `MODEL_LABEL_SPEC.entry_lag`. *Status: PENDING OD8 OWNER APPROVAL.*
+- **F1.1** A decision at d (inputs available at d's cutoff) trades at the close of d+L, with L = 1. The new holdings first earn r_{d+2}. *Status: APPROVED 2026-10-15 (T5a D1, `docs/research/t5a_open_decisions.md`).*
+- **F1.2** Drift: w̃_{i,t} = w_{i,t−1}(1+r_{i,t})/(1+R_{p,t}). *Status: APPROVED 2026-10-15 (T5a D1, `docs/research/t5a_open_decisions.md`).*
+- **F1.3** `EXECUTION_LAG` is bound to `MODEL_LABEL_SPEC.entry_lag`. *Status: APPROVED 2026-10-15 (T5a D1, `docs/research/t5a_open_decisions.md`).*
 
 **(c) Examples.**
 - **Switch:** the portfolio holds B (flat) and decides at close d0 on 100% A, with r_A = +10% (d1) and −5% (d2). Lag 0 gives W = **1.045**; lag 1 gives **0.950**.
@@ -103,12 +103,12 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
   - the cash leg is charged: stocks → cash costs 20 bp (`tests/test_baseline.py:971-1004` asserts 99,800).
 
 **(b) Proposed.**
-- **F2.1** Δ_i = w*_i − w̃_i at the execution close. *Status: PENDING OD8 OWNER APPROVAL.*
-- **F2.2** C = Σ_{i≠cash} c_{k(i)}·|Δ_i|, as a fraction of pre-trade wealth. Cash is the funding account and is free. *Status: PENDING OD8 OWNER APPROVAL.*
-- **F2.3** W⁺ = W⁻(1 − C), post-trade weights = w*, W_{t+1} = W⁺(1 + R_p). The O(c²) fixed point is ignored, and this is stated. *Status: PENDING OD8 OWNER APPROVAL.*
-- **F2.4** Reported one-way turnover τ = ½Σ_{all, incl. cash}|Δ_i| (a full switch = 1), annualized per calendar year, plus the traded notional Σ_{i≠cash}|Δ_i|. *Status: PENDING OD8 OWNER APPROVAL.*
-- **F2.5** Every portfolio and benchmark starts as 100% cash at the first execution close and pays F2.2. No exit charge (stated). *Status: PENDING OD8 OWNER APPROVAL.*
-- **F2.6** Rates [A]: single large caps 10 bp, broad equity and Treasury ETFs 5 bp, T-bill fund 2 bp, cash 0. Shown at 0×, 1× and 2×, never selected. *Status: PENDING OD8 OWNER APPROVAL.*
+- **F2.1** Δ_i = w*_i − w̃_i at the execution close. *Status: APPROVED 2026-10-15 (T5a D2, `docs/research/t5a_open_decisions.md`).*
+- **F2.2** C = Σ_{i≠cash} c_{k(i)}·|Δ_i|, as a fraction of pre-trade wealth. Cash is the funding account and is free. *Status: APPROVED 2026-10-15 (T5a D2, `docs/research/t5a_open_decisions.md`).*
+- **F2.3** W⁺ = W⁻(1 − C), post-trade weights = w*, W_{t+1} = W⁺(1 + R_p). The O(c²) fixed point is ignored, and this is stated. *Status: APPROVED 2026-10-15 (T5a D2, `docs/research/t5a_open_decisions.md`).*
+- **F2.4** Reported one-way turnover τ = ½Σ_{all, incl. cash}|Δ_i| (a full switch = 1), annualized per calendar year, plus the traded notional Σ_{i≠cash}|Δ_i|. *Status: APPROVED 2026-10-15 (T5a D2, `docs/research/t5a_open_decisions.md`).*
+- **F2.5** Every portfolio and benchmark starts as 100% cash at the first execution close and pays F2.2. No exit charge (stated). *Status: APPROVED 2026-10-15 (T5a D3, `docs/research/t5a_open_decisions.md`).*
+- **F2.6** Rates [A]: single large caps 10 bp, broad equity and Treasury ETFs 5 bp, T-bill fund 2 bp, cash 0. Shown at 0×, 1× and 2×, never selected. *Status: APPROVED 2026-10-15 (T5a D2, provisional rates, `docs/research/t5a_open_decisions.md`).*
 
 **(c) Examples.**
 - **Rebalance:** W = 100,000, w̃ = (A .55, B .25, cash .20), w* = (.40, .40, .20), c = 10 bp.
@@ -367,8 +367,8 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
 - No volume check and no bands.
 
 **(b) Proposed.**
-- **F7.1** Every portfolio and benchmark builds at one common first execution close. Later rebalances follow the decision sessions with (d − d_first) mod k = o, for one registered offset o shared by every compared portfolio. Otherwise a nonzero offset builds later, and n, the calendar span, the bootstrap draws and the benchmark start all vary by offset. *Status: PENDING OD8 OWNER APPROVAL.*
-- **F7.2** Run all k offsets; report the registered offset's result and the max − min spread across offsets, with no per-offset intervals. The k offsets are recorded as **one variant with a k-member sensitivity family**, not k independent trials: they are nearly identical return paths, and counting k would inflate the trial count in a later deflated Sharpe (risk register STAT-5 asks for an effective-trial-count rule). They never choose the headline. Approving this changes the roadmap's T5 wording "counted as variants". *Status: PENDING OD8 OWNER APPROVAL.*
+- **F7.1** Every portfolio and benchmark builds at one common first execution close. Later rebalances follow the decision sessions with (d − d_first) mod k = o, for one registered offset o shared by every compared portfolio. Otherwise a nonzero offset builds later, and n, the calendar span, the bootstrap draws and the benchmark start all vary by offset. *Status: APPROVED 2026-10-15 (T5a D7, `docs/research/t5a_open_decisions.md`).*
+- **F7.2** Run all k offsets; report the registered offset's result and the max − min spread across offsets, with no per-offset intervals. The k offsets are recorded as **one variant with a k-member sensitivity family**, not k independent trials: they are nearly identical return paths, and counting k would inflate the trial count in a later deflated Sharpe (risk register STAT-5 asks for an effective-trial-count rule). They never choose the headline. Approving this changes the roadmap's T5 wording "counted as variants". *Status: APPROVED 2026-10-15 (T5a D7, `docs/research/t5a_open_decisions.md`).*
 - **F7.3** Participation is a flag only, measured on **actual traded notional** at each execution:
   - q_i = |Δ_i|·W⁻/MDV_i, where Δ_i is the F2.1 trade (drifted pre-trade weight to target), W⁻ is pre-trade wealth, and MDV_i is the median of close × volume over the 20 sessions ending at the decision session d;
   - **the initial construction is a separate full purchase** (Δ_i = w*_i from 100% cash), reported separately from later rebalances;
@@ -420,7 +420,7 @@ P1-1b's other dependencies are not formulas: OD9's production availability rule 
   2. Earn r_next, with cash from F3.1: 1 + R_net = (1 − C)(1 + w*ᵀr).
   3. Drift: w_next = w* ⊙ (1 + r)/(1 + w*ᵀr).
 
-  The lag (F1.1) and the schedule (F7.1) live in the caller. The PPO reward is later log(1 + R_net), with no extra cost term. *Status: PENDING OD8 OWNER APPROVAL.*
+  The lag (F1.1) and the schedule (F7.1) live in the caller. The PPO reward is log(1 + R_net), with no extra cost term (D8 (a)). *Status: APPROVED 2026-10-15 (T5a D1-D8, `docs/research/t5a_open_decisions.md`).*
 - **Invariants:**
   - w ≥ 0, and Σw = 1 within 1e-12;
   - 0 ≤ C < 1;
@@ -496,6 +496,10 @@ The owner approved OD8 group A for descriptive history only, with these decision
 | R5d | F6.6 | Approved. A year-end without a value makes both affected years unavailable |
 
 Not authorized by these approvals: T5a–T5c simulator formulas (groups B–D) and any PPO or RL work.
+
+### Group B decision record (owner, 2026-10-15)
+
+The owner approved the T5a open decisions D1-D8, recorded verbatim against each D identifier in `docs/research/t5a_open_decisions.md`. These are approved: F1.1-F1.3 (D1), F2.1-F2.4 and F2.6 (D2; the rates are provisional assumptions shown at 0×, 1× and 2×), F2.5 (D3), F7.1-F7.2 (D7) and F8.1 with the reward log(1 + R_net) (D8 (a)). So are the new rules D4 (a), D5 and D6, which have no F-identifier here. D4 (a) holds only for synthetic engineering. Group C (cash returns, benchmarks) and group D (statistics, reporting) remain pending. One D5 clause, constraint sets for learned policies, awaits the owner's confirmation; until then, constraint sets apply identically to every compared policy. D9 is not approved.
 
 ### Decision groups (how to approve)
 

@@ -1,5 +1,5 @@
 """
-The per-step transition contract the RL environment injects (spec F8.1).
+The per-step transition the RL environment injects (spec F8.1).
 
     portfolio_step(w_pre, target | None, r_next, cost_rate, cash_index) -> StepResult
 
@@ -8,27 +8,46 @@ at this close (no trade when `target` is None), then earn `r_next` over the
 following span and drift. Every vector has length n with the cash account at
 `cash_index`. `cost_rate` is a per-asset vector (cash entry 0).
 
+The production transition is `stock_agent.portfolio.transition.portfolio_step`,
+approved by the owner on 2026-10-15 (T5a D1-D8), identified by
+`APPROVED_TRANSITION`. It is the same function the backtest engine uses, so
+rule baselines, optimizers and learned policies share one definition of
+costs and drift; the engineering stand-in used before the approval is
+retired.
+
 The environment never computes a return, a cost or a drift itself. It only
-schedules calls (decision timing, gaps) and reads `StepResult`. The one
-function shared by backtests, optimizers, rule baselines and learned
-policies is what keeps their comparison fair.
+schedules calls (decision timing, gaps) and reads `StepResult`.
 
 `check_step_result` enforces the shared invariants on whatever transition is
-injected, so a defective transition fails loudly instead of training a policy
-on broken economics.
+injected (tests inject mutants), so a defective transition fails loudly
+instead of training a policy on broken economics.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
 
 import numpy as np
+
+from stock_agent.portfolio.transition import StepResult, portfolio_step
+from stock_agent.portfolio.transition import Transition as PortfolioStep
 
 ENGINEERING_ONLY = "engineering_only_unapproved_transition"
 APPROVED = "approved"
 
 SIMPLEX_TOLERANCE = 1e-9
+
+__all__ = [
+    "APPROVED",
+    "APPROVED_TRANSITION",
+    "ENGINEERING_ONLY",
+    "PortfolioStep",
+    "StepResult",
+    "TransitionContractError",
+    "TransitionInfo",
+    "check_step_result",
+    "portfolio_step",
+]
 
 
 class TransitionContractError(ValueError):
@@ -36,33 +55,11 @@ class TransitionContractError(ValueError):
 
 
 @dataclass(frozen=True)
-class StepResult:
-    w_post_trade: np.ndarray
-    w_next: np.ndarray
-    gross_return: float
-    cost: float
-    net_return: float
-    turnover_one_way: float
-    traded_notional: float
-
-
-class PortfolioStep(Protocol):
-    def __call__(
-        self,
-        w_pre: np.ndarray,
-        target: np.ndarray | None,
-        r_next: np.ndarray,
-        cost_rate: np.ndarray,
-        cash_index: int,
-    ) -> StepResult: ...
-
-
-@dataclass(frozen=True)
 class TransitionInfo:
     """
     Identity of an injected transition, recorded with every artifact.
 
-    status is `approved` only for the owner-approved Track A implementation;
+    status is `approved` only for the owner-approved `portfolio_step`;
     anything else labels every result built on it as engineering only.
     """
 
@@ -76,6 +73,11 @@ class TransitionInfo:
 
     def to_dict(self) -> dict[str, str]:
         return {"name": self.name, "version": self.version, "status": self.status}
+
+
+APPROVED_TRANSITION = TransitionInfo(
+    name="portfolio.transition.portfolio_step", version="1.0.0", status=APPROVED
+)
 
 
 def _check_simplex(name: str, weights: np.ndarray, n_assets: int) -> None:

@@ -9,9 +9,9 @@ from stock_agent.rl import env as rl_env
 from stock_agent.rl import observation as ob
 from stock_agent.rl import optimizer as opt
 from stock_agent.rl import policies as pol
-from stock_agent.rl import reference_transition as ref
 from stock_agent.rl import replay
 from stock_agent.rl import scenarios as sc
+from stock_agent.rl import transition as tr
 
 SPEC = ob.FeatureSpec()
 
@@ -25,8 +25,8 @@ def make_env(data, start=60, stop=360, **config):
         data,
         start=start,
         stop=stop,
-        transition=ref.proposed_portfolio_step,
-        transition_info=ref.TRANSITION_INFO,
+        transition=tr.portfolio_step,
+        transition_info=tr.APPROVED_TRANSITION,
         builder=builder,
         config=rl_env.EnvConfig(**config),
     )
@@ -122,7 +122,7 @@ def test_engineering_diagnostics_are_labelled_and_never_called_metrics(calm):
     assert diagnostics["log_growth"] == pytest.approx(record.total_reward, rel=1e-12)
     assert diagnostics["n_decisions"] == len(record.decisions)
     assert 0.0 <= diagnostics["max_observed_decline"] < 1.0
-    assert diagnostics["transition_status"] == "engineering_only_unapproved_transition"
+    assert diagnostics["transition_status"] == "approved"
     assert not hasattr(record, "summary")
 
 

@@ -11,6 +11,7 @@ from stock_agent.config import (
 )
 from stock_agent.evaluation.baseline import (
     prepare_momentum_targets,
+    require_common_schedule,
     run_equal_weight_baseline,
     run_inverse_volatility_baseline,
     run_momentum_baseline,
@@ -91,12 +92,14 @@ def build_results():
         for symbol in benchmark_symbols
     }
 
-    return {
-        "Equal Weight": (equal_weight_result),
-        "Inverse Volatility": (inverse_vol_result),
+    portfolios = {
+        "Equal Weight": equal_weight_result,
+        "Inverse Volatility": inverse_vol_result,
         "Momentum": momentum_result,
-        **benchmark_results,
     }
+    require_common_schedule(portfolios, benchmark_results)  # D3, D7: one build, one schedule
+
+    return {**portfolios, **benchmark_results}
 
 
 def plot_normalized_wealth(

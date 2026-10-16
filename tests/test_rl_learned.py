@@ -11,8 +11,8 @@ import pytest
 from stock_agent.rl import env as rl_env
 from stock_agent.rl import learned, splits
 from stock_agent.rl import observation as ob
-from stock_agent.rl import reference_transition as ref
 from stock_agent.rl import scenarios as sc
+from stock_agent.rl import transition as tr
 
 SPEC = ob.FeatureSpec()
 
@@ -36,8 +36,8 @@ def builder(plan):
 def _envs(fold, builder):
     return rl_env.fold_envs(
         fold,
-        transition=ref.proposed_portfolio_step,
-        transition_info=ref.TRANSITION_INFO,
+        transition=tr.portfolio_step,
+        transition_info=tr.APPROVED_TRANSITION,
         builder=builder,
     )
 
@@ -109,8 +109,8 @@ def _train(plan, builder, **kwargs):
     return learned.train_linear_softmax(
         plan,
         builder=builder,
-        transition=ref.proposed_portfolio_step,
-        transition_info=ref.TRANSITION_INFO,
+        transition=tr.portfolio_step,
+        transition_info=tr.APPROVED_TRANSITION,
         **kwargs,
     )
 
@@ -136,9 +136,9 @@ def test_the_result_records_everything_needed_to_replay_it(plan, builder):
     result = _train(plan, builder, config=learned.CEMConfig(iterations=1, population=2, seed=0))
     record = result.to_dict()
     json.dumps(record, allow_nan=False)
-    assert record["label"] == "engineering_only_unapproved_transition"
-    assert record["transition"] == ref.TRANSITION_INFO.to_dict()
-    assert record["reward"]["status"] == "proposed_d8a_pending_owner_approval"
+    assert record["label"] == "approved_transition"
+    assert record["transition"] == tr.APPROVED_TRANSITION.to_dict()
+    assert record["reward"]["status"] == "approved"
     assert record["normalizer"] == builder.normalizer.to_dict()
     assert record["normalizer"]["fitted_on"]["role"] == "train"
     assert record["feature_spec"] == SPEC.to_dict()

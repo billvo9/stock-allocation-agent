@@ -16,9 +16,9 @@ Registered baselines (parameters fixed before any result is seen):
                       mean and covariance (the same 60 sessions the learned
                       policies' features use), cash as the riskless asset
 
-The cash account earns 0 under decision D4 (a) (pending approval), so the
-short-Treasury fund is the natural conservative holding; the registered
-weights reflect that.
+The cash account earns 0 under decision D4 (a) (approved 2026-10-15 for
+synthetic engineering only), so the short-Treasury fund is the natural
+conservative holding; the registered weights reflect that.
 """
 
 from __future__ import annotations

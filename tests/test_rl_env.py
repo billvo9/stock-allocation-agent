@@ -19,11 +19,10 @@ import pytest
 
 from stock_agent.rl import env as rl_env
 from stock_agent.rl import observation as ob
-from stock_agent.rl import reference_transition as ref
 from stock_agent.rl import scenarios as sc
 from stock_agent.rl import transition as tr
 
-STEP = ref.proposed_portfolio_step
+STEP = tr.portfolio_step
 
 
 def tiny(returns_a, *, rate=0.0):
@@ -59,7 +58,7 @@ def make_env(data, start=0, stop=None, transition=STEP, **config):
         start=start,
         stop=data.sessions if stop is None else stop,
         transition=transition,
-        transition_info=ref.TRANSITION_INFO,
+        transition_info=tr.APPROVED_TRANSITION,
         builder=builder_for(data, ob.FeatureSpec() if start >= 60 else None),
         config=rl_env.EnvConfig(**config),
     )
@@ -315,5 +314,16 @@ def test_a_window_with_fewer_than_three_complete_sessions_is_refused():
 def test_the_info_records_the_transition_and_reward_identity():
     env = make_env(tiny([0.0, 0.01, 0.02, 0.0]))
     _, info = env.reset()
-    assert info["transition"]["status"] == tr.ENGINEERING_ONLY
+    assert info["transition"]["status"] == tr.APPROVED
     assert info["reward"]["name"] == "log_net_growth"
+
+
+def test_the_environment_lag_is_bound_to_the_registered_execution_lag(monkeypatch):
+    from stock_agent.portfolio import schedule
+
+    data = tiny([0.0, 0.01, 0.02, 0.0])
+    assert schedule.execution_lag() == rl_env.ENV_EXECUTION_LAG == 1
+    make_env(data)
+    monkeypatch.setattr(rl_env, "execution_lag", lambda: 2)
+    with pytest.raises(ValueError, match="execution lag"):
+        make_env(data)

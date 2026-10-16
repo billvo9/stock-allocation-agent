@@ -2,9 +2,9 @@
 Independent reference oracle for the T5a engine.
 
 A deliberately simple, loop-based ledger of share counts and cash dollars
-implementing the RECOMMENDED options of `docs/research/t5a_open_decisions.md`
-(D1-D8, v2, 2026-10-14). Those rules are PENDING the owner's approval; this
-module is test-only and approves nothing.
+implementing the options of `docs/research/t5a_open_decisions.md` (D1-D8, v2,
+2026-10-14) that the owner approved on 2026-10-15. This module is test-only:
+the production engine is held to it.
 
 Independence: it imports nothing from `stock_agent` and none of the
 engine's weight algebra (no drift identity, no (1 - C)(1 + w.r) product).
@@ -13,7 +13,7 @@ between the cash account and share counts, and pays fees out of cash. The
 weights-based engine and this ledger agreeing within 1e-12 on random paths
 is the conservation test.
 
-Recommended rules implemented:
+Approved rules implemented:
 
 - D1: a decision at session d executes at the close of d + lag. Holdings
   bought there first earn the price change to the close of d + lag + 1.
@@ -23,13 +23,15 @@ Recommended rules implemented:
   states). The cash leg is free.
 - D3: a run starts as 100% cash at its first decision's execution close and
   pays D2 to build. No exit charge.
-- D4 (a): the cash account earns the cash column of `returns` (zero in the
-  recommended interim).
+- D4 (a): the cash account earns the cash column of `returns` (zero for
+  synthetic engineering; tests also use nonzero rates for the mechanics).
 - D5: long only and summing to 1, else `InvalidTarget`; a per-asset cap
   whose excess goes to cash; then a turnover limit trading part way.
 - D6: a rebalance waits for the next session at which every held or
-  targeted asset has a close. A new decision arriving while one is deferred
-  is an open sub-question, so the oracle refuses it (`ScenarioNotCovered`). Share counts are held through gaps;
+  targeted asset has a close. A newer target arriving while one is deferred
+  supersedes it (`superseded_deferred_target`, the owner's 2026-10-15
+  answer to the packet's sub-question); a newer hold (None) is not a target
+  and leaves the deferred one waiting. Share counts are held through gaps;
   wealth is unavailable (None) at a close where a held asset has none. A
   held asset with a close but no available return (a distribution inside
   the gap) stops the run.
@@ -53,6 +55,7 @@ SUM_TOLERANCE = 1e-9
 
 UNEXECUTABLE_MISSING_CLOSE = "unexecutable_missing_close"
 NO_EXECUTION_SESSION = "no_execution_session"
+SUPERSEDED_DEFERRED_TARGET = "superseded_deferred_target"
 DISTRIBUTION_IN_GAP = "distribution_in_gap"
 COMPLETE = "complete"
 STOPPED = "stopped"
@@ -60,10 +63,6 @@ STOPPED = "stopped"
 
 class InvalidTarget(ValueError):
     """A target that is not long-only or does not sum to 1 (D5: never repaired)."""
-
-
-class ScenarioNotCovered(Exception):
-    """The decision packet does not specify this case, so the oracle refuses it."""
 
 
 @dataclass
@@ -332,17 +331,18 @@ def run(
         result.weights.append(ledger.weights(prices[t]))
 
         if t in planned:
-            if waiting is not None:
-                raise ScenarioNotCovered("a new decision is due while one is deferred (D6 open)")
-            waiting = (planned[t], t)
+            decision = planned[t]
+            if targets[decision] is None:
+                # A hold trades nothing at once; it is not a target, so it supersedes nothing.
+                result.events.append(Event(decision, t, t, None))
+            else:
+                if waiting is not None:
+                    result.events.append(Event(*waiting, None, SUPERSEDED_DEFERRED_TARGET))
+                waiting = (decision, t)
         if waiting is None:
             continue
         decision, due = waiting
         target = targets[decision]
-        if target is None:
-            result.events.append(Event(decision, due, t, None))
-            waiting = None
-            continue
         if t == last_session:
             result.events.append(Event(decision, due, None, NO_EXECUTION_SESSION))
             waiting = None

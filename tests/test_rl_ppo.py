@@ -20,8 +20,8 @@ from stock_agent.rl import actions, gym_env, ppo, replay, safety, splits
 from stock_agent.rl import config as cfg
 from stock_agent.rl import env as rl_env
 from stock_agent.rl import observation as ob
-from stock_agent.rl import reference_transition as ref
 from stock_agent.rl import scenarios as sc
+from stock_agent.rl import transition as tr
 
 TINY_PLAN = {
     "train": {
@@ -74,8 +74,8 @@ def train(tmp_path, config, seed=0, name="run", loader=sc.generate_scenario, bui
         config,
         seed,
         builder=builder or builder_for(config, loader),
-        transition=ref.proposed_portfolio_step,
-        transition_info=ref.TRANSITION_INFO,
+        transition=tr.portfolio_step,
+        transition_info=tr.APPROVED_TRANSITION,
         out_dir=tmp_path / name,
         run_id="test-run",
         code={"git_sha": "abc", "git_dirty": False},
@@ -109,8 +109,8 @@ def test_clipped_samples_keep_their_raw_logits_and_likelihoods():
     env = gym_env.AllocationGymEnv(
         gym_env.EpisodeSampler(config.plan.train, 60),
         builder=builder,
-        transition=ref.proposed_portfolio_step,
-        transition_info=ref.TRANSITION_INFO,
+        transition=tr.portfolio_step,
+        transition_info=tr.APPROVED_TRANSITION,
         env_config=config.env,
     )
     received = []
@@ -166,13 +166,13 @@ def test_training_records_health_and_a_dev_selected_checkpoint(trained):
 def test_the_checkpoint_records_what_replay_needs(trained):
     config, run = trained
     meta = json.loads((run.directory / ppo.METADATA_FILE).read_text())
-    assert meta["label"] == "engineering_only_unapproved_transition"
+    assert meta["label"] == "approved_transition"
     assert meta["config_sha256"] == config.sha256()
     assert meta["code"] == {"git_sha": "abc", "git_dirty": False}
     assert meta["scenario_generator_version"] == sc.GENERATOR_VERSION
     assert meta["normalizer"]["fitted_on"]["role"] == "train"
     assert set(meta["libraries"]) == {"python", "numpy", "torch", "stable_baselines3", "gymnasium"}
-    assert meta["reward"]["status"] == "proposed_d8a_pending_owner_approval"
+    assert meta["reward"]["status"] == "approved"
 
 
 def test_a_checkpoint_loads_with_its_frozen_normalizer_and_acts_identically(trained):
@@ -314,8 +314,8 @@ def test_a_trained_policy_survives_every_stress_scenario(trained, scenario):
         data,
         start=960,
         stop=1200,
-        transition=ref.proposed_portfolio_step,
-        transition_info=ref.TRANSITION_INFO,
+        transition=tr.portfolio_step,
+        transition_info=tr.APPROVED_TRANSITION,
         builder=loaded.builder,
         config=config.env,
     )

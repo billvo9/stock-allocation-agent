@@ -1,6 +1,7 @@
 """
 The comparison harness: every method on the same dates, assets, costs and
-constraints, and no comparison table until the transition is approved.
+constraints, and no comparison table until the transition is approved and the
+registered comparison releases it.
 """
 
 from __future__ import annotations
@@ -14,14 +15,15 @@ from stock_agent.rl import env as rl_env
 from stock_agent.rl import forecasts, harness, replay, splits
 from stock_agent.rl import observation as ob
 from stock_agent.rl import policies as pol
-from stock_agent.rl import reference_transition as ref
 from stock_agent.rl import scenarios as sc
 from stock_agent.rl import transition as tr
 
 SPEC = ob.FeatureSpec()
 FOLD = splits.FoldSpec("dev", ("calm", "high_costs"), (10, 11), 260, 420)
 ENV_CONFIG = rl_env.EnvConfig(rebalance_every=5)
-APPROVED = tr.TransitionInfo(name="approved.portfolio_step", version="1.0.0", status="approved")
+APPROVED = tr.APPROVED_TRANSITION
+# Test-only identity: the approved function under an unapproved label, to keep the guard tested.
+UNAPPROVED = tr.TransitionInfo(name="tests.unapproved", version="0", status=tr.ENGINEERING_ONLY)
 
 
 @pytest.fixture(scope="module")
@@ -41,14 +43,15 @@ def _entries():
     ]
 
 
-def _run(builder, info=ref.TRANSITION_INFO):
+def _run(builder, info=UNAPPROVED, release_tables=False):
     return harness.run_comparison(
         _entries(),
         FOLD,
         builder=builder,
-        transition=ref.proposed_portfolio_step,
+        transition=tr.portfolio_step,
         transition_info=info,
         env_config=ENV_CONFIG,
+        release_tables=release_tables,
     )
 
 
@@ -93,8 +96,8 @@ def test_the_fairness_check_rejects_a_method_run_on_a_different_window(builder):
             data,
             start=start,
             stop=420,
-            transition=ref.proposed_portfolio_step,
-            transition_info=ref.TRANSITION_INFO,
+            transition=tr.portfolio_step,
+            transition_info=UNAPPROVED,
             builder=builder,
             config=ENV_CONFIG,
         )
@@ -126,8 +129,20 @@ def test_no_comparison_table_without_an_approved_transition(comparison):
         comparison.comparison_table()
 
 
+def test_an_approved_transition_alone_does_not_release_a_table(builder):
+    run = _run(builder, info=APPROVED)
+    assert not run.tables_released
+    assert run.engineering_report()["comparison_tables"] == harness.WITHHELD_UNRELEASED
+    with pytest.raises(harness.ComparisonWithheldError):
+        run.comparison_table()
+    # Releasing tables never overrides an unapproved transition.
+    unapproved = _run(builder, info=UNAPPROVED, release_tables=True)
+    with pytest.raises(harness.UnapprovedTransitionError):
+        unapproved.comparison_table()
+
+
 def test_with_an_approved_transition_learned_seeds_are_a_distribution(builder):
-    table = _run(builder, info=APPROVED).comparison_table()
+    table = _run(builder, info=APPROVED, release_tables=True).comparison_table()
     rows = {(row["method"], row["scenario"]): row for row in table["rows"]}
     assert ("equal_weight", "calm") in rows
     group = table["groups"]["ppo"]
@@ -138,7 +153,7 @@ def test_with_an_approved_transition_learned_seeds_are_a_distribution(builder):
 
 
 def test_comparison_tables_never_carry_engineering_diagnostics(builder):
-    table = _run(builder, info=APPROVED).comparison_table()
+    table = _run(builder, info=APPROVED, release_tables=True).comparison_table()
     for row in table["rows"]:
         assert set(row) == {"method", "scenario", "episodes", "log_growth", "trades", "fallbacks"}
     record = next(iter(next(iter(_run(builder, info=APPROVED).records.values())).values()))

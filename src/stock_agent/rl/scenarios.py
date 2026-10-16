@@ -29,9 +29,11 @@ Arrays (T sessions, n assets, cash last):
 
 Assumptions (synthetic, illustrative, never calibrated to real funds):
 annual log drifts and volatilities per regime, constant within a segment;
-Gaussian or unit-variance Student-t shocks with a fixed correlation; cash
-earns 0 (decision D4 (a), pending approval); base cost rates are the
-proposed D2 rates (5, 5, 2 and 0 bp), an assumption pending approval.
+Gaussian or unit-variance Student-t shocks with a fixed correlation;
+uninvested cash earns 0 (decision D4 (a), approved 2026-10-15 for synthetic
+engineering only); base cost rates are the D2 provisional all-in rates
+(5, 5, 2 and 0 bp, approved 2026-10-15 as provisional assumptions), read
+from `stock_agent.portfolio.transition.PROVISIONAL_RATES`.
 
 Generator versions. The version enters every seed, so a new version changes
 every draw, and an old version is refused rather than approximated.
@@ -51,6 +53,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from stock_agent.model_diagnostics.seeds import derive_seed
+from stock_agent.portfolio.transition import BROAD_ETF, CASH_ACCOUNT, PROVISIONAL_RATES, TBILL_FUND
 
 GENERATOR_VERSION = "1.1.0"
 SUPPORTED_GENERATOR_VERSIONS = ("1.1.0",)
@@ -58,7 +61,8 @@ SUPPORTED_GENERATOR_VERSIONS = ("1.1.0",)
 ASSET_NAMES = ("equity_etf", "bond_etf", "short_treasury_fund", "cash")
 CASH_INDEX = 3
 N_RISKY = 3
-BASE_COST_RATES = (5e-4, 5e-4, 2e-4, 0.0)
+ASSET_CLASSES = (BROAD_ETF, BROAD_ETF, TBILL_FUND, CASH_ACCOUNT)
+BASE_COST_RATES = tuple(PROVISIONAL_RATES[klass] for klass in ASSET_CLASSES)
 SESSIONS_PER_YEAR = 252
 DEFAULT_TOTAL_SESSIONS = 1500
 

@@ -1,12 +1,15 @@
 """
-The RL reward: proposed decision D8 (a), pending owner approval.
+The RL reward: decision D8 (a), approved by the owner on 2026-10-15.
 
     reward = log(1 + R_net)
 
 R_net comes from the injected transition and already contains the trading
 cost, so there is no separate cost term (subtracting the cost again would
 count it twice). Any other reward (drawdown or variance penalties) is an
-owner-approved variant registered before training, never a silent change.
+owner-approved variant registered before training, never a silent change;
+D8 (b) and (c) are not approved. The same formula is
+`stock_agent.environment.reward.log_growth_reward`, which this package may
+not import (tests check that the two agree).
 """
 
 from __future__ import annotations
@@ -27,9 +30,7 @@ class RewardInfo:
         return {"name": self.name, "version": self.version, "status": self.status}
 
 
-REWARD_INFO = RewardInfo(
-    name="log_net_growth", version="1.0.0", status="proposed_d8a_pending_owner_approval"
-)
+REWARD_INFO = RewardInfo(name="log_net_growth", version="1.0.0", status="approved")
 
 
 def log_growth_reward(result: StepResult) -> float:
