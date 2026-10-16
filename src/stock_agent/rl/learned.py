@@ -27,8 +27,8 @@ episodes) is a noisy, non-differentiable function of five parameters.
 Checkpoint selection. Each iteration's mean parameters are a checkpoint;
 the one with the best mean dev-fold log growth is selected. The test fold is
 never built here. `LearnedResult.to_dict()` records the frozen normalizer and
-its provenance, the folds, the transition and reward identity (with the
-engineering-only label), the environment schedule and every scenario's
+its provenance, the folds, the transition and reward identity (with their
+approval status), the environment schedule and every scenario's
 fingerprint, so a result can be replayed and audited.
 """
 

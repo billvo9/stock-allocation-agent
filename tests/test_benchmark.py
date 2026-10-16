@@ -41,7 +41,9 @@ def test_buy_and_hold_benchmark_zero_returns():
 
     assert result.cumulative_return == pytest.approx(0.0)
 
-    assert result.total_turnover == pytest.approx(0.0)
+    # OD8.14 rewrite: the build from cash is a full switch (one-way turnover 1.0), at zero
+    # cost for an untradeable price index.
+    assert result.total_turnover == pytest.approx(1.0)
 
 
 def test_buy_and_hold_benchmark_compounds_returns():
@@ -52,15 +54,19 @@ def test_buy_and_hold_benchmark_compounds_returns():
                     "2026-01-01",
                     "2026-01-02",
                     "2026-01-03",
+                    "2026-01-04",
                 ]
             ),
             "symbol": [
                 "SP500",
                 "SP500",
                 "SP500",
+                "SP500",
             ],
+            # OD8.14 rewrite: built at the Jan 2 close, the benchmark earns Jan 3 and Jan 4.
             "daily_return": [
                 0.0,
+                0.50,
                 0.10,
                 0.10,
             ],

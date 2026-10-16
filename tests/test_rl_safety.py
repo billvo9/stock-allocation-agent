@@ -10,9 +10,9 @@ import pytest
 from stock_agent.rl import env as rl_env
 from stock_agent.rl import observation as ob
 from stock_agent.rl import policies as pol
-from stock_agent.rl import reference_transition as ref
 from stock_agent.rl import replay, safety
 from stock_agent.rl import scenarios as sc
+from stock_agent.rl import transition as tr
 
 SPEC = ob.FeatureSpec()
 
@@ -26,8 +26,8 @@ def make_env(data, start=60, stop=700):
         data,
         start=start,
         stop=stop,
-        transition=ref.proposed_portfolio_step,
-        transition_info=ref.TRANSITION_INFO,
+        transition=tr.portfolio_step,
+        transition_info=tr.APPROVED_TRANSITION,
         builder=builder,
     )
 

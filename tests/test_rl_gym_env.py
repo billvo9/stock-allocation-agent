@@ -17,8 +17,8 @@ from stock_agent.rl import (
 )
 from stock_agent.rl import env as rl_env
 from stock_agent.rl import observation as ob
-from stock_agent.rl import reference_transition as ref
 from stock_agent.rl import scenarios as sc
+from stock_agent.rl import transition as tr
 
 SPEC = ob.FeatureSpec()
 TRAIN = splits.FoldSpec("train", ("mixed", "stale_observations"), (0, 1), 60, 600)
@@ -34,8 +34,8 @@ def make(builder, episode_sessions=120, **config):
     return gym_env.AllocationGymEnv(
         gym_env.EpisodeSampler(TRAIN, episode_sessions),
         builder=builder,
-        transition=ref.proposed_portfolio_step,
-        transition_info=ref.TRANSITION_INFO,
+        transition=tr.portfolio_step,
+        transition_info=tr.APPROVED_TRANSITION,
         env_config=rl_env.EnvConfig(**config),
     )
 

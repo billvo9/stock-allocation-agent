@@ -3,10 +3,9 @@ The T5a reference oracle (`tests/reference/`) against every number in the
 decision packet (`docs/research/t5a_open_decisions.md`), and the timing
 detectors and replay harness against planted defects.
 
-These tests pass now. They check test-only code: the oracle implements the
-packet's RECOMMENDED options, which are pending the owner's approval, so a
-passing test here approves nothing. The production engine is held to the
-same numbers by the strict xfails in `test_portfolio_transition.py`.
+They check test-only code: the oracle implements the packet's options that
+the owner approved on 2026-10-15 (D1-D8). The production engine is held to
+the same numbers by `test_portfolio_transition.py`.
 """
 
 from __future__ import annotations
@@ -244,24 +243,27 @@ def test_d6_a_trade_waits_for_the_close_of_an_asset_it_buys():
     assert result.wealth[-1] == pytest.approx(1.01**2 * (0.5 * 1.02 + 0.5 * 1.01), abs=1e-12)
 
 
-def test_d6_the_oracle_refuses_a_case_the_packet_leaves_open():
-    with pytest.raises(oracle.ScenarioNotCovered):
-        oracle.run(
-            _gap_returns(),
-            {0: [0.5, 0.5, 0.0], 1: [0.2, 0.8, 0.0], 2: [0.4, 0.6, 0.0]},
-            lag=1,
-            cost_rate=[0.0] * 3,
-            cash_index=2,
-        )
+def test_d6_a_newer_hold_leaves_a_deferred_target_waiting():
+    # A hold (None) trades nothing and is not a newer target, so it supersedes nothing.
+    returns = _gap_returns()
+    returns[5] = [0.02, -0.01, 0.0]
+    result = oracle.run(
+        returns,
+        {0: [0.5, 0.5, 0.0], 1: [0.2, 0.8, 0.0], 2: None},
+        lag=1,
+        cost_rate=[0.0] * 3,
+        cash_index=2,
+    )
+    assert result.events[1:] == [
+        oracle.Event(2, 3, 3, None),
+        oracle.Event(1, 2, 4, oracle.UNEXECUTABLE_MISSING_CLOSE),
+    ]
+    at_t3 = 0.5 * 1.03 + 0.5 * 1.01**3
+    assert result.wealth[-1] == pytest.approx(at_t3 * (1 + 0.2 * 0.02 - 0.8 * 0.01), abs=1e-12)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=oracle.ScenarioNotCovered,
-    reason="D6 open sub-question: superseding a deferred target awaits the owner",
-)
 def test_d6_a_newer_decision_supersedes_a_deferred_target():
-    # Recommended: the newer target replaces the deferred one (superseded_deferred_target).
+    # Approved 2026-10-15: the newer target replaces the deferred one (superseded_deferred_target).
     returns = _gap_returns()
     returns[5] = [0.02, -0.01, 0.0]
     result = oracle.run(
@@ -272,7 +274,7 @@ def test_d6_a_newer_decision_supersedes_a_deferred_target():
         cash_index=2,
     )
     assert result.events[1:] == [
-        oracle.Event(1, 2, None, "superseded_deferred_target"),
+        oracle.Event(1, 2, None, oracle.SUPERSEDED_DEFERRED_TARGET),
         oracle.Event(2, 3, 4, oracle.UNEXECUTABLE_MISSING_CLOSE),
     ]
     at_t3 = 0.5 * 1.03 + 0.5 * 1.01**3

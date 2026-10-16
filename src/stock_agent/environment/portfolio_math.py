@@ -1,3 +1,15 @@
+"""
+RETIRED: the pre-T5a cost, turnover and wealth helpers (spec F8.1).
+
+No simulator uses this module. Since the owner approved T5a (D1-D8,
+2026-10-15), `stock_agent.portfolio.transition.portfolio_step` is the single
+definition of trading costs, returns and drift. These helpers encode the
+defects T5a corrected (two-way turnover over every column, the cash leg
+charged, costs netted additively), so nothing may import them; a test
+enforces that. The module and its tests (`tests/test_portfolio.py`) stay
+until the owner approves deleting them.
+"""
+
 from __future__ import annotations
 
 import numpy as np

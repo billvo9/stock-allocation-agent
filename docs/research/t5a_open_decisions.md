@@ -21,7 +21,7 @@ Not approved here: D9 (the Builder's buy-and-hold mix), D4 (b) (group C cash ret
 
 - Recorded in the repository on 2026-10-14 with its substance unchanged; only this status block is added.
 - Formula ids and option names refer to `docs/research/t5_portfolio_formulas.md` (sections 1, 2, 7 and 8).
-- The T5a engine interface (`src/stock_agent/portfolio/transition.py`, `schedule.py`, `engine.py`, and `log_growth_reward` in `src/stock_agent/environment/reward.py`) raised `NotImplementedError` until this approval. The implementation follows in the T5a engine pull request.
+- The T5a engine interface (`src/stock_agent/portfolio/transition.py`, `schedule.py`, `engine.py`, and `log_growth_reward` in `src/stock_agent/environment/reward.py`) raised `NotImplementedError` until this approval. It is implemented as approved in the T5a engine pull request; see `docs/research/t5a_engine.md`.
 - `tests/reference/t5a_reference.py`, a test-only shares-and-cash ledger of the recommended options, reproduces every number below (`tests/test_t5a_reference.py`). D4 (b) is group C and is not reproduced.
 - D6 was corrected on 2026-10-14 after independent review: a rebalance now waits for every **held or targeted** asset, and the packet adds an open sub-question about a decision that arrives while a rebalance is deferred. Until the owner answers it, the oracle refuses that case (`ScenarioNotCovered`). The recommended rule (the newer target supersedes) is held as a strict xfail on both the oracle and the engine.
 - The approval, with its date and the owner's exact words, is recorded here and in `docs/PROJECT_STATE.md` before any formula is implemented.

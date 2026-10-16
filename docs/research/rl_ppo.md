@@ -1,15 +1,22 @@
 # RL environment and PPO on synthetic data
 
-Status (2026-10-14): engineering only. Nothing here is evidence that any
-policy is a good investment, and no strategy comparison is published.
+Status (2026-10-15): synthetic engineering. Nothing here is evidence that
+any policy is a good investment, and no strategy comparison is published.
 
 - The per-step economics are Track A's `portfolio_step` (spec F8.1,
-  `t5_portfolio_formulas.md` section 8). Decisions D1-D8 are **pending owner
-  approval**. Until they are approved and Track A's implementation merges,
-  the environment runs on `rl/reference_transition.py`, a stand-in for the
-  *proposed* rules, and every result carries the label
-  `engineering_only_unapproved_transition`.
-- The reward is the proposed D8 (a), `log(1 + R_net)`, pending approval.
+  `t5_portfolio_formulas.md` section 8), approved by the owner on 2026-10-15
+  (T5a D1-D8, `t5a_open_decisions.md`). The environment and every script
+  inject it (`rl.transition.APPROVED_TRANSITION`), so every result carries
+  the transition status `approved`. The engineering stand-in used before the
+  approval (`rl/reference_transition.py`, label
+  `engineering_only_unapproved_transition`) is retired.
+- Every target passes through the engine's D5 feasibility map
+  (`feasible_target`) with the registered constraint set
+  (`EnvConfig.max_weight`, `EnvConfig.max_turnover`; defaults cap 1.0 and no
+  turnover limit), identically for every method.
+- The reward is D8 (a), `log(1 + R_net)`, approved; (b) and (c) are not.
+- Uninvested cash earns 0% (D4 (a), approved for synthetic engineering only;
+  group C pending), and the cost rates are D2's provisional assumptions.
 - Standing owner rule: do not train or evaluate PPO on an economically
   uncorrected simulator. The `rl` package never imports
   `stock_agent.environment` (a test enforces it).
@@ -20,9 +27,8 @@ policy is a good investment, and no strategy comparison is published.
 
 | Module | Role |
 |---|---|
-| `transition.py` | The `PortfolioStep` protocol, `StepResult`, `TransitionInfo` (approval label) and `check_step_result` (F8.1 invariants on any injected transition) |
-| `reference_transition.py` | Engineering stand-in for the proposed D2 / F8.1 rules. Track A's `portfolio.transition.Transition` protocol (merged, interface only) has the same signature; inject `portfolio_step` and delete this module once it is approved and implemented |
-| `reward.py` | `log(1 + R_net)`, labelled `proposed_d8a_pending_owner_approval` |
+| `transition.py` | The approved `portfolio_step` and its `StepResult` (re-exported from `portfolio.transition`), `PortfolioStep` (the engine's `Transition` protocol), `TransitionInfo` (approval label, `APPROVED_TRANSITION`) and `check_step_result` (F8.1 invariants on any injected transition) |
+| `reward.py` | `log(1 + R_net)`, D8 (a), labelled `approved` |
 | `scenarios.py` | Versioned, seeded synthetic scenario library |
 | `splits.py` | Train / dev / test folds by time and by seed; `LeakageError` |
 | `observation.py` | Point-in-time snapshots, features, frozen normalization |
@@ -544,8 +550,13 @@ engineering result, never evidence that PPO is investment-ready.
   model).
 - Gap returns inside a trailing window are multi-session returns, which
   inflates trailing volatility slightly in gappy regimes.
-- The stand-in transition, the reward, the cost rates and the cash rate are
-  all proposals pending approval.
+- The cost rates are D2's provisional assumptions and the 0% cash rate is
+  D4 (a), approved for synthetic engineering only: neither is a claim about
+  real trading costs or interest-bearing cash (group C pending).
+- The environment's gap rule is the universe-complete form of D6: it decides
+  and trades only on sessions where every asset has a close. That equals the
+  engine's held-or-targeted rule whenever every fund is held or targeted (all
+  softmax policies) and is stricter otherwise, identically for every method.
 - Distributions in gaps (D6, R5b) are not simulated: synthetic total returns
   carry no separate distribution events.
 
@@ -649,13 +660,16 @@ will move; then compare.
 
 ### Integration notes (PR 2)
 
-- **Track A (merged, interface only).** `stock_agent.portfolio.transition`
-  defines the same `Transition` signature, and
-  `stock_agent.environment.reward.log_growth_reward(step)` is the D8 reward;
-  both raise `NotImplementedError` until D1-D8 are approved. Then the
-  environment injects `portfolio_step` and that reward in place of the
-  stand-ins `rl/reference_transition.py` and `rl/reward.py`, and the boundary
-  test admits exactly that reward import from `stock_agent.environment`.
+- **Track A (approved 2026-10-15, implemented).** The environment injects
+  `stock_agent.portfolio.transition.portfolio_step`; the stand-in
+  `rl/reference_transition.py` is deleted. The boundary test admits exactly
+  one project import outside `rl`, `stock_agent.portfolio.transition`, and
+  still forbids `stock_agent.environment` (whose retired pre-T5a helpers stay
+  uncorrected). `rl.reward.log_growth_reward` is therefore the same one-line
+  formula as `stock_agent.environment.reward.log_growth_reward`, and a test
+  checks they agree. `tests/test_t5a_engine.py` replays the backtest engine,
+  the environment and the oracle on the same targets and returns and finds
+  one wealth path within 1e-12, with and without binding constraints.
 - **Track B (merged contract).** Forecast artifacts are dated:
   `read_forecast_artifact(path)` and `forecasts_asof(frame, decision_time)`,
   selecting on `available_at <= decision_time`. RL scenarios count sessions,

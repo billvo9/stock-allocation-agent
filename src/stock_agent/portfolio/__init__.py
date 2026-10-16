@@ -12,10 +12,13 @@ Modules:
     schedule     the T5a decision and execution schedule (lag, offsets,
                  deferral).
     engine       the T5a caller: targets and returns to a wealth path.
+    backtest_summary
+                 the `backtest_summary` health input (agreed format v1.0)
+                 for one engine simulation.
 
-transition, schedule and engine are interfaces only: OD8 group B
-(docs/research/t5a_open_decisions.md) awaits the owner's approval, and every
-economic function raises NotImplementedError until then.
+transition, schedule and engine implement OD8 group B (T5a D1-D8,
+docs/research/t5a_open_decisions.md), approved by the owner on 2026-10-15;
+docs/research/t5a_engine.md describes the implementation.
 
 Dependency direction (tested): this package never imports the product app
 (`stock_agent.app`), the design system (`stock_agent.ui`), the research

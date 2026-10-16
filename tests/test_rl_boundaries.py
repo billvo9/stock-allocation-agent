@@ -2,7 +2,9 @@
 Import boundaries of the `rl` package.
 
 - It never imports the economically uncorrected `stock_agent.environment`
-  simulator (standing owner rule: no PPO on an uncorrected simulator).
+  simulator (standing owner rule: no PPO on an uncorrected simulator). Its
+  one project dependency outside `rl` is the approved T5a transition,
+  `stock_agent.portfolio.transition` (D1-D8, approved 2026-10-15).
 - It reaches no network or stored data.
 - Only the scenario generator touches the latent (true) returns; the
   environment, observations and policies see observed data only.
@@ -26,7 +28,11 @@ import pytest
 PACKAGE = Path(__file__).resolve().parents[1] / "src" / "stock_agent" / "rl"
 MODULES = sorted(path for path in PACKAGE.glob("*.py"))
 
-ALLOWED_PROJECT_IMPORTS = ("stock_agent.rl", "stock_agent.model_diagnostics.seeds")
+ALLOWED_PROJECT_IMPORTS = (
+    "stock_agent.rl",
+    "stock_agent.model_diagnostics.seeds",
+    "stock_agent.portfolio.transition",
+)
 FORBIDDEN_TOP_LEVEL = {
     "requests",
     "urllib",

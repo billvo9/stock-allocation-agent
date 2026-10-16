@@ -9,8 +9,11 @@ import pytest
 
 from stock_agent.rl import health
 from stock_agent.rl.config import HealthThresholds
-from stock_agent.rl.reference_transition import TRANSITION_INFO
 from stock_agent.rl.reward import REWARD_INFO
+from stock_agent.rl.transition import APPROVED_TRANSITION, ENGINEERING_ONLY, TransitionInfo
+
+# Test-only identity: an unapproved transition, to keep the labelling of one tested.
+TRANSITION_INFO = TransitionInfo("tests.unapproved", "0", ENGINEERING_ONLY)
 
 THRESHOLDS = HealthThresholds()
 
@@ -166,6 +169,27 @@ def _report(seeds):
         thresholds=THRESHOLDS,
         seeds=seeds,
     )
+
+
+def test_an_approved_transition_is_labelled_approved_everywhere():
+    report = health.training_health_report(
+        run_id="run-1",
+        config_sha256="abc",
+        created_at="2026-10-15T12:00:00Z",
+        transition=APPROVED_TRANSITION,
+        reward=REWARD_INFO,
+        thresholds=THRESHOLDS,
+        seeds=[_seed(0)],
+    )
+    assert report["label"] == "approved_transition"
+    record = health.health_input_record(
+        report,
+        generated_at=GENERATED_AT,
+        code_sha=None,
+        scenario_version="1.1.0",
+        thresholds=THRESHOLDS,
+    )
+    assert record["transition_status"] == "approved"
 
 
 def _input(seeds, **kwargs):

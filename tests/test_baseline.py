@@ -3,7 +3,9 @@ import pandas as pd
 import pytest
 
 from stock_agent.evaluation.baseline import (
+    CASH_SYMBOL,
     add_cash_returns,
+    backtest_inputs,
     drift_weights,
     inverse_volatility_weights,
     prepare_equal_weight_targets,
@@ -42,6 +44,7 @@ def test_update_peak_and_drawdown_DRAWNDOWN():
 
 
 def test_equal_weight_baseline_zero_returns():
+    # OD8.14 rewrite: the build from cash is a trade (D3), so it costs 10 bp and turns over 1.0.
     dates = pd.date_range(
         "2026-01-01",
         periods=6,
@@ -70,16 +73,19 @@ def test_equal_weight_baseline_zero_returns():
         transaction_cost_rate=0.001,
     )
 
-    assert result.final_wealth == pytest.approx(100_000)
-    assert result.cumulative_return == pytest.approx(0)
-    assert result.max_drawdown == pytest.approx(0)
-    assert result.total_turnover == pytest.approx(0)
+    assert result.final_wealth == pytest.approx(99_900)
+    assert result.final_wealth != pytest.approx(100_000)  # the old free build
+    assert result.cumulative_return == pytest.approx(-0.001)
+    assert result.max_drawdown == pytest.approx(0.001)
+    assert result.total_turnover == pytest.approx(1.0)
 
 
 def test_equal_weight_baseline_equal_positive_returns():
+    # OD8.14 rewrite: decided at date 0, built at the close of date 1 (D1, D3), so only
+    # date 2's return is earned, net of the build cost: 100,000 x 0.999 x 1.01.
     dates = pd.date_range(
         "2026-01-01",
-        periods=2,
+        periods=3,
         freq="D",
     )
 
@@ -105,16 +111,17 @@ def test_equal_weight_baseline_equal_positive_returns():
         transaction_cost_rate=0.001,
     )
 
-    assert result.final_wealth == pytest.approx(101_000)
-    assert result.cumulative_return == pytest.approx(0.01)
+    assert result.final_wealth == pytest.approx(100_899)
+    assert result.cumulative_return == pytest.approx(0.00899)
     assert result.max_drawdown == pytest.approx(0)
-    assert result.total_turnover == pytest.approx(0)
+    assert result.total_turnover == pytest.approx(1.0)
 
 
-def test_equal_weight_baseline_does_not_apply_first_date_return():
+def test_equal_weight_baseline_does_not_apply_returns_before_the_build_executes():
+    # OD8.14 rewrite: neither the decision date's return nor the execution date's is earned.
     dates = pd.date_range(
         "2026-01-01",
-        periods=2,
+        periods=3,
         freq="D",
     )
 
@@ -122,7 +129,7 @@ def test_equal_weight_baseline_does_not_apply_first_date_return():
 
     for date, daily_return in zip(
         dates,
-        [0.50, 0.0],
+        [0.50, 0.50, 0.0],
         strict=True,
     ):
         for symbol in ["MU", "SNDK", "MRVL"]:
@@ -144,16 +151,17 @@ def test_equal_weight_baseline_does_not_apply_first_date_return():
         transaction_cost_rate=0.001,
     )
 
-    assert result.final_wealth == pytest.approx(100_000)
-    assert result.cumulative_return == pytest.approx(0)
-    assert result.max_drawdown == pytest.approx(0)
-    assert result.total_turnover == pytest.approx(0)
+    assert result.final_wealth == pytest.approx(99_900)
+    assert result.cumulative_return == pytest.approx(-0.001)
+    assert result.max_drawdown == pytest.approx(0.001)
+    assert result.total_turnover == pytest.approx(1.0)
 
 
-def test_equal_weight_baseline_requires_two_dates():
+def test_equal_weight_baseline_requires_three_dates():
+    # OD8.14 rewrite: a decision, its execution close and one earned return (D1).
     dates = pd.date_range(
         "2026-01-01",
-        periods=1,
+        periods=2,
         freq="D",
     )
 
@@ -161,7 +169,7 @@ def test_equal_weight_baseline_requires_two_dates():
 
     for date, daily_return in zip(
         dates,
-        [0.50],
+        [0.50, 0.50],
         strict=True,
     ):
         for symbol in ["MU", "SNDK", "MRVL"]:
@@ -177,7 +185,7 @@ def test_equal_weight_baseline_requires_two_dates():
 
     with pytest.raises(
         ValueError,
-        match="at least two dates",
+        match="at least three dates",
     ):
         run_equal_weight_baseline(
             frame=frame,
@@ -429,17 +437,20 @@ def test_prepare_inverse_volatility_targets():
     assert result.loc[second_date, "MU"] != pytest.approx(result.loc[first_date, "MU"])
 
 
-def test_run_rebalanced_backtest_applies_previous_date_weights():
+def test_run_rebalanced_backtest_applies_the_build_target_from_the_next_close():
+    # OD8.14 rewrite: the target decided at Jan 1 trades at the Jan 2 close and earns Jan 3.
     dates = pd.to_datetime(
         [
             "2026-01-01",
             "2026-01-02",
+            "2026-01-03",
         ]
     )
 
     returns = pd.DataFrame(
         data=[
             [0.00, 0.00, 0.00],
+            [0.50, 0.50, 0.50],  # into the execution close: never earned
             [0.10, 0.00, -0.10],
         ],
         index=dates,
@@ -449,8 +460,8 @@ def test_run_rebalanced_backtest_applies_previous_date_weights():
     target_weights = pd.DataFrame(
         data=[
             [0.50, 0.30, 0.20],
-            # Deliberately very different.
-            # The Jan 2 return should NOT use this row.
+            # Deliberately very different, and not a decision date (rebalance_every=5).
+            [0.00, 1.00, 0.00],
             [0.00, 1.00, 0.00],
         ],
         index=dates,
@@ -468,33 +479,35 @@ def test_run_rebalanced_backtest_applies_previous_date_weights():
     assert result.final_wealth == pytest.approx(103_000)
     assert result.cumulative_return == pytest.approx(0.03)
     assert result.max_drawdown == pytest.approx(0.0)
-    assert result.total_turnover == pytest.approx(0.0)
+    assert result.total_turnover == pytest.approx(1.0)
 
 
 def test_run_rebalanced_backtest_applies_rebalance_and_transaction_cost():
+    # OD8.14 rewrite: build 10 bp on 1.0; the rebalance decided Jan 3 trades at the Jan 4
+    # close: 10 bp on traded notional 0.6 (one-way turnover 0.3), multiplicative.
     dates = pd.to_datetime(
         [
             "2026-01-01",
             "2026-01-02",
             "2026-01-03",
+            "2026-01-04",
+            "2026-01-05",
         ]
     )
 
     returns = pd.DataFrame(
-        data=[
-            [0.00, 0.00, 0.00],
-            [0.00, 0.00, 0.00],
-            [0.00, 0.00, 0.00],
-        ],
+        data=[[0.00, 0.00, 0.00]] * 5,
         index=dates,
         columns=["MU", "SNDK", "MRVL"],
     )
 
     target_weights = pd.DataFrame(
         data=[
-            [0.50, 0.30, 0.20],  # initialize
-            [0.20, 0.30, 0.50],  # target used before Jan 3 return
+            [0.50, 0.30, 0.20],  # the build
+            [0.90, 0.05, 0.05],  # not a decision date
+            [0.20, 0.30, 0.50],  # the rebalance
             [0.10, 0.20, 0.70],
+            [0.10, 0.20, 0.70],  # decided on the last date: never executed
         ],
         index=dates,
         columns=["MU", "SNDK", "MRVL"],
@@ -508,13 +521,14 @@ def test_run_rebalanced_backtest_applies_rebalance_and_transaction_cost():
         transaction_cost_rate=0.001,
     )
 
-    assert result.final_wealth == pytest.approx(99_940)
-    assert result.cumulative_return == pytest.approx(-0.0006)
-    assert result.max_drawdown == pytest.approx(0.0006)
-    assert result.total_turnover == pytest.approx(0.6)
+    assert result.final_wealth == pytest.approx(100_000 * 0.999 * 0.9994)
+    assert result.cumulative_return == pytest.approx(0.999 * 0.9994 - 1)
+    assert result.max_drawdown == pytest.approx(1 - 0.999 * 0.9994)
+    assert result.total_turnover == pytest.approx(1.3)
 
 
 def test_run_inverse_volatility_baseline_zero_returns():
+    # OD8.14 rewrite: the build from cash costs 10 bp and turns over 1.0 (D3).
     dates = pd.date_range(
         "2026-01-01",
         periods=3,
@@ -557,92 +571,42 @@ def test_run_inverse_volatility_baseline_zero_returns():
         transaction_cost_rate=0.001,
     )
 
-    assert result.final_wealth == pytest.approx(100_000)
-    assert result.cumulative_return == pytest.approx(0.0)
-    assert result.max_drawdown == pytest.approx(0.0)
-    assert result.total_turnover == pytest.approx(0.0)
+    assert result.final_wealth == pytest.approx(99_900)
+    assert result.cumulative_return == pytest.approx(-0.001)
+    assert result.max_drawdown == pytest.approx(0.001)
+    assert result.total_turnover == pytest.approx(1.0)
 
 
 def test_run_inverse_volatility_baseline_rebalances_when_volatility_changes():
+    # OD8.14 rewrite: with next-close execution the rebalance decided on date 3 trades at
+    # the close of date 4, so five dates are needed for it to execute (three sufficed only
+    # at the same close). The build alone would turn over exactly 1.0.
     dates = pd.date_range(
         "2026-01-01",
-        periods=3,
+        periods=5,
         freq="D",
     )
 
+    volatilities = [
+        (0.02, 0.04, 0.05),
+        (0.02, 0.04, 0.05),
+        (0.05, 0.02, 0.04),  # the rebalance decision: a different profile
+        (0.03, 0.03, 0.03),
+        (0.03, 0.03, 0.03),
+    ]
+
     rows = []
 
-    # Date 1
-    rows.extend(
-        [
-            {
-                "date": dates[0],
-                "symbol": "MU",
-                "daily_return": 0.0,
-                "volatility_20d": 0.02,
-            },
-            {
-                "date": dates[0],
-                "symbol": "SNDK",
-                "daily_return": 0.0,
-                "volatility_20d": 0.04,
-            },
-            {
-                "date": dates[0],
-                "symbol": "MRVL",
-                "daily_return": 0.0,
-                "volatility_20d": 0.05,
-            },
-        ]
-    )
-
-    # Date 2 — substantially different volatility profile
-    rows.extend(
-        [
-            {
-                "date": dates[1],
-                "symbol": "MU",
-                "daily_return": 0.0,
-                "volatility_20d": 0.05,
-            },
-            {
-                "date": dates[1],
-                "symbol": "SNDK",
-                "daily_return": 0.0,
-                "volatility_20d": 0.02,
-            },
-            {
-                "date": dates[1],
-                "symbol": "MRVL",
-                "daily_return": 0.0,
-                "volatility_20d": 0.04,
-            },
-        ]
-    )
-
-    # Date 3 — valid values; these are not the target used for the Jan 3 return
-    rows.extend(
-        [
-            {
-                "date": dates[2],
-                "symbol": "MU",
-                "daily_return": 0.0,
-                "volatility_20d": 0.03,
-            },
-            {
-                "date": dates[2],
-                "symbol": "SNDK",
-                "daily_return": 0.0,
-                "volatility_20d": 0.03,
-            },
-            {
-                "date": dates[2],
-                "symbol": "MRVL",
-                "daily_return": 0.0,
-                "volatility_20d": 0.03,
-            },
-        ]
-    )
+    for date, profile in zip(dates, volatilities, strict=True):
+        for symbol, volatility in zip(["MU", "SNDK", "MRVL"], profile, strict=True):
+            rows.append(
+                {
+                    "date": date,
+                    "symbol": symbol,
+                    "daily_return": 0.0,
+                    "volatility_20d": volatility,
+                }
+            )
 
     frame = pd.DataFrame(rows)
 
@@ -654,9 +618,9 @@ def test_run_inverse_volatility_baseline_rebalances_when_volatility_changes():
         transaction_cost_rate=0.001,
     )
 
-    assert result.total_turnover > 0
-    assert result.final_wealth < 100_000
-    assert result.cumulative_return < 0
+    assert result.total_turnover > 1.0
+    assert result.final_wealth < 99_900
+    assert result.cumulative_return < -0.001
 
 
 def test_prepare_equal_weight_targets():
@@ -739,9 +703,10 @@ def test_equal_weight_targets_are_constant_across_dates():
 
 
 def test_equal_weight_baseline_forwards_non_default_initial_wealth():
+    # OD8.14 rewrite: three dates, so the build (decided at date 0) earns date 2's return.
     dates = pd.date_range(
         "2026-01-01",
-        periods=2,
+        periods=3,
         freq="D",
     )
 
@@ -771,23 +736,14 @@ def test_equal_weight_baseline_forwards_non_default_initial_wealth():
     assert result.final_wealth == pytest.approx(55_000)
 
 
-def test_run_rebalanced_backtest_respects_first_rebalance_step():
-    dates = pd.to_datetime(
-        [
-            "2026-01-01",
-            "2026-01-02",
-            "2026-01-03",
-            "2026-01-04",
-        ]
-    )
+def test_run_rebalanced_backtest_respects_the_registered_offset():
+    # OD8.14 rewrite (D7): the per-strategy first_rebalance_step is replaced by one registered
+    # offset. With every=2 and offset=1 the decisions are dates 0 (build), 1, 3 and 5; date 2's
+    # very different target is never used, and date 5's has no following session.
+    dates = pd.date_range("2026-01-01", periods=7, freq="D")
 
     returns = pd.DataFrame(
-        data=[
-            [0.00, 0.00, 0.00],
-            [0.00, 0.00, 0.00],
-            [0.00, 0.00, 0.00],
-            [0.00, 0.00, 0.00],
-        ],
+        data=[[0.00, 0.00, 0.00]] * 7,
         index=dates,
         columns=["MU", "SNDK", "MRVL"],
     )
@@ -796,7 +752,10 @@ def test_run_rebalanced_backtest_respects_first_rebalance_step():
         data=[
             [0.50, 0.30, 0.20],
             [0.20, 0.30, 0.50],
-            [0.10, 0.20, 0.70],
+            [0.90, 0.05, 0.05],
+            [0.40, 0.40, 0.20],
+            [0.40, 0.40, 0.20],
+            [0.40, 0.40, 0.20],
             [0.40, 0.40, 0.20],
         ],
         index=dates,
@@ -809,13 +768,14 @@ def test_run_rebalanced_backtest_respects_first_rebalance_step():
         initial_wealth=100_000,
         rebalance_every=2,
         transaction_cost_rate=0.001,
-        first_rebalance_step=3,
+        rebalance_offset=1,
     )
 
-    assert result.total_turnover == pytest.approx(1.0)
-    assert result.final_wealth == pytest.approx(99_900)
-    assert result.cumulative_return == pytest.approx(-0.001)
-    assert result.max_drawdown == pytest.approx(0.001)
+    executed = [e.execution for e in result.simulation.executions if e.execution is not None]
+    assert executed == [1, 2, 4]
+    assert result.total_turnover == pytest.approx(1.6)
+    assert result.final_wealth == pytest.approx(100_000 * 0.999 * 0.9994**2)
+    assert result.max_drawdown == pytest.approx(1 - 0.999 * 0.9994**2)
 
 
 def test_add_cash_returns_adds_zero_return_cash():
@@ -929,17 +889,21 @@ def test_add_cash_returns_rejects_existing_cash_column():
 
 
 def test_rebalanced_backtest_supports_full_cash_position():
+    # OD8.14 rewrite: three dates (decision, execution, one earned return); building an
+    # all-cash target from cash trades nothing.
 
     dates = pd.to_datetime(
         [
             "2026-01-01",
             "2026-01-02",
+            "2026-01-03",
         ]
     )
 
     returns = pd.DataFrame(
         data=[
             [0.00, 0.00, 0.00, 0.00],
+            [-0.20, -0.30, -0.15, 0.00],
             [-0.20, -0.30, -0.15, 0.00],
         ],
         columns=["MU", "SNDK", "MRVL", "CASH"],
@@ -948,6 +912,7 @@ def test_rebalanced_backtest_supports_full_cash_position():
 
     target_weights = pd.DataFrame(
         data=[
+            [0.00, 0.00, 0.00, 1.00],
             [0.00, 0.00, 0.00, 1.00],
             [0.00, 0.00, 0.00, 1.00],
         ],
@@ -968,31 +933,19 @@ def test_rebalanced_backtest_supports_full_cash_position():
     assert result.total_turnover == pytest.approx(0.0)
 
 
-def test_rebalanced_backtest_charges_cost_when_moving_to_cash():
-    dates = pd.to_datetime(
-        [
-            "2026-01-01",
-            "2026-01-02",
-            "2026-01-03",
-        ]
-    )
+def test_rebalanced_backtest_charges_only_the_risky_leg_when_moving_to_cash():
+    # OD8.14 rewrite (spec T2.1): selling everything into cash costs 10 bp, not 20 bp; the
+    # cash account is the free funding leg. Build (10 bp) then sale (10 bp), multiplicative.
+    dates = pd.date_range("2026-01-01", periods=5, freq="D")
 
     returns = pd.DataFrame(
-        data=[
-            [0.00, 0.00, 0.00, 0.00],
-            [0.00, 0.00, 0.00, 0.00],
-            [0.00, 0.00, 0.00, 0.00],
-        ],
+        data=[[0.00, 0.00, 0.00, 0.00]] * 5,
         index=dates,
         columns=["MU", "SNDK", "MRVL", "CASH"],
     )
 
     target_weights = pd.DataFrame(
-        data=[
-            [0.50, 0.30, 0.20, 0.00],
-            [0.00, 0.00, 0.00, 1.00],
-            [0.00, 0.00, 0.00, 1.00],
-        ],
+        data=[[0.50, 0.30, 0.20, 0.00]] + [[0.00, 0.00, 0.00, 1.00]] * 4,
         index=dates,
         columns=["MU", "SNDK", "MRVL", "CASH"],
     )
@@ -1005,10 +958,13 @@ def test_rebalanced_backtest_charges_cost_when_moving_to_cash():
         transaction_cost_rate=0.001,
     )
 
+    sale = result.simulation.steps[2]
+    assert sale.cost == pytest.approx(0.001)  # charging the cash leg too would give 0.002
     assert result.total_turnover == pytest.approx(2.0)
-    assert result.final_wealth == pytest.approx(99_800)
-    assert result.cumulative_return == pytest.approx(-0.002)
-    assert result.max_drawdown == pytest.approx(0.002)
+    assert result.final_wealth == pytest.approx(99_800.10)
+    assert result.final_wealth != pytest.approx(99_700.20)
+    assert result.cumulative_return == pytest.approx(0.999**2 - 1)
+    assert result.max_drawdown == pytest.approx(1 - 0.999**2)
 
 
 def make_momentum_test_frame(
@@ -1184,7 +1140,9 @@ def test_run_momentum_baseline_applies_positive_momentum_exposure():
     assert result.cumulative_return > 0
 
 
-def test_run_momentum_baseline_forwards_nonzero_cash_return():
+def test_run_momentum_baseline_refuses_a_cash_rate_before_group_c():
+    # OD8.14 rewrite: uninvested cash earns 0% (D4 (a), synthetic engineering only); a cash
+    # rate is group C and not approved, so it is refused rather than silently used.
     dates = pd.date_range(
         "2026-01-01",
         periods=5,
@@ -1203,33 +1161,34 @@ def test_run_momentum_baseline_forwards_nonzero_cash_return():
         },
     )
 
-    result = run_momentum_baseline(
-        frame=frame,
-        symbols=symbols,
-        lookback=3,
-        initial_wealth=100_000,
-        rebalance_every=2,
-        transaction_cost_rate=0.0,
-        cash_return=0.001,
-    )
-
-    assert result.final_wealth == pytest.approx(100_200.10)
-    assert result.cumulative_return == pytest.approx(0.002001)
-    assert result.max_drawdown == pytest.approx(0.0)
+    with pytest.raises(ValueError, match="group C"):
+        run_momentum_baseline(
+            frame=frame,
+            symbols=symbols,
+            lookback=3,
+            initial_wealth=100_000,
+            rebalance_every=2,
+            transaction_cost_rate=0.0,
+            cash_return=0.001,
+        )
 
 
 def test_rebalanced_backtest_records_return_and_wealth_history():
+    # OD8.14 rewrite: wealth starts at the build's execution close (Jan 2), and the first
+    # realized return is dated Jan 3; Jan 2's +50% is never earned.
     dates = pd.to_datetime(
         [
             "2026-01-01",
             "2026-01-02",
             "2026-01-03",
+            "2026-01-04",
         ]
     )
 
     returns = pd.DataFrame(
         data=[
             [0.00, 0.00],
+            [0.50, 0.50],
             [0.01, 0.01],
             [0.02, 0.02],
         ],
@@ -1238,11 +1197,7 @@ def test_rebalanced_backtest_records_return_and_wealth_history():
     )
 
     target_weights = pd.DataFrame(
-        data=[
-            [0.50, 0.50],
-            [0.50, 0.50],
-            [0.50, 0.50],
-        ],
+        data=[[0.50, 0.50]] * 4,
         index=dates,
         columns=["A", "B"],
     )
@@ -1257,23 +1212,15 @@ def test_rebalanced_backtest_records_return_and_wealth_history():
 
     assert result.history is not None
 
-    # What should the index of portfolio_returns be?
-    # How many realized returns should exist?
-    #
-    # Expected realized returns:
-    # Day 2 = 1%
-    # Day 3 = 2%
     assert list(result.history.portfolio_returns.index) == [
-        dates[1],
         dates[2],
+        dates[3],
     ]
 
     assert result.history.portfolio_returns.iloc[0] == pytest.approx(0.01)
     assert result.history.portfolio_returns.iloc[1] == pytest.approx(0.02)
 
-    assert result.history.wealth.iloc[-1] == pytest.approx(result.final_wealth)
-
-    assert list(result.history.wealth.index) == list(dates)
+    assert list(result.history.wealth.index) == list(dates[1:])
 
     assert result.history.wealth.iloc[0] == pytest.approx(100_000)
 
@@ -1328,3 +1275,22 @@ def test_backtest_history_returns_include_transaction_costs():
     assert result.final_wealth == pytest.approx(99_900)
 
     assert result.history.wealth.iloc[-1] == pytest.approx(99_900)
+
+
+def test_the_added_cash_account_earns_zero_and_is_never_charged():
+    # D4 (a): uninvested cash earns 0% (synthetic engineering only); D2: the cash leg is free.
+    dates = pd.date_range("2026-01-01", periods=4, freq="D")
+    returns = pd.DataFrame(0.01, index=dates, columns=["A", "B"])
+    targets = pd.DataFrame(0.5, index=dates, columns=["A", "B"])
+
+    inputs = backtest_inputs(
+        returns,
+        targets,
+        rebalance_every=2,
+        transaction_cost_rate=0.001,
+    )
+
+    assert inputs.columns == ("A", "B", CASH_SYMBOL)
+    assert (inputs.returns[:, 2] == 0.0).all()
+    assert list(inputs.cost_rate) == [0.001, 0.001, 0.0]
+    assert all(target[2] == 0.0 for target in inputs.targets.values())

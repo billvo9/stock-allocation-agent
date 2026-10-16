@@ -14,14 +14,15 @@ from stock_agent.rl import env as rl_env
 from stock_agent.rl import forecasts, harness, replay, splits
 from stock_agent.rl import observation as ob
 from stock_agent.rl import policies as pol
-from stock_agent.rl import reference_transition as ref
 from stock_agent.rl import scenarios as sc
 from stock_agent.rl import transition as tr
 
 SPEC = ob.FeatureSpec()
 FOLD = splits.FoldSpec("dev", ("calm", "high_costs"), (10, 11), 260, 420)
 ENV_CONFIG = rl_env.EnvConfig(rebalance_every=5)
-APPROVED = tr.TransitionInfo(name="approved.portfolio_step", version="1.0.0", status="approved")
+APPROVED = tr.APPROVED_TRANSITION
+# Test-only identity: the approved function under an unapproved label, to keep the guard tested.
+UNAPPROVED = tr.TransitionInfo(name="tests.unapproved", version="0", status=tr.ENGINEERING_ONLY)
 
 
 @pytest.fixture(scope="module")
@@ -41,12 +42,12 @@ def _entries():
     ]
 
 
-def _run(builder, info=ref.TRANSITION_INFO):
+def _run(builder, info=UNAPPROVED):
     return harness.run_comparison(
         _entries(),
         FOLD,
         builder=builder,
-        transition=ref.proposed_portfolio_step,
+        transition=tr.portfolio_step,
         transition_info=info,
         env_config=ENV_CONFIG,
     )
@@ -93,8 +94,8 @@ def test_the_fairness_check_rejects_a_method_run_on_a_different_window(builder):
             data,
             start=start,
             stop=420,
-            transition=ref.proposed_portfolio_step,
-            transition_info=ref.TRANSITION_INFO,
+            transition=tr.portfolio_step,
+            transition_info=UNAPPROVED,
             builder=builder,
             config=ENV_CONFIG,
         )

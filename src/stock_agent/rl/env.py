@@ -26,6 +26,11 @@ there) and earns each asset's span return over (c_m, c_{m+1}]:
   indices before T*. Up to k - 1 trailing complete sessions of the window
   are left unbooked, identically for every policy.
 - Start (D3): 100% cash. The first execution close pays the build.
+- Constraints (D5): every target passes through the engine's
+  `feasible_target` with the registered set (`EnvConfig.max_weight`,
+  `EnvConfig.max_turnover`), identically for every policy, before the
+  transition sees it. A rule-breaking target raises `InvalidTarget`; the
+  defaults (cap 1.0, no turnover limit) leave a valid target unchanged.
 
 Episode accounting. reset() books calls c_0..c_o (cash; identical for every
 policy) and returns the observation at c_o. step(target) books the calls
@@ -57,6 +62,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from stock_agent.portfolio.transition import Constraints, FeasibleTarget, feasible_target
 from stock_agent.rl.observation import (
     Observation,
     ObservationBuilder,
@@ -71,27 +77,46 @@ from stock_agent.rl.transition import PortfolioStep, TransitionInfo, check_step_
 
 @dataclass(frozen=True)
 class EnvConfig:
+    """
+    The schedule and the registered D5 constraint set: `max_weight` is the
+    per-fund cap (1.0, the default, means no cap) and `max_turnover` the
+    one-way turnover limit per rebalance (None, the default, means none).
+    """
+
     rebalance_every: int = 1
     rebalance_offset: int = 0
     validate_transition: bool = True
+    max_weight: float = 1.0
+    max_turnover: float | None = None
 
     def __post_init__(self) -> None:
         if self.rebalance_every < 1:
             raise ValueError("rebalance_every must be at least 1.")
         if not 0 <= self.rebalance_offset < self.rebalance_every:
             raise ValueError("rebalance_offset must be in [0, rebalance_every).")
+        Constraints(0, self.max_weight, self.max_turnover)  # validates the set
+
+    def constraints(self, cash_index: int) -> Constraints:
+        return Constraints(cash_index, self.max_weight, self.max_turnover)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "rebalance_every": self.rebalance_every,
             "rebalance_offset": self.rebalance_offset,
             "validate_transition": self.validate_transition,
+            "max_weight": self.max_weight,
+            "max_turnover": self.max_turnover,
         }
 
 
 @dataclass(frozen=True)
 class LedgerRow:
-    """One transition call: the close of `session`, earning to `next_session`."""
+    """
+    One transition call: the close of `session`, earning to `next_session`.
+    `target` is the policy's requested target and `feasibility` its D5
+    record (None when no target was given); the transition received
+    `feasibility.weights`.
+    """
 
     index: int
     session: int
@@ -110,6 +135,7 @@ class LedgerRow:
     wealth_before: float
     wealth_after: float
     reward: float
+    feasibility: FeasibleTarget | None = None
 
 
 class AllocationEnv:
@@ -134,6 +160,7 @@ class AllocationEnv:
         self.config = config or EnvConfig()
         if builder.asset_names != data.asset_names or builder.cash_index != data.cash_index:
             raise ValueError("The observation builder was made for a different universe.")
+        self.constraints = self.config.constraints(data.cash_index)
         self.complete = data.complete_sessions(self.start, self.stop)
         if len(self.complete) < 3:
             raise ValueError("An episode window needs at least three complete sessions.")
@@ -204,9 +231,14 @@ class AllocationEnv:
         session, next_session = int(self.complete[m]), int(self.complete[m + 1])
         rates = self.data.cost_rates_at(session)
         target_array = None if target is None else np.asarray(target, dtype=np.float64).copy()
+        feasibility = (
+            None
+            if target_array is None
+            else feasible_target(target_array, self._w_pre, self.constraints)
+        )
         result = self.transition(
             self._w_pre,
-            target_array,
+            None if feasibility is None else np.array(feasibility.weights),
             self.data.span_returns(session, next_session),
             rates,
             self.data.cash_index,
@@ -233,6 +265,7 @@ class AllocationEnv:
             wealth_before=wealth_before,
             wealth_after=wealth_after,
             reward=log_growth_reward(result),
+            feasibility=feasibility,
         )
         self.ledger.append(row)
         self._post_trade.append(row.w_post_trade)

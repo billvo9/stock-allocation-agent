@@ -74,6 +74,12 @@ def main(
 
     run = _read(args.run_dir / "run.json")
     config = run_config_from_dict(run["config"])
+    if run["transition_key"] not in TRANSITIONS:
+        raise ValueError(
+            f"The run was trained on transition {run['transition_key']!r}, which this code no "
+            "longer provides (the engineering stand-in was retired when T5a was approved on "
+            "2026-10-15). Retrain it on the approved transition."
+        )
     transition, transition_info = TRANSITIONS[run["transition_key"]]
     if transition_info.to_dict() != run["transition"]:
         raise ValueError("The run was trained with a different transition than this code provides.")

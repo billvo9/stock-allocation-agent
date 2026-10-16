@@ -1,12 +1,12 @@
 """
 The per-step transition the RL environment injects.
 
-`reference_transition.proposed_portfolio_step` implements the PROPOSED
-(unapproved) D2 / F8.1 rules for engineering tests only. These tests pin it
+The environment injects the approved `portfolio.transition.portfolio_step`
+(T5a D1-D8, approved 2026-10-15). These tests pin it, through the RL seam,
 to the specification's worked examples (t5_portfolio_formulas.md sections 2
-and 8), so the stand-in and Track A's approved `portfolio_step` must agree on
-them, and `check_step_result` rejects a transition that breaks the shared
-invariants.
+and 8), and check that `check_step_result` rejects a transition that breaks
+the shared invariants. (They pinned the engineering stand-in to the same
+numbers before the approval; the stand-in is retired.)
 """
 
 from __future__ import annotations
@@ -16,10 +16,9 @@ import math
 import numpy as np
 import pytest
 
-from stock_agent.rl import reference_transition as ref
 from stock_agent.rl import transition as tr
 
-STEP = ref.proposed_portfolio_step
+STEP = tr.portfolio_step
 BP = 1e-4
 
 
@@ -172,6 +171,7 @@ def test_check_step_result_rejects_a_transition_that_breaks_the_simplex():
         net_return=good.net_return,
         turnover_one_way=good.turnover_one_way,
         traded_notional=good.traded_notional,
+        reason=good.reason,
     )
     with pytest.raises(tr.TransitionContractError, match="w_next"):
         tr.check_step_result(broken, n_assets=2)
@@ -184,7 +184,17 @@ def test_check_step_result_rejects_a_net_return_above_gross():
         tr.check_step_result(broken, n_assets=2)
 
 
-def test_the_reference_transition_is_labelled_engineering_only():
-    assert ref.TRANSITION_INFO.status == tr.ENGINEERING_ONLY
+def test_the_injected_transition_is_the_approved_engine_function():
+    from stock_agent.portfolio import transition as engine_transition
+
+    assert tr.portfolio_step is engine_transition.portfolio_step
+    assert tr.StepResult is engine_transition.StepResult
+    assert tr.APPROVED_TRANSITION.approved and tr.APPROVED_TRANSITION.status == "approved"
     assert tr.ENGINEERING_ONLY == "engineering_only_unapproved_transition"
-    assert not ref.TRANSITION_INFO.approved
+    assert not tr.TransitionInfo("x", "0", tr.ENGINEERING_ONLY).approved
+
+
+def test_the_engineering_stand_in_is_retired():
+    import importlib.util
+
+    assert importlib.util.find_spec("stock_agent.rl.reference_transition") is None
