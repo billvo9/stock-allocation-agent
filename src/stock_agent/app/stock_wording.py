@@ -351,3 +351,20 @@ FOLDS_NOTE = (
     "(the half-life, the logistic penalty) was made inside the training years."
 )
 CANDIDATES = "Candidates tried: {family}. Every one is reported here; none was dropped."
+
+# --- the forecast record (PR 3) ---
+
+HISTORY_TITLE = "Earlier forecasts and what happened"
+HISTORY_NOTE = (
+    "Each forecast is stored once and never changed; a newer one replaces it on the page but "
+    "the old one stays. When its session closes, what happened is recorded beside it with the "
+    "score of the stored probabilities (lower RPS is better). {summary}"
+)
+HISTORY_SUMMARY = "{targets} session targets scored so far, mean RPS {rps:.3f}."
+HISTORY_NONE = "No session has closed since the first forecast, so nothing is scored yet."
+JOB_STATUS = "Last update: {status} at {finished} (expected session {expected})."
+REPLAY_COMMAND = ".venv/bin/python scripts/stock_lab_daily.py --demo-replay 20"
+REPLAY_NOTE = (
+    "To see forecasts scored as sessions close, run a synthetic replay: it reveals the demo "
+    "stocks' last sessions one simulated day at a time, with models fitted only on earlier data."
+)

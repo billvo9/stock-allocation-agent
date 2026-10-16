@@ -240,3 +240,49 @@ def test_a_real_stock_has_no_probabilities_until_the_approvals(home):
     assert words.FORECAST_NONE_REAL_TITLE in text
     assert words.DIAGNOSTICS_NONE in text  # no real evaluation: the synthetic one is not shown
     assert words.FORECAST_BADGE not in text
+
+
+def _replay(home: Path, sessions: int = 4) -> StockLabStore:
+    import importlib.util
+    import io
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "stock_lab_daily.py"
+    spec = importlib.util.spec_from_file_location("stock_lab_daily_app", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    store = StockLabStore(home / DB_NAME)
+    argv = ["--demo-replay", str(sessions), "--health-inputs", str(home / "inputs")]
+    assert module.main(argv, store_factory=lambda: store, out=io.StringIO()) == 0
+    return store
+
+
+def test_the_forecast_history_shows_what_happened_beside_each_stored_forecast(home):
+    _replay(home)
+    app = page()
+    history = next(t.value for t in app.table if t.value.index.name == "As of")
+    assert history["What happened"].iloc[0] == "pending"  # the newest session has not closed
+    assert set(history["What happened"].iloc[1:]) <= {"Increase", "Stable", "Decrease"}
+    text = text_of(app)
+    assert "session targets scored so far" in text and "Last update: ok" in text
+    assert words.REPLAY_NOTE not in text  # scores exist, so no replay prompt
+    scan_for_advice(text)
+
+
+def test_a_forecast_older_than_the_expected_session_is_labelled_stale_never_replaced(home):
+    store = _replay(home)
+    latest = store.latest_forecast("DEMO_CALM")
+    store.record_job_run(
+        {
+            "run_id": "replay-later",
+            "started_at": "2025-01-03T21:10:00.000000Z",
+            "finished_at": "2025-01-03T21:11:00.000000Z",
+            "status": "failed",
+            "reason": "planted",
+            "expected_session": "2025-01-03",
+            "data_class": "synthetic",
+        }
+    )
+    app = page()
+    warning = " ".join(w.value for w in app.warning)
+    assert f"Stale: made as of {latest['as_of_session']}" in warning and "(failed)" in warning
+    assert store.latest_forecast("DEMO_CALM") == latest  # nothing was invented

@@ -30,7 +30,7 @@ EXTRA = {
     "evaluation": {"stock_agent.model_validation.folds", "stock_agent.model_diagnostics.inference"},
     "logistic": {"sklearn"},
 }
-RESEARCH_SIDE = ("tiingo", "evaluation", "logistic", "predict")
+RESEARCH_SIDE = ("tiingo", "evaluation", "logistic", "predict", "replay")
 # The only project code that may import the Stock Lab.
 CONSUMERS = ("stock_agent/app/", "stock_agent/stock_lab/")
 
