@@ -23,7 +23,14 @@ PROJECT = SOURCE.parent
 PACKAGE = SOURCE / "stock_agent" / "stock_lab"
 MODULES = sorted(PACKAGE.glob("*.py"))
 ALLOWED_THIRD_PARTY = {"numpy", "pandas"}
-TIINGO_EXTRA = {"stock_agent.data.vendors.tiingo"}
+# The research-side modules and the one extra each may import. The Lab's page
+# never imports any of them (tested below and in test_app_explore.py).
+EXTRA = {
+    "tiingo": {"stock_agent.data.vendors.tiingo"},
+    "evaluation": {"stock_agent.model_validation.folds", "stock_agent.model_diagnostics.inference"},
+    "logistic": {"sklearn"},
+}
+RESEARCH_SIDE = ("tiingo", "evaluation", "logistic", "predict")
 # The only project code that may import the Stock Lab.
 CONSUMERS = ("stock_agent/app/", "stock_agent/stock_lab/")
 
@@ -43,7 +50,7 @@ def _imports(path: Path) -> set[str]:
 
 @pytest.mark.parametrize("path", MODULES, ids=lambda p: p.stem)
 def test_stock_lab_modules_import_only_the_standard_library_numpy_pandas_and_itself(path):
-    extra = TIINGO_EXTRA if path.stem == "tiingo" else set()
+    extra = EXTRA.get(path.stem, set())
     for name in _imports(path):
         top = name.split(".")[0]
         assert (
@@ -70,9 +77,18 @@ def test_nothing_else_in_the_project_imports_the_stock_lab():
         assert not [n for n in _imports(path) if n.startswith("stock_agent.stock_lab")], relative
 
 
-def test_the_app_never_imports_the_tiingo_adapter():
+def test_the_app_never_imports_the_research_side():
+    forbidden = {f"stock_agent.stock_lab.{name}" for name in RESEARCH_SIDE}
     for path in sorted((SOURCE / "stock_agent" / "app").rglob("*.py")):
-        assert "stock_agent.stock_lab.tiingo" not in _imports(path), path.name
+        assert not _imports(path) & forbidden, path.name
+
+
+def test_page_side_modules_never_import_the_research_side():
+    forbidden = {f"stock_agent.stock_lab.{name}" for name in RESEARCH_SIDE}
+    for path in MODULES:
+        if path.stem in RESEARCH_SIDE:
+            continue
+        assert not _imports(path) & forbidden, path.name
 
 
 def test_only_the_fetch_script_uses_the_adapter():
@@ -88,6 +104,8 @@ def test_importing_the_page_side_loads_no_network_or_research_module():
     statement = (
         "import json, sys\n"
         "import stock_agent.stock_lab.view, stock_agent.stock_lab.store\n"
+        "import stock_agent.stock_lab.reversal, stock_agent.stock_lab.traps\n"
+        "import stock_agent.stock_lab.forecast, stock_agent.stock_lab.scores\n"
         "print(json.dumps(sorted(sys.modules)))"
     )
     completed = subprocess.run(
@@ -100,7 +118,15 @@ def test_importing_the_page_side_loads_no_network_or_research_module():
     )
     assert completed.returncode == 0, completed.stderr[-2000:]
     loaded = set(json.loads(completed.stdout.strip().splitlines()[-1]))
-    for forbidden in ("urllib.request", "http.client", "sklearn", "stock_agent.data"):
+    for forbidden in (
+        "urllib.request",
+        "http.client",
+        "sklearn",
+        "scipy",
+        "stock_agent.data",
+        "stock_agent.model_validation",
+        "stock_agent.model_diagnostics",
+    ):
         assert not [m for m in loaded if m == forbidden or m.startswith(forbidden + ".")]
     project = {m for m in loaded if m.startswith("stock_agent")}
     assert project <= {"stock_agent", "stock_agent.stock_lab"} | {

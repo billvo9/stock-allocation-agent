@@ -25,6 +25,11 @@ Tables
                        listing snapshot (symbols.classify), made by the
                        owner-run update script, which has the exchange
                        calendar; the page shows the latest check per ticker.
+    evaluations        each walk-forward evaluation record (evaluation.py),
+                       as strict JSON (write-once)
+    forecasts          each StockProbabilityForecast (forecast.py), checked
+                       before it is stored and again when read; a newer
+                       forecast names the one it supersedes, which stays
     price_batches      one retrieval of one ticker's bars (write-once), with
     price_bars         its rows: a vintage. Later retrievals never overwrite
                        earlier ones; reads choose, per session, the latest
@@ -43,6 +48,8 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
+import math
 import os
 import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -53,6 +60,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from stock_agent.stock_lab import forecast as forecast_artifact
 from stock_agent.stock_lab.contracts import DataClass, SymbolReason, SymbolStatus
 from stock_agent.stock_lab.prices import BAR_COLUMNS, validate_bars
 from stock_agent.stock_lab.symbols import Classification, ListingRow, ParsedTicker
@@ -67,6 +75,8 @@ WRITE_ONCE_TABLES = (
     "listing_rows",
     "price_batches",
     "price_bars",
+    "evaluations",
+    "forecasts",
 )
 
 SCHEMA = (
@@ -120,6 +130,23 @@ CREATE TABLE IF NOT EXISTS price_batches (
     vintage_note TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS price_batches_ticker ON price_batches (ticker, retrieved_at);
+CREATE TABLE IF NOT EXISTS evaluations (
+    run_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    data_class TEXT NOT NULL CHECK (data_class IN ('real', 'synthetic')),
+    content_sha256 TEXT NOT NULL,
+    record TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS forecasts (
+    forecast_id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    as_of_session TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    data_class TEXT NOT NULL CHECK (data_class IN ('real', 'synthetic')),
+    supersedes TEXT,
+    record TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS forecasts_symbol ON forecasts (symbol, created_at);
 CREATE TABLE IF NOT EXISTS price_bars (
     batch_id TEXT NOT NULL REFERENCES price_batches (batch_id),
     session TEXT NOT NULL,
@@ -162,6 +189,12 @@ CREATE TRIGGER IF NOT EXISTS price_bars_no_replace BEFORE INSERT ON price_bars
 WHEN EXISTS (
     SELECT 1 FROM price_bars WHERE batch_id = NEW.batch_id AND session = NEW.session
 )
+BEGIN SELECT RAISE(ABORT, 'write-once table'); END;
+CREATE TRIGGER IF NOT EXISTS evaluations_no_replace BEFORE INSERT ON evaluations
+WHEN EXISTS (SELECT 1 FROM evaluations WHERE run_id = NEW.run_id)
+BEGIN SELECT RAISE(ABORT, 'write-once table'); END;
+CREATE TRIGGER IF NOT EXISTS forecasts_no_replace BEFORE INSERT ON forecasts
+WHEN EXISTS (SELECT 1 FROM forecasts WHERE forecast_id = NEW.forecast_id)
 BEGIN SELECT RAISE(ABORT, 'write-once table'); END;
 CREATE TRIGGER IF NOT EXISTS price_bars_complete BEFORE INSERT ON price_bars
 WHEN (SELECT COUNT(*) FROM price_bars WHERE batch_id = NEW.batch_id)
@@ -710,3 +743,117 @@ class StockLabStore:
             revised_sessions=revised,
             data_class=classes.pop(),
         )
+
+    # --- evaluations and forecasts ---
+
+    def record_evaluation(self, record: dict) -> str:
+        """Store one evaluation record (strict JSON, write-once); returns its run id."""
+
+        text = _strict_json(record)
+        with self._write() as connection:
+            connection.execute(
+                "INSERT INTO evaluations VALUES (?, ?, ?, ?, ?)",
+                (
+                    record["run_id"],
+                    record["created_at"],
+                    DataClass(record["data_class"]).value,
+                    hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    text,
+                ),
+            )
+        return record["run_id"]
+
+    def latest_evaluation(self, data_class: DataClass) -> dict | None:
+        """The newest evaluation of `data_class`, re-checked against its hash."""
+
+        with self._read() as connection:
+            if connection is None:
+                return None
+            row = connection.execute(
+                "SELECT content_sha256, record FROM evaluations WHERE data_class = ? "
+                "ORDER BY created_at DESC, run_id DESC LIMIT 1",
+                (DataClass(data_class).value,),
+            ).fetchone()
+        if row is None:
+            return None
+        if hashlib.sha256(row[1].encode("utf-8")).hexdigest() != row[0]:
+            raise StoreRefused("an evaluation record does not match its hash")
+        return json.loads(row[1])
+
+    def record_forecast(self, record: dict, *, real_authorized: bool = False) -> str:
+        """
+        Store one checked forecast (write-once); returns its id. A real-data
+        forecast is refused unless the caller says the owner's decisions A2
+        and A4 are recorded (`real_authorized`; only the owner-run daily
+        script passes it, from an explicit flag).
+        """
+
+        checked = forecast_artifact.check(record)
+        if checked["data_class"] == DataClass.REAL.value and real_authorized is not True:
+            raise StoreRefused("real forecasts need the owner's decisions A2 and A4")
+        demo = "_" in checked["symbol"]
+        if (checked["data_class"] == DataClass.SYNTHETIC.value) != demo:
+            raise StoreRefused("synthetic forecasts only under demo identifiers, and only they")
+        with self._write() as connection:
+            connection.execute(
+                "INSERT INTO forecasts VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    checked["forecast_id"],
+                    checked["symbol"],
+                    checked["as_of_session"],
+                    checked["created_at"],
+                    checked["data_class"],
+                    checked["supersedes"],
+                    forecast_artifact.canonical(dict(checked)),
+                ),
+            )
+        return checked["forecast_id"]
+
+    def evaluation(self, run_id: str) -> dict | None:
+        """One stored evaluation by its run id, re-checked against its hash."""
+
+        with self._read() as connection:
+            if connection is None:
+                return None
+            row = connection.execute(
+                "SELECT content_sha256, record FROM evaluations WHERE run_id = ?", (run_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        if hashlib.sha256(row[1].encode("utf-8")).hexdigest() != row[0]:
+            raise StoreRefused("an evaluation record does not match its hash")
+        return json.loads(row[1])
+
+    def forecasts(self, symbol: str) -> tuple[dict, ...]:
+        """Every stored forecast of `symbol`, oldest first, each re-checked."""
+
+        with self._read() as connection:
+            if connection is None:
+                return ()
+            rows = connection.execute(
+                "SELECT record FROM forecasts WHERE symbol = ? ORDER BY created_at, forecast_id",
+                (symbol,),
+            ).fetchall()
+        return tuple(dict(forecast_artifact.check(json.loads(row[0]))) for row in rows)
+
+    def latest_forecast(self, symbol: str) -> dict | None:
+        found = self.forecasts(symbol)
+        return found[-1] if found else None
+
+
+def _plain(value):
+    """JSON-ready values: a non-finite number becomes null (missing), numpy scalars plain."""
+
+    if hasattr(value, "item") and not isinstance(value, str | bytes):
+        value = value.item()
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_plain(item) for item in value]
+    return value
+
+
+def _strict_json(record: dict) -> str:
+    return json.dumps(_plain(record), sort_keys=True, separators=(",", ":"), allow_nan=False)
