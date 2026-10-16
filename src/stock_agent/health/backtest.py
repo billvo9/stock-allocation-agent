@@ -1,7 +1,9 @@
 """
 Portfolio health from backtest summaries (artifact `backtest_summary`, agreed
-format v1.0), read from `<inputs>/backtest_summary/` (the newest file by
-`generated_at`). Producers: the T5a engine or the RL comparison harness.
+format v1.0), read from `<inputs>/backtest_summary/`: the newest file per
+`policy` (by `generated_at`, then `run_id`), so every policy a run writes is
+judged, never only one. Producers: the T5a engine or the RL comparison
+harness.
 
 Fields besides the envelope (`inputs`):
 
@@ -15,8 +17,11 @@ Fields besides the envelope (`inputs`):
                        drawdown is non-negative)
     units              optional {measure: unit text}
 
-Each check compares one stored measure with its stored limit and takes its
-worst finding: above the limit is failed with reason `constraint_breached`
+Each check compares one stored measure with its stored limit, for each
+policy, and the check takes the worst policy's state; the detail keeps one
+line per policy with its own state, and the value is the largest measure
+reported across policies (for one policy, its measure). Per policy, the
+worst finding counts: above the limit is failed with reason `constraint_breached`
 (an informational constraint-violation alert, never an action); an
 unapproved transition or unreadable input files are degraded; a measure the
 producer did not report, or a limit it did not declare, is
@@ -38,7 +43,7 @@ from stock_agent.health.inputs import (
     NotRead,
     choice,
     common_findings,
-    load_latest,
+    load_latest_by,
     require,
     worst_finding,
 )
@@ -107,16 +112,51 @@ def _measure_finding(name: str, value, bound) -> Finding:
     )
 
 
+def _row(
+    policy: str,
+    artifact: Artifact,
+    parsed,
+    measure: str,
+    limit: str,
+    name: str,
+    *,
+    allow_synthetic: bool,
+):
+    label, constraints, measures, units = parsed
+    value, bound = measures[measure], constraints[limit]
+    finding = worst_finding(
+        [
+            _measure_finding(name, value, bound),
+            *common_findings(artifact, allow_synthetic=allow_synthetic),
+        ]
+    )
+    line = (
+        f"{finding.state.value}: {label}; {measure} = {value}, {limit} = {bound}; "
+        f"{artifact.describe()}"
+    )
+    return {
+        "policy": policy,
+        "finding": finding,
+        "value": value,
+        "bound": bound,
+        "unit": units.get(measure, "as defined by the producer"),
+        "line": line,
+        "generated_at": artifact.generated_at,
+    }
+
+
+def _summary(rows: list[dict], finding: Finding) -> str:
+    if len(rows) == 1:
+        return finding.summary
+    healthy = sum(row["finding"].state is HealthState.HEALTHY for row in rows)
+    if healthy == len(rows):
+        return f"All {len(rows)} policies are within their limits."
+    worst = next(row for row in rows if row["finding"] is finding)
+    return f"{worst['policy']}: {finding.summary} {healthy} of {len(rows)} policies healthy."
+
+
 def backtest_checks(directory: Path | None, *, allow_synthetic: bool = False) -> list[Check]:
-    loaded = load_latest(directory, ARTIFACT)
-    parsed = None
-    if isinstance(loaded, Artifact):
-        try:
-            parsed = _parse(loaded)
-        except FormatError as error:
-            loaded = NotRead(
-                HealthState.UNAVAILABLE, "unrecognized_format", f"{loaded.path}: {error}"
-            )
+    loaded = load_latest_by(directory, ARTIFACT, "policy", _parse)
     evidence = None if directory is None else str(directory)
     checks = []
     for check_id, (title, measure, limit, name) in MEASURES.items():
@@ -126,7 +166,7 @@ def backtest_checks(directory: Path | None, *, allow_synthetic: bool = False) ->
             "title": title,
             "evidence": evidence,
         }
-        if parsed is None:
+        if isinstance(loaded, NotRead):
             checks.append(
                 Check(
                     state=loaded.state,
@@ -143,31 +183,30 @@ def backtest_checks(directory: Path | None, *, allow_synthetic: bool = False) ->
                 )
             )
             continue
-        label, constraints, measures, units = parsed
-        value, bound = measures[measure], constraints[limit]
-        finding = worst_finding(
-            [
-                _measure_finding(name, value, bound),
-                *common_findings(loaded, allow_synthetic=allow_synthetic),
-            ]
-        )
+        rows = [
+            _row(policy, artifact, parsed, measure, limit, name, allow_synthetic=allow_synthetic)
+            for policy, (artifact, parsed) in loaded.items()
+        ]
+        finding = worst_finding([row["finding"] for row in rows])
+        reported = [row for row in rows if row["value"] is not None]
+        largest = max(reported, key=lambda row: row["value"]) if reported else None
+        bounds = [row["bound"] for row in rows if row["bound"] is not None]
+        if len(rows) == 1:
+            threshold = None if not bounds else f"<= {bounds[0]} (the backtest's declared {limit})"
+        else:
+            threshold = None if not bounds else f"each policy's declared {limit}"
         checks.append(
             Check(
                 state=finding.state,
                 reason=finding.reason,
-                measured_at=loaded.generated_at,
-                value=value,
-                unit=units.get(measure, "as defined by the producer"),
-                threshold=None
-                if bound is None
-                else f"<= {bound} (the backtest's declared {limit})",
+                measured_at=max(row["generated_at"] for row in rows),
+                value=None if largest is None else largest["value"],
+                unit=None if largest is None else largest["unit"],
+                threshold=threshold,
                 better=Better.LOWER,
                 tolerance=None,
-                summary=finding.summary,
-                detail=(
-                    f"{label}; {measure} = {value}, {limit} = {bound}; "
-                    f"{loaded.describe()}. {SIMULATED}"
-                ),
+                summary=_summary(rows, finding),
+                detail="\n".join([*(row["line"] for row in rows), SIMULATED]),
                 **common,
             )
         )

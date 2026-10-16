@@ -9,7 +9,13 @@ the Builder too (test_app_builder.py).
 
 from __future__ import annotations
 
+import html
+import importlib.util
+import json
+import os
 import re
+import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -19,12 +25,17 @@ from streamlit.testing.v1 import AppTest
 
 from stock_agent.app import (
     evidence,
+    health_summary,
     labels,
     navigation,
     synthetic,
     wording,
 )
-from stock_agent.app.model_health import HealthCheck, HealthReport
+from stock_agent.health.context import CodeState
+from stock_agent.health.model import Check, HealthState, Scope
+from stock_agent.health.summary import build_summary, write_summary
+from stock_agent.health.view import STATE_LEVELS, STATE_WORDS, build_view
+from stock_agent.ui import theme
 
 REPO = Path(__file__).resolve().parents[1]
 PACKAGE = REPO / "src" / "stock_agent" / "app"
@@ -99,16 +110,19 @@ def text_of(app: AppTest) -> str:
             *app.info,
             *app.warning,
             *app.error,
+            *app.success,
         )
     ]
-    parts += [h.proto.body for h in app.get("html") if "<style>" not in h.proto.body]
+    parts += [html.unescape(h.proto.body) for h in app.get("html") if "<style>" not in h.proto.body]
     parts += [frame.value.to_csv(index=False) for frame in app.dataframe]
     parts += [table.value.to_csv() for table in app.table]
     parts += [f"{metric.label} {metric.value}" for metric in app.metric]
     parts += [link.proto.label for link in app.get("page_link")]
     parts += [button.proto.label for button in app.get("link_button")]
     parts += widget_text(app)
-    text = " ".join(parts).replace("\\$", "$").replace("**", "")
+    text = " ".join(parts).replace("**", "")
+    # Markdown escapes removed: "\\$" and the literal text of health summaries.
+    text = re.sub(r"\\([\\`*_{}\[\]()#+\-.!|<>~$&:/=^%@?'\"])", r"\1", text)
     scan_for_advice(text)
     return text
 
@@ -275,71 +289,445 @@ def test_experiments_is_an_honest_empty_state_with_a_way_to_the_dashboard():
 
 # --- Model Health ---
 
+HEALTH_NOW = datetime(2026, 10, 15, 12, tzinfo=UTC)
+STAGE_LINE = (
+    "etf.ridge@v1 (etf:synthetic:h20, synthetic): engineering_only; development_evaluated "
+    "blocked by: data_class_engineering_only (data_class='synthetic'); "
+    "universe_not_point_in_time"
+)
+HEAD = "ab" * 32
+
+
+@pytest.fixture(autouse=True)
+def _no_health_summary_paths(monkeypatch):
+    # The Lab reads summaries only from these variables; tests never see the owner's.
+    monkeypatch.delenv(health_summary.LOCAL_VARIABLE, raising=False)
+    monkeypatch.delenv(health_summary.CI_VARIABLE, raising=False)
+
+
+def _health_check(check_id: str, state: HealthState, **fields) -> Check:
+    measured = state is not HealthState.INSUFFICIENT_EVIDENCE
+    defaults = {
+        "title": f"Planted {check_id}",
+        "measured_at": HEALTH_NOW if measured else None,
+        "value": 1 if measured else None,
+        "unit": "planted units" if measured else None,
+        "threshold": "planted threshold",
+        "summary": f"Planted sentence for {check_id} ({state.value}).",
+        "detail": f"planted detail for {check_id}",
+        "evidence": "fixture:lab",
+        "reason": None if state is HealthState.HEALTHY else "planted_reason",
+    }
+    return Check(
+        check_id=check_id, area=check_id.split(".")[0], state=state, **{**defaults, **fields}
+    )
+
+
+def _health_summary(checks, *, scope=Scope.PRIVATE, generated_at=HEALTH_NOW):
+    return build_summary(
+        checks,
+        generated_at=generated_at,
+        code=CodeState("c" * 40, False),
+        scope=scope,
+        run_context={"environment": "local"},
+    )
+
+
+def _write_summary(path: Path, checks, **fields) -> str:
+    write_summary(path, _health_summary(checks, **fields))
+    return str(path)
+
+
+def _health_page(local, ci):
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from stock_agent.app import health_summary, model_health
+
+    now = datetime(2026, 10, 15, 12, tzinfo=UTC)
+    page = health_summary.HealthPage(
+        local=health_summary.load_summary(None if local is None else Path(local), now=now),
+        ci=health_summary.load_summary(None if ci is None else Path(ci), now=now),
+    )
+    model_health.render(lambda: page)
+
+
+def _render_health(local: str | None, ci: str | None = None) -> AppTest:
+    app = AppTest.from_function(_health_page, default_timeout=TIMEOUT, args=(local, ci)).run()
+    assert not app.exception, [e.value for e in app.exception]
+    return app
+
+
+def _pill_words(app: AppTest) -> list[str]:
+    html = " ".join(h.proto.body for h in app.get("html"))
+    return re.findall(r'class="sa-pill sa-pill--([a-z-]+)"[^>]*>([^<]+)</span>', html)
+
 
 def test_model_health_is_not_yet_collected_and_shows_no_value():
     app = running("health")
     text = text_of(app)
     assert wording.HEALTH_EMPTY_TITLE in text and wording.HEALTH_EMPTY in text
+    assert wording.HEALTH_NOT_SET in text
+    assert wording.HEALTH_CREATE_COMMAND in [c.proto.code_text for c in app.get("code")]
     assert not app.get("plotly_chart") and not app.dataframe and not app.metric
+    assert "valid" not in {level for level, _ in _pill_words(app)}  # nothing is green
 
 
-REPORT = HealthReport(
-    collected_at="2026-10-14 18:00 UTC",
-    source="a test collector",
-    checks=(
-        HealthCheck("Data freshness", "VALID", "Fresh", "Prices end at the expected session."),
-        HealthCheck(
-            "Feature drift",
-            "WARNING",
-            "Drift",
-            "Two features moved beyond their reference range.",
-            detail="PSI 0.31 and 0.27 against the training window",
-            measured_at="2026-10-14",
-        ),
-    ),
-)
+def test_a_configured_summary_that_does_not_exist_is_not_yet_collected(tmp_path, monkeypatch):
+    missing = tmp_path / "nowhere" / "latest.json"
+    monkeypatch.setenv(health_summary.LOCAL_VARIABLE, str(missing))
+    text = text_of(running("health"))
+    assert wording.HEALTH_EMPTY_TITLE in text
+    assert wording.HEALTH_LOOKED.format(path=missing) in text
 
 
-def _health_page(report):
-    from stock_agent.app import model_health
+# One summary per overall state: the planted state is the worst check's.
+STATE_CASES = {
+    HealthState.HEALTHY: [HealthState.HEALTHY, HealthState.HEALTHY],
+    HealthState.INSUFFICIENT_EVIDENCE: [HealthState.HEALTHY, HealthState.INSUFFICIENT_EVIDENCE],
+    HealthState.DEGRADED: [HealthState.INSUFFICIENT_EVIDENCE, HealthState.DEGRADED],
+    HealthState.UNAVAILABLE: [HealthState.DEGRADED, HealthState.UNAVAILABLE],
+    HealthState.FAILED: [HealthState.UNAVAILABLE, HealthState.FAILED],
+}
 
-    model_health.render(lambda: report)
 
-
-def test_model_health_lays_out_a_supplied_report_with_statuses_in_words():
-    app = AppTest.from_function(_health_page, default_timeout=TIMEOUT, args=(REPORT,)).run()
-    assert not app.exception
+@pytest.mark.parametrize("overall", list(STATE_CASES), ids=lambda state: state.value)
+def test_model_health_shows_each_overall_state_in_words_with_its_next_step(tmp_path, overall):
+    first, second = STATE_CASES[overall]
+    checks = [_health_check("ci.verify", first), _health_check("forecast.ledger", second)]
+    app = _render_health(_write_summary(tmp_path / "latest.json", checks))
     text = text_of(app)
-    assert "Collected 2026-10-14 18:00 UTC from a test collector." in text
-    for check in REPORT.checks:
-        assert check.name in text and check.summary in text and f">{check.word}</span>" in text
-    details = app.dataframe[0].value
-    assert details["Detail"].tolist() == ["—", "PSI 0.31 and 0.27 against the training window"]
-    assert wording.HEALTH_EMPTY_TITLE not in text
+    view = build_view(_health_summary(checks), now=HEALTH_NOW)
+    assert view.state is overall
+    pills = _pill_words(app)
+    assert pills[0] == (theme.status_slug(STATE_LEVELS[overall]), STATE_WORDS[overall])
+    assert view.headline in text
+    assert view.next_action in text and (pills[1][1], wording.HEALTH_NEXT_TITLE) == (
+        wording.HEALTH_NEXT_WORD,
+        wording.HEALTH_NEXT_TITLE,
+    )
+    assert view.caveat in text  # informational only, always shown
+    # Each area in words, then each check with its own sentence.
+    assert (theme.status_slug(STATE_LEVELS[first]), STATE_WORDS[first]) in pills
+    assert (theme.status_slug(STATE_LEVELS[second]), STATE_WORDS[second]) in pills
+    for check in checks:
+        assert check.summary in text and check.title in text
+        assert check.detail in [c.proto.code_text for c in app.get("code")]
+    assert "Code and tests" in text and "Prospective forecast ledger" in text
+    labels = [expander.label for expander in app.expander]
+    assert wording.HEALTH_MEASUREMENTS.format(title="Prospective forecast ledger") in labels
 
 
-def test_an_empty_report_is_still_not_yet_collected():
-    empty = HealthReport("2026-10-14", "a test collector", ())
-    app = AppTest.from_function(_health_page, default_timeout=TIMEOUT, args=(empty,)).run()
-    assert wording.HEALTH_EMPTY_TITLE in text_of(app)
+def test_the_five_states_render_with_five_distinct_words(tmp_path):
+    checks = [
+        _health_check(check_id, state)
+        for check_id, state in zip(
+            ("ci.verify", "ci.tests", "deps.pins", "data.anchors", "forecast.ledger"),
+            HealthState,
+            strict=True,
+        )
+    ]
+    app = _render_health(_write_summary(tmp_path / "latest.json", checks))
+    shown = {word for _, word in _pill_words(app)}
+    assert {STATE_WORDS[state] for state in HealthState} <= shown
+    assert len({STATE_WORDS[state] for state in HealthState}) == 5
 
 
-@pytest.mark.parametrize(
-    ("change", "error"),
-    [
-        ({"level": "GREEN"}, ValueError),
-        ({"word": ""}, ValueError),
-        ({"summary": ""}, ValueError),
-    ],
-)
-def test_a_health_check_with_an_unknown_level_or_missing_words_is_refused(change, error):
-    fields = {"name": "Check", "level": "VALID", "word": "Fresh", "summary": "Fine.", **change}
-    with pytest.raises(error):
-        HealthCheck(**fields)
-    with pytest.raises(ValueError):
-        HealthReport("", "source", ())
-    with pytest.raises(TypeError):
-        HealthReport("now", "source", [])  # a list is not the contract
+def test_a_summary_with_nothing_measured_shows_nothing_green(tmp_path):
+    checks = [
+        _health_check(check_id, HealthState.INSUFFICIENT_EVIDENCE)
+        for check_id in ("ci.verify", "data.anchors", "forecast.ledger", "portfolio.diagnostics")
+    ]
+    app = _render_health(_write_summary(tmp_path / "latest.json", checks))
+    shown = {wording.HEALTH_EMPTY_BADGE, wording.HEALTH_NEXT_WORD}  # the page's own badges
+    pills = [pill for pill in _pill_words(app) if pill[1] not in shown]
+    assert pills and all(word == "Insufficient evidence" for _, word in pills)
+    assert "valid" not in {level for level, _ in _pill_words(app)}
+    assert "Healthy" not in text_of(app)
+
+
+def test_a_summary_without_checks_is_insufficient_evidence_and_shows_nothing_green(tmp_path):
+    app = _render_health(_write_summary(tmp_path / "latest.json", []))
+    text = text_of(app)
+    assert "This summary has no checks." in text
+    assert "Run scripts/health_check.py to measure something" in text
+    assert not app.expander  # no area, no check
+    pills = _pill_words(app)
+    assert pills[0] == (theme.status_slug("NOTICE"), "Insufficient evidence")
+    assert "valid" not in {level for level, _ in pills}
+
+
+def test_a_refused_summary_shows_why_and_nothing_from_it(tmp_path):
+    path = tmp_path / "latest.json"
+    _write_summary(path, [_health_check("ci.verify", HealthState.FAILED)])
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["overall_state"] = "healthy"  # an edited summary
+    path.write_text(json.dumps(document), encoding="utf-8")
+    app = _render_health(str(path))
+    text = text_of(app)
+    assert "was refused (state_mismatch)" in text and "Nothing from it is shown." in text
+    assert "Planted sentence" not in text and not app.expander
+    assert "valid" not in {level for level, _ in _pill_words(app)}
+
+
+def test_every_models_stage_and_its_blockers_are_shown(tmp_path):
+    stages = _health_check(
+        "registry.stages",
+        HealthState.HEALTHY,
+        title="Computed stages",
+        value=0,
+        detail=f"by stage: engineering_only 1\nblockers to the next stage: none\n{STAGE_LINE}",
+    )
+    app = _render_health(_write_summary(tmp_path / "latest.json", [stages]))
+    text = text_of(app)
+    assert "Models, versions and evidence stage" in text
+    assert STAGE_LINE in text
+    assert "blocked by: data_class_engineering_only" in text
+
+
+def test_ledger_facts_and_a_broken_chain_are_shown(tmp_path):
+    ledger_ok = _health_check(
+        "forecast.ledger",
+        HealthState.FAILED,
+        title="Forecast ledger integrity",
+        value=None,
+        reason="ledger_refused",
+        summary="The forecast ledger failed its integrity check, so none of its records can be "
+        "trusted.",
+        detail="ledger.jsonl: Line 2 was edited (its hash does not match).",
+    )
+    backup = _health_check(
+        "forecast.ledger_backup",
+        HealthState.HEALTHY,
+        title="Kept copy of the ledger head",
+        value=0,
+        detail=f"kept {HEAD}\nhead {HEAD}\n3 entries in the ledger",
+    )
+    app = _render_health(_write_summary(tmp_path / "latest.json", [ledger_ok, backup]))
+    text = text_of(app)
+    assert ledger_ok.summary in text and "Line 2 was edited" in text
+    assert f"head {HEAD}" in text
+    assert (theme.status_slug("INVALID/BLOCKED"), "Failed") in _pill_words(app)
+    assert "Start with “Forecast ledger integrity”" in text
+
+
+def test_the_daily_github_summary_is_shown_or_its_download_command(tmp_path):
+    local = _write_summary(
+        tmp_path / "latest.json", [_health_check("ci.verify", HealthState.HEALTHY)]
+    )
+    app = _render_health(local)
+    text = text_of(app)
+    assert wording.HEALTH_CI_TITLE in text and wording.HEALTH_CI_MISSING in text
+    assert wording.HEALTH_CI_DOWNLOAD in [c.proto.code_text for c in app.get("code")]
+
+    ci = _write_summary(
+        tmp_path / "ci.json",
+        [_health_check("ci.tests", HealthState.FAILED)],
+        scope=Scope.SYNTHETIC,
+        generated_at=HEALTH_NOW - timedelta(days=3),
+    )
+    text = text_of(_render_health(local, ci))
+    assert "Generated 2026-10-12 12:00 UTC." in text
+    assert "Something is broken" in text
+    assert "This summary is 3 days old" in text
+
+
+PLANTED = "See [a link](http://evil.example/a) or http://evil.example/b and <b>bold</b>."
+MARKDOWN_ELEMENTS = ("markdown", "caption", "info", "warning", "error", "success", "subheader")
+
+
+def _all_html(app: AppTest) -> str:
+    return " ".join(h.proto.body for h in app.get("html") if "<style>" not in h.proto.body)
+
+
+def test_producer_text_is_escaped_html_and_never_a_link(tmp_path):
+    planted = _health_check(
+        "ci.verify",
+        HealthState.DEGRADED,  # degraded: it is quoted in the next step and an alert too
+        title=f"Title {PLANTED}",
+        summary=PLANTED,
+        threshold=PLANTED,
+        unit=None,
+        value=PLANTED,
+        evidence=PLANTED,
+        detail=PLANTED,
+    )
+    app = _render_health(_write_summary(tmp_path / "latest.json", [planted]))
+    # Markdown would autolink a URL even with its punctuation escaped, so producer text
+    # never reaches a markdown element at all.
+    for kind in MARKDOWN_ELEMENTS:
+        for element in getattr(app, kind):
+            assert "evil.example" not in element.value, (kind, element.value)
+    rendered = _all_html(app)
+    assert rendered.count("http://evil.example/b") >= 5  # summary, next step, alert, ...
+    assert not re.search(r"<a\b[^>]*evil", rendered)  # no anchor anywhere points there
+    assert "<b>bold</b>" not in rendered and "&lt;b&gt;bold&lt;/b&gt;" in rendered
+    anchors = re.findall(r'<a\b[^>]*href="([^"]+)"', rendered)
+    assert anchors == [view_runbook_url("ci.verify")]  # the runbook link only
+    assert PLANTED in [code.proto.code_text for code in app.get("code")]  # detail, literal
+
+
+def view_runbook_url(check_id: str) -> str:
+    from stock_agent.health.model import runbook_for
+    from stock_agent.health.view import RUNBOOK_BASE_URL
+
+    return html.escape(RUNBOOK_BASE_URL + runbook_for(check_id), quote=True)
+
+
+def test_a_refused_summary_path_and_reason_are_escaped_html(tmp_path):
+    directory = tmp_path / "http:" / "evil.example"
+    directory.mkdir(parents=True)
+    path = directory / "latest.json"
+    path.write_text("{not json", encoding="utf-8")
+    app = _render_health(str(path))
+    for kind in MARKDOWN_ELEMENTS:
+        for element in getattr(app, kind):
+            assert "evil.example" not in element.value, (kind, element.value)
+    assert not re.search(r"<a\b[^>]*evil", _all_html(app))
+    assert "was refused (invalid_json)" in text_of(app)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads unreadable files")
+def test_an_unreadable_summary_is_shown_as_refused_not_a_crash(tmp_path):
+    path = Path(
+        _write_summary(tmp_path / "latest.json", [_health_check("ci.verify", HealthState.HEALTHY)])
+    )
+    path.chmod(0)
+    try:
+        app = _render_health(str(path))
+    finally:
+        path.chmod(0o600)
+    text = text_of(app)
+    assert "was refused (unreadable)" in text and "PermissionError" in text
+    assert "valid" not in {level for level, _ in _pill_words(app)}
+
+
+def test_degraded_and_unavailable_have_distinct_colours(tmp_path):
+    levels = {state: STATE_LEVELS[state] for state in HealthState}
+    assert len(set(levels.values())) == 5  # one treatment per state, the word beside it
+    for level in levels.values():
+        tones = theme.STATUS[level]
+        assert theme.contrast_ratio(tones["fg"], tones["bg"]) >= 4.5, level
+    checks = [
+        _health_check("ci.verify", HealthState.DEGRADED),
+        _health_check("ci.tests", HealthState.UNAVAILABLE),
+    ]
+    pills = _pill_words(_render_health(_write_summary(tmp_path / "latest.json", checks)))
+    slug = {word: level for level, word in pills}
+    assert slug["Degraded"] != slug["Unavailable"]
+    assert slug["Unavailable"] == theme.status_slug("UNAVAILABLE")
+
+
+def test_the_lab_page_reads_a_real_local_monitor_summary(tmp_path):
+    from stock_agent.health import collect, fixtures
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "requirements.txt").write_text("pytest==9.1.1\n", encoding="utf-8")
+    inputs = tmp_path / "health_inputs"
+    for document in (fixtures.training_health(), fixtures.backtest_summary()):
+        fixtures.write_input(inputs, document)
+
+    def runner(argv, **kwargs):
+        argv = [str(part) for part in argv]
+        if argv[:2] == ["git", "check-ignore"]:
+            return subprocess.CompletedProcess(argv, 0)
+        if argv[0] == "git":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        return subprocess.CompletedProcess(argv, 0, "No broken requirements found.\n", "")
+
+    environment = collect.Environment(
+        root=root,
+        env={},
+        now=lambda: HEALTH_NOW,
+        runner=runner,
+        installed={"pytest": "9.1.1"}.get,
+        python="/repo/.venv/bin/python",
+        home=Path("/Users/someone"),
+    )
+    _, latest = collect.run_local(
+        environment,
+        tmp_path / "private",
+        verify=None,
+        inputs=collect.PrivateInputs(
+            health_inputs=inputs,
+            registry=fixtures.build_registry(tmp_path / "ml-fixture"),
+        ),
+    )
+    app = _render_health(str(latest))
+    text = text_of(app)
+    for _, title, _ in health_summary.SECTIONS:
+        assert title in text, title
+    assert "Every registered version is synthetic" in text
+    assert "blocked by: " in text  # each version's blockers, from the registry
+    assert "No copy of the ledger head is configured" in text
+    assert "risk, turnover and drawdown diagnostics" in text.lower()
+
+
+def test_every_policys_limits_and_fallbacks_reach_the_page(tmp_path):
+    from stock_agent.health import backtest, fixtures, policy
+
+    for name, costs in (("equal_weight", 12.5), ("inverse_volatility", 12.5), ("momentum", 75.0)):
+        document = fixtures.backtest_summary()
+        document |= {
+            "synthetic": False,
+            "transition_status": "approved",
+            "policy": name,
+            "run_id": f"run-1-{name}",
+            "constraint_violations": 0,
+            "fallback_events": 0,
+        }
+        document["measures"]["costs_bps"] = costs
+        fixtures.write_input(tmp_path / "inputs", document)
+    directory = tmp_path / "inputs" / backtest.ARTIFACT
+    checks = [*backtest.backtest_checks(directory), *policy.policy_checks(directory, None)]
+    app = _render_health(_write_summary(tmp_path / "latest.json", checks))
+    text = text_of(app)
+    assert "momentum: Estimated costs (75) breaches its limit (50)." in text
+    for name in ("equal_weight", "inverse_volatility", "momentum"):
+        assert f"policy {name}" in text, name  # each policy's own line, in the details
+    assert ("blocked", "Failed") in _pill_words(app)
+
+
+def test_checks_are_grouped_into_the_labs_areas_and_nothing_is_dropped():
+    assert health_summary.section_of("ci.daily_health") == "code"
+    assert health_summary.section_of("forecast.coverage") == "runs"
+    assert health_summary.section_of("forecast.ledger_backup") == "ledger"
+    assert health_summary.section_of("registry.stages") == "models"
+    assert health_summary.section_of("data.window_coverage") == "data"
+    assert health_summary.section_of("portfolio.fallbacks") == "policy"
+    assert health_summary.section_of("portfolio.diagnostics") == "diagnostics"
+    assert health_summary.section_of("training.future_check") == "runs"
+    checks = [
+        _health_check("portfolio.turnover", HealthState.HEALTHY),
+        _health_check("ci.tests", HealthState.DEGRADED),
+        _health_check("ci.verify", HealthState.HEALTHY),
+    ]
+    grouped = health_summary.sections(_health_summary(checks))
+    assert [item.key for item in grouped] == ["code", "policy"]
+    assert [check.check_id for check in grouped[0].checks] == ["ci.tests", "ci.verify"]
+    assert grouped[0].state is HealthState.DEGRADED
+    assert grouped[0].summary == f"{checks[1].summary} 1 of 2 checks healthy."
+    assert grouped[1].summary == "All 1 check healthy."
+    assert sum(len(item.checks) for item in grouped) == len(checks)
+
+
+def test_the_launcher_passes_the_health_summary_paths(tmp_path):
+    path = REPO / "scripts" / "run_portfolio_lab.py"
+    spec = importlib.util.spec_from_file_location("stock_agent_run_portfolio_lab_health", path)
+    launcher = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(launcher)
+    assert launcher.LOCAL_SUMMARY_VARIABLE == health_summary.LOCAL_VARIABLE
+    assert launcher.CI_SUMMARY_VARIABLE == health_summary.CI_VARIABLE
+    env = launcher.environment(tmp_path / "latest.json", None)
+    assert env[health_summary.LOCAL_VARIABLE] == str((tmp_path / "latest.json").resolve())
+    assert health_summary.CI_VARIABLE not in env
+    old, new = tmp_path / "1" / "health_summary.json", tmp_path / "2" / "health_summary.json"
+    for index, item in enumerate((old, new)):
+        item.parent.mkdir()
+        item.write_text("{}", encoding="utf-8")
+        os.utime(item, (1_000_000 + index, 1_000_000 + index))
+    assert launcher.newest_ci_summary(tmp_path) == new
 
 
 # --- Evidence ---
@@ -501,6 +889,13 @@ def _pending_paragraph() -> str:
     return " ".join(text[start:end].split())
 
 
+def _waits_for(decision: str, pending: str) -> bool:
+    """The whole decision tag is listed: "D9" is not found inside "OD9's"."""
+
+    pattern = rf"(?<![A-Za-z0-9]){re.escape(decision)}(?![A-Za-z0-9])"
+    return re.search(pattern, pending) is not None
+
+
 def test_every_pending_item_still_waits_for_a_pending_decision():
     import datetime
 
@@ -508,10 +903,26 @@ def test_every_pending_item_still_waits_for_a_pending_decision():
     pending = _pending_paragraph()
     for _, title, _, decision in wording.PENDING:
         if decision is not None:
-            assert decision in pending, (
+            assert _waits_for(decision, pending), (
                 f"'{title}' waits for {decision}, which docs/PROJECT_STATE.md no longer lists "
                 "as pending: update wording.PENDING and PENDING_AS_OF."
             )
+
+
+def test_a_decision_taken_off_the_pending_list_is_caught():
+    pending = _pending_paragraph()
+    for _, title, _, decision in wording.PENDING:
+        if decision is None:
+            continue
+        # The bullet that names the decision, removed as it would be once decided.
+        bullets = [b for b in pending.split(" - ") if _waits_for(decision, b)]
+        assert bullets, (title, decision)
+        without = pending
+        for bullet in bullets:
+            without = without.replace(bullet, "")
+        assert not _waits_for(decision, without), (title, decision)
+    assert not _waits_for("D9", "OD9's signal_cutoff_at for decisions")
+    assert _waits_for("D9", "- D9 (the Builder's buy-and-hold mix)")
 
 
 def test_the_sealed_date_is_the_owners_lockbox_and_no_demo_data_reaches_it():

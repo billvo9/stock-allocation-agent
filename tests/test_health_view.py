@@ -133,6 +133,18 @@ def test_gates_and_ci_facts_come_from_their_checks():
     assert "Tests passed" not in labels  # absent from the summary: not shown at all
 
 
+def test_facts_of_an_unexpected_shape_are_shown_as_stored_not_a_crash():
+    result = build(
+        check("ci.verify", value="4", unit=None),
+        check("ci.tests", value="all of them", unit=None),
+    )
+    labels = {fact.label: fact.value for fact in result.facts}
+    assert labels["Quality gates passed"] == "4"
+    assert labels["Tests passed"] == "all of them"
+    counted = build(check("ci.tests", value=3686, unit="tests passed"))
+    assert {fact.label: fact.value for fact in counted.facts}["Tests passed"] == "3,686"
+
+
 def test_old_summaries_warn_and_provenance_names_the_run():
     context = {
         "environment": "github_actions",

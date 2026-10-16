@@ -1,11 +1,11 @@
 # Model Health runbook
 
-One entry per health check: what it means, likely causes, exact diagnostic
-commands, a safe retry and the fallback behaviour. The design, the summary
-format and the local monitoring set-up are in
-[`model_health.md`](model_health.md).
+What to do when a health check is not healthy: where to look, how to
+reproduce, when to retry, and when to disable a policy or rely on the
+registered fallback. The design, the summary format and the scheduled local
+run are in [`model_health.md`](model_health.md).
 
-Rules that apply to every entry:
+Rules for every entry:
 
 - **Alerts are informational.** Nothing in the health center trades,
   retrains, promotes or demotes a model, deletes data, or changes
@@ -15,18 +15,24 @@ Rules that apply to every entry:
   different settings to turn a check green. Weakening a test or a threshold
   is an owner approval gate (AGENTS.md).
 - **Fallback means hold.** When a check is not healthy, nothing new is
-  decided from the affected area; existing published, write-once artifacts
-  stay as they are and keep their own labels. Stale or missing data is
-  never filled, and a decision is never made on stale prices (risk
-  register, OPS-4).
-- **A safe retry repeats the measurement, not the fix.** Re-run the health
-  check once; if the result is the same, follow the diagnosis.
+  decided from the affected area; existing write-once artifacts keep their
+  own labels. Stale or missing data is never filled, and nothing is decided
+  on stale prices (risk register, OPS-4).
+- **A safe retry repeats the measurement, not the fix.**
 
-Commands run from the repository root with the project virtual environment.
-`PRIVATE` stands for the private monitoring directory (default
-`~/stock-agent-private/health`). Producers write their health inputs to
-`reports/health_inputs/<artifact>/<run_id>.json` (ignored by Git); the local
-monitor reads the newest file per artifact.
+## Where to look
+
+1. **Portfolio Lab, Model Health** (`.venv/bin/python
+   scripts/run_portfolio_lab.py`): the overall state, the next step, each
+   area's worst state, and each check's exact value, threshold, reason code,
+   evidence and runbook link (under "Exact measurements").
+2. **The private summary** (`PRIVATE` = `~/stock-agent-private/health`):
+   `latest.json`, the write-once `history/` and per-run `evidence/<stamp>/`
+   (verify log, pip check, GitHub run list).
+3. **GitHub Actions**: the `CI` and `Model health` workflows. The daily
+   summary is the `model-health` artifact (synthetic fixtures only).
+4. **The technical page** (`.venv/bin/python scripts/run_model_health.py`):
+   both summaries, every field, one tab each.
 
 ## States
 
@@ -38,695 +44,410 @@ monitor reads the newest file per artifact.
 | insufficient_evidence | Nothing to judge yet (no input, or too few observations) | none |
 | healthy | Measured, within its threshold | none |
 
-A check that does not apply (coverage of a point forecast) is listed as
-**not applicable**: shown, without a state, never counted. In the local
-monitor a producer input marked `synthetic: true` (or a registry whose
-versions are all synthetic) is at most insufficient evidence
-(`synthetic_input`): fixture data says nothing about the real system.
+The overall state is the worst check's. A check that was never measured is
+never healthy. A check that does not apply is listed as **not applicable**
+and never counts. In the local monitor a synthetic input is at most
+insufficient evidence (`synthetic_input`). A value that moves in its worse
+direction while its state stays the same raises a deterioration alert (a
+falling ledger entry count is how a truncated ledger shows).
 
-The overall state is the worst state of any check, in the order of the
-table. A check that was never measured is never healthy. A numeric value
-that moves in its worse direction by more than its tolerance, while its
-state stays the same, raises a deterioration alert in the local monitor.
-
-## Getting the summaries
+## Reproduce a failure
 
 ```bash
 .venv/bin/python scripts/health_check.py ci --run-verify --output-dir reports/health/ci-local
 ```
 
 ```bash
-RUN=$(gh run list --repo billvo9/stock-allocation-agent --workflow health.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+.venv/bin/python scripts/health_check.py local --run-verify --github
 ```
+
+The first repeats the daily workflow's checks; the second the private run
+(add the inputs your scheduled run uses, for example `--prospective-store`
+and `--ledger-head-backup`). Each entry below lists the narrower commands.
+For a failed workflow run:
 
 ```bash
-gh run download "$RUN" --repo billvo9/stock-allocation-agent --name model-health --dir "reports/health/ci/$RUN"
+gh run view <run id> --repo billvo9/stock-allocation-agent --log-failed
 ```
 
-```bash
-.venv/bin/python scripts/run_model_health.py
-```
+## When to retry
 
-`reports/` is ignored by Git. The first command reproduces the daily
-workflow's checks on this machine; the next two download the latest
-workflow summary; the last opens the Model Health page.
+Retry once, and only the measurement, when the cause can be transient: the
+GitHub CLI was offline or not signed in (`gh_unavailable`), a workflow run
+was `cancelled` or timed out, an AppTest timed out on a machine that slept,
+a file was being written. A result that repeats is the diagnosis. Never
+retry until green: a failed contract probe, a broken ledger chain, a kept
+head missing from the ledger, a constraint violation, a refused registry or
+store, and a failing test are not transient.
+
+## When to disable a policy or rely on the fallback
+
+- **The registered fallback is automatic, per decision, inside a guarded
+  policy** (`stock_agent.rl.safety`): fixed balanced weights, or holding the
+  current positions on stale inputs. Health only counts it
+  (`portfolio.fallbacks`); it never switches anything.
+- **Disable a policy** (a person stops using it; nothing does it
+  automatically) when its `training.health` is failed or unavailable, when
+  `portfolio.violations` is failed for it, when its registry version no
+  longer verifies (`registry.entries`, `registry.selection_history`), or
+  when `portfolio.fallbacks` shows it overruled by `model_unhealthy` or on
+  a large share of decisions.
+- **Rely on the fallback, and decide nothing new,** while its inputs are
+  stale or missing (`data.freshness`, `data.window_coverage`,
+  `data.missing_sessions`) or while the forecast ledger is refused
+  (`forecast.ledger`).
+- Every policy is engineering-only until its transition is approved
+  (`unapproved_transition`): it is never used for a real decision.
+
+The scheduled private run (launchd steps, outputs, keeping it private) is in
+[`model_health.md`](model_health.md#scheduling-it-owner-steps-nothing-here-installs-them).
 
 ## CI and tests
 
 <a id="ci-verify"></a>
 ### Quality gates (`ci.verify`)
 
-**What it means.** The result of `scripts/verify.py`: the two pytest passes,
-the format check and the lint check. Healthy when every gate passed within
-the last 7 days; degraded when the result is older; failed when any gate
-failed; unavailable when verify could not run, its output is unreadable, or
-a `--verify-log` has no `health_check: verify.py finished at` first line
-(`verify_time_unknown`: a log's age is never taken from its file time).
-
-**Likely causes.** A code change broke a test or the formatting; an
-unpinned dependency (pandas, numpy, pyarrow, ...) released a version that
-changes behaviour (the daily workflow installs the newest allowed
-versions); the `.venv` is missing or is not Python 3.12.
-
-**Diagnose.**
-
-```bash
-python3 scripts/verify.py
-```
-
-```bash
-.venv/bin/python -m pip list --format=freeze
-```
-
-Compare the second command's output with the last green run's evidence
-(`evidence/verify.log` in the workflow artifact). For a CI failure:
-
-```bash
-gh run view "$RUN" --repo billvo9/stock-allocation-agent --log-failed
-```
-
-**Safe retry.** Run `python3 scripts/verify.py` once more. A gate that
-passes on retry is a flaky test: record it as a defect; do not re-run until
-green.
-
-**Fallback.** Do not merge or publish from the failing commit. Published
-artifacts from earlier commits are unaffected and stay readable.
+- **What it means.** `scripts/verify.py`'s four gates. Healthy within 7 days; degraded when older; failed on any failing gate; unavailable when verify could not run or its log has no `health_check: verify.py finished at` first line (a log is never dated by its file time).
+- **Likely causes.** A code change; a new release of an unpinned dependency (the daily workflow installs the newest allowed); a missing or wrong `.venv`.
+- **Diagnose.** `python3 scripts/verify.py`, then compare `.venv/bin/python -m pip list --format=freeze` with the last green run's `evidence/verify.log`.
+- **Safe retry.** Once. A pass on retry is a flaky test: record it as a defect.
+- **Fallback.** No merge or publication from the failing commit; earlier artifacts stay readable.
 
 <a id="ci-tests"></a>
 ### Test suite (`ci.tests`)
 
-**What it means.** The pytest counts from both verify passes. Healthy when
-both report the same counts with 0 failed and 0 errors; failed when any test
-failed or errored, or a pass ran no tests; degraded when the passes
-disagree (non-determinism) or the result is older than 7 days. A falling
-number of passing tests raises a deterioration alert: tests were deleted,
-skipped or deselected.
-
-**Likely causes.** A regression; order- or time-dependent tests (the
-AppTest timeouts use wall-clock time, so a machine sleeping mid-run can fail
-them); a deleted or newly skipped test.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -m pytest -q
-```
-
-```bash
-.venv/bin/python -m pytest -q --lf
-```
-
-```bash
-git log --oneline --diff-filter=D -- tests | head
-```
-
-The last command lists recent commits that deleted test files.
-
-**Safe retry.** Re-run the failing tests alone with
-`.venv/bin/python -m pytest -q <test path>`; a pass on retry is flaky, not
-fixed.
-
-**Fallback.** As for `ci.verify`. Deleting or weakening a test is an owner
-approval gate.
+- **What it means.** Both pytest passes report the same counts with 0 failed and 0 errors. Failed on any failure or a pass that ran nothing; degraded when the passes disagree or the result is older than 7 days. Fewer passing tests raise a deterioration alert.
+- **Likely causes.** A regression; order- or clock-dependent tests; a deleted or newly skipped test.
+- **Diagnose.** `.venv/bin/python -m pytest -q --lf`; `git log --oneline --diff-filter=D -- tests | head`.
+- **Safe retry.** The failing test alone: `.venv/bin/python -m pytest -q <test path>`.
+- **Fallback.** As for `ci.verify`. Deleting or weakening a test is an owner approval gate.
 
 <a id="ci-main-runs"></a>
 ### Latest CI run on main (`ci.main_runs`)
 
-**What it means.** The conclusion of the latest completed run of the `CI`
-workflow on `main`, from a run list the owner writes with the GitHub CLI
-(local monitor only; nothing in this package contacts GitHub). Runs of other
-workflows or branches in the list are ignored and counted in the detail. Healthy on `success`;
-failed on `failure` or `startup_failure`; degraded on any other conclusion
-(`cancelled`, `timed_out`, ...) or when the list is older than 7 days.
+- **What it means.** The latest completed `CI` workflow run on `main`, from the run list the local monitor records with `--github` (or a list passed with `--ci-runs`). Healthy on `success`; failed on `failure`; degraded on another conclusion or a list older than 7 days; insufficient evidence without a list (`not_collected`, or `gh_unavailable` when gh could not run).
+- **Likely causes.** A merge that broke `main`; a runner or network failure; Actions disabled.
+- **Diagnose.** `gh run list --repo billvo9/stock-allocation-agent --workflow ci.yml --branch main --limit 5`, then `gh run view <run id> --log-failed`.
+- **Safe retry.** Re-run the local monitor. Re-running the workflow (`gh run rerun <run id> --failed`) is the owner's call, for a clearly transient failure.
+- **Fallback.** Treat `main` as broken: no merge or publication until a fix's run succeeds.
 
-**Likely causes.** A merge that broke `main`; a transient runner or network
-failure; GitHub Actions disabled or out of minutes.
+<a id="ci-daily-health"></a>
+### Latest daily health run (`ci.daily_health`)
 
-**Diagnose.**
-
-```bash
-gh run list --repo billvo9/stock-allocation-agent --workflow ci.yml --branch main --limit 20 --json databaseId,status,conclusion,headSha,headBranch,workflowName,createdAt,url,event > ~/stock-agent-private/health/ci_runs.json
-```
-
-```bash
-gh run view <run id> --repo billvo9/stock-allocation-agent --log-failed
-```
-
-**Safe retry.** Re-write the run list (first command) and re-run the local
-monitor. Re-running the CI run itself is the owner's decision
-(`gh run rerun <run id> --failed`), and only for a failure that is clearly
-transient.
-
-**Fallback.** Treat `main` as broken: no merge, no publication from it,
-until a run on a fix succeeds.
+- **What it means.** The latest completed `Model health` workflow run on `main` (the daily smoke test on synthetic fixtures). Healthy on a success less than 48 hours old; degraded when older (`daily_run_overdue`) or inconclusive; failed on `failure`; insufficient evidence without a run list.
+- **Likely causes.** A public check failed (open the run's summary); GitHub disabled the schedule after 60 days without activity; Actions minutes ran out.
+- **Diagnose.** `gh run list --repo billvo9/stock-allocation-agent --workflow health.yml --limit 5`; download the summary with the commands on the Model Health page.
+- **Safe retry.** `gh workflow run health.yml --repo billvo9/stock-allocation-agent` (owner) and re-run the local monitor.
+- **Fallback.** Rely on the local monitor's own `ci.verify` until the daily run is green again.
 
 ## Dependencies
 
 <a id="deps-pins"></a>
 ### Pinned dependencies (`deps.pins`)
 
-**What it means.** Every `==` pin in `requirements.txt` is installed at
-exactly that version in the interpreter that ran the health check. Healthy
-when all match; failed on any mismatch or missing package. Unpinned
-requirements are listed and not judged: several are unpinned by owner
-decision.
-
-**Likely causes.** A manual `pip install --upgrade`; a stale `.venv` after a
-pin changed on `main`; the check ran under another interpreter.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -m pip show ruff pytest streamlit plotly scikit-learn edgartools
-```
-
-```bash
-git log --oneline -5 -- requirements.txt
-```
-
-The check's detail names the interpreter it inspected.
-
-**Safe retry.** Reinstall the pinned set, which changes nothing in the
-repository: `.venv/bin/python -m pip install -r requirements.txt`. Changing
-or adding a pin is an owner approval gate.
-
-**Fallback.** Results from the mismatched environment are not reproducible
-evidence; re-run them after reinstalling.
+- **What it means.** Every `==` pin in `requirements.txt` (with its environment marker) is installed at exactly that version in the interpreter that ran the check. Unpinned requirements are listed, not judged.
+- **Likely causes.** A manual upgrade; a stale `.venv` after a pin changed; another interpreter.
+- **Diagnose.** `git log --oneline -5 -- requirements.txt`; the check's detail names the interpreter.
+- **Safe retry.** `.venv/bin/python -m pip install -r requirements.txt` (changes nothing in the repository), then re-run.
+- **Fallback.** Results from the mismatched environment are not reproducible evidence. Changing a pin is an owner approval gate.
 
 <a id="deps-pip-check"></a>
 ### Dependency consistency (`deps.pip_check`)
 
-**What it means.** `python -m pip check` found no installed package whose
-declared requirements are unmet. Failed when it reports any; unavailable
-when pip could not run.
-
-**Likely causes.** An unpinned dependency released a version outside
-another package's range (for example a Streamlit release excluding a
-pyarrow version); a partial install.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -m pip check
-```
-
-```bash
-.venv/bin/python -m pip show pyarrow streamlit
-```
-
-**Safe retry.** Run `pip check` again after
-`.venv/bin/python -m pip install -r requirements.txt`.
-
-**Fallback.** Do not upgrade anything to "fix" it without owner approval
-(dependency changes are an approval gate); report the conflicting pair.
+- **What it means.** `pip check` finds no package with unmet requirements. Failed when it reports any; unavailable when pip could not run.
+- **Likely causes.** An unpinned dependency released outside another's range; a partial install.
+- **Diagnose.** `.venv/bin/python -m pip check`.
+- **Safe retry.** After `.venv/bin/python -m pip install -r requirements.txt`.
+- **Fallback.** Upgrade nothing without owner approval; report the conflicting pair.
 
 ## Artifact contracts
 
 <a id="contract-publication"></a>
 ### Publication contract (`contract.publication`)
 
-**What it means.** Four probes of `stock_agent.publication` on a synthetic
-fixture: a written publication reads back identical; an edited file is
-refused (`hash_mismatch`); rows in the lockbox are refused
-(`lockbox_violation`); a dirty-tree publication is refused by the default
-reader (`dirty_tree`). Failed when any probe misbehaves.
-
-**Likely causes.** A change to the writer, reader or `policy.validate`
-that weakened a refusal; a pandas or pyarrow change in how parquet
-round-trips.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -m pytest -q tests/test_publication_contract.py tests/test_publication_writer.py tests/test_health_contracts.py
-```
-
-The check's detail names each broken probe and what happened instead.
-
-**Safe retry.** Re-run the health check; the probes use a fresh temporary
-directory each time.
-
-**Fallback.** Write no new publication from this code. Existing
-publications are still verified by the reader on every read.
+- **What it means.** Probes on a synthetic publication: it reads back identical; an edited file, rows in the lockbox and a dirty-tree publication are refused.
+- **Likely causes.** A change that weakened a refusal in `stock_agent.publication`; a parquet round-trip change.
+- **Diagnose.** `.venv/bin/python -m pytest -q tests/test_publication_contract.py tests/test_health_contracts.py`.
+- **Safe retry.** Re-run the health check (fresh temporary directory each time).
+- **Fallback.** Write no new publication from this code; existing ones are re-verified on every read.
 
 <a id="contract-fund-data"></a>
 ### Fund-data contract (`contract.fund_data`)
 
-**What it means.** Five probes of the F1 fund-data store on the synthetic
-adapter: an ingested batch reads back complete with schema 1.0; the same
-batch twice is refused (`already_exists`); a request past the lockbox is
-refused (`request_after_cap`); an availability rule is refused before OD9
-(`pending_od9`); an edited table is refused (`hash_mismatch`).
-
-**Likely causes.** A change in `stock_agent.data.funds` that weakened a
-refusal; a calendar change; a parquet round-trip change.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -m pytest -q tests/test_fund_data_store.py tests/test_fund_data_boundaries.py tests/test_health_contracts.py
-```
-
-**Safe retry.** Re-run the health check.
-
-**Fallback.** Ingest no new batch with this code. Stored batches are
-re-verified by `read_store` on every read.
+- **What it means.** Probes of the F1 fund store on the synthetic adapter: a batch reads back; a duplicate, a request past the lockbox, an availability rule before OD9 and an edited table are refused.
+- **Likely causes.** A weakened refusal in `stock_agent.data.funds`; a calendar change.
+- **Diagnose.** `.venv/bin/python -m pytest -q tests/test_fund_data_store.py tests/test_health_contracts.py`.
+- **Safe retry.** Re-run the health check.
+- **Fallback.** Ingest no new batch with this code.
 
 <a id="contract-generators"></a>
 ### Synthetic generators (`contract.generators`)
 
-**What it means.** Each synthetic generator, run twice, reproduces the
-SHA-256 recorded in `stock_agent.health.contracts.RECORDED_HASHES`. Failed
-when two runs differ (non-determinism) or the output changed.
-
-**Likely causes.** A generator or its parameters were edited; numpy's
-legacy `RandomState` stream or pandas' hashing behaviour changed; a
-calendar change moved sessions.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -c "from stock_agent.health.contracts import generator_hashes, RECORDED_HASHES; print(generator_hashes()); print(RECORDED_HASHES)"
-```
-
-```bash
-git log --oneline -5 -- src/stock_agent/publication/synthetic.py src/stock_agent/data/funds/adapter.py
-```
-
-**Safe retry.** Re-run the health check. Update a recorded hash only for an
-intended, reviewed generator version change, in the same commit.
-
-**Fallback.** Synthetic publications and the Explore demo are not
-reproducible until resolved; do not compare results across the change.
+- **What it means.** Each synthetic generator, run twice, reproduces its recorded SHA-256.
+- **Likely causes.** An edited generator; a numpy, pandas or calendar change.
+- **Diagnose.** `.venv/bin/python -c "from stock_agent.health.contracts import generator_hashes, RECORDED_HASHES; print(generator_hashes()); print(RECORDED_HASHES)"`.
+- **Safe retry.** Re-run. Update a recorded hash only for an intended, reviewed generator change.
+- **Fallback.** Do not compare synthetic results across the change.
 
 ## Monitor self-tests
 
 <a id="smoke-data-monitors"></a>
 ### Data monitors on planted defects (`smoke.data_monitors`)
 
-**What it means.** The four data monitors run on a clean synthetic store
-(all healthy) and on one with planted defects (3 missing tail sessions, 2
-closes moved 1 % in a second source), and must report exactly those
-defects. Failed when a monitor misses a defect or flags a clean store.
-
-**Likely causes.** A change in `stock_agent.health.data_quality` or its
-thresholds; a change in the synthetic adapter's output.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -m pytest -q tests/test_health_data_quality.py
-```
-
-**Safe retry.** Re-run the health check.
-
-**Fallback.** Treat every `data.*` result in the local monitor as
-unverified until this passes again.
+- **What it means.** The fund-store monitors find exactly the defects planted in a synthetic store and nothing in a clean one.
+- **Likely causes.** A change in `stock_agent.health.data_quality` or the synthetic adapter.
+- **Diagnose.** `.venv/bin/python -m pytest -q tests/test_health_data_quality.py`.
+- **Safe retry.** Re-run the health check.
+- **Fallback.** Treat every `data.*` fund-store result as unverified until it passes.
 
 <a id="smoke-input-readers"></a>
 ### Producer-file readers on fixtures (`smoke.input_readers`)
 
-**What it means.** The readers of other tracks' files (training health,
-registry, backtest) run on the example files in
-`stock_agent.health.fixtures`: clean files are healthy, a planted cap breach
-fails only its check, absent files are insufficient evidence and an
-unreadable file is unavailable.
+- **What it means.** The training, registry and backtest readers judge their example files correctly (clean, planted breach, absent, unreadable).
+- **Likely causes.** A reader or format change without a matching fixture change.
+- **Diagnose.** `.venv/bin/python -m pytest -q tests/test_health_inputs.py`.
+- **Safe retry.** Re-run the health check.
+- **Fallback.** Treat `training.*`, `registry.*`, `forecast.*` and `portfolio.*` as unverified until it passes.
 
-**Likely causes.** A reader or format change in `stock_agent.health`
-without a matching fixture change.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -m pytest -q tests/test_health_inputs.py
-```
-
-**Safe retry.** Re-run the health check.
-
-**Fallback.** Treat `training.*`, `registry.*`, `forecast.*` and
-`portfolio.*` results as unverified until this passes again.
-
-## Data quality (local monitor)
-
-These read a private F1 fund store (`--fund-store`) and never modify it.
-Only batches retrieved at or before the run time count.
+## Data quality and vendor basis (local monitor)
 
 <a id="data-freshness"></a>
 ### Data freshness (`data.freshness`)
 
-**What it means.** For each fund, the NYSE sessions between its newest
-stored close and the latest permitted session: the last session before the
-run date, the holdout start (2025-01-01) and the end of the frozen calendar
-(2024-12-31). Healthy at 0 or 1 session behind; degraded beyond, or when a
-requested fund has no close at all; unavailable with no closes in the store.
-
-**Likely causes.** The newest batch requested a window ending earlier than
-the cap; a vendor returned fewer sessions than requested.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -c "from stock_agent.data.funds.reader import read_store; s = read_store('PATH_TO_STORE'); print(s.batches[['batch_id','request_start','request_end_exclusive','retrieved_at']]); print(s.prices.groupby('fund_id')['session_date'].agg(['min','max','size']))"
-```
-
-**Safe retry.** Re-run the local monitor. Fetching a new batch is an owner
-action under the vendor terms and the lockbox cap.
-
-**Fallback.** Pages built on this store show their stale and
-unavailable states; no decision uses the missing sessions. Nothing is
-filled.
+- **What it means.** Sessions between each fund's newest close in the F1 store (`--fund-store`) and the latest permitted session (capped at the lockbox). Healthy at 0 or 1; degraded beyond.
+- **Likely causes.** A batch requested an earlier end; the vendor served fewer sessions.
+- **Diagnose.** `.venv/bin/python -c "from stock_agent.data.funds.reader import read_store; s = read_store('STORE'); print(s.prices.groupby('fund_id')['session_date'].agg(['min','max','size']))"`.
+- **Safe retry.** Re-run the local monitor. Fetching data is an owner action.
+- **Fallback.** Pages show their stale states; nothing is filled or decided on the missing sessions.
 
 <a id="data-coverage"></a>
 ### Session coverage (`data.coverage`)
 
-**What it means.** The share of requested fund-sessions (every batch's
-request, combined) that have a close. Healthy at 99.5 % or more; degraded
-below; failed below 95 %.
-
-**Likely causes.** Vendor gaps; a fund that did not trade for part of the
-request (a later inception date); an instrument mapping error.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -c "from stock_agent.data.funds.reader import read_store; s = read_store('PATH_TO_STORE'); print(s.missing_sessions.groupby('fund_id').size())"
-```
-
-**Safe retry.** Re-run the local monitor.
-
-**Fallback.** Descriptive calculations already label incomplete histories
-and sessions without a close; no gap is filled or interpolated.
+- **What it means.** Requested fund-sessions with a close, over all requested. Healthy at 99.5 % or more; degraded below; failed below 95 %.
+- **Likely causes.** Vendor gaps; a later inception date; a mapping error.
+- **Diagnose.** `.venv/bin/python -c "from stock_agent.data.funds.reader import read_store; s = read_store('STORE'); print(s.missing_sessions.groupby('fund_id').size())"`.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** Incomplete histories stay labelled; no gap is filled.
 
 <a id="data-missing-sessions"></a>
 ### Missing sessions (`data.missing_sessions`)
 
-**What it means.** Requested fund-sessions without a close. Healthy at 0;
-degraded with any; failed when one fund misses 5 or more consecutive
-sessions (a broken feed rather than isolated gaps).
-
-**Likely causes.** As for coverage; a feed that stopped mid-request.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -c "from stock_agent.data.funds.reader import read_store; s = read_store('PATH_TO_STORE'); print(s.missing_sessions.sort_values(['fund_id','session_date']).to_string())"
-```
-
-**Safe retry.** Re-run the local monitor.
-
-**Fallback.** As for coverage.
+- **What it means.** Requested fund-sessions without a close. Healthy at 0; degraded with any; failed with 5 or more consecutive for one fund.
+- **Likely causes.** As for coverage; a feed that stopped.
+- **Diagnose.** As for coverage, listing `s.missing_sessions` in full.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** As for coverage.
 
 <a id="data-vendor-discrepancy"></a>
 ### Source discrepancies (`data.vendor_discrepancy`)
 
-**What it means.** For fund-sessions held by two or more sources with the
-same adjustment basis (each source's latest retrieval), the relative
-difference (max − min) / min of their closes. Healthy when none exceeds
-0.1 %; degraded otherwise; insufficient evidence with a single source or no
-overlap.
+- **What it means.** The largest relative difference between two sources' closes for one fund, session and basis. Healthy at 0.1 % or less; insufficient evidence with one source.
+- **Likely causes.** Consolidated versus primary closes; an applied corporate action; a mapping error.
+- **Diagnose.** The detail lists the largest differences; compare the two sources' rows in the store.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** Never pick a source silently; which source a page uses is an owner decision.
 
-**Likely causes.** Consolidated versus primary-exchange closes; a split or
-distribution applied by one source; a wrong instrument mapping.
+<a id="data-anchors"></a>
+### Distribution anchors file (`data.anchors`)
 
-**Diagnose.** The check's detail lists the largest differences. Compare the
-two sources' rows:
+- **What it means.** The owner's hand-filled anchors file in the prospective scope: its sha256, rows by status, anchors per fund. Failed when the loader refuses it (the reason names a row and column, never a value); degraded when a fund has no anchor; insufficient evidence with no file (nothing can pass the spot check).
+- **Likely causes.** A typing error (decimals, date, basis); a fund not yet filled in.
+- **Diagnose.** `.venv/bin/python scripts/check_anchors.py` (counts and sha256 only).
+- **Safe retry.** Fix the file by hand, then re-run the local monitor.
+- **Fallback.** No batch is stored for a fund whose distributions cannot be spot-checked.
 
-```bash
-.venv/bin/python -c "from stock_agent.data.funds.reader import read_store; s = read_store('PATH_TO_STORE'); p = s.prices; print(p[(p.fund_id=='FUND') & (p.session_date=='YYYY-MM-DD')].to_string())"
-```
+<a id="data-store-batches"></a>
+### Prospective batches and spot checks (`data.store_batches`)
 
-**Safe retry.** Re-run the local monitor.
+- **What it means.** The batches the prospective store's reader uses for the window, each with its retrieval time, request and the anchors file its spot check used. Degraded when a batch records no anchors file (`spot_check_not_recorded`) or a later batch serves a different value for the same fund and date (`vendor_revisions`, values never shown); unavailable when the reader refuses the store; insufficient evidence before anything is stored or with no fund named (`no_assets`).
+- **Likely causes.** A vendor revision; an edited or foreign file in the store (`store_refused`).
+- **Diagnose.** The detail names the batches and the revised fund-dates; `ls -la` the store root (`--prospective-store`).
+- **Safe retry.** Re-run the local monitor. Nothing is ever deleted or repaired in the store.
+- **Fallback.** The reader uses the newest batch and lists every disagreement; a refused store is not read at all.
 
-**Fallback.** Never pick a source silently. Record the discrepancy; which
-source a page uses is an owner decision.
+<a id="data-window-coverage"></a>
+### Prospective window coverage (`data.window_coverage`)
 
-## Training (local monitor)
+- **What it means.** Closes present over fund-sessions expected from the window start to the last complete session (18:00 New York, rules calendar), per fund, with each missing close's reason (`no_batch`, `missing_session`). Healthy when complete; degraded otherwise.
+- **Likely causes.** The latest sessions are not collected yet; a vendor gap.
+- **Diagnose.** The detail lists the missing dates per fund.
+- **Safe retry.** Re-run after the owner's next approved collection.
+- **Fallback.** A forecast for a fund with a missing close is refused, never filled.
+
+## Training and evaluation runs (local monitor)
 
 <a id="training-health"></a>
 ### Training health (`training.health`)
 
-**What it means.** The newest RL training-health file
-(`reports/health_inputs/rl_training_health/<run_id>.json`, by
-`generated_at`). The check takes its worst finding:
+- **What it means.** The newest RL training-health file (`reports/health_inputs/rl_training_health/`): failed when the run or a producer check failed; degraded on a warning, an unapproved transition or unreadable files; insufficient evidence while running, with an unrun listed check or no file; healthy when all eight listed checks passed.
+- **Likely causes.** Diverging losses, entropy collapse, non-finite values, seed spread; or the transition is not approved yet.
+- **Diagnose.** `ls -lt reports/health_inputs/rl_training_health/`; read the failing producer checks in the file named in the detail.
+- **Safe retry.** Re-run the local monitor. Retraining is a separate, deliberate run.
+- **Fallback.** Do not use the run's policy (see "When to disable a policy").
 
-- failed: the run failed, or any producer check failed;
-- degraded: a check warns, the run uses an engineering-only portfolio
-  transition that is not yet approved (`unapproved_transition`, a visible
-  limitation, not a failure of the run), or some input files are unreadable;
-- insufficient evidence: the run is still in progress, one of the eight
-  listed checks (`nan_or_inf`, `exploding_values`, `approx_kl`,
-  `clip_fraction`, `entropy_collapse`, `value_loss`, `reward_trend`,
-  `seed_spread`) did not run or is absent, or no file exists yet;
-- healthy: a completed run whose eight listed checks all passed.
+<a id="training-ml-runs"></a>
+### Latest ML experiment run (`training.ml_runs`)
 
-The producer's own statuses are used; nothing is recomputed. Extra check ids
-are shown.
-
-**Likely causes.** Diverging losses, entropy collapse, non-finite values,
-too few seeds or a large spread between them, an environment bug; or the
-transition is simply not approved yet.
-
-**Diagnose.** Open the file named in the check's detail (run id, seeds,
-scenario version) and read the failing producer checks; then the RL track's
-own diagnostics.
-
-```bash
-ls -lt reports/health_inputs/rl_training_health/
-```
-
-**Safe retry.** Re-run the local monitor. Retraining is a separate,
-deliberate run; nothing retrains automatically. Approving the transition is
-an owner decision (T5a).
-
-**Fallback.** Do not use the run's policy for anything; the previously
-registered artifact, if any, stays as it was.
-
-## Model registry and forecasts (local monitor)
-
-These read the ML track's model registry (`--registry`, normally
-`reports/ml/registry`; artifacts root `--ml-artifacts`, default its parent)
-through its read API, `stock_agent.registry.open_registry`, which re-verifies
-everything it reads (docs/research/ml_registry.md). Health never writes to
-the registry and changes no stage. The diagnostic commands below use the same
-read API; replace `ROOT` with the registry root.
-
-<a id="registry-entries"></a>
-### Registry entries and artifacts (`registry.entries`)
-
-**What it means.** Every registry entry loads and hash-verifies, the
-activation event chain verifies, and every entry's artifacts (experiment
-runs, forecast artifacts) still match their SHA-256. Failed with
-`registry_refused` when the reader refuses the registry (an edited entry or
-event line), or `artifacts_unverified` when an entry's artifacts no longer
-match; insufficient evidence with no entries.
-
-**Likely causes.** A file under `reports/ml/` was edited, moved or deleted
-(`reports/` is ignored by Git and easy to clean by mistake); a partial copy
-of the registry; an artifacts root other than the one the entries were
-registered with.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -c "from stock_agent.registry import open_registry; r = open_registry('ROOT'); print(r.summary().to_string())"
-```
-
-```bash
-.venv/bin/python -c "from stock_agent.registry import open_registry; r = open_registry('ROOT'); print([str(e.ref) for e in r.entries() if not r.artifacts_verified(e)])"
-```
-
-**Safe retry.** Re-run the local monitor with the same `--registry` and
-`--ml-artifacts`. Restoring a deleted artifact from a backup is the owner's
-step; re-running an experiment registers a new version, it never repairs an
-old one.
-
-**Fallback.** Versions whose artifacts do not verify drop to the floor stage
-by the registry's own rule; nothing compares against them or promotes them.
-
-<a id="registry-stages"></a>
-### Computed stages (`registry.stages`)
-
-**What it means.** The stage the registry computes for each version from
-verified evidence. The value is the number of versions above the floor
-stage (`engineering_only`); a drop raises a deterioration alert in the local
-monitor. The upper stages are fail-closed until the owner approves their
-rules, so the floor is the expected stage today; the detail lists the most
-common blockers.
-
-**Likely causes.** A drop: an artifact altered or deleted; evidence that no
-longer re-derives from its run record.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -c "from stock_agent.registry import open_registry; r = open_registry('ROOT'); print(r.assessment('MODEL@vN').frame().to_string())"
-```
-
-**Safe retry.** Re-run the local monitor.
-
-**Fallback.** A stage is computed per read, so a dropped version is simply
-treated at its lower stage; nothing is promoted or demoted by hand.
-
-<a id="registry-selection-history"></a>
-### Reference-version history (`registry.selection_history`)
-
-**What it means.** The activation and rollback events that record each
-research scope's reference version, and whether every currently active
-version still verifies. Failed with `active_unverified` when an active
-version's artifacts no longer verify; insufficient evidence before the first
-activation. "Active" is research bookkeeping, never a deployment.
-
-**Likely causes.** As for `registry.entries`, for the active version.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -c "from stock_agent.registry import open_registry; r = open_registry('ROOT'); [print(e) for e in r.events()]"
-```
-
-**Safe retry.** Re-run the local monitor. Activating or rolling back a
-version is a deliberate research decision (`Registry.activate` /
-`Registry.rollback` with a stated reason), never an automatic response.
-
-**Fallback.** Comparisons against an unverified reference are not made.
-
-<a id="registry-experiments"></a>
-### Experiment counts (`registry.experiments`)
-
-**What it means.** Every version records its multiple-testing counts
-(candidates in its run, grid points, prior variants in its scope). Failed
-when a version records no candidate count; degraded when a version's
-`prior_variants_in_scope` is below the number of versions registered earlier
-in its scope, which would understate how many variants were tried.
-
-**Likely causes.** Variants tried outside the experiment runner; a counter
-reset between runs; a scope renamed.
-
-**Diagnose.**
-
-```bash
-.venv/bin/python -c "from stock_agent.registry import open_registry; r = open_registry('ROOT'); [print(e.ref, e.created_at, e.evidence['multiple_testing']) for e in r.entries()]"
-```
-
-**Safe retry.** Re-run the local monitor.
-
-**Fallback.** Report results with the larger, conservative count until
-resolved.
+- **What it means.** The newest attempt in the experiment runner's ledger (`reports/ml/ledger.jsonl`): healthy when completed from a clean tree; degraded from a dirty tree; failed when it failed; insufficient evidence when the attempt does not record its tree state (`tree_state_unknown`). In the local monitor it is healthy only when the registry shows every version the run registered as non-synthetic: synthetic versions (`synthetic_input`) or versions the registry cannot show (`data_class_unknown`) are insufficient evidence.
+- **Likely causes.** A config or data error (the detail quotes the error); uncommitted changes when it ran; the registry missing or refused (`registry.entries` says which).
+- **Diagnose.** `tail -3 reports/ml/ledger.jsonl`, then re-run the experiment's config locally.
+- **Safe retry.** Re-run the experiment from a clean tree: a new run is a new, counted variant.
+- **Fallback.** Nothing is registered from a failed run; earlier versions keep their stages.
 
 <a id="forecast-coverage"></a>
 ### Forecast interval coverage (`forecast.coverage`)
 
-**What it means.** From the newest registry export
-(`reports/health_inputs/model_registry/<run_id>.json`): for interval and
-probabilistic forecasts with at least 50 observations and a reported
-coverage, the largest gap between observed coverage and the stated level.
-Healthy at 0.05 or less; degraded up to 0.10; failed beyond. A screening
-band, not a statistical test (see the Learning Notes in `model_health.md`).
-Point forecasts are named as "not applicable: point forecast" and never count;
-an export of point forecasts only lists this check as not applicable.
-
-**Likely causes.** Mis-specified uncertainty; a regime change; overlapping
-horizons that make a short sample look better or worse than it is.
-
-**Diagnose.** Read the export's `forecast_evaluation` rows named in the
-detail, then the experiment run's calibration diagnostics.
-
-```bash
-ls -lt reports/health_inputs/model_registry/
-```
-
-**Safe retry.** Re-run the local monitor.
-
-**Fallback.** Forecast intervals are not shown as calibrated; nothing is
-promoted.
+- **What it means.** From the newest registry export: the largest gap between observed and stated interval coverage (n of 50 or more). Healthy at 0.05 or less; degraded to 0.10; failed beyond. A screening band, not a test. Point forecasts do not apply.
+- **Likely causes.** Mis-specified uncertainty; a regime change; overlapping horizons.
+- **Diagnose.** `ls -lt reports/health_inputs/model_registry/`; read the rows named in the detail.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** Intervals are not shown as calibrated; nothing is promoted.
 
 <a id="forecast-calibration"></a>
 ### Forecast calibration (`forecast.calibration`)
 
-**What it means.** The producer's own calibration status for each interval
-or probabilistic evaluation in the export: failed on any fail, degraded on
-any warning, insufficient evidence when none ran. Point forecasts do not
-apply, as for coverage.
+- **What it means.** The producer's own calibration status per interval evaluation: failed on any fail, degraded on a warning, insufficient evidence when none ran.
+- **Likely causes.** As for coverage.
+- **Diagnose.** As for coverage.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** As for coverage.
 
-**Likely causes.** As for coverage.
+## Models, versions and evidence stage (local monitor)
 
-**Diagnose.** As for coverage.
+<a id="registry-entries"></a>
+### Registry entries and artifacts (`registry.entries`)
 
-**Safe retry.** Re-run the local monitor.
+- **What it means.** Every registry entry, the activation chain and every entry's artifacts verify through `open_registry` (`--registry`, default `reports/ml/registry`). Failed when the reader refuses the registry or an artifact no longer matches.
+- **Likely causes.** A file under `reports/ml/` edited, moved or deleted; another artifacts root.
+- **Diagnose.** `.venv/bin/python -c "from stock_agent.registry import open_registry; r = open_registry('ROOT'); print([str(e.ref) for e in r.entries() if not r.artifacts_verified(e)])"`.
+- **Safe retry.** Re-run with the same `--registry` and `--ml-artifacts`. A re-run experiment registers a new version; it never repairs an old one.
+- **Fallback.** Unverified versions drop to the floor stage; nothing compares against them.
 
-**Fallback.** As for coverage.
+<a id="registry-stages"></a>
+### Computed stages (`registry.stages`)
 
-## Portfolio (simulated backtests, local monitor)
+- **What it means.** Each version's stage, computed from verified evidence, with the reasons that block its next stage (one line per version in the detail). The value counts versions above `engineering_only`; a drop raises a deterioration alert. Upper stages stay closed until the owner approves their rules.
+- **Likely causes.** A drop: an altered or deleted artifact; evidence that no longer re-derives.
+- **Diagnose.** `.venv/bin/python -c "from stock_agent.registry import open_registry; r = open_registry('ROOT'); print(r.assessment('MODEL@vN').frame().to_string())"`.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** A version is treated at its computed stage; nothing is promoted or demoted by hand.
 
-Backtest summaries are read from `reports/health_inputs/backtest_summary/`
-(the newest by `generated_at`); each names its `policy`. A backtest is
-simulated, never a track record. These checks compare stored measures (from
-the approved T5a formulas only) with the backtest's own stored limits and
-never recompute turnover, cost or drawdown (owner-gated, OD8). Each takes its
-worst finding: a measure above its limit fails with `constraint_breached` and
-raises an informational constraint-violation alert; an engineering-only
-transition that is not yet approved is degraded (`unapproved_transition`);
-a measure or limit that is not reported is insufficient evidence. Measures
-and limits are non-negative: a negative value (for example a drawdown
-written as -0.45) makes the file unreadable rather than judged.
+<a id="registry-selection-history"></a>
+### Reference-version history (`registry.selection_history`)
+
+- **What it means.** Activation and rollback events per research scope; failed when an active version no longer verifies. "Active" is research bookkeeping, never a deployment.
+- **Likely causes.** As for `registry.entries`, for the active version.
+- **Diagnose.** `.venv/bin/python -c "from stock_agent.registry import open_registry; r = open_registry('ROOT'); [print(e) for e in r.events()]"`.
+- **Safe retry.** Re-run. Activating or rolling back is a deliberate decision with a stated reason.
+- **Fallback.** No comparison against an unverified reference.
+
+<a id="registry-experiments"></a>
+### Experiment counts (`registry.experiments`)
+
+- **What it means.** Every version records its multiple-testing counts; failed without a candidate count; degraded when prior variants are below the versions registered earlier.
+- **Likely causes.** Variants tried outside the runner; a reset counter; a renamed scope.
+- **Diagnose.** `.venv/bin/python -c "from stock_agent.registry import open_registry; r = open_registry('ROOT'); [print(e.ref, e.evidence['multiple_testing']) for e in r.entries()]"`.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** Report results with the larger, conservative count.
+
+## Prospective forecast ledger (local monitor)
+
+<a id="forecast-ledger"></a>
+### Forecast ledger integrity (`forecast.ledger`)
+
+- **What it means.** The hash chain of `data/raw/prospective_forecasts/ledger.jsonl` (`--ledger`) verifies with the forecast job's own reader. The detail names the entry counts, the head hash and the as-of sessions. Failed on an edited, inserted, removed or reordered line, an incomplete last line or a symlink, and when the file is missing although the kept head shows it held records (`ledger_deleted`); unavailable when unreadable; insufficient evidence before the first record. Fewer entries than the previous summary raise a deterioration alert.
+- **Likely causes.** A hand edit; a copy that cut the file; a crash mid-write.
+- **Diagnose.** `.venv/bin/python scripts/forecast_prospective.py report`; the error names the first bad line.
+- **Safe retry.** Re-run once (a write may have been in progress). Never edit the ledger to repair it; restoring it from a backup is the owner's step.
+- **Fallback.** No record from a refused ledger is shown or scored; record nothing new until it verifies.
+
+<a id="forecast-ledger-backup"></a>
+### Kept copy of the ledger head (`forecast.ledger_backup`)
+
+- **What it means.** The head hash the owner keeps outside the ledger (`--ledger-head-backup`, first line of the file) against the ledger. Healthy when it is the head (the genesis hash, all zeros, for an empty ledger); degraded when an earlier entry (copy the new head); failed when the ledger no longer holds it (lines removed, the file rewritten, or the file deleted); insufficient evidence when not configured.
+- **Likely causes.** The kept copy was not refreshed after the last record; the ledger lost its tail or was deleted or moved.
+- **Diagnose.** `.venv/bin/python scripts/forecast_prospective.py report --expect-head <kept hash>`.
+- **Safe retry.** After copying the head printed by the job's last append.
+- **Fallback.** As for `forecast.ledger` when failed.
+
+<a id="forecast-ledger-sessions"></a>
+### Sessions with a forecast record (`forecast.ledger_sessions`)
+
+- **What it means.** Rules-calendar sessions from the first recorded as-of session to the last one whose recording deadline (09:30 New York, next weekday) has passed, without a forecast or refusal record. No cadence is pre-registered, so every session is expected (operator default): gaps are degraded and listed.
+- **Likely causes.** A missed scheduled run; the job refused to record (a refusal counts as a record).
+- **Diagnose.** The detail lists the sessions without a record.
+- **Safe retry.** None for a past session: a forecast is never backdated.
+- **Fallback.** The gap stays visible in the record; it is never filled.
+
+## Policy limits and fallbacks (local monitor)
+
+Backtest summaries are read from `reports/health_inputs/backtest_summary/`,
+the newest per `policy` (so every policy a run writes is judged), and RL
+evaluation reports from `models/rl/<run_id>/evaluation_*.json`
+(`--rl-runs`). Each check takes the worst policy's state; its detail keeps
+one line per policy with that policy's own state. Backtests are simulated,
+never a track record. Measures come from the approved T5a formulas only and
+are never recomputed here.
 
 <a id="portfolio-turnover"></a>
 ### Portfolio turnover (`portfolio.turnover`)
 
-**What it means.** Stored turnover against the declared `max_turnover`.
-
-**Likely causes.** A rebalance rule trading more than designed; a missing
-no-trade band; noisy weights.
-
-**Diagnose.** Read the backtest's own record named in the evidence; compare
-its rebalance log with its rule.
-
-**Safe retry.** Re-run the local monitor.
-
-**Fallback.** The construction is not eligible for promotion until reviewed;
-nothing trades.
+- **What it means.** Stored turnover against the backtest's declared `max_turnover`; above it fails with `constraint_breached`.
+- **Likely causes.** A rebalance rule trading more than designed; noisy weights.
+- **Diagnose.** Read the backtest record named in the evidence; compare its rebalances with its rule.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** The construction is not eligible for promotion until reviewed.
 
 <a id="portfolio-costs"></a>
 ### Trading costs (`portfolio.costs`)
 
-**What it means.** Stored estimated costs against the declared
-`max_cost_bps`.
-
-**Likely causes.** Higher turnover; a cost-model change.
-
-**Diagnose.** As for turnover.
-
-**Safe retry.** Re-run the local monitor.
-
-**Fallback.** As for turnover.
+- **What it means.** Stored costs against the declared `max_cost_bps`.
+- **Likely causes.** Higher turnover; a cost-assumption change.
+- **Diagnose.** As for turnover.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** As for turnover.
 
 <a id="portfolio-concentration"></a>
 ### Concentration (`portfolio.concentration`)
 
-**What it means.** The stored largest single weight against the declared
-`max_weight` cap. A breach means the construction violated its own cap.
-
-**Likely causes.** A cap not enforced after drift between rebalances; a
-rounding or normalization error.
-
-**Diagnose.** As for turnover; check the weights on the dates in the
-backtest's record.
-
-**Safe retry.** Re-run the local monitor.
-
-**Fallback.** As for turnover.
+- **What it means.** The stored largest weight against the declared `max_weight` cap.
+- **Likely causes.** A cap not enforced after drift; a normalization error.
+- **Diagnose.** As for turnover, on the weights in the backtest's record.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** As for turnover.
 
 <a id="portfolio-drawdown"></a>
 ### Drawdown (`portfolio.drawdown`)
 
-**What it means.** The stored maximum drawdown against the declared
-`max_drawdown`.
+- **What it means.** The stored maximum drawdown against the declared `max_drawdown`.
+- **Likely causes.** A stress period; more risk than designed.
+- **Diagnose.** As for turnover.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** As for turnover.
 
-**Likely causes.** A stress period in the sample; higher risk than
-designed.
+<a id="portfolio-violations"></a>
+### Policy constraint violations (`portfolio.violations`)
 
-**Diagnose.** As for turnover.
+- **What it means.** Decisions that broke a hard constraint: the backtest's `constraint_violations` plus the RL report's `invalid_targets`. Any is failed (`constraint_breached`); none is healthy; insufficient evidence when nothing reports them.
+- **Likely causes.** A policy producing targets outside the simplex or the caps; a constraint not applied.
+- **Diagnose.** The detail names the backtest and the methods with invalid targets.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** Disable the policy until the cause is fixed (see "When to disable a policy").
 
-**Safe retry.** Re-run the local monitor.
+<a id="portfolio-fallbacks"></a>
+### Fallback decisions (`portfolio.fallbacks`)
 
-**Fallback.** As for turnover.
+- **What it means.** Decisions the registered fallback took instead of the policy: the backtest's `fallback_events` plus the guarded policies' `fallback_decisions`, with their reasons. Any is degraded; none is healthy.
+- **Likely causes.** `stale_inputs`, `out_of_distribution`, `model_unhealthy`, `invalid_action`.
+- **Diagnose.** The detail gives the share per guarded policy and the reasons.
+- **Safe retry.** Re-run the local monitor.
+- **Fallback.** The fallback already decided; disable the policy if `model_unhealthy` or a large share recurs.
+
+<a id="portfolio-diagnostics"></a>
+### Risk, turnover and drawdown diagnostics (`portfolio.diagnostics`)
+
+- **What it means.** Which of risk (`volatility`), turnover and drawdown (`max_drawdown`) the newest backtest summary of each policy reports. Healthy when every policy reports all three; insufficient evidence until the T5a engine writes summaries, or while a measure is not reported (the risk formula awaits approval).
+- **Likely causes.** No backtest summary yet; a formula not yet approved.
+- **Diagnose.** `ls -lt reports/health_inputs/backtest_summary/`.
+- **Safe retry.** Re-run the local monitor after the next backtest.
+- **Fallback.** No risk statement is shown without its approved measure.

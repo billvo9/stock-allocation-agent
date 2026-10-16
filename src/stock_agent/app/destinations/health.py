@@ -1,5 +1,5 @@
-"""Model Health: not yet collected; the Model Health Center supplies the report loader."""
+"""Model Health: the local monitor's latest summary and the daily GitHub check, read-only."""
 
-from stock_agent.app import model_health
+from stock_agent.app import health_summary, model_health
 
-model_health.render()
+model_health.render(health_summary.load)

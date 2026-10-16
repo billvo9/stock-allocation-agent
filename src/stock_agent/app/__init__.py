@@ -25,7 +25,9 @@ Modules:
     forecast_records  the prospective forecast ledger, re-verified and laid out (pure)
     experiments   the Experiments page: recorded prospective forecasts, else an
                   honest empty state (Streamlit)
-    model_health  the Model Health page and its report contract (Streamlit)
+    health_summary  the Model Health page's inputs: the health summaries read
+                  with the health center's strict reader, grouped into areas (pure)
+    model_health  the Model Health page (Streamlit)
     evidence      the Evidence page: provenance and assumptions (Streamlit)
     navigation    the destinations' page scripts
     run           Streamlit entry point (launch with scripts/run_portfolio_lab.py)
@@ -35,8 +37,10 @@ The Lab's theme is the script-level `.streamlit/config.toml` next to run.py
 from `static/`.
 
 Boundary (tested): the app imports only `stock_agent.ui`,
-`stock_agent.portfolio`, its own modules, pandas, numpy, plotly, streamlit and
-the standard library. It never imports the research dashboard, models, raw
+`stock_agent.portfolio`, the health center's summary reader and view model
+(`stock_agent.health.model`, `stock_agent.health.view`, standard library
+only), its own modules, pandas, numpy, plotly, streamlit and the standard
+library. It never imports the research dashboard, models, raw
 data, features or the publication writer, and it computes no financial
 formula itself: every return, growth, decline and calendar-year figure comes
 from the approved descriptive calculations, and the Builder only restates

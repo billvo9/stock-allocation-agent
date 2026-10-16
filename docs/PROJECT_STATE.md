@@ -3,24 +3,85 @@
 Changing project state only. Permanent policy lives in `AGENTS.md`.
 Git is authoritative: verify everything here before relying on it.
 
-Last reviewed: 2026-10-14
+Last reviewed: 2026-10-15
 
 
 ## Last checkpoint
 
-2026-10-14, milestone "T5-A: the approved descriptive calculations and
-the first working Explore page", verified on branch
-`feature/t5a-descriptive-metrics` at `58be124` plus this checkpoint's docs
-commit, based on `0df3a0c` (merge pending).
+2026-10-15, milestone "Wave 1 and the prospective ETF pipeline". Wave 1
+covers the ML runner and registry, the RL environment and PPO engineering,
+the Model Health Center, the Portfolio Lab redesign and the T5a
+scaffolding. The prospective pipeline covers the real ETF data path and
+the frozen 5/20/30-session forecasters. Verified on `main` at `f98668a`.
+This checkpoint's docs commit is on `docs/checkpoint-2026-10-15` (merge
+pending).
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `0df3a0c` as of last fetch,
-verified 2026-10-14 with `git fetch` and the GitHub API; CI on `0df3a0c`
-succeeded):
+Recently merged to `main` (`origin/main` = `f98668a` as of last fetch,
+verified 2026-10-15 with `git fetch` and the GitHub API):
+- CI on `f98668a` succeeded.
+- A manual Model health run on `f98668a` succeeded (2026-10-15).
+- The first scheduled Model health run, on `82911ac` (2026-10-15 11:30
+  UTC), failed `deps.pins` with a false alarm that PR #75 fixed.
+
+- PR #75 (`f98668a`, 2026-10-15): platform-aware dependency pins in the
+  health check (environment markers, pip's comment rule, direct-URL wheel
+  versions).
+- PR #74 (`5a2db6f`, 2026-10-15): prospective ETF forecasts for VTI, AGG
+  and SHV at 5, 20 and 30 sessions:
+  - frozen, registered models with split-conformal 80% bands;
+  - a hash-chained, write-once forecast ledger and a scoring job;
+  - the "Prospective forecasts (unvalidated)" panel in Experiments.
+  It reads the prospective store only through PR #73's
+  `load_inference_window`. Synthetic tests only; no real forecast exists.
+- PR #73 (`128604c`, 2026-10-15): the real ETF data path:
+  - private, hand-filled distribution anchors replacing the in-code
+    allowlist;
+  - a rule-based NYSE calendar through 2027 that reproduces the frozen
+    2003-2024 list;
+  - an isolated prospective store and Tiingo prospective mode (window
+    2026-07-16 to the last complete session; read-only by default);
+  - the inference loader.
+  It includes the owner decision record `a633723`. No live request has
+  been made.
+- PRs #64, #66, #69, #70, #72 (`dedc07e`, `97f5185`, `1e06142`, `7279aec`,
+  `82911ac`, 2026-10-14): feature contracts, frozen universes and
+  prefix-invariant labels; the reproducible experiment runner; the
+  HistGradientBoosting challenger; the separate synthetic ETF return and
+  risk track; the registry health export. PR #63 merged into a stacked
+  branch, not `main`; #64 replaced it.
+- PR #71 (`9e3decd`, 2026-10-14): PPO (stable-baselines3 2.9.0,
+  gymnasium 1.3.0, torch 2.14.0 pinned, CPU wheel by URL and sha256 on
+  Linux) on the synthetic environment. Engineering only; includes the
+  owner decision record `eebff9a`.
+- PR #68 (`e0557f9`, 2026-10-14): RL review fixes. The step info is now
+  backward-looking, closing a leak of the next-session gap present on
+  `main` from `6619a30` until this merge. It also adds checkpoint
+  provenance.
+- PR #67 (`772b9a9`, 2026-10-14): the Model Health Center (health
+  contract, collectors, the daily `health.yml` workflow, runbook,
+  standalone page).
+- PR #65 (`f5578ea`, 2026-10-14): the Portfolio Lab redesign (six
+  destinations; Builder weights and concentration only, mix history
+  awaiting D9).
+- PR #62 (`6619a30`, 2026-10-14): the RL environment, synthetic scenarios,
+  replay and baseline policies.
+- PR #61 (`88ac452`, 2026-10-14): T5a scaffolding: interfaces, a
+  shares-and-cash reference oracle, and strict-xfail `portfolio_step`
+  tests (formulas pending D1-D8).
+- PR #60 (`c5b3175`, 2026-10-14): the model registry and the out-of-fold
+  forecast artifact contract.
+- PR #59 (`7ad4d44`, 2026-10-14): Tiingo checks labelled as spot checks,
+  and a read-only coverage audit by default.
+- PR #58 (`6b33c1b`, 2026-10-14): the Tiingo fund adapter (allowlisted
+  fields, verified splits, primary-source distribution gate).
+- PR #57 (`14cdf9d`, 2026-10-14): T5-A, the approved descriptive
+  calculations on the Explore page; checkpoint `9b9a667`.
 
 - PR #56 (`0df3a0c`, 2026-10-14): the Explore page on synthetic data and
   the neutral `ui/` package.
+
 - PR #55 (`ace2e66`, 2026-10-14): F1 fund-data foundations (frozen NYSE
   calendar 2003-2024, fund-data contract, write-once private store).
 - PR #54 (`c2ba633`, 2026-10-13): RES-1 cost-conscious and non-blocking
@@ -94,10 +155,29 @@ are owner-owned and untouched.
 
 ## Current objective
 
-Phase 1 of the product track: the rules-only Portfolio Lab, starting with
-the publication contract (P1-1a, this milestone), the T5 formula
-specification, and preparatory research work. Each ticket is scoped and
-approved by the owner before it starts.
+Two tracks:
+- **Phase 1, the Portfolio Lab:** first the rules-only Lab, then the
+  first real-data forecasts.
+- **The owner's 2026-10-14 brief:** the ML, RL and PPO engineering
+  delegated to the agent (decisions below).
+
+The immediate objective is the first prospective 5/20/30-session ETF
+forecast for VTI, AGG and SHV. Every piece of code for it is merged. It
+waits on owner steps: three open decisions, the read-only audit, the
+hand-filled anchors and storage approval, then the collection approval.
+The corrected simulator (T5a) waits on D1-D8.
+
+- **Merged since the 2026-10-14 checkpoint:** PRs #57-#75 (the list
+  above).
+- **Wave 1 status:**
+  - ML: runner, registry with evidence-derived stages (upper stages not
+    attainable until the owner approves criteria), synthetic ETF track,
+    challenger;
+  - RL: environment and PPO, engineering only, labelled
+    `engineering_only_unapproved_transition`, with no comparison tables;
+  - Model Health: the page is not yet integrated into the Lab;
+  - Lab redesign;
+  - T5a scaffolding: formulas pending.
 
 - **F1 foundations** (merged in PR #55) and the **Explore page** (merged in
   PR #56).
@@ -115,7 +195,7 @@ approved by the owner before it starts.
     knowledge rule d 23:59:59.999999Z;
   - hash integrity is documented as distinct from provenance; `code_sha`,
     `code_dirty` and `created_at` are unauthenticated producer claims.
-- **T5-A** (this branch, `src/stock_agent/portfolio/descriptive.py`): the
+- **T5-A** (merged in PR #57, `src/stock_agent/portfolio/descriptive.py`): the
   approved OD8 group A calculations, connected to the Explore page:
   total returns from raw closes, as-paid distributions and share-count
   splits (adjusted inputs refused); labelled multi-session returns across
@@ -125,8 +205,13 @@ approved by the owner before it starts.
   calendar-year returns with unavailable years where a year-end value is
   missing. Run with `.venv/bin/python scripts/run_portfolio_lab.py`
   (synthetic demo data).
-- **Tiingo adapter** (separate branch and PR, offline only): allowlisted
-  fields, verified splits, no adjusted levels or post-2024 metadata stored.
+- **Tiingo adapter** (merged in PRs #58, #59 and #73):
+  - allowlisted fields and verified splits; no adjusted levels or
+    post-2024 metadata in the research store;
+  - distribution "spot checks" against hand-filled private anchors, never
+    committed, because of the Vanguard and BlackRock terms;
+  - a read-only audit by default;
+  - a separate prospective mode.
   No live request has been made.
 - **RES-1 strategy** (merged in PR #54; owner direction 2026-10-13): ETF-first
   and cost-conscious. RES-1 does not block F1, P1-1b, the Portfolio
@@ -454,11 +539,68 @@ the owner's answers and messages in session:
   - Target: "Risk and return". Forecast volatility and total return, each
     with an 80% band, with the return forecast shown next to the
     historical-average null.
-- Pending: the rest of OD3; OD8 groups B-D (the T5a packet B1-B9 is
-  prepared); OD9's `signal_cutoff_at` for decisions and the production
-  availability rule beyond descriptive display; OD10-OD15 (OD13's
-  sub-decisions are proposed); OD16's activation, H_end and transition
-  rules; OD17.
+- 2026-10-15, Wave 2 brief (owner, verbatim where quoted):
+  - T5a: the owner approved D1-D8, "provided they exactly match the
+    current `docs/research/t5a_open_decisions.md` packet". The approval is
+    recorded verbatim against each D identifier in that packet (commit
+    `8b5e564`).
+    - D4 (a) holds for synthetic engineering only.
+    - One D5 clause ("Stricter constraints are explicitly registered for
+      learned policies") awaits confirmation. Until then, constraint sets
+      apply identically to every compared policy.
+    - "Keep D9 separate for later owner review."
+  - The prospective window: "My intended 63-return input window is 64
+    consecutive closes ending at the forecast close. For the initial
+    October 14 endpoint this means July 16 through October 14, 2026, used
+    only as inputs to frozen models, not for research training, tuning or
+    sealed-holdout evaluation." "This clarifies the window definition; it
+    does not authorize retroactive forecast records or unrestricted
+    sealed-period access."
+  - Still to be decided before any real forecast is recorded, each
+    escalated to the owner:
+    - "Confirm the exact registration, first eligible decision time,
+      burn-in and prospective confirmation rules. No forecast should be
+      backdated, and no paper-trading activation should be inferred
+      merely because logging code exists."
+    - "Before freezing a real model, review the current treatment of
+      zero-realized-volatility outcomes ... Escalate the target-formula
+      decision for approval."
+    - "Verify the 2025-2027 NYSE calendar against authoritative exchange
+      information and document any unresolved holidays."
+  - Data: "Do not store vendor data until I explicitly approve that step."
+    The owner runs the read-only audit locally.
+  - Monitoring: "The GitHub health workflow must use only public or
+    synthetic-safe information. Private local data and real forecast
+    monitoring need a separate safe local process."
+  - Not authorized: "Do not make changes to live investment decisions,
+    model promotion claims, training targets, historical lockbox access,
+    data purchases, source terms or reward formulas outside the
+    authorizations above."
+  - Activation boundary (lead reconciliation, not an owner decision):
+    - Decided: H_end, the window definition, the prospective path, the
+      hand-filled anchors, the owner-run audit and collection, and the
+      forecast targets.
+    - Not decided: the registration rules, the first eligible decision
+      time, burn-in, the confirmation rules, the zero-volatility target
+      treatment, storing any batch, and OD16 activation (recording a real
+      forecast, paper trading).
+    - No real forecast may be recorded until all of these are approved.
+- Pending:
+  - the rest of OD3;
+  - OD8 groups C-D (cash returns and benchmarks; statistics and
+    reporting). Group B, the D1-D8 packet, was approved on 2026-10-15
+    (above); its D5 clause on constraint sets for learned policies awaits
+    confirmation;
+  - D9 (the Builder's buy-and-hold mix), separate from group B;
+  - OD9's `signal_cutoff_at` for decisions and the production
+    availability rule beyond descriptive display;
+  - OD10-OD15 (OD13's sub-decisions are proposed);
+  - OD16: activation (recording any real forecast, paper trading) and
+    the transition rules. The registration, first-eligible-decision,
+    burn-in and confirmation rules and the zero-volatility target
+    treatment are pending (2026-10-15, above). H_end = 2026-10-14 and
+    the prospective window are decided.
+  - OD17.
 
 Owner decision (2026-10-11, T4 phase B/C): "I explicitly authorize you to
 implement the remaining `linear.py` estimator core, including
@@ -691,19 +833,43 @@ Coverage limitations found are tracked as open item 2.
 
 ## Last verified quality baseline
 
-Measured 2026-10-14 with `python3 scripts/verify.py` on
-`feature/t5a-descriptive-metrics` (base `0df3a0c`; the working tree then
-held exactly the content of `58be124`); gates ran with `.venv` tools
-(Python 3.12.2, pytest 9.1.1, ruff 0.16.2, pandas 3.0.5, numpy 2.5.1,
-pyarrow 25.0.1, streamlit 1.64.0, plotly 7.1.0, scikit-learn 1.9.1).
-Exit 0.
+**Run.** Measured 2026-10-15 with `PYTHONPATH=$PWD/src python3
+scripts/verify.py` (unpiped) on `main` at `f98668a`, with a clean tree in a
+session worktree. `PYTHONPATH` makes the shared venv import the worktree's
+sources. Exit 0. The run is from this session's `/project-verify` (READY).
 
-- `pytest -q`: 1845 passed
-- `python -m pytest -q`: 1845 passed
-- `ruff format --check src tests scripts .claude/hooks`: 232 files
+**Tools** (`.venv`): Python 3.12.2, pytest 9.1.1, ruff 0.16.2, pandas
+3.0.5, numpy 2.5.1, pyarrow 25.0.1, streamlit 1.64.0, plotly 7.1.0,
+scikit-learn 1.9.1, scipy 1.18.1, torch 2.14.0, stable-baselines3 2.9.0
+and gymnasium 1.3.0.
+
+- `pytest -q`: 3578 passed, 54 xfailed
+- `python -m pytest -q`: 3578 passed, 54 xfailed
+- `ruff format --check src tests scripts .claude/hooks`: 409 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- Suite runtime about 70 s per pass.
+- Suite runtime about 3.6 min per pass.
+- The 54 xfails are the strict `xfail` tests for T5a `portfolio_step`.
+  They raise `NotImplementedError` until the owner approves D1-D8, and
+  are expected, not hidden failures.
+- Independent reviews and mutation checks, 2026-10-14 and 2026-10-15
+  (not re-run):
+  - **T5a (#61):** the oracle numbers were re-derived with exact
+    fractions. A separate weights-based implementation passed all 48
+    xfail tests, and every mutant tried was caught (cash-leg cost,
+    additive cost, same-close execution, free build, `r_next` visible,
+    double-counted reward).
+  - **RL (#62, #68):** 16 mutants, 15 killed. The survivor (a future
+    `has_close` row) was killed after #68.
+  - **Data path (#73):** 31 mutants: 27 killed, 2 equivalent, and 2
+    fixed by follow-up tests.
+  - **Forecasts (#74):** 15 mutants: 11 killed. Tests added for 2 (the
+    null window and the stage cap); 1 equivalent.
+  - **ML stack:** the surviving challenger-imputer mutant was killed after
+    the fix.
+  - **Health (#67), Lab (#65), registry export (#72):** security,
+    frontend and statistics reviews; every blocker and should-fix item
+    was fixed before merge.
 - Mutation checks (T5-A): 11 of 11 probes killed (dropped distribution,
   ignored split ratio, span chained from the previous session,
   reinvestment through a gap, t0's own return applied, history always
@@ -892,9 +1058,17 @@ Exit 0.
      2026-10-13 with the GitHub API ("Branch not protected", HTTP 404). The
      local command guard is the only mechanical control against direct
      pushes and merges.
-   - Confirm in a fresh session that the `Edit(...)` ask rules prompt for
-     `.claude/**`, `AGENTS.md`, and dependency manifests. They did not
-     prompt in the session that added them.
+   - The `Edit(...)` ask rules (root-anchored, e.g. `Edit(/.github/**)`)
+     did not prompt for guardrail files edited inside session worktrees.
+     Observed 2026-10-14 for `.github/workflows/health.yml` and a local
+     `.claude/launch.json`. The cause is unconfirmed: either path anchoring
+     or the permission mode. A fix is proposed as a task (a guardrail
+     change, owner-gated). Until then, sessions quote the owner's words for
+     every guardrail edit.
+   - Local branches left by reviews and wave 1 (`review-pr60` to
+     `review-pr72`, `wave1-base`, `prospective-base`,
+     `lead/pr71-owner-decisions`, merged `fix/*` branches). Deleting them
+     needs owner approval.
    - `numpy` and `pandas` are unpinned; tests use the legacy `RandomState`
      stream and canonical fingerprints so results do not depend on them.
    - `.gitignore`'s `.venv/` pattern matches only a directory, so a
@@ -912,16 +1086,37 @@ Exit 0.
      copies about 20 lines of the T2 pattern);
    - published directories have mode 0o700 and files are not fsynced; a
      torn write fails the reader's hash checks.
-9. Tiingo and F1 follow-ups (owner decisions where marked):
+9. Tiingo, F1 and prospective-track follow-ups (owner decisions where
+   marked):
+   - **Before the first prospective `--store`** (owner;
+     `docs/research/prospective_data_path.md` sections 2 and 7):
+     - confirm the window reading 2026-07-16 to 2026-10-14 (64 closes, 63
+       returns);
+     - decide the VTI gate: VTI has one ex-date in the window. Either
+       every served distribution must match an anchor (at least one), or
+       wait for its December ex-date;
+     - check the 2025-2027 holidays, which were entered from recall,
+       against NYSE's published page.
+   - Distribution anchors are filled by hand into a private, git-ignored
+     file (PR #73). The rows the research agents gathered on 2026-10-14
+     are kept privately under `data/raw/issuer_sources/` and are not
+     anchors.
+   - A precision-aware anchor match (round half-even at the issuer's
+     reported decimals; the current rule is 1e-6) is proposed and not
+     approved.
    - F1's `AmountBasis` has no "unknown" value, so an unverified
-     distribution basis cannot be stored honestly; the adapter stores
-     distributions only after verification (adding "unknown" is a contract
-     change, owner-gated);
-   - `VERIFIED_DISTRIBUTIONS` (primary-source amounts) are needed to admit
-     AGG and SHV distributions; each entry is owner-reviewed, like
-     `VERIFIED_SPLITS`;
-   - vendor-adjusted reconciliation needs an isolated, owner-approved
+     distribution basis cannot be stored honestly. The adapter stores
+     distributions only after the spot check. Adding "unknown" is a
+     contract change, owner-gated.
+   - Vendor-adjusted reconciliation needs an isolated, owner-approved
      procedure (proposed in `docs/research/f1_fund_data.md`).
+   - A primary-source close anchor, to detect a uniform rescaling of
+     closes, is not built.
+   - The ETF plug-in interval under-covers by design: development
+     fold-block coverage was 0.753 at a nominal 80%. The prospective
+     forecasters use pre-registered split-conformal bands instead (PR #74).
+   - The Model Health page is not yet wired into the Lab's Model Health
+     destination (a small follow-up).
 10. Smaller items: lineage lacks current-side tie lists; as-of change log
    trusts `period_end`; mixed availability rules at one trigger instant;
    FY consistency checks (Q1+Q2+Q3+Q4 = FY); duplicate flow logic in
@@ -931,21 +1126,33 @@ Exit 0.
 
 ## Next steps
 
-1. Owner (merging is owner-only): review and merge the T5-A pull request
-   and the Tiingo adapter pull request.
-2. The real-data Explore page, after the Tiingo PR merges:
-   - the owner configures `TIINGO_API_KEY` locally and authorizes the
-     restricted pre-2025 coverage audit (VTI, AGG, SHV);
-   - sourced `VERIFIED_DISTRIBUTIONS` entries for AGG and SHV (owner
-     review);
-   - then the first real-data publication kind (contract 1.1, the OD9
-     descriptive convention) and the page reading it.
-3. T5a: the owner decides D1-D8 (open-decision packet,
-   `docs/research/t5a_open_decisions.md`, 2026-10-14); then the corrected
-   simulator replaces the proposed-rules stand-in. Until then PPO runs are
-   engineering-only smoke runs (lead decision pending owner confirmation,
-   recorded under the 2026-10-14 decisions above). D9 (the Builder's
-   buy-and-hold mix history) is also pending.
+1. **First prospective forecast** (owner steps in the owner's terminal;
+   `docs/research/prospective_data_path.md` section 6):
+   1. Owner: the three decisions in open item 9.
+   2. Owner: the read-only pre-2025 audit:
+      `scripts/audit_fund_coverage.py --authorized --funds VTI AGG SHV
+      --start 2005-01-01 --end-exclusive 2025-01-01`.
+   3. Owner: fill the anchors file by hand, then approve storing the
+      pre-2025 batch.
+   4. Lead: train and freeze the registered forecasters on real data up
+      to 2024.
+   5. Owner: approve the prospective collection.
+   6. Lead: record forecast #1, labelled "unvalidated, no demonstrated
+      skill", and score each horizon as its outcome matures.
+2. **T5a** (owner-gated):
+   1. The owner decides D1-D8 (including the corrected D6 and its
+      sub-question) and D9.
+   2. Then T5a PR 2: `portfolio_step`, the backtest migration and the
+      reward fix.
+   3. Then PPO on the approved transition, and the first comparison table
+      across the baselines, the optimizer, simple RL and PPO.
+
+   Until then, PPO runs stay engineering-only. That is a lead decision
+   pending owner confirmation, recorded above.
+3. **Small engineering follow-ups:**
+   - the Model Health page in the Lab;
+   - the guardrail worktree fix (owner-gated);
+   - review-branch cleanup (owner approval).
 4. FE-0 and FE-1 (approved 2026-10-13 as preparatory work only), and
    RES-1a (the zero-purchase proof of concept) when the owner approves it;
    RES-1 stays cost-conscious and never blocks the ETF Portfolio Lab.

@@ -18,7 +18,7 @@ import pytest
 
 from stock_agent.data.funds.adapter import SYNTHETIC_FUND_IDS, SyntheticFundAdapter
 from stock_agent.data.funds.ingest import ingest_batch
-from stock_agent.health import collect, fixtures
+from stock_agent.health import collect, fixtures, forecast
 from stock_agent.health.context import code_state, run_context
 from stock_agent.health.model import AlertKind, HealthState, Scope, read_summary
 
@@ -54,21 +54,32 @@ PUBLIC_CHECKS = [
 ]
 PRIVATE_CHECKS = [
     "ci.main_runs",
+    "ci.daily_health",
     "data.freshness",
     "data.coverage",
     "data.missing_sessions",
     "data.vendor_discrepancy",
+    "data.anchors",
+    "data.store_batches",
+    "data.window_coverage",
     "training.health",
+    "training.ml_runs",
     "registry.entries",
     "registry.stages",
     "registry.selection_history",
     "registry.experiments",
     "forecast.coverage",
     "forecast.calibration",
+    "forecast.ledger",
+    "forecast.ledger_backup",
+    "forecast.ledger_sessions",
     "portfolio.turnover",
     "portfolio.costs",
     "portfolio.concentration",
     "portfolio.drawdown",
+    "portfolio.violations",
+    "portfolio.fallbacks",
+    "portfolio.diagnostics",
 ]
 
 
@@ -344,7 +355,7 @@ def test_a_local_run_reads_every_private_input(root, tmp_path, monkeypatch):
     unapproved = (HealthState.DEGRADED, "unapproved_transition")
     economics = ["training.health", *(c for c in states if c.startswith("portfolio."))]
     assert {states[check_id] for check_id in economics} == {unapproved}
-    synthetic = [c for c in states if c.startswith(("registry.", "forecast."))]
+    synthetic = [c for c in states if c.startswith("registry.") or c in forecast.CHECKS]
     assert {states[check_id] for check_id in synthetic} == {
         (HealthState.INSUFFICIENT_EVIDENCE, "synthetic_input")  # private scope: never healthy
     }
@@ -546,3 +557,50 @@ def test_a_point_only_export_is_listed_as_not_applicable(root, tmp_path):
         "forecast.calibration",
     ]
     assert read_summary(latest).not_applicable == summary.not_applicable
+
+
+def test_the_local_script_wires_the_private_inputs(root, tmp_path):
+    script = _script()
+    out = tmp_path / "out"
+    (tmp_path / "kept.txt").write_text("0" * 64 + "\n", encoding="utf-8")  # the genesis head
+    arguments = [
+        "local",
+        "--output-dir",
+        str(out),
+        "--ledger",
+        str(tmp_path / "ledger.jsonl"),
+        "--ledger-head-backup",
+        str(tmp_path / "kept.txt"),
+        "--anchors",
+        str(tmp_path / "anchors.csv"),
+        "--prospective-store",
+        str(tmp_path / "prospective"),
+        "--rl-runs",
+        str(tmp_path / "rl"),
+        "--ml-root",
+        str(tmp_path / "ml"),
+        "--health-inputs",
+        str(tmp_path / "inputs"),
+        "--registry",
+        str(tmp_path / "registry"),
+    ]
+    assert script.main(arguments, environment(root)) == 0
+    summary = read_summary(out / "latest.json")
+    reasons = {check.check_id: check.reason for check in summary.checks}
+    assert reasons["forecast.ledger"] == "input_missing"
+    assert reasons["forecast.ledger_backup"] == "input_missing"  # genesis head, no ledger yet
+    assert reasons["data.anchors"] == "anchors_missing"
+    assert reasons["data.store_batches"] == "store_missing"
+    assert reasons["data.window_coverage"] == "store_missing"
+    assert reasons["training.ml_runs"] == "input_missing"
+    assert reasons["portfolio.violations"] == "not_reported"
+    assert reasons["ci.daily_health"] == "not_collected"
+    assert summary.overall_state is HealthState.INSUFFICIENT_EVIDENCE
+
+
+def test_the_script_refuses_both_github_and_a_run_list(root, tmp_path):
+    with pytest.raises(SystemExit) as stopped:
+        _script().main(
+            ["local", "--github", "--ci-runs", str(tmp_path / "runs.json")], environment(root)
+        )
+    assert stopped.value.code == 2

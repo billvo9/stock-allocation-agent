@@ -56,7 +56,7 @@ NEXT_LINKS = {
 # it names the pending entry of docs/PROJECT_STATE.md ("Pending:") the item
 # waits for, and a test fails once that entry is no longer pending, so this
 # list is updated when the decision is taken. None: a fact about the lab itself.
-PENDING_AS_OF = "2026-10-14"
+PENDING_AS_OF = "2026-10-15"
 PENDING = (
     (
         "Awaiting approval",
@@ -65,16 +65,17 @@ PENDING = (
             "A fixed mix held without rebalancing or costs needs one more formula approval, "
             "so the Builder shows weights and concentration only."
         ),
-        "OD8 groups B-D",
+        "D9",
     ),
     (
-        "Awaiting approval",
+        "Being built",
         "Simulator formulas",
         (
-            "Rebalancing, transaction costs and execution timing are specified but not "
-            "approved, so the lab shows no simulated portfolio."
+            "Rebalancing, transaction costs and execution timing were approved on 2026-10-15 "
+            "and are being built. Cash returns, benchmarks and the reporting statistics still "
+            "await approval, so the lab shows no simulated portfolio."
         ),
-        "OD8 groups B-D",
+        "OD8 groups C-D",
     ),
     (
         "Not loaded",
@@ -98,8 +99,8 @@ PENDING = (
         "Not yet",
         "Experiments and model health",
         (
-            "No machine-learning or reinforcement-learning result is ready to show, and model "
-            "health is not yet collected."
+            "No machine-learning or reinforcement-learning result is ready to show. Model "
+            "Health shows what the local monitor last measured, once it has run."
         ),
         None,
     ),
@@ -154,8 +155,9 @@ HISTORY_PENDING = (
 )
 NOT_MODELLED_BADGE = "Awaiting approval"
 NOT_MODELLED = (
-    "Rebalancing, transaction costs, execution timing and taxes need simulator formulas that "
-    "are also awaiting approval, and the Builder makes no forecast."
+    "Rebalancing, transaction costs and execution timing were approved for the simulator on "
+    "2026-10-15 and are being built, not shown here. Taxes are not modelled, and the Builder "
+    "makes no forecast."
 )
 EXPLORE_LINK = "See each fund's history"
 
@@ -256,21 +258,71 @@ DASHBOARD_LINK = "Open the research dashboard (once it is running)"
 
 # --- Model Health ---
 
-HEALTH_EYEBROW = "Research"
+HEALTH_EYEBROW = "Operations"
 HEALTH_TITLE = "Model Health"
 HEALTH_LEDE = (
-    "Checks on data freshness, model drift and calibration, once there are models and data "
-    "to check."
+    "Whether the code, the data, the forecast records and the models can be trusted today: "
+    "the status and the next step first, exact measurements underneath. Read-only: nothing "
+    "here acts on what it finds."
 )
 HEALTH_EMPTY_BADGE = "Not yet collected"
 HEALTH_EMPTY_TITLE = "Not yet collected"
 HEALTH_EMPTY = (
-    "No health check has been collected yet. Nothing here is estimated or assumed while that is so."
+    "No local health summary was found. Nothing here is estimated or assumed while that is so, "
+    "and a check that was never measured is never shown as healthy."
 )
+HEALTH_LOOKED = "Looked for: {path}."
+HEALTH_NOT_SET = "No summary location was given to the lab."
+HEALTH_CREATE = (
+    "Create one on this machine. It reads private data, so it runs only here, never on GitHub:"
+)
+HEALTH_CREATE_COMMAND = ".venv/bin/python scripts/health_check.py local --run-verify --github"
 HEALTH_LATER = (
-    "When checks are collected, each will show its status in words, what it measured and when."
+    "Then start the lab with scripts/run_portfolio_lab.py, which finds the newest summary. "
+    "The scheduled run is described in docs/operations/model_health.md."
 )
-HEALTH_COLLECTED = "Collected {collected_at} from {source}."
+HEALTH_REFUSED_WORD = "Refused"
+HEALTH_REFUSED_TITLE = "The {label} was refused ({reason})"
+HEALTH_REFUSED_TEXT = "{path}: {detail}. Nothing from it is shown."
+HEALTH_LOCAL_LABEL = "local health summary"
+HEALTH_CI_LABEL = "daily workflow summary"
+HEALTH_NEXT_WORD = "Next step"
+HEALTH_NEXT_TITLE = "What to do now"
+HEALTH_GLANCE_TITLE = "At a glance"
+HEALTH_GLANCE_CAPTION = "Each area takes the state of its worst check. Open an area for details."
+HEALTH_MEASUREMENTS = "Exact measurements: {title}"
+HEALTH_MEASURED_FIELDS = {
+    "value": "Value",
+    "threshold": "Threshold",
+    "measured": "Measured",
+    "reason": "Reason code",
+    "check_id": "Check id",
+    "evidence": "Evidence",
+    "runbook": "Runbook",
+}
+HEALTH_ALERTS_TITLE = "Alerts"
+HEALTH_ALERTS_CAPTION = "Informational only: nothing acts on an alert."
+HEALTH_NO_ALERTS = "No alerts."
+HEALTH_NOT_APPLICABLE_TITLE = "Not applicable"
+HEALTH_NOT_APPLICABLE_WORD = "Not applicable"
+HEALTH_NOT_APPLICABLE_CAPTION = (
+    "Checks that do not apply to what was measured. They never count towards the state."
+)
+HEALTH_PROVENANCE_TITLE = "Provenance"
+HEALTH_CI_TITLE = "Daily GitHub check"
+HEALTH_CI_SCOPE = (
+    "The daily workflow on GitHub checks repository code and synthetic fixtures only; it cannot "
+    "see private data or local models. When the local monitor records GitHub runs, its latest "
+    "result also appears under Code and tests."
+)
+HEALTH_CI_MISSING = "No downloaded summary of the daily workflow was found. Download the latest:"
+HEALTH_CI_DOWNLOAD = (
+    "RUN=$(gh run list --repo billvo9/stock-allocation-agent --workflow health.yml "
+    "--branch main --status completed --limit 1 --json databaseId --jq '.[0].databaseId')\n"
+    'gh run download "$RUN" --repo billvo9/stock-allocation-agent --name model-health '
+    '--dir "reports/health/ci/$RUN"'
+)
+HEALTH_CI_GENERATED = "Generated {generated}. {summary}"
 
 # --- Evidence ---
 
@@ -294,11 +346,11 @@ NOT_READY = (
     ),
     (
         "FUTURE",
-        "Awaiting approval",
+        "Being built",
         "No simulator",
         (
-            "Transaction costs, rebalancing and execution timing are not modelled, so no result "
-            "reflects what holding a portfolio would have cost."
+            "Transaction costs, rebalancing and execution timing are approved but not yet built "
+            "into the lab, so no result reflects what holding a portfolio would have cost."
         ),
     ),
     (
