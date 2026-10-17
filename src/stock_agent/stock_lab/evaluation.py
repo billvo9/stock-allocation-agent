@@ -21,15 +21,23 @@ Protocol (pre-registered here; docs/research/stock_probability_lab.md, section 5
                model and target.
     Inference  per decision date, the cross-sectional mean of each model's
                RPS minus B1's (the reference); its mean with a Newey-West
-               standard error (lag NW_LAG, at least h - 1) and a circular
-               block bootstrap (block BLOCK); Holm across the pre-registered
-               comparisons. Dates are the unit, never rows, so stocks that
-               move together are not counted as independent evidence.
+               standard error (lag NW_LAG, at least h - 1), the decision test,
+               and beside it the fold-block t (the test years as blocks) and a
+               circular block bootstrap (block BLOCK)
+               (size_simulation.one_sided_tests); Holm across the
+               pre-registered comparisons. Dates are the unit, never rows, so
+               stocks that move together are not counted as independent
+               evidence.
     Selection  the reported estimator is B1 unless a challenger has a lower
                mean RPS with a Holm-adjusted one-sided p below ALPHA on the
                primary target set (all five daily targets pooled by date);
                among those, the lowest RPS. Every candidate and every inner
                choice is recorded; nothing is selected on a test result alone.
+    Reported   never used to select: the fold-block t and bootstrap p-values,
+               B1's score at every half-life, B1 and B3 re-run at other stable
+               bands on the same folds (SENSITIVITY_BANDS), and each test's
+               simulated size on no-skill panels shaped like this one
+               (size_simulation).
 
 Nothing here is evidence of skill on its own: the watchlist is chosen in
 hindsight, and synthetic runs only check the machinery.
@@ -41,22 +49,18 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
 
-from stock_agent.model_diagnostics.inference import (
-    bootstrap_mean,
-    draw_circular_blocks,
-    newey_west_mean,
-)
+from stock_agent.model_diagnostics.inference import draw_circular_blocks
 from stock_agent.model_validation.folds import (
     MODEL_HOLDOUT_START,
     make_expanding_folds,
 )
 from stock_agent.stock_lab import estimators as est
-from stock_agent.stock_lab import logistic, scores
+from stock_agent.stock_lab import logistic, scores, size_simulation
 from stock_agent.stock_lab.contracts import DEFAULT_BAND, StableBand
 from stock_agent.stock_lab.features import FEATURE_VERSION, build_features
 from stock_agent.stock_lab.prices import categorize, category_codes
@@ -65,16 +69,21 @@ from stock_agent.stock_lab.runs import RunRule
 from stock_agent.stock_lab.targets import HORIZONS, build_targets, cumulative_band
 
 SCHEMA = "stock_lab_evaluation"
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"  # 1.1 adds the fold-block t, simulated sizes and band sensitivity
 MODELS = ("B0", "B1", "B2", "B3", "M1")
 REFERENCE = "B1"
 H_GRID = (21.0, 63.0, 126.0, 252.0)
 NW_LAG = 10
 BLOCK = 20
 BOOTSTRAP_REPS = 499
+BOOTSTRAP_SEED = 7
 ALPHA = 0.05
 MIN_TRAIN_SESSIONS = 756  # three years before the first test window
 TARGETS = (*(f"target_{h}" for h in HORIZONS), "target_cum")
+SENSITIVITY_BANDS = (0.0025, 0.01)  # reported only, never used to select
+SIZE_REPS = 1000  # no-skill panels, shared by every placebo and half-life; MC SE ~0.7 pp at 5%
+SIZE_SEED = 20261016
+SIZE_CORRELATION = 0.4  # pairwise correlation of the no-skill panels' returns
 
 
 @dataclass(frozen=True)
@@ -89,6 +98,10 @@ class EvaluationConfig:
     last_test_year: int = 2024
     include_m1: bool = True
     outcome_end: pd.Timestamp | None = None  # real data: 2024-12-31
+    sensitivity_bands: tuple[float, ...] = SENSITIVITY_BANDS
+    size_reps: int = SIZE_REPS
+    size_seed: int = SIZE_SEED
+    size_correlation: float = SIZE_CORRELATION
 
     def as_dict(self) -> dict:
         return {
@@ -107,7 +120,12 @@ class EvaluationConfig:
             "nw_lag": NW_LAG,
             "block": BLOCK,
             "bootstrap_reps": BOOTSTRAP_REPS,
+            "bootstrap_seed": BOOTSTRAP_SEED,
             "alpha": ALPHA,
+            "sensitivity_bands": list(self.sensitivity_bands),
+            "size_reps": self.size_reps,
+            "size_seed": self.size_seed,
+            "size_correlation": self.size_correlation,
             "m1_c_grid": list(logistic.C_GRID),
             "m1_inputs": list(logistic.M1_INPUTS),
             "feature_version": FEATURE_VERSION,
@@ -318,9 +336,14 @@ def evaluate(
         fold_rows.append(fold_info)
 
     test_rows = np.concatenate(test_index)
-    record = _score(panel, test_rows, preds, config)
+    fold_starts = pd.DatetimeIndex([fold.test_start for fold in folds])
+    record = _score(panel, test_rows, preds, fold_starts)
     record["path_calibration"] = _path_calibration(panel, paths)
     record["sensitivity_half_life"] = _half_life_sensitivity(panel, test_rows, b1_by_h)
+    record["sensitivity_band"] = _band_sensitivity(histories, config, panel, folds, z_by_h, b1_by_h)
+    record["size_simulation"] = size_simulation.simulate_size(
+        size_design(config, names=len(histories), years=len(folds))
+    )
     record.update(
         {
             "schema": SCHEMA,
@@ -346,7 +369,7 @@ def _per_date_mean(values: np.ndarray, dates: pd.DatetimeIndex) -> pd.Series:
     return pd.Series(values).groupby(dates).mean()
 
 
-def _score(panel, test_rows, preds: _Predictions, config) -> dict:
+def _score(panel, test_rows, preds: _Predictions, fold_starts: pd.DatetimeIndex) -> dict:
     dates_all = pd.DatetimeIndex(panel["date"])
     metrics, comparisons, reliability, calibration, by_stock, by_regime = [], [], [], [], [], []
     p_values = {}
@@ -412,13 +435,13 @@ def _score(panel, test_rows, preds: _Predictions, config) -> dict:
             if m == REFERENCE:
                 continue
             diff = _per_date_mean(per_model_rps[m] - per_model_rps[REFERENCE], dates)
-            comparisons.append(_comparison(m, target, diff))
+            comparisons.append(_comparison(m, target, diff, fold_starts))
             if target != "target_cum":
                 pooled_diff.setdefault(m, []).append(diff)
     pooled_rows = []
     for m, series in pooled_diff.items():
         combined = pd.concat(series, axis=1).mean(axis=1)
-        row = _comparison(m, "daily_pooled", combined)
+        row = _comparison(m, "daily_pooled", combined, fold_starts)
         pooled_rows.append(row)
         p_values[m] = row["p_one_sided"]
     adjusted = scores.holm(p_values)
@@ -429,7 +452,7 @@ def _score(panel, test_rows, preds: _Predictions, config) -> dict:
         for row in pooled_rows
         if row["mean_diff"] < 0 and row["p_holm"] == row["p_holm"] and row["p_holm"] < ALPHA
     ]
-    selected, steps = _select(beating, pooled_diff)
+    selected, steps = _select(beating, pooled_diff, fold_starts)
     return {
         "metrics": metrics,
         "comparisons": comparisons + pooled_rows,
@@ -447,6 +470,11 @@ def _score(panel, test_rows, preds: _Predictions, config) -> dict:
             "selected": selected,
             "beating_reference": [row["model"] for row in beating],
             "steps": steps,
+            "reported_only": (
+                "the fold-block t and circular block bootstrap p-values, the half-life and band "
+                "sensitivities and the simulated sizes are reported beside the results and never "
+                "used to select"
+            ),
         },
     }
 
@@ -454,7 +482,11 @@ def _score(panel, test_rows, preds: _Predictions, config) -> dict:
 SIMPLEST_FIRST = ("B0", "B1", "B3", "B2", "M1")
 
 
-def _select(beating: list[dict], pooled_diff: Mapping[str, list[pd.Series]]):
+def _select(
+    beating: list[dict],
+    pooled_diff: Mapping[str, list[pd.Series]],
+    fold_starts: pd.DatetimeIndex,
+):
     """
     The selection hierarchy: B1 unless a challenger beats it (Holm); then the
     simplest such challenger, replaced by a more complex one only when that one
@@ -472,7 +504,7 @@ def _select(beating: list[dict], pooled_diff: Mapping[str, list[pd.Series]]):
     for challenger in winners[1:]:
         # (challenger - B1) - (current - B1) = challenger - current, per date.
         diff = (against_reference(challenger) - against_reference(current)).dropna()
-        row = _comparison(challenger, "daily_pooled", diff)
+        row = _comparison(challenger, "daily_pooled", diff, fold_starts)
         moved = bool(row["mean_diff"] < 0 and row["p_one_sided"] == row["p_one_sided"]
                      and row["p_one_sided"] < ALPHA)  # fmt: skip
         steps.append(
@@ -481,6 +513,8 @@ def _select(beating: list[dict], pooled_diff: Mapping[str, list[pd.Series]]):
                 "against": current,
                 "mean_diff": row["mean_diff"],
                 "p_one_sided": row["p_one_sided"],
+                "fold_t_p_one_sided": row["fold_t_p_one_sided"],
+                "boot_p_one_sided": row["boot_p_one_sided"],
                 "moved": moved,
             }
         )
@@ -553,10 +587,107 @@ def _half_life_sensitivity(panel, test_rows, b1_by_h) -> list[dict]:
     return rows
 
 
-def _comparison(model: str, target: str, diff: pd.Series) -> dict:
+def _band_sensitivity(
+    histories: Mapping[str, pd.DataFrame],
+    config: EvaluationConfig,
+    panel: pd.DataFrame,
+    folds,
+    z_by_h: Mapping[int, np.ndarray],
+    b1_by_h: Mapping[float, np.ndarray],
+) -> list[dict]:
+    """
+    B1 and B3 re-run at the band in use and every band in
+    config.sensitivity_bands, on the same folds and rows (reported only, never
+    used to select). Each band has its own categories and targets; B1's
+    half-life is chosen inside each fold's training years by the same rule; B3
+    uses the same standardized-return distributions, since z = r / sigma does
+    not depend on the band. Mean RPS over the five daily targets, on the rows
+    where both are defined. RPS levels are not comparable across bands (a wider
+    band makes Stable more common); B3 minus B1 within a band is.
+    """
+
+    symbols = panel["symbol"].to_numpy(dtype=object)
+    sigma = panel["ewma_vol"].to_numpy(dtype="float64")
+    bands = sorted({config.band.tau, *config.sensitivity_bands})
+    panels, b1s = {}, {}
+    for tau in bands:
+        if tau == config.band.tau:
+            panels[tau], b1s[tau] = panel, b1_by_h
+            continue
+        other = build_panel(histories, replace(config, band=StableBand(tau)))
+        if not (other["symbol"].equals(panel["symbol"]) and other["date"].equals(panel["date"])):
+            raise ValueError("a band changed the panel's rows; the folds would differ")
+        panels[tau] = other
+        b1s[tau] = {
+            h: _frequency_state(
+                other, "category_code", est.FrequencyParams(config.alpha_prior, h, config.kappa)
+            )[1]
+            for h in config.half_life_grid
+        }
+    chosen = {tau: [] for tau in bands}
+    b1_test = {tau: [] for tau in bands}
+    b3_test = {tau: {h: [] for h in HORIZONS} for tau in bands}
+    for fold in folds:
+        train_mask = np.zeros(len(panel), dtype=bool)
+        train_mask[fold.train_rows] = True
+        test = fold.test_rows
+        errors = {
+            h: est.errors_from_panel(panel, z_by_h[h], train_mask, h, config.error_kappa)
+            for h in HORIZONS
+        }
+        for tau in bands:
+            half_life, _ = _inner_half_life(panels[tau], train_mask, b1s[tau], config)
+            chosen[tau].append(half_life)
+            b1_test[tau].append(b1s[tau][half_life][test])
+            for h in HORIZONS:
+                b3_test[tau][h].append(
+                    est.b3(errors[h], symbols[test], sigma[test], StableBand(tau))
+                )
+    test_rows = np.concatenate([fold.test_rows for fold in folds])
+    out = []
+    for tau in bands:
+        b1 = np.concatenate(b1_test[tau])
+        b1_rps, b3_rps, stable, rows = [], [], [], 0
+        for h in HORIZONS:
+            y = _codes(panels[tau][f"target_{h}"])[test_rows]
+            b3 = np.concatenate(b3_test[tau][h])
+            valid = np.isfinite(y) & np.isfinite(b1).all(axis=1) & np.isfinite(b3).all(axis=1)
+            b1_rps.append(float(scores.rps(b1[valid], y[valid]).mean()))
+            b3_rps.append(float(scores.rps(b3[valid], y[valid]).mean()))
+            stable.append(y[valid] == 1)
+            rows += int(valid.sum())
+        b1_mean, b3_mean = float(np.mean(b1_rps)), float(np.mean(b3_rps))
+        out.append(
+            {
+                "band": tau,
+                "primary": tau == config.band.tau,
+                "rows": rows,
+                "stable_share": float(np.concatenate(stable).mean()),
+                "b1_rps": b1_mean,
+                "b3_rps": b3_mean,
+                "b3_minus_b1": b3_mean - b1_mean,
+                "half_lives": chosen[tau],
+            }
+        )
+    return out
+
+
+def _comparison(model: str, target: str, diff: pd.Series, fold_starts: pd.DatetimeIndex) -> dict:
+    """
+    One per-date differential's mean and its three tests: Newey-West (the
+    decision test, p_one_sided), the fold-block t with the test years as blocks
+    and the circular block bootstrap (both reported only).
+    """
+
     values = diff.to_numpy(dtype="float64")
-    nw = newey_west_mean(values, lag=NW_LAG)
-    row = {
+    blocks = fold_starts.searchsorted(pd.DatetimeIndex(diff.index), side="right") - 1
+    # Fewer than two blocks of dates leaves the bootstrap unavailable before any draw is used.
+    draws = draw_circular_blocks(
+        max(len(values), 1), block_length=BLOCK, reps=BOOTSTRAP_REPS, seed=BOOTSTRAP_SEED
+    )
+    tests = size_simulation.one_sided_tests(values, blocks, draws, lag=NW_LAG)
+    nw, fold, boot = (tests[method] for method in size_simulation.METHODS)
+    return {
         "model": model,
         "vs": REFERENCE,
         "target": target,
@@ -564,15 +695,38 @@ def _comparison(model: str, target: str, diff: pd.Series) -> dict:
         "mean_diff": float(np.nanmean(values)) if len(values) else math.nan,
         "nw_se": nw.se,
         "nw_status": nw.status,
-        "p_one_sided": (float(0.5 * nw.p_value) if nw.estimate < 0 else float(1 - 0.5 * nw.p_value))
-        if nw.p_value == nw.p_value
-        else math.nan,
+        "p_one_sided": size_simulation.one_sided_p(nw),
+        "fold_t_mean": fold.estimate,
+        "fold_t_se": fold.se,
+        "fold_t_df": fold.params.get("df"),
+        "fold_t_status": fold.status,
+        "fold_t_p_one_sided": size_simulation.one_sided_p(fold),
+        "boot_se": boot.se,
+        "boot_ci_low": boot.ci_low,
+        "boot_ci_high": boot.ci_high,
+        "boot_status": boot.status,
+        "boot_p_one_sided": size_simulation.one_sided_p(boot),
     }
-    if len(values) >= 2 * BLOCK:
-        draws = draw_circular_blocks(len(values), block_length=BLOCK, reps=BOOTSTRAP_REPS, seed=7)
-        boot = bootstrap_mean(values, draws)
-        row.update({"boot_se": boot.se, "boot_ci_low": boot.ci_low, "boot_ci_high": boot.ci_high})
-    return row
+
+
+def size_design(config: EvaluationConfig, *, names: int, years: int) -> size_simulation.SizeDesign:
+    """The no-skill panels for this evaluation: its stocks, test years, band, B1 and tests."""
+
+    return size_simulation.SizeDesign(
+        names=names,
+        years=years,
+        half_lives=tuple(config.half_life_grid),
+        reps=config.size_reps,
+        seed=config.size_seed,
+        nw_lag=NW_LAG,
+        block=BLOCK,
+        bootstrap_reps=BOOTSTRAP_REPS,
+        bootstrap_seed=BOOTSTRAP_SEED,
+        correlation=config.size_correlation,
+        tau=config.band.tau,
+        alpha_prior=config.alpha_prior,
+        kappa=config.kappa,
+    )
 
 
 def dumps(record: dict) -> str:
