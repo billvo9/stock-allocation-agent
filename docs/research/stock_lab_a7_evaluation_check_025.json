@@ -1,0 +1,673 @@
+{
+ "schema": "stock_lab_a7_simulation",
+ "schema_version": "1.0",
+ "data_class": "synthetic",
+ "role": "the evaluation's size check at the planned shapes (reported only)",
+ "changed": {
+  "nominal": 0.025
+ },
+ "sizes": [
+  {
+   "use": "reported beside the comparisons; never used to select an estimator",
+   "status": "ok",
+   "reason": null,
+   "design": {
+    "names": 4,
+    "years": 19,
+    "half_lives": [
+     21.0,
+     63.0,
+     126.0,
+     252.0
+    ],
+    "reps": 1000,
+    "seed": 20261016,
+    "nw_lag": 10,
+    "block": 20,
+    "bootstrap_reps": 499,
+    "bootstrap_seed": 7,
+    "correlation": 0.4,
+    "daily_vol": 0.015,
+    "t_df": 5.0,
+    "tau": 0.005,
+    "alpha_prior": 50.0,
+    "kappa": 40.0,
+    "warmup_years": 3,
+    "sessions_per_year": 252,
+    "nominal": 0.025,
+    "dates": 4788,
+    "dgp": "independent over time, equicorrelated Student-t returns",
+    "placebos": {
+     "other_vs_own": "B1 from the next stock's history against the stock's own B1",
+     "other_vs_other": "B1 from the next stock's history against B1 from the previous stock's"
+    },
+    "target": "mean RPS over the five daily targets, averaged across stocks per date",
+    "one_sided": true,
+    "limit": 0.03487420882906575
+   },
+   "rates": [
+    {
+     "placebo": "other_vs_own",
+     "half_life": 21.0,
+     "method": "newey_west",
+     "rejections": 36,
+     "reps": 1000,
+     "rate": 0.036,
+     "mc_se": 0.005891010100144117,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 21.0,
+     "method": "fold_block_t",
+     "rejections": 33,
+     "reps": 1000,
+     "rate": 0.033,
+     "mc_se": 0.005648982209212559,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 21.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 32,
+     "reps": 1000,
+     "rate": 0.032,
+     "mc_se": 0.005565608681896348,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 63.0,
+     "method": "newey_west",
+     "rejections": 43,
+     "reps": 1000,
+     "rate": 0.043,
+     "mc_se": 0.006414904519944158,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 63.0,
+     "method": "fold_block_t",
+     "rejections": 41,
+     "reps": 1000,
+     "rate": 0.041,
+     "mc_se": 0.006270486424512854,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 63.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 36,
+     "reps": 1000,
+     "rate": 0.036,
+     "mc_se": 0.005891010100144117,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 126.0,
+     "method": "newey_west",
+     "rejections": 43,
+     "reps": 1000,
+     "rate": 0.043,
+     "mc_se": 0.006414904519944158,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 126.0,
+     "method": "fold_block_t",
+     "rejections": 49,
+     "reps": 1000,
+     "rate": 0.049,
+     "mc_se": 0.006826346021115542,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 126.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 39,
+     "reps": 1000,
+     "rate": 0.039,
+     "mc_se": 0.006122009474020765,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 252.0,
+     "method": "newey_west",
+     "rejections": 43,
+     "reps": 1000,
+     "rate": 0.043,
+     "mc_se": 0.006414904519944158,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 252.0,
+     "method": "fold_block_t",
+     "rejections": 47,
+     "reps": 1000,
+     "rate": 0.047,
+     "mc_se": 0.006692607862410586,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 252.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 38,
+     "reps": 1000,
+     "rate": 0.038,
+     "mc_se": 0.006046155803483731,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 21.0,
+     "method": "newey_west",
+     "rejections": 31,
+     "reps": 1000,
+     "rate": 0.031,
+     "mc_se": 0.0054807846153630225,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 21.0,
+     "method": "fold_block_t",
+     "rejections": 24,
+     "reps": 1000,
+     "rate": 0.024,
+     "mc_se": 0.004839834707921336,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 21.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 25,
+     "reps": 1000,
+     "rate": 0.025,
+     "mc_se": 0.0049371044145328745,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 63.0,
+     "method": "newey_west",
+     "rejections": 31,
+     "reps": 1000,
+     "rate": 0.031,
+     "mc_se": 0.0054807846153630225,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 63.0,
+     "method": "fold_block_t",
+     "rejections": 23,
+     "reps": 1000,
+     "rate": 0.023,
+     "mc_se": 0.004740358636221525,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 63.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 25,
+     "reps": 1000,
+     "rate": 0.025,
+     "mc_se": 0.0049371044145328745,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 126.0,
+     "method": "newey_west",
+     "rejections": 26,
+     "reps": 1000,
+     "rate": 0.026,
+     "mc_se": 0.0050322956987840055,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 126.0,
+     "method": "fold_block_t",
+     "rejections": 23,
+     "reps": 1000,
+     "rate": 0.023,
+     "mc_se": 0.004740358636221525,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 126.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 23,
+     "reps": 1000,
+     "rate": 0.023,
+     "mc_se": 0.004740358636221525,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 252.0,
+     "method": "newey_west",
+     "rejections": 27,
+     "reps": 1000,
+     "rate": 0.027,
+     "mc_se": 0.00512552436341883,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 252.0,
+     "method": "fold_block_t",
+     "rejections": 24,
+     "reps": 1000,
+     "rate": 0.024,
+     "mc_se": 0.004839834707921336,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 252.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 23,
+     "reps": 1000,
+     "rate": 0.023,
+     "mc_se": 0.004740358636221525,
+     "exceeds_nominal": false
+    }
+   ],
+   "null_mean": [
+    {
+     "placebo": "other_vs_own",
+     "half_life": 21.0,
+     "mean": 1.423841565790292e-06,
+     "se": 4.693153047588168e-06
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 63.0,
+     "mean": 2.1420950414678005e-06,
+     "se": 4.393475075459208e-06
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 126.0,
+     "mean": 2.2121119721553964e-06,
+     "se": 3.7233503612799694e-06
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 252.0,
+     "mean": 1.8678056846959435e-06,
+     "se": 2.959004748241778e-06
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 21.0,
+     "mean": 2.447562893167713e-06,
+     "se": 4.7709248808501136e-06
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 63.0,
+     "mean": 4.422326868256642e-06,
+     "se": 4.462431381175561e-06
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 126.0,
+     "mean": 5.661998605331147e-06,
+     "se": 3.7064579354224784e-06
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 252.0,
+     "mean": 4.656728641860712e-06,
+     "se": 2.9284337583346594e-06
+    }
+   ]
+  },
+  {
+   "use": "reported beside the comparisons; never used to select an estimator",
+   "status": "ok",
+   "reason": null,
+   "design": {
+    "names": 6,
+    "years": 19,
+    "half_lives": [
+     21.0,
+     63.0,
+     126.0,
+     252.0
+    ],
+    "reps": 1000,
+    "seed": 20261016,
+    "nw_lag": 10,
+    "block": 20,
+    "bootstrap_reps": 499,
+    "bootstrap_seed": 7,
+    "correlation": 0.4,
+    "daily_vol": 0.015,
+    "t_df": 5.0,
+    "tau": 0.005,
+    "alpha_prior": 50.0,
+    "kappa": 40.0,
+    "warmup_years": 3,
+    "sessions_per_year": 252,
+    "nominal": 0.025,
+    "dates": 4788,
+    "dgp": "independent over time, equicorrelated Student-t returns",
+    "placebos": {
+     "other_vs_own": "B1 from the next stock's history against the stock's own B1",
+     "other_vs_other": "B1 from the next stock's history against B1 from the previous stock's"
+    },
+    "target": "mean RPS over the five daily targets, averaged across stocks per date",
+    "one_sided": true,
+    "limit": 0.03487420882906575
+   },
+   "rates": [
+    {
+     "placebo": "other_vs_own",
+     "half_life": 21.0,
+     "method": "newey_west",
+     "rejections": 37,
+     "reps": 1000,
+     "rate": 0.037,
+     "mc_se": 0.005969170796685248,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 21.0,
+     "method": "fold_block_t",
+     "rejections": 34,
+     "reps": 1000,
+     "rate": 0.034,
+     "mc_se": 0.005730968504537431,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 21.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 30,
+     "reps": 1000,
+     "rate": 0.03,
+     "mc_se": 0.005394441583704471,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 63.0,
+     "method": "newey_west",
+     "rejections": 44,
+     "reps": 1000,
+     "rate": 0.044,
+     "mc_se": 0.006485676526007136,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 63.0,
+     "method": "fold_block_t",
+     "rejections": 40,
+     "reps": 1000,
+     "rate": 0.04,
+     "mc_se": 0.0061967733539318665,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 63.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 42,
+     "reps": 1000,
+     "rate": 0.042,
+     "mc_se": 0.0063431853196954605,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 126.0,
+     "method": "newey_west",
+     "rejections": 45,
+     "reps": 1000,
+     "rate": 0.045,
+     "mc_se": 0.0065555320150236475,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 126.0,
+     "method": "fold_block_t",
+     "rejections": 46,
+     "reps": 1000,
+     "rate": 0.046,
+     "mc_se": 0.006624499981130651,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 126.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 41,
+     "reps": 1000,
+     "rate": 0.041,
+     "mc_se": 0.006270486424512854,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 252.0,
+     "method": "newey_west",
+     "rejections": 46,
+     "reps": 1000,
+     "rate": 0.046,
+     "mc_se": 0.006624499981130651,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 252.0,
+     "method": "fold_block_t",
+     "rejections": 47,
+     "reps": 1000,
+     "rate": 0.047,
+     "mc_se": 0.006692607862410586,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 252.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 40,
+     "reps": 1000,
+     "rate": 0.04,
+     "mc_se": 0.0061967733539318665,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 21.0,
+     "method": "newey_west",
+     "rejections": 40,
+     "reps": 1000,
+     "rate": 0.04,
+     "mc_se": 0.0061967733539318665,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 21.0,
+     "method": "fold_block_t",
+     "rejections": 26,
+     "reps": 1000,
+     "rate": 0.026,
+     "mc_se": 0.0050322956987840055,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 21.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 34,
+     "reps": 1000,
+     "rate": 0.034,
+     "mc_se": 0.005730968504537431,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 63.0,
+     "method": "newey_west",
+     "rejections": 43,
+     "reps": 1000,
+     "rate": 0.043,
+     "mc_se": 0.006414904519944158,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 63.0,
+     "method": "fold_block_t",
+     "rejections": 28,
+     "reps": 1000,
+     "rate": 0.028,
+     "mc_se": 0.005216895628628198,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 63.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 33,
+     "reps": 1000,
+     "rate": 0.033,
+     "mc_se": 0.005648982209212559,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 126.0,
+     "method": "newey_west",
+     "rejections": 39,
+     "reps": 1000,
+     "rate": 0.039,
+     "mc_se": 0.006122009474020765,
+     "exceeds_nominal": true
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 126.0,
+     "method": "fold_block_t",
+     "rejections": 24,
+     "reps": 1000,
+     "rate": 0.024,
+     "mc_se": 0.004839834707921336,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 126.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 33,
+     "reps": 1000,
+     "rate": 0.033,
+     "mc_se": 0.005648982209212559,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 252.0,
+     "method": "newey_west",
+     "rejections": 30,
+     "reps": 1000,
+     "rate": 0.03,
+     "mc_se": 0.005394441583704471,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 252.0,
+     "method": "fold_block_t",
+     "rejections": 21,
+     "reps": 1000,
+     "rate": 0.021,
+     "mc_se": 0.004534203347888138,
+     "exceeds_nominal": false
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 252.0,
+     "method": "circular_block_bootstrap",
+     "rejections": 28,
+     "reps": 1000,
+     "rate": 0.028,
+     "mc_se": 0.005216895628628198,
+     "exceeds_nominal": false
+    }
+   ],
+   "null_mean": [
+    {
+     "placebo": "other_vs_own",
+     "half_life": 21.0,
+     "mean": -2.1381552978278892e-06,
+     "se": 3.7284996146905784e-06
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 63.0,
+     "mean": -2.4980456482396583e-06,
+     "se": 3.4716697288997244e-06
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 126.0,
+     "mean": -2.3950113021490757e-06,
+     "se": 2.9041629234099567e-06
+    },
+    {
+     "placebo": "other_vs_own",
+     "half_life": 252.0,
+     "mean": -1.8105513078068973e-06,
+     "se": 2.302487765220337e-06
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 21.0,
+     "mean": -5.488289665805106e-06,
+     "se": 3.922943687723093e-06
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 63.0,
+     "mean": -3.172549041261554e-06,
+     "se": 3.5997791723441546e-06
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 126.0,
+     "mean": -2.061127689817042e-06,
+     "se": 2.9875151051602873e-06
+    },
+    {
+     "placebo": "other_vs_other",
+     "half_life": 252.0,
+     "mean": -1.0231464958153459e-06,
+     "se": 2.323742110918806e-06
+    }
+   ]
+  }
+ ]
+}

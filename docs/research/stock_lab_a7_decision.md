@@ -1,8 +1,19 @@
 # A7 decision packet: which test decides "a challenger beats B1"
 
-Status: the pre-registration was committed on 2026-10-17 (`2189fe7`) before
-any simulation in this packet was run. It is unchanged below. The results
-followed the same day. Synthetic panels only; awaiting the owner.
+Status: synthetic panels only; awaiting the owner. The pre-registration is
+unchanged below.
+
+How the ordering is evidenced, and how far:
+- **Server-side.** GitHub's repository activity log
+  (`repos/billvo9/stock-allocation-agent/activity`) records:
+  - the branch created at `2189fe7` (the pre-registration and the code) at
+    2026-10-17 21:33:07 UTC;
+  - `1011056` (the results) pushed at 22:36:18 UTC;
+  - PR #93 opened at 22:36:28 UTC.
+- **Local only.** That the first simulation ran after 21:33:07 UTC rests on
+  local evidence alone: the commit time of `2189fe7` (21:33:02 UTC) and the
+  first record written about 21:47 UTC. GitHub holds no record of when a
+  simulation ran.
 
 B1 stays the Stock Lab's default throughout. This packet changes no rule,
 default or stored record. It gives the owner the evidence for decision A7
@@ -10,25 +21,29 @@ default or stored record. It gives the owner the evidence for decision A7
 
 ## Summary
 
-- **Recommendation: the fold-block t decides.** It is a t-test on the 19
-  yearly fold means with t(18) critical values. Holm across the four
-  challengers and the simplest-first rule stay exactly as they are.
-- **Why.** It is the only one of the six procedures within ±1 pp of 5% in
-  all 32 planned cells (worst 0.9 pp). The current test, Newey-West at
-  lag 10, is 1.8 pp off: liberal (5.7–6.8%) on the symmetric null that the
-  stepwise rule faces, and conservative on the own-history null.
-- **Cost.** About 0.5 pp of power on average against the most powerful
-  procedure (1.5 pp at N = 4).
-- **What no test fixes.** Under the evaluation's other own-history placebo
-  (B1 read from the next scored stock's history), every test, the
-  fold-block t included, rejects 6–8% of the time at N = 4. Under this
-  packet's shadow placebo the same tests sit at or below 5%.
-  - How much B1's learning imbalance favours a challenger depends on how
-    the challenger learns. No choice of test removes it.
-  - See the limitations.
-- **Power is modest for real challengers.** Against a challenger as noisy
-  as B3 or M1 on the synthetic demo, power at an RPS gain of 0.0005 is
-  roughly 30–50% at N = 4.
+- **Recommendation: the fold-block t decides, at a one-sided family level
+  of 2.5%.** It is a t-test on the 19 yearly fold means with t(18) critical
+  values. Holm runs across the four challengers at 2.5%, and the
+  simplest-first steps use 2.5%. The rule's structure is otherwise
+  unchanged. B1 stays the default.
+- **Why the fold-block t.** It is the only one of the six procedures within
+  ±1 pp of 5% in all 32 pre-registered cells (worst 0.9 pp). The current
+  test, Newey-West at lag 10, is 1.8 pp off: liberal (5.7–6.8%) on the
+  symmetric null that the stepwise rule faces, and conservative on the
+  own-history null.
+- **Why 2.5% rather than 5%.** This came from simulations run after the
+  choice, in review. The pre-registered criterion fixed only the procedure.
+  - At 5%, the fold-block t does not hold a 5% false-selection rate
+    everywhere. Holm's family-wise rate reaches 6.1% (N = 6, H = 21, about
+    3 Monte Carlo SE above 5%). Under the evaluation's neighbour placebo it
+    rejects 6.1–8.1% at N = 4 and 5.6–7.6% at N = 6.
+  - At 2.5%, every simulated rate at N = 4 and 6 is at most 4.9%.
+- **The cost is power, which is low either way.** Against a challenger
+  twice as noisy as the placebo (as B3 is on the synthetic demo), at an RPS
+  gain of 0.0005 and N = 4: 48% at 5%, 36% at 2.5%. At three times the
+  noise (M1-like): 29% and 20%.
+- **The alternative** is the fold-block t at 5%, which meets the
+  pre-registered bar. Both are set out for the owner below.
 
 ## Pre-registration (written before running)
 
@@ -276,41 +291,85 @@ noisier.
   Newey-West SE of B3 − B1 is about 2.5 × 10⁻⁴ and of M1 − B1 about
   4.4 × 10⁻⁴: about 2× and 3× the placebo's at N = 4.
 - The t-ratio is scale-free, so power against δ at k times the noise equals
-  power against δ/k at the simulated noise. For the fold-block t at N = 4,
-  by a noncentral-t(18) approximation (it ran 1–3.5 pp above the simulated
-  power where both exist):
+  the simulated power against δ/k. These are simulated, from the same
+  seeds, with δ/2 and δ/3 added (`stock_lab_a7_noise_power.json` and
+  `stock_lab_a7_stricter_level.json`).
 
-  | Noise | Power at δ = 0.0005 | Power at δ = 0.001 | Gain detected with 80% power |
-  |---|---|---|---|
-  | placebo (1×) | ~94% | ~100% | 0.0004 |
-  | B3-like (2×) | ~49% | ~94% | 0.0008 |
-  | M1-like (3×) | ~29% | ~70% | 0.0012 |
+**Power and false selection for the fold-block t at H = 63 (power ranges
+run over the four half-lives in brackets)**
+
+| Level | N | Power, 2× noise, δ = 0.0005 | Power, 3× noise, δ = 0.0005 | Power, 2× noise, δ = 0.001 | Power, 3× noise, δ = 0.001 |
+|---|---|---|---|---|---|
+| 5% | 4 | 48% (43–73%) | 29% (26–46%) | 91% (87–99%) | 67% (60–89%) |
+| 5% | 6 | 59% (52–83%) | 36% (32–56%) | 97% (95–100%) | 78% (72–95%) |
+| 2.5% | 4 | 36% (31–61%) | 20% (17–34%) | 84% (78–98%) | 55% (48–82%) |
+| 2.5% | 6 | 46% (40–72%) | 25% (21–44%) | 93% (90–100%) | 68% (60–91%) |
+
+**The stricter level, simulated after review (reported only; N = 4 and 6,
+the evaluable watchlist; ranges over the four half-lives)**
+
+| Fold-block t | One comparison, own-history (shadow) | Symmetric | Holm family, any false selection | One comparison, neighbour placebo |
+|---|---|---|---|---|
+| 5%, N = 4 | 4.9–5.4% | 4.9–5.2% | 4.9–5.8% | 6.1–8.1% |
+| 5%, N = 6 | 4.6–5.8% | 4.7–5.0% | 4.4–6.1% | 5.6–7.6% |
+| 2.5%, N = 4 | 2.6–2.9% | 2.3–2.6% | 2.5–3.2% | 3.3–4.9% |
+| 2.5%, N = 6 | 2.3–3.2% | 2.4% | 2.3–3.4% | 3.4–4.7% |
+
+- The 2.5% runs use `--set nominal=0.025`: Holm's levels become 0.625%,
+  0.83%, 1.25% and 2.5%, and the steps 2.5%.
+- The neighbour column comes from `--evaluation-check --set nominal=0.025`
+  (`stock_lab_a7_evaluation_check_025.json`; 1,000 panels, Monte Carlo SE
+  about 0.6 pp).
+- The neighbour placebo has one challenger, so its family rate is not
+  simulated. In the shadow design the family rate stayed within 0.5 pp of
+  the one-comparison rate in every cell.
 
 ## Recommendation
 
-**The fold-block t decides "a challenger beats B1". B1 stays the default.**
+**The fold-block t at a one-sided family level of 2.5% decides "a
+challenger beats B1". B1 stays the default.**
 
 - **Statistic.** d̄_f is the mean of the pooled daily differential over the
   test dates of yearly fold f (the evaluation's folds, 2006–2024 for names
   listed by 2003: F = 19). Then τ = mean_f(d̄_f) / (s_F / √F), with one-sided
   p = P(t_(F−1) ≤ τ).
-- **Holm, F = 19 (t(18)), lower-tail critical values.** τ < −2.445 at
-  1.25%, −2.304 at 1.67%, −2.101 at 2.5% and −1.734 at 5%
-  (`decision_tests.PLANNED_FOLD_T`, reproduced in tests). With fewer folds
-  the degrees of freedom are F − 1. Below three folds the test is
-  unavailable, and B1 stays.
+- **Holm at 2.5%, F = 19 (t(18)), lower-tail critical values.** τ < −2.775
+  at 0.625%, −2.639 at 0.83%, −2.445 at 1.25% and −2.101 at 2.5%
+  (`decision_tests.PLANNED_FOLD_T_STRICT`, reproduced in tests).
 - **Steps.** A more complex winner replaces the current choice only if its
-  fold-block t against it gives τ < −1.734 (5%, unadjusted, as now).
-- **Reported beside it, never deciding.** Newey-West (lag 10) and the
-  circular block bootstrap, as now.
+  fold-block t against it gives τ < −2.101 (2.5%, unadjusted).
+- **Why the stricter level is recommended.** At 5% the fold-block t keeps
+  each test's own distortion within 1 pp, but it does not hold the
+  false-selection rate at 5%:
+  - Holm's family rate reaches 6.1%;
+  - B1's learning imbalance, under the neighbour placebo, takes one
+    comparison to 6–8% at N = 4 and 6.
+
+  At 2.5% every simulated rate at N = 4 and 6 is at most 4.9%, under both
+  placebos. The highest, the neighbour placebo's 4.9% (N = 4, H = 126),
+  has a Monte Carlo SE of 0.7 pp, so it is "at or near 5%", not certainly
+  below it. The price is power: at twice the placebo's noise, a gain of
+  0.0005 is found 36% rather than 48% of the time at N = 4.
+- **The alternative: the fold-block t at 5%.** It meets the pre-registered
+  ±1 pp bar. Its Holm critical values are τ < −2.445 at 1.25%, −2.304 at
+  1.67%, −2.101 at 2.5% and −1.734 at 5% (`decision_tests.PLANNED_FOLD_T`),
+  and its steps use −1.734. Choose it to favour power and accept up to
+  about 8% false selection at N = 4–6.
+- **Both levels:**
+  - with fewer folds, the degrees of freedom are F − 1;
+  - below three folds the test is unavailable, and B1 stays;
+  - Newey-West (lag 10) and the circular block bootstrap stay reported
+    only.
 - **Already computed.** The evaluation already records the fold-block t for
   every comparison (`fold_t_p_one_sided`). Adopting it changes which
-  p-value `evaluation._score` and `_select` read. It is a small follow-up,
-  after the owner's approval.
+  p-value `evaluation._score` and `_select` read, and at 2.5% the rule's
+  ALPHA. It is a small follow-up, after the owner's approval.
 - **For reference only (not admissible):** the runner-up, Newey-West with
-  M = 479 and fixed-b critical values −2.637, −2.484, −2.246 and −1.839.
+  M = 479 and fixed-b critical values −2.637, −2.484, −2.246 and −1.839
+  at 5%.
   - The simulated fixed-b 95% point at b = 0.1 is 1.839. Kiefer and
-    Vogelsang's cubic approximation gives 1.866.
+    Vogelsang's cubic approximation gives 1.866, and an independent
+    simulation in review gave 1.841 and 1.824.
   - At b = 0.019 the two agree (1.686 and 1.687).
 
 ## Remaining limitations
@@ -322,14 +381,21 @@ noisier.
      nominal. With the neighbour placebo every test reaches 6–8% at N = 4.
    - Real challengers (B3, M1) learn from the stock's own past in
      different ways, so their imbalance is unknown.
-   - Read a nominal 5% per comparison as up to about 8% at N = 4–6.
-   - Options, not tested here, for the owner: a stricter level, or
-     confirmation in the prospective ledger (A4) before any challenger's
-     probabilities are shown as preferred.
+   - At 5%, read the nominal level as up to about 8% per comparison at
+     N = 4–6. At 2.5%, the simulated rate stays at most 4.9%.
+   - That holds only for the two placebos simulated. A third kind of
+     challenger could differ.
+   - Confirmation in the prospective ledger (A4), before any challenger's
+     probabilities are shown as preferred, is a further safeguard. It was
+     not simulated.
 2. **Few stocks.** The evaluable watchlist is about 4 to 6 names (SKHY may
    be unsupported, and SNDK's pre-2025 history is another company's). At a
-   correlation of 0.5 the cross-section adds little (above). A realistic
-   challenger's gain of 0.0005 is found about a third to half the time.
+   correlation of 0.5 the cross-section adds little (above).
+   - A B3-like challenger's gain of 0.0005 is found 48% of the time at 5%
+     and 36% at 2.5% (N = 4).
+   - An M1-like challenger's is found 29% and 20% of the time.
+   - Small real gains will usually not be detected, and B1 will usually be
+     kept.
 3. **Few folds.** The fold-block t's sample is 19 yearly means.
    - Its t(18) critical values cost a little power.
    - One extreme year, such as 2008 or 2020, is one nineteenth of the
@@ -349,9 +415,13 @@ noisier.
      The stepwise moves are unadjusted (the symmetric null: the fold-block
      t at 4.3–6.1%).
    - Sensitivities stay reported only.
-   - This packet tried 6 procedures on 32 simulated cells, plus one
-     sensitivity and one check run after the choice. All were synthetic,
-     and no real result was seen.
+   - This packet tried 6 procedures on 32 simulated cells. After the
+     choice it ran:
+     - one sensitivity (constant volatility);
+     - the evaluation's size check;
+     - in review, a second level (2.5%) and extra power shifts.
+
+     All were synthetic, and no real result was seen.
    - A new challenger (for example B2's per-stock tilts), or a rerun after
      the A3 results, spends further budget and must be recorded.
 7. **The simulation's own choices.** These are reasons the numbers could
@@ -359,16 +429,19 @@ noisier.
    - The challengers are B1 placebos, and the alternatives are location
      shifts.
    - Late listings are warmed up on latent history.
-   - The family's false-selection rate for the fold-block t reaches 6.1%
-     in one cell (N = 6, H = 21), against 5.8% for that cell's single
-     comparison.
+   - The family's false-selection rate for the fold-block t at 5% reaches
+     6.1% in one cell (N = 6, H = 21), about 3 Monte Carlo SE above 5%,
+     against 5.8% for that cell's single comparison.
+   - The 2.5% level was chosen after the results, so it is a post hoc
+     option, not a pre-registered one.
 
 ## Owner decision
 
-A7: adopt the fold-block t (t(F − 1) on the yearly fold means, Holm across
-the four challengers at one-sided 5%, unadjusted 5% for the simplest-first
-steps) as the test that decides "beats B1". Newey-West (lag 10) and the
-block bootstrap would be reported only, and B1 stays the default. Approve or
+A7: adopt the fold-block t (t(F − 1) on the yearly fold means) as the test
+that decides "beats B1", **at a one-sided family level of 2.5%** (Holm
+across the four challengers; 2.5% for the simplest-first steps), or
+alternatively at 5%. Newey-West (lag 10) and the block bootstrap would be
+reported only, and B1 stays the default. Approve 2.5%, approve 5%, or
 decline.
 
 ## Learning notes

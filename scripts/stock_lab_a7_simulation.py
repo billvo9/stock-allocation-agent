@@ -11,10 +11,12 @@ first run. Nothing here changes the evaluation's rule: B1 stays the default.
 constant volatility, `--set arch=0.0 garch=0.0`): it is labelled as such and
 reported only; the pre-registered choice is the default run's.
 
+A tuple field takes comma-separated numbers (`--set deltas=0.00025,0.0005`).
+
 `--evaluation-check` instead runs the evaluation's own recorded size check
 (size_simulation: the neighbour placebos, iid returns, the three reported
 tests, 1,000 panels) at the planned shapes: each universe size, 19 test years.
-Reported only.
+Reported only; `--set nominal=0.025` changes its level.
 
 Usage:
     .venv/bin/python scripts/stock_lab_a7_simulation.py \
@@ -32,7 +34,7 @@ import json
 import sys
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 from typing import TextIO
 
@@ -49,10 +51,24 @@ def _run(args: tuple[int, Mapping]) -> dict:
     return ps.simulate_planned(ps.planned_design(names, **overrides))
 
 
-def _evaluation_check(names: int) -> dict:
+def _evaluation_check(args: tuple[int, Mapping]) -> dict:
+    names, changed = args
     config = evaluation.EvaluationConfig()
     design = evaluation.size_design(config, names=names, years=ps.PlannedDesign.years)
-    return size_simulation.simulate_size(design)
+    return size_simulation.simulate_size(replace(design, **changed))
+
+
+def _parse_sets(parser: argparse.ArgumentParser, items: Sequence[str], allowed: set[str]) -> dict:
+    """FIELD=VALUE pairs: a number, or comma-separated numbers for a tuple field."""
+
+    changed = {}
+    for item in items:
+        name, _, value = item.partition("=")
+        if name not in allowed:
+            parser.error(f"--set: {name!r} cannot be changed here")
+        numbers = [float(v) if "." in v or "e" in v else int(v) for v in value.split(",")]
+        changed[name] = tuple(float(v) for v in numbers) if "," in value else numbers[0]
+    return changed
 
 
 def evaluation_table(sizes: Sequence[Mapping]) -> str:
@@ -162,7 +178,10 @@ def main(
         nargs="+",
         default=[],
         metavar="FIELD=VALUE",
-        help="a sensitivity run: numeric design fields changed (reported only, never chosen on)",
+        help=(
+            "a sensitivity run: numeric design fields changed, a tuple field as comma-separated "
+            "numbers (reported only, never chosen on); with --evaluation-check only nominal"
+        ),
     )
     parser.add_argument(
         "--evaluation-check",
@@ -171,28 +190,30 @@ def main(
     )
     args = parser.parse_args(argv)
     if args.evaluation_check:
+        changed = _parse_sets(parser, args.set, {"nominal"})
+        work = [(names, changed) for names in args.sizes]
         if args.jobs > 1:
             with ProcessPoolExecutor(max_workers=args.jobs) as pool:
-                checks = list(pool.map(_evaluation_check, args.sizes))
+                checks = list(pool.map(_evaluation_check, work))
         else:
-            checks = [_evaluation_check(names) for names in args.sizes]
+            checks = [_evaluation_check(item) for item in work]
         record = {
             "schema": SCHEMA,
             "schema_version": SCHEMA_VERSION,
             "data_class": "synthetic",
             "role": "the evaluation's size check at the planned shapes (reported only)",
+            "changed": changed,
             "sizes": checks,
         }
         args.out.write_text(json.dumps(record, indent=1, allow_nan=False) + "\n", encoding="utf-8")
         print(evaluation_table(checks), file=out)
         return 0
-    changed = {}
-    numeric = {f.name for f in fields(ps.PlannedDesign) if f.type in ("float", "int")}
-    for item in args.set:
-        name, _, value = item.partition("=")
-        if name not in numeric - {"names", "seed"}:
-            parser.error(f"--set: {name!r} is not a numeric design field")
-        changed[name] = float(value) if "." in value or "e" in value else int(value)
+    numeric = {
+        f.name for f in fields(ps.PlannedDesign) if f.type in ("float", "int", "tuple[float, ...]")
+    }
+    changed = _parse_sets(parser, args.set, numeric - {"names", "seed"})
+    pre_registered = not changed and not overrides
+    pre_registered &= args.sizes == list(ps.UNIVERSE_SIZES) and args.reps == ps.REPS
     settings = {"reps": args.reps, **changed, **(overrides or {})}
     work = [(names, settings) for names in args.sizes]
     if args.jobs > 1:
@@ -206,7 +227,7 @@ def main(
         "schema_version": SCHEMA_VERSION,
         "data_class": "synthetic",
         "use": "owner decision A7; B1 stays the default; no real data",
-        "role": "sensitivity (reported only)" if changed else "pre-registered",
+        "role": "pre-registered" if pre_registered else "sensitivity (reported only)",
         "changed": changed,
         "procedures": list(dt.PROCEDURES),
         "deltas": list(sizes[0]["design"]["deltas"]),

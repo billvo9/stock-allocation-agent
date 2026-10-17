@@ -73,6 +73,9 @@ KV_BARTLETT = {
 # dates), at holm_levels(0.05, 4) = 1.25%, 1.67%, 2.5% and 5% (reproduced in
 # tests): the fold-block t's t(18), and fixed_b_table's default simulation.
 PLANNED_FOLD_T = (-2.4450, -2.3043, -2.1009, -1.7341)
+# The same t(18) at the stricter family level, holm_levels(0.025, 4) =
+# 0.625%, 0.83%, 1.25% and 2.5% (the packet's recommended option).
+PLANNED_FOLD_T_STRICT = (-2.7745, -2.6391, -2.4450, -2.1009)
 PLANNED_FIXED_B = {
     "nw_fixed_b_sqrt": (-2.3196, -2.2006, -2.0216, -1.6859),  # M = 90, b = 0.0188
     "nw_fixed_b_tenth": (-2.6372, -2.4837, -2.2456, -1.8390),  # M = 479, b = 0.1000

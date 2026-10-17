@@ -170,17 +170,33 @@ def test_fixed_b_draws_are_seeded_symmetric_and_need_the_planned_bandwidth():
 
 
 def test_fixed_b_critical_values_meet_the_normal_limit_and_kiefer_vogelsang():
-    """As b -> 0 the fixed-b limit is the normal. At b = 0.019 and 0.1 the
-    simulated 95% and 97.5% points agree with Kiefer and Vogelsang's cubic
-    approximation to within 0.05 (it reads about 0.03 higher at b = 0.1)."""
+    """
+    As b -> 0 the fixed-b limit is the normal.
+
+    At b = 0.019 the simulated 95% and 97.5% points agree with Kiefer and
+    Vogelsang's cubic approximation to within 0.02, about two Monte Carlo
+    standard errors of the 97.5% point at 100,000 values.
+
+    At b = 0.1 the cubic sits above the simulation, by 0.027 (95%) and 0.015
+    (97.5%) here. This gap is known, so the test pins it in a one-sided band
+    instead of hiding it in a wide tolerance:
+    - an independent simulation in review gave 1.841 and 1.824 against the
+      cubic's 1.866;
+    - finer discretizations, from 250 to 9,576 steps, did not close it;
+    - the cubic is a fit across b. The simulated value is the one used.
+    """
 
     tiny = dt.fixed_b_critical_values(0.001, [0.05, 0.025])
     np.testing.assert_allclose(tiny, [normal_ppf(0.05), normal_ppf(0.025)], atol=0.03)
-    for b in (0.019, 0.1):
-        simulated = -dt.fixed_b_critical_values(b, [0.05, 0.025])
-        published = [dt.kiefer_vogelsang(b, 0.95), dt.kiefer_vogelsang(b, 0.975)]
-        np.testing.assert_allclose(simulated, published, atol=0.05)
-        assert (simulated > [1.6449, 1.96]).all()  # wider than the normal's
+    published = {
+        b: [dt.kiefer_vogelsang(b, 0.95), dt.kiefer_vogelsang(b, 0.975)] for b in (0.019, 0.1)
+    }
+    simulated = {b: -dt.fixed_b_critical_values(b, [0.05, 0.025]) for b in (0.019, 0.1)}
+    np.testing.assert_allclose(simulated[0.019], published[0.019], atol=0.02)
+    gap = np.array(published[0.1]) - simulated[0.1]
+    assert ((gap > 0.005) & (gap < 0.045)).all(), gap
+    for values in simulated.values():
+        assert (values > [1.6449, 1.96]).all()  # wider than the normal's
 
 
 def test_the_planned_fold_block_critical_values_are_reproduced():
@@ -195,6 +211,9 @@ def test_the_planned_fold_block_critical_values_are_reproduced():
     )
     np.testing.assert_allclose(stats["fold_block_t"].critical[0], dt.PLANNED_FOLD_T, atol=5e-5)
     np.testing.assert_allclose(dt.PLANNED_FOLD_T, [student_t_ppf(q, 18) for q in LEVELS], atol=5e-5)
+    strict = dt.holm_levels(0.025, 4)
+    expected = [student_t_ppf(q, 18) for q in strict]
+    np.testing.assert_allclose(dt.PLANNED_FOLD_T_STRICT, expected, atol=5e-5)
 
 
 def test_the_planned_fixed_b_critical_values_are_reproduced():

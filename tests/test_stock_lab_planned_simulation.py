@@ -291,8 +291,24 @@ def test_the_recorded_run_reproduces_its_choice_and_critical_values():
     assert sensitivity["role"] == "sensitivity (reported only)"
     assert sensitivity["changed"] == {"arch": 0.0, "garch": 0.0}
     check = json.loads((RECORD.parent / "stock_lab_a7_evaluation_check.json").read_text("utf-8"))
-    assert "reported only" in check["role"]
+    assert "reported only" in check["role"] and check["changed"] == {}
     assert [size["design"]["names"] for size in check["sizes"]] == list(ps.UNIVERSE_SIZES)
+    # The review's stricter-level option: the same seeds at N = 4 and 6.
+    shifts = [0.0001666667, 0.00025, 0.0003333333, 0.0005, 0.001]
+    for name, changes in (
+        ("stock_lab_a7_noise_power.json", {"deltas": shifts}),
+        ("stock_lab_a7_stricter_level.json", {"deltas": shifts, "nominal": 0.025}),
+    ):
+        run = json.loads((RECORD.parent / name).read_text("utf-8"))
+        assert run["role"] == "sensitivity (reported only)" and run["changed"] == changes
+        for size, planned in zip(run["sizes"], record["sizes"][:2], strict=True):
+            assert size["design"]["seed"] == planned["design"]["seed"]
+            if "nominal" not in changes:  # extra shifts leave every size untouched
+                for cell, same in zip(size["cells"], planned["cells"], strict=True):
+                    assert cell["size_own"] == same["size_own"]
+    strict = json.loads((RECORD.parent / "stock_lab_a7_evaluation_check_025.json").read_text())
+    assert strict["changed"] == {"nominal": 0.025}
+    assert all(size["design"]["nominal"] == 0.025 for size in strict["sizes"])
 
 
 # --- the owner-run script ---
@@ -316,14 +332,17 @@ def test_the_script_writes_the_record_and_prints_the_tables(tmp_path):
     text = out.getvalue()
     assert "Size, own-history null" in text and f"Chosen: `{record['choice']['chosen']}`" in text
     assert math.isfinite(record["sizes"][0]["cells"][0]["variance_ratio"])
-    assert record["role"] == "pre-registered"
+    assert record["role"] == "sensitivity (reported only)"  # not the pre-registered sizes and reps
     sensitivity = tmp_path / "sensitivity.json"
     argv = ["--out", str(sensitivity), "--sizes", "4", "--reps", "6", "--set", "arch=0.0"]
-    assert script.main([*argv, "garch=0.0"], out=io.StringIO(), overrides=overrides) == 0
+    sets = ["garch=0.0", "deltas=0.00025,0.0005"]
+    assert script.main([*argv, *sets], out=io.StringIO(), overrides=overrides) == 0
     changed = json.loads(sensitivity.read_text(encoding="utf-8"))
     assert changed["role"] == "sensitivity (reported only)"
-    assert changed["changed"] == {"arch": 0.0, "garch": 0.0}
+    assert changed["changed"] == {"arch": 0.0, "garch": 0.0, "deltas": [0.00025, 0.0005]}
     assert changed["sizes"][0]["design"]["garch"] == 0.0
+    cell = changed["sizes"][0]["cells"][0]
+    assert [p["delta"] for p in cell["power_own"]] == [0.00025, 0.0005]
     with pytest.raises(SystemExit):
         script.main(["--out", str(sensitivity), "--set", "names=3"], out=io.StringIO())
 
@@ -345,9 +364,13 @@ def test_the_script_runs_the_evaluations_size_check_at_a_planned_shape(tmp_path,
 
     monkeypatch.setattr(evaluation, "size_design", shrunk)
     out, target = io.StringIO(), tmp_path / "check.json"
-    argv = ["--evaluation-check", "--sizes", "4", "--out", str(target)]
+    argv = ["--evaluation-check", "--sizes", "4", "--out", str(target), "--set", "nominal=0.025"]
     assert script.main(argv, out=out) == 0
     assert seen == [(4, 19)]
     record = json.loads(target.read_text(encoding="utf-8"))
     assert record["sizes"][0]["status"] == "ok" and "reported only" in record["role"]
+    assert record["changed"] == {"nominal": 0.025}
+    assert record["sizes"][0]["design"]["nominal"] == 0.025
+    with pytest.raises(SystemExit):  # only the level can change there
+        script.main(["--evaluation-check", "--out", str(target), "--set", "reps=3"], out=out)
     assert "other_vs_own" in out.getvalue() and "`fold_block_t`" in out.getvalue()
