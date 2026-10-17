@@ -141,13 +141,14 @@ So 80% is a target, not a guarantee. The sequential development estimate has the
 
 Per asset × horizon × target:
 - the point forecast, the 10% and 90% band ends, and the historical-mean null;
+- the unadjusted as-of close (`as_of_close`, forecast schema 1.1), which fixes any zero-volatility floor at the decision time;
 - the model id, version and entry hash, and the computed stage;
 - the development coverage and the band method and level;
 - `display_percent` values for the panel: log return × 100, or daily volatility in percent.
 
 Per record:
 - `as_of_session`, `created_at`, `close_available_at` and `record_deadline`;
-- the bundle id, manifest hash, config hash and status;
+- the bundle id, manifest hash, config hash and status, and the zero-volatility rule the bundle was trained under (`bundle.zero_volatility_rule`);
 - the window fingerprint, the calendar id, `retrieved_by`, 63 returns from 64 closes, and the window's `batches`, `missing`, `revisions` and `complete` flag;
 - any refused assets (`refusals`), the code state, the conventions and the fixed labels.
 
@@ -156,7 +157,8 @@ Per record:
 - **When a row is scored.** Once its exit session (entry + h) is in the store, as read with `retrieved_by` = the scoring time, and that close is available (18:00 New York). The outcome window runs from the earliest pending as-of session to the scoring close, and its lineage is recorded. It is recorded with its outcome, whether the outcome is inside the band, and the model's and the null's errors.
 - **When a row waits.** A row whose inputs are incomplete (a missing close in its window) is left pending with its reason, never scored as missing.
 - **Zero realized volatility.** If every return in a volatility outcome's window is 0 (possible for SHV, whose close moves in $0.01 steps), the log volatility is minus infinity, below every band. It is scored as outside the band, with no error, and never left pending: leaving such outcomes out would bias coverage upward.
-  - Every scored volatility row also records the zero-volatility rule, `sigma_raw`, `measured_zero`, `floored` and `sigma_floor` (score schema 1.1), and a ledger is never scored under two rules.
+  - Every scored volatility row also records the zero-volatility rule, `sigma_raw`, `measured_zero`, `floored`, `sigma_floor`, the `as_of_close` used and whether the store has since revised it (score schema 1.1).
+  - Scoring refuses any rule other than the forecast's bundle rule (`zero_vol_rule_not_trained`), and a ledger is never scored under two rules (`zero_vol_rule_mismatch`).
   - The research-only floor B2 and its development check are in `docs/research/zero_vol_floor.md`. The rule in force is unchanged until the owner decides.
 - **The cumulative report.** Each scoring run stores it:
   - per variant (bundle, config hash, model id and version), asset, horizon and target: n, hits, coverage and a Wilson 95% interval. A re-freeze is never pooled with earlier forecasts;

@@ -75,7 +75,7 @@ def sigma_floor(as_of_close: object, horizon: int, tick: float = TICK) -> np.nda
 
 
 def as_of_closes(dates: pd.Series, prices: pd.DataFrame, fund_id: str) -> np.ndarray:
-    """The fund's unadjusted close on each of `dates` (NaN where it has none)."""
+    """The fund's unadjusted close on each of `dates` (NaN where it has none), a new array."""
 
     own = prices.loc[
         (prices["fund_id"] == fund_id) & (prices["adjustment_basis"] == series.UNADJUSTED),
@@ -84,7 +84,7 @@ def as_of_closes(dates: pd.Series, prices: pd.DataFrame, fund_id: str) -> np.nda
     index = pd.DatetimeIndex(pd.to_datetime(own["session_date"], utc=True)).as_unit("ns")
     closes = pd.Series(own["close"].to_numpy(np.float64), index=index)
     wanted = pd.DatetimeIndex(pd.to_datetime(dates, utc=True)).as_unit("ns")
-    return closes.reindex(wanted).to_numpy(np.float64)
+    return np.array(closes.reindex(wanted).to_numpy(np.float64))  # writable, never a view
 
 
 def volatility_labels(

@@ -18,15 +18,25 @@ zero_vol.B2 it reports:
                    bands re-scored with every measured-zero row in a scored
                    fold as a miss, which is what prospective scoring does
     zero split     coverage on measured-zero and non-zero rows separately
+    non-zero       on rows scored under both rules: each rule's coverage on
+                   non-zero rows, and the difference (what the floor does to
+                   the rows it does not floor)
     band width     the mean width of the scored bands
-    QLIKE          the improvement over the historical-mean null
+    losses         QLIKE and squared-error improvements over the historical-
+                   mean null
     shift          the mean residual shift, B2 minus CURRENT, on non-zero rows
 
 It then evaluates the pre-stated acceptance criteria Z1-Z4 in that order and
 stops at the first failure: the remaining criteria are not evaluated, and the
-failure is reported, never resolved by switching rules. Only when every
-criterion passes does it add the registration power estimates (development
-loss differentials under B2, on non-overlapping outcomes).
+failure is reported, never resolved by switching rules. Band calibration (R1)
+is a reported check, never a criterion: it tests the band, not the floor.
+Only when every criterion passes does it add the registration power
+estimates (development loss differentials under B2, on non-overlapping
+outcomes).
+
+The criteria were revised on 2026-10-17, before any real data existed: Z2
+replaced a band-calibration test (`ORIGINAL_Z2`, now reported as R1) by a
+test of the floor itself.
 """
 
 from __future__ import annotations
@@ -52,11 +62,14 @@ RET = "total_log_return"
 CURRENT_AS_MISS = "current_zero_as_miss"  # the CURRENT bands, measured zeros scored as misses
 NEVER_FLOORED = ("VTI", "AGG")  # pre-stated: the floor must never bind for these funds
 FLOOR_ASSET = "SHV"  # the fund whose $0.01 tick can make a window flat
-COVERAGE_TOLERANCE = 0.05
+COVERAGE_TOLERANCE = 0.05  # R1, reported only
+NONZERO_COVERAGE_TOLERANCE = 0.02  # Z2
 FLOORED_NOT_ZERO_MAX = 0.01
 RESIDUAL_SHIFT_MAX = 0.05
 GRID_TOLERANCE_CENTS = 1e-6
 QLIKE_METRIC = f"qlike_improvement_vs_{training.NULL}"
+MSE_METRIC = f"mse_improvement_vs_{training.NULL}"
+REPORTED = "reported"
 PASS, FAIL, NOT_EVALUATED = "pass", "fail", "not_evaluated"
 CRITERIA = (
     (
@@ -69,8 +82,9 @@ CRITERIA = (
     (
         "Z2",
         (
-            "SHV volatility-band coverage under B2 (fold-block estimate) is within 0.80 +- 0.05 "
-            "at every horizon, and no lower than the current bands with measured zeros as misses."
+            "On the volatility rows scored under both rules, B2's band coverage on non-zero rows "
+            "is within 0.02 of the current rule's coverage for every asset and horizon; coverage "
+            "on measured-zero rows is reported."
         ),
     ),
     (
@@ -85,6 +99,23 @@ CRITERIA = (
         (
             "The mean residual shift (B2 minus current, log volatility) on non-zero development "
             "rows is at most 0.05 in absolute value for every asset and horizon."
+        ),
+    ),
+)
+# The original Z2 (2026-10-17, before any real run), kept for the record. Revised the same
+# day, still before any real data existed: a fixed band around 0.80 tests the band's
+# calibration, which the simulated SHV-like path fails under every rule, not the floor.
+ORIGINAL_Z2 = (
+    "SHV volatility-band coverage under B2 (fold-block estimate) is within 0.80 +- 0.05 "
+    "at every horizon, and no lower than the current bands with measured zeros as misses."
+)
+REPORTED_CHECKS = (
+    (
+        "R1",
+        (
+            "Band calibration (reported, never a criterion): SHV volatility-band coverage "
+            "under B2 (fold-block estimate) against 0.80 +- 0.05 at every horizon, and "
+            "against the current bands with measured zeros as misses."
         ),
     ),
 )
@@ -123,6 +154,7 @@ class CheckReport:
     tables: Mapping[str, pd.DataFrame]
     criteria: tuple[Mapping[str, object], ...]
     registration_power: pd.DataFrame | None
+    reported: tuple[Mapping[str, object], ...] = ()
     labels: tuple[str, ...] = field(default=LABELS)
 
 
@@ -382,6 +414,41 @@ def zero_split(evidence_: Evidence, rescored: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def nonzero_coverage(evidence_: Evidence) -> pd.DataFrame:
+    """
+    Per asset x horizon, on the volatility rows with a band under both rules
+    that are not measured zeros: the share inside each rule's band and the
+    difference (B2 minus CURRENT).
+    """
+
+    keys = ["fold_id", "date", "symbol", "horizon"]
+
+    def scored(dev):
+        own = dev.bands.loc[(dev.bands["target"] == VOL) & dev.bands["band_low"].notna()]
+        return own.assign(inside=bands.inside(own)).loc[:, [*keys, "inside"]]
+
+    joined = scored(evidence_.dev_current).merge(
+        scored(evidence_.dev_b2), on=keys, suffixes=("_current", "_b2"), validate="one_to_one"
+    )
+    joined = joined.merge(
+        _flag_lookup(diagnostics(evidence_.b2)),
+        on=["date", "symbol", "horizon"],
+        how="left",
+        validate="many_to_one",
+    )
+    joined = joined.loc[~joined["measured_zero"].astype(bool)]
+    grouped = joined.groupby(["symbol", "horizon"], sort=True)
+    frame = pd.DataFrame(
+        {
+            "n_common": grouped.size(),
+            "coverage_current": grouped["inside_current"].mean(),
+            "coverage_b2": grouped["inside_b2"].mean(),
+        }
+    ).reset_index()
+    frame["difference"] = frame["coverage_b2"] - frame["coverage_current"]
+    return frame.rename(columns={"symbol": "asset"})
+
+
 def band_widths(dev: training.Development, rule: str) -> pd.DataFrame:
     scored = dev.bands.loc[dev.bands["band_low"].notna()]
     width = (scored["band_high"] - scored["band_low"]).rename("width")
@@ -471,6 +538,35 @@ def _z1(tables: Mapping[str, pd.DataFrame], config: ProspectiveConfig) -> tuple[
 
 
 def _z2(tables: Mapping[str, pd.DataFrame], config: ProspectiveConfig) -> tuple[bool, str]:
+    shares = tables["nonzero_coverage"]
+    expected = {(a, h) for a in config.assets for h in config.horizons}
+    present = set(zip(shares["asset"], shares["horizon"], strict=True))
+    if present != expected or shares["difference"].isna().any():
+        return False, f"non-zero coverage unavailable for {sorted(expected - present)}"
+    worst = shares.loc[shares["difference"].abs().idxmax()]
+    zero = tables["zero_split"]
+    zero = zero.loc[(zero["rule"] == zero_vol.B2) & (zero["n_zero_rows"] > 0)]
+    reported = "; ".join(
+        f"{a} h{h} zero rows {c:.3f} (n {n})"
+        for a, h, c, n in zip(
+            zero["asset"],
+            zero["horizon"],
+            zero["coverage_zero_rows"],
+            zero["n_zero_rows"],
+            strict=True,
+        )
+    )
+    text = (
+        f"largest |difference| {abs(worst['difference']):.4f} ({worst['asset']} "
+        f"h{int(worst['horizon'])}: B2 {worst['coverage_b2']:.3f} vs current "
+        f"{worst['coverage_current']:.3f}, n {int(worst['n_common'])}); "
+        f"B2 coverage on measured zeros: {reported or 'none scored'}"
+    )
+    within = shares["difference"].abs() <= NONZERO_COVERAGE_TOLERANCE + 1e-12
+    return bool(within.all()), text
+
+
+def _r1(tables: Mapping[str, pd.DataFrame], config: ProspectiveConfig) -> tuple[bool, str]:
     coverage = tables["coverage"]
     level = config.band.level
     parts = []
@@ -523,6 +619,24 @@ CHECKS: dict[str, Callable[[Mapping[str, pd.DataFrame], ProspectiveConfig], tupl
 }
 
 
+def evaluate_reported(
+    tables: Mapping[str, pd.DataFrame], config: ProspectiveConfig
+) -> tuple[dict[str, object], ...]:
+    """The reported checks: never criteria, never a reason to stop."""
+
+    within, measured = _r1(tables, config)
+    identifier, statement = REPORTED_CHECKS[0]
+    return (
+        {
+            "id": identifier,
+            "statement": statement,
+            "status": REPORTED,
+            "within": within,
+            "measured": measured,
+        },
+    )
+
+
 def evaluate_criteria(
     tables: Mapping[str, pd.DataFrame], config: ProspectiveConfig
 ) -> tuple[dict[str, object], ...]:
@@ -571,10 +685,13 @@ def _non_overlapping(frame: pd.DataFrame) -> pd.DataFrame:
 
 def registration_power(evidence_: Evidence, config: ProspectiveConfig) -> pd.DataFrame:
     """
-    Per asset x horizon x target, from the B2 development: the loss
-    differential d = loss(null) - loss(ridge) (QLIKE for volatility, squared
-    error for return) on non-overlapping outcomes, its standardized mean, and
-    the implied power at each registered checkpoint (first Holm step).
+    Per asset x horizon x target x loss, from the B2 development: the loss
+    differential d = loss(null) - loss(ridge) on non-overlapping outcomes, its
+    standardized mean, and the implied power at each registered checkpoint
+    (first Holm step). Squared error for both targets (on log volatility for
+    volatility: option (a) of the registration's primary-loss decision) and
+    QLIKE on exp(2f) for volatility (the draft's primary loss, kept as a
+    sensitivity).
     """
 
     dev = evidence_.dev_b2
@@ -595,38 +712,45 @@ def registration_power(evidence_: Evidence, config: ProspectiveConfig) -> pd.Dat
         joined = _non_overlapping(joined.sort_values("date").reset_index(drop=True))
         y = joined["target_return"].to_numpy(np.float64)
         fitted, base = (joined[c].to_numpy(np.float64) for c in ("prediction", "prediction_null"))
-        if target == VOL:
-            d = training._qlike(y, base) - training._qlike(y, fitted)
-        else:
-            d = (y - base) ** 2 - (y - fitted) ** 2
-        n = len(d)
-        sd = float(np.std(d, ddof=1)) if n > 1 else math.nan
-        effect = float(np.mean(d)) / sd if sd > 0 else math.nan
-        row = {
-            "asset": asset,
-            "horizon": int(horizon),
-            "target": target,
-            "n_dev_outcomes": n,
-            "mean_d": float(np.mean(d)) if n else math.nan,
-            "sd_d": sd,
-            "effect": effect,
-        }
-        for name, checkpoint in registration.CHECKPOINTS.items():
-            outcomes = registration.confirmatory_outcomes(int(horizon), checkpoint)
-            level = registration.first_holm_level(checkpoint)
-            tested = outcomes >= registration.MIN_OUTCOMES and level is not None
-            row[f"n_{name}"] = outcomes
-            row[f"power_{name}"] = (
-                registration.power(effect, outcomes, level)
-                if tested and math.isfinite(effect)
-                else None
-            )
-        level = registration.first_holm_level(registration.CHECKPOINTS["12_months"])
-        row["outcomes_for_80pct_power"] = (
-            registration.outcomes_for_power(effect, level) if math.isfinite(effect) else None
-        )
-        rows.append(row)
+        losses = {"squared_error": (y - base) ** 2 - (y - fitted) ** 2}
+        if target == VOL:  # QLIKE on exp(2f): the sensitivity of option (a)
+            losses["qlike"] = training._qlike(y, base) - training._qlike(y, fitted)
+        for loss, d in losses.items():
+            rows.append(_power_row(asset, int(horizon), target, loss, d))
     return pd.DataFrame(rows)
+
+
+def _power_row(asset: str, horizon: int, target: str, loss: str, d: np.ndarray) -> dict:
+    """The standardized mean of d and the implied power at each registered checkpoint."""
+
+    n = len(d)
+    sd = float(np.std(d, ddof=1)) if n > 1 else math.nan
+    effect = float(np.mean(d)) / sd if sd > 0 else math.nan
+    row = {
+        "asset": asset,
+        "horizon": horizon,
+        "target": target,
+        "loss": loss,
+        "n_dev_outcomes": n,
+        "mean_d": float(np.mean(d)) if n else math.nan,
+        "sd_d": sd,
+        "effect": effect,
+    }
+    for name, checkpoint in registration.CHECKPOINTS.items():
+        outcomes = registration.confirmatory_outcomes(horizon, checkpoint)
+        level = registration.first_holm_level(checkpoint)
+        tested = outcomes >= registration.MIN_OUTCOMES and level is not None
+        row[f"n_{name}"] = outcomes
+        row[f"power_{name}"] = (
+            registration.power(effect, outcomes, level)
+            if tested and math.isfinite(effect)
+            else None
+        )
+    level = registration.first_holm_level(registration.CHECKPOINTS["12_months"])
+    row["outcomes_for_80pct_power"] = (
+        registration.outcomes_for_power(effect, level) if math.isfinite(effect) else None
+    )
+    return row
 
 
 # --- the whole check -------------------------------------------------------------------
@@ -658,6 +782,7 @@ def run_check(
             ignore_index=True,
         ),
         "zero_split": zero_split(found, rescored_rows),
+        "nonzero_coverage": nonzero_coverage(found),
         "band_width": pd.concat(
             [
                 band_widths(found.dev_current, zero_vol.CURRENT),
@@ -669,6 +794,13 @@ def run_check(
             [
                 _metric_summary(found.dev_current, QLIKE_METRIC, zero_vol.CURRENT),
                 _metric_summary(found.dev_b2, QLIKE_METRIC, zero_vol.B2),
+            ],
+            ignore_index=True,
+        ),
+        "mse_improvement": pd.concat(
+            [
+                _metric_summary(found.dev_current, MSE_METRIC, zero_vol.CURRENT),
+                _metric_summary(found.dev_b2, MSE_METRIC, zero_vol.B2),
             ],
             ignore_index=True,
         ),
@@ -685,6 +817,7 @@ def run_check(
         tables=tables,
         criteria=criteria,
         registration_power=registration_power(found, config) if passed else None,
+        reported=evaluate_reported(tables, config),
     )
 
 
@@ -850,6 +983,7 @@ def report_document(report: CheckReport, context: Mapping[str, object]) -> dict[
             "fingerprints": dict(report.fingerprints),
             "rules": {rule: zero_vol.DESCRIPTIONS[rule] for rule in zero_vol.RULES},
             "criteria": list(report.criteria),
+            "reported_checks": list(report.reported),
             "tables": dict(report.tables),
             "registration_power": report.registration_power,
         }
@@ -872,13 +1006,22 @@ def render_report(report: CheckReport, context: Mapping[str, object]) -> str:
         "",
         markdown_table(pd.DataFrame(report.criteria).loc[:, ["id", "status", "measured"]]),
     ]
+    if report.reported:
+        lines += [
+            "",
+            "## Reported checks (never criteria)",
+            "",
+            markdown_table(pd.DataFrame(report.reported).loc[:, ["id", "within", "measured"]]),
+        ]
     for name in (
         "window_totals",
         "cent_grid",
         "coverage",
         "zero_split",
+        "nonzero_coverage",
         "band_width",
         "qlike",
+        "mse_improvement",
         "residual_shift",
         "bit_identity",
         "windows_by_year",
@@ -903,13 +1046,17 @@ __all__ = [
     "CRITERIA",
     "CURRENT_AS_MISS",
     "EXAMPLE_CLOSES",
+    "ORIGINAL_Z2",
+    "REPORTED_CHECKS",
     "CheckRefused",
     "CheckReport",
     "Evidence",
     "evaluate_criteria",
+    "evaluate_reported",
     "evidence",
     "jsonable",
     "markdown_table",
+    "nonzero_coverage",
     "refuse_after",
     "registration_power",
     "render_examples",

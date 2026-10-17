@@ -42,11 +42,16 @@ outcome window's lineage. The window runs from the earliest pending as-of
 session to the scoring close, read with retrieved_by = scored_at. Forecast
 entries are never edited; a row is scored once.
 
-Zero realized volatility (zero_vol.py). Scoring uses the rule in force
-(`zero_vol.CURRENT`: a zero outcome is outside the band) unless research code
-passes the unapproved option `zero_vol.B2`; the job never does. Every scored
-volatility row records the rule, sigma_raw, measured_zero, floored and
-sigma_floor, and a ledger is never scored under two rules.
+Zero realized volatility (zero_vol.py). One treatment everywhere: a forecast
+records the rule its bundle was trained under, and scoring refuses any other
+rule (`zero_vol_rule_not_trained`); a ledger is never scored under two rules
+(`zero_vol_rule_mismatch`). The rule in force is `zero_vol.CURRENT` (a zero
+outcome is outside the band); `freeze` and the job cannot select the
+unapproved research option `zero_vol.B2`. Each forecast row records its
+unadjusted as-of close, and B2's floor is computed from that recorded value,
+so a later revision of the close cannot move it. Every scored volatility row
+records the rule, sigma_raw, measured_zero, floored, sigma_floor and the
+as-of close used.
 """
 
 from __future__ import annotations
@@ -66,7 +71,7 @@ from stock_agent.model_diagnostics.record import sha256_json
 from stock_agent.registry import EntryRef, RegistryReader
 from stock_agent.registry.stages import STAGES
 
-FORECAST_SCHEMA_VERSION = "1.0"
+FORECAST_SCHEMA_VERSION = "1.1"  # 1.1: the bundle's zero-volatility rule; rows' as-of close
 SCORE_SCHEMA_VERSION = "1.1"  # 1.1: volatility rows record the zero-volatility rule and flags
 ALLOWED_STAGES = STAGES[:2]  # engineering_only, development_evaluated; never higher
 UNITS = {
@@ -102,6 +107,28 @@ class Models:
     def config(self):
         return parse_config(self.bundle.document["config"])
 
+    @property
+    def zero_vol_rule(self) -> str:
+        return training_rule(self.bundle)
+
+
+def training_rule(bundle: frozen.Bundle) -> str:
+    """
+    The zero-volatility rule every fit of the bundle was trained under. A fit
+    frozen before the rule was recorded used the rule in force.
+    """
+
+    rules = {
+        fit.get("training", {}).get("zero_volatility_rule", zero_vol.CURRENT)
+        for fit in bundle.document["fits"]
+    }
+    if len(rules) != 1:
+        raise ForecastRefused("models_unverified", f"the fits disagree on the rule: {rules}")
+    rule = rules.pop()
+    if rule not in zero_vol.RULES:
+        raise ForecastRefused("models_unverified", f"unknown zero-volatility rule {rule!r}")
+    return rule
+
 
 def load_models(bundle_path: str | Path, registry: RegistryReader) -> Models:
     """The verified frozen bundle and the identity and stage of each registered fit."""
@@ -135,6 +162,7 @@ def load_models(bundle_path: str | Path, registry: RegistryReader) -> Models:
             "registered_at": entry.created_at,
             "stage": stage,
         }
+    training_rule(bundle)  # refuses a bundle whose fits disagree on the rule
     return Models(bundle, entries)
 
 
@@ -186,6 +214,10 @@ def forecast_rows(
         if not observed:  # incomplete_assets lists every missing close
             raise ForecastRefused("window", f"{asset}: no close at the forecast close")
         imputed = [name for name, value in zip(series.FEATURES, x, strict=True) if np.isnan(value)]
+        # The unadjusted as-of close, recorded so that B2's floor is fixed at the decision time.
+        as_of_close = float(
+            zero_vol.as_of_closes(pd.Series([win.forecast_close]), win.prices, asset)[0]
+        )
         for horizon in config.horizons:
             fits = {t: bundle.fit(asset, horizon, t) for t in config.targets}
             volatility = frozen.ridge_from_json(fits["log_realized_volatility"]["model"])
@@ -227,6 +259,7 @@ def forecast_rows(
                         # as cash on a split date without its share basis): imputed as in
                         # training and listed here.
                         "imputed_features": imputed,
+                        "as_of_close": as_of_close,
                     }
                 )
                 rows[-1]["display_percent"] = {
@@ -319,6 +352,7 @@ def record_forecast(
             "config_sha256": bundle.document["config_sha256"],
             "run_id": bundle.document["run_id"],
             "status": bundle.document["status"],
+            "zero_volatility_rule": models.zero_vol_rule,
         },
         "data": {
             "data_class": bundle.document["data_class"],
@@ -405,6 +439,7 @@ def _outcome(
     entry_lag: int,
     horizon: int,
     rule: str = zero_vol.DEFAULT,
+    recorded_close: float | None = None,
 ):
     sessions = list(win.sessions)
     if as_of not in sessions:
@@ -419,6 +454,16 @@ def _outcome(
     g = returns["log_return"].to_numpy(np.float64)
     if not np.isfinite(g[position + entry_lag + 1 : exit_position + 1]).all():
         return None, "outcome_inputs_unavailable"
+    # The as-of close the forecast recorded fixes B2's floor; the window's own close is
+    # compared with it, so a revision is visible but never moves the floor.
+    closes = zero_vol.as_of_closes(returns["date"], win.prices, asset)
+    window_close = float(closes[position])
+    if recorded_close is None and rule != zero_vol.CURRENT:
+        raise ForecastRefused(
+            "as_of_close_not_recorded", f"{asset}: the forecast holds no as-of close for the floor"
+        )
+    used_close = window_close if recorded_close is None else float(recorded_close)
+    closes[position] = used_close
     # The training labels' arithmetic (series.labels_from_log_returns and
     # zero_vol.volatility_labels under the same rule), at the as-of row.
     labels = {
@@ -432,7 +477,7 @@ def _outcome(
         "log_realized_volatility": zero_vol.volatility_labels(
             returns["date"],
             returns["log_return"],
-            zero_vol.as_of_closes(returns["date"], win.prices, asset),
+            closes,
             horizon=horizon,
             entry_lag=entry_lag,
             rule=rule,
@@ -450,6 +495,12 @@ def _outcome(
         "measured_zero": bool(flags["measured_zero"]),
         "floored": bool(flags["floored"]),
         "sigma_floor": sigma_floor if np.isfinite(sigma_floor) else None,
+        "as_of_close": used_close if np.isfinite(used_close) else None,
+        "as_of_close_revised": (
+            window_close != used_close
+            if recorded_close is not None and np.isfinite(window_close)
+            else None
+        ),
     }
     flat = values["log_realized_volatility"] is None and diagnostics["measured_zero"]
     return {
@@ -478,8 +529,10 @@ def score_matured(
     close_not_available, outcome_inputs_unavailable, as_of_outside_window).
 
     `zero_vol_rule` is the rule in force unless research code passes the
-    unapproved `zero_vol.B2`; a ledger already scored under another rule is
-    refused (`zero_vol_rule_mismatch`), so two rules are never pooled.
+    unapproved `zero_vol.B2`. It must be the rule every pending forecast's
+    bundle was trained under (`zero_vol_rule_not_trained` otherwise), and a
+    ledger already scored under another rule is refused
+    (`zero_vol_rule_mismatch`), so two rules are never pooled.
     """
 
     zero_vol.check_rule(zero_vol_rule)
@@ -488,6 +541,16 @@ def score_matured(
     pending = pending_rows(entries)
     if not pending:
         return None, []
+    for entry in {e.entry_sha256: e for e, _ in pending}.values():
+        # Forecasts recorded before the rule was recorded came from bundles trained under
+        # the rule in force.
+        trained = entry.payload["bundle"].get("zero_volatility_rule", zero_vol.CURRENT)
+        if trained != zero_vol_rule:
+            raise ForecastRefused(
+                "zero_vol_rule_not_trained",
+                f"entry {entry.sequence} comes from a bundle trained under {trained!r}; it is "
+                f"never scored under {zero_vol_rule!r} (one treatment in training and scoring)",
+            )
     close = window.session_stamp(score_close, "score_close")
     stamp = pd.Timestamp(scored_at).tz_convert("UTC")
     earliest = min(pd.Timestamp(entry.payload["as_of_session"], tz="UTC") for entry, _ in pending)
@@ -522,6 +585,7 @@ def score_matured(
             int(row["entry_lag"]),
             int(row["horizon"]),
             zero_vol_rule,
+            row.get("as_of_close"),
         )
         key = {
             "forecast_entry_sha256": entry.entry_sha256,
