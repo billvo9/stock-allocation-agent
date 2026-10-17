@@ -7,7 +7,8 @@ Visual language: the three directions keep one identity everywhere (theme
 and green), always paired with a marker shape so colour never carries the
 category alone; gaps stay gaps; a synthetic stock says so in every chart's
 subtitle (a chart can be exported on its own); every chart uses the Lab's
-editorial layout and has a table beside it on the page.
+editorial layout, in the viewer's colour scheme ("light" or "dark") which
+the page passes in, and has a table beside it on the page.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ def _subtitle(text: str, synthetic: bool) -> str:
     return f"{words.SYNTHETIC_CHART} · {text}" if synthetic else text
 
 
-def price_figure(frame: pd.DataFrame, *, synthetic: bool) -> go.Figure:
+def price_figure(frame: pd.DataFrame, *, synthetic: bool, scheme: str = "light") -> go.Figure:
     """The split-consistent price on the last shown session's share basis (log axis)."""
 
     figure = go.Figure(
@@ -33,7 +34,7 @@ def price_figure(frame: pd.DataFrame, *, synthetic: bool) -> go.Figure:
             y=frame["display_level"],
             mode="lines",
             name=words.PRICE_SERIES,
-            line={"color": theme.LAB_COLOURS["text"], "width": 1.5},
+            line={"color": theme.LAB_PALETTES[scheme]["text"], "width": 1.5},
             connectgaps=False,
             hovertemplate="%{x|%Y-%m-%d}: %{y:,.2f}<extra></extra>",
         )
@@ -44,6 +45,7 @@ def price_figure(frame: pd.DataFrame, *, synthetic: bool) -> go.Figure:
         y_title=words.PRICE_AXIS,
         subtitle=_subtitle(words.PRICE_SUBTITLE, synthetic),
         height=360,
+        scheme=scheme,
     )
     layout["yaxis"].update({"type": "log"})
     layout["showlegend"] = False
@@ -51,9 +53,12 @@ def price_figure(frame: pd.DataFrame, *, synthetic: bool) -> go.Figure:
     return figure
 
 
-def recent_figure(recent: pd.DataFrame, band: StableBand, *, synthetic: bool) -> go.Figure:
+def recent_figure(
+    recent: pd.DataFrame, band: StableBand, *, synthetic: bool, scheme: str = "light"
+) -> go.Figure:
     """The last sessions' price returns, one marker per session, by direction."""
 
+    tokens = theme.LAB_PALETTES[scheme]
     figure = go.Figure()
     for category in CATEGORIES:
         rows = recent[recent["category"].eq(category.value)]
@@ -66,7 +71,7 @@ def recent_figure(recent: pd.DataFrame, band: StableBand, *, synthetic: bool) ->
                 marker={
                     "symbol": theme.DIRECTION_MARKERS[category.value],
                     "size": 9,
-                    "color": theme.DIRECTION_COLOURS[category.value],
+                    "color": theme.DIRECTION_PALETTES[scheme][category.value],
                 },
                 hovertemplate="%{x|%Y-%m-%d}: %{y:+.2%}<extra>%{fullData.name}</extra>",
             )
@@ -74,10 +79,10 @@ def recent_figure(recent: pd.DataFrame, band: StableBand, *, synthetic: bool) ->
     for edge, label in ((band.tau, f"+{band.words()[1:]}"), (-band.tau, f"−{band.words()[1:]}")):
         figure.add_hline(
             y=edge,
-            line={"color": style.REFERENCE_LINE, "dash": "dot", "width": 1},
+            line={"color": tokens["reference_line"], "dash": "dot", "width": 1},
             annotation_text=label,
             annotation_position="right",
-            annotation_font={"color": theme.LAB_COLOURS["text_muted"]},
+            annotation_font={"color": tokens["text_muted"]},
         )
     layout = style.lab_layout(
         words.RECENT_TITLE.format(count=len(recent)),
@@ -85,9 +90,10 @@ def recent_figure(recent: pd.DataFrame, band: StableBand, *, synthetic: bool) ->
         y_title="Price return",
         subtitle=_subtitle(words.RECENT_SUBTITLE, synthetic),
         height=340,
+        scheme=scheme,
     )
     layout["yaxis"].update(
-        {"tickformat": ".2%", "zeroline": True, "zerolinecolor": style.REFERENCE_LINE}
+        {"tickformat": ".2%", "zeroline": True, "zerolinecolor": tokens["reference_line"]}
     )
     figure.update_layout(**layout)
     return figure

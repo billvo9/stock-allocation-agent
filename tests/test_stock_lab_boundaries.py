@@ -108,14 +108,15 @@ def test_importing_the_page_side_loads_no_network_or_research_module():
     }
 
 
-def test_direction_colours_are_legible_and_never_carry_a_category_alone():
-    assert (
-        set(theme.DIRECTION_COLOURS)
-        == set(theme.DIRECTION_MARKERS)
-        == set(theme.DIRECTION_PATTERNS)
-    )
-    for colour in theme.DIRECTION_COLOURS.values():
+@pytest.mark.parametrize("scheme", theme.SCHEMES)
+def test_direction_colours_are_legible_and_never_carry_a_category_alone(scheme):
+    colours = theme.DIRECTION_PALETTES[scheme]
+    assert theme.DIRECTION_PALETTES["light"] is theme.DIRECTION_COLOURS
+    assert set(colours) == set(theme.DIRECTION_MARKERS) == set(theme.DIRECTION_PATTERNS)
+    assert len(set(colours.values())) == 3
+    for colour in colours.values():
         for surface in ("surface", "canvas"):
-            assert theme.contrast_ratio(colour, theme.LAB_COLOURS[surface]) >= 3.0, colour
+            ratio = theme.contrast_ratio(colour, theme.LAB_PALETTES[scheme][surface])
+            assert ratio >= 3.0, (scheme, colour, surface)
     assert len(set(theme.DIRECTION_MARKERS.values())) == 3
     assert len(set(theme.DIRECTION_PATTERNS.values())) == 3

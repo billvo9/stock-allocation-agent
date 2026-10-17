@@ -92,6 +92,10 @@ CANDIDATE_FALLBACK = ("#8C2D04", "#2B5C8A")
 # 3:1 on the Lab's chart surface, and always paired with a marker or pattern
 # so colour never carries the category alone.
 DIRECTION_COLOURS = {"increase": "#0072B2", "stable": "#6E675C", "decrease": "#C04F00"}
+# On the dark chart surface the blue and the grey fall below 3:1: Okabe-Ito sky
+# blue, a light warm grey and the Okabe-Ito vermillion keep each hue's meaning.
+DIRECTION_DARK_COLOURS = {"increase": "#56B4E9", "stable": "#A39A8C", "decrease": "#D55E00"}
+DIRECTION_PALETTES = {"light": DIRECTION_COLOURS, "dark": DIRECTION_DARK_COLOURS}
 DIRECTION_MARKERS = {"increase": "triangle-up", "stable": "circle", "decrease": "triangle-down"}
 DIRECTION_PATTERNS = {"increase": "", "stable": ".", "decrease": "/"}
 

@@ -211,14 +211,17 @@ def _detail(store: StockLabStore, demos: Mapping[str, pd.DataFrame]) -> None:
     cards = headline(detail)
     ui.stat_row([ui.Stat(c.label, c.value, caption=c.caption, help=c.help) for c in cards])
     say(words.SHOWN_THROUGH.format(day=detail.shown_through) + " " + rule.words(), "caption")
+    scheme = ui.colour_scheme()
     ui.chart(
-        stock_figures.price_figure(detail.frame, synthetic=synthetic_data),
+        stock_figures.price_figure(detail.frame, synthetic=synthetic_data, scheme=scheme),
         key=f"{PREFIX}price-chart",
     )
     with st.expander(words.AS_TABLE.format(chart=words.PRICE_TITLE)):
         st.table(price_table(detail))
     ui.chart(
-        stock_figures.recent_figure(recent_sessions(detail), band, synthetic=synthetic_data),
+        stock_figures.recent_figure(
+            recent_sessions(detail), band, synthetic=synthetic_data, scheme=scheme
+        ),
         key=f"{PREFIX}recent-chart",
     )
     with st.expander(words.AS_TABLE.format(chart=words.RECENT_TABLE_TITLE)):
