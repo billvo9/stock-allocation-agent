@@ -406,9 +406,10 @@ def _forecast(store: StockLabStore, selected: Selected | None) -> None:
         "caption",
     )
     history = store.forecasts(selected.stock_id)
-    earlier = len(history) - 1
-    if earlier:
-        say(words.SUPERSEDED.format(count=earlier), "caption")
+    replaced = store.superseded_ids()
+    recalculated = sum(f["forecast_id"] in replaced for f in history)
+    if recalculated:
+        say(words.SUPERSEDED.format(count=recalculated), "caption")
     bullets(record["limitations"])
     _record_history(store, selected, history)
 
@@ -425,7 +426,8 @@ def _record_history(store: StockLabStore, selected: Selected, history) -> None:
             ),
             "caption",
         )
-    scored = store.scores(selected.stock_id)
+    replaced = store.superseded_ids()  # a recalculation's predecessor counts once, as itself
+    scored = [s for s in store.scores(selected.stock_id) if s["forecast_id"] not in replaced]
     summary = scored_summary(scored)
     say(
         words.HISTORY_NOTE.format(
@@ -603,7 +605,13 @@ def _diagnostics(store: StockLabStore, selected: Selected | None) -> None:
     frame = reliability_frame(evaluation, [chosen, "B1"])
     for code, category in ((2, "Increase"), (1, "Stable"), (0, "Decrease")):
         status = calibration_status(frame, chosen, code)
-        say(f"**{category}: {status}**")
+        say(
+            words.CALIBRATION_STATUS.format(
+                category=category,
+                status=status,
+                qualifier=words.CALIBRATION_SYNTHETIC if synthetic_data else words.CALIBRATION_REAL,
+            )
+        )
         left, right = st.columns([3, 2])
         with left:
             ui.chart(

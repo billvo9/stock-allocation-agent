@@ -11,7 +11,12 @@ A forecast is scored against outcomes it could not have seen:
       total) must be ABSENT from the store when the forecast was created:
       it was first downloaded afterwards, by any vintage (so a forecast is
       never scored on data it could have seen, even after a later
-      re-download, and a rebuilt "forecast" can never score itself);
+      re-download, and a rebuilt "forecast" can never score itself). "When
+      it was created" is the later of its created_at and the time the store
+      itself recorded it (its ledger entry), so a backdated created_at
+      cannot hide a batch the store already held;
+    - every session a target needs must open after the forecast was made
+      (forecast.opened_by), otherwise the target is unscorable;
     - a session without a usable return (a gap, an unverified split) is
       left unscored with its reason, never filled;
     - a score is written once per (forecast, target) and never rewritten:
@@ -33,6 +38,7 @@ import pandas as pd
 
 from stock_agent.stock_lab.contracts import CATEGORY_CODES, StableBand
 from stock_agent.stock_lab.forecast import PROBABILITY_KEYS
+from stock_agent.stock_lab.forecast import opened_by as forecast_opened_by
 from stock_agent.stock_lab.prices import on_calendar, session_returns
 from stock_agent.stock_lab.scores import brier, log_loss, rps
 
@@ -121,6 +127,9 @@ def score_forecast(
             "symbol": record["symbol"],
             "target": target,
         }
+        if forecast_opened_by(record, needed):
+            out.append(_score(common, session, UNSCORABLE, "forecast_after_target_opened"))
+            continue
         row = by_day.get(session)
         if row is None or session not in batch_of:
             out.append(_score(common, session, PENDING, "not_closed_yet"))
@@ -150,13 +159,21 @@ def score_forecast(
     return tuple(out)
 
 
-def rolling_summary(scores: Sequence[Mapping], window: int = 63) -> dict:
+def rolling_summary(
+    scores: Sequence[Mapping], window: int = 63, *, superseded: AbstractSet[str] = frozenset()
+) -> dict:
     """
     The latest `window` scored daily targets (by session): mean Brier, log
-    loss and RPS, observed frequency of each category, and the count.
+    loss and RPS, observed frequency of each category, and the count. Scores
+    of a `superseded` forecast (replaced by a recalculation) are left out,
+    so one as-of session counts once.
     """
 
-    daily = [s for s in scores if s["status"] == SCORED and s["target"] != "cum"]
+    daily = [
+        s
+        for s in scores
+        if s["status"] == SCORED and s["target"] != "cum" and s["forecast_id"] not in superseded
+    ]
     daily = sorted(daily, key=lambda s: (s["session"], s["target"]))[-window * 5 :]
     n = len(daily)
     if not n:
@@ -205,10 +222,16 @@ def score_store(
         if calendar is not None and len(bars):
             sessions = calendar(bars["session"].iloc[0], bars["session"].iloc[-1])
         done = store.scored_keys(symbol)
+        recorded = store.forecast_recorded_at(symbol)
         for record in store.forecasts(symbol):
             if all((record["forecast_id"], t) in done for t in TARGETS):
                 continue
-            visible = store.bars(symbol, as_of=pd.Timestamp(record["created_at"]))
+            if record["forecast_id"] not in recorded:
+                continue  # no ledger entry: the chain check reports it; never scored
+            known = max(
+                pd.Timestamp(record["created_at"]), pd.Timestamp(recorded[record["forecast_id"]])
+            )
+            visible = store.bars(symbol, as_of=known)
             seen = (
                 set() if visible is None else set(visible.bars["session"].dt.strftime("%Y-%m-%d"))
             )

@@ -19,11 +19,15 @@ Modes
         4. forecasts for stocks whose newest close is the expected session
            (decision A4), never for a stale one;
         5. the job run, the ledger and the `stock_lab_monitor` health input
-           (written to --health-inputs, default reports/health_inputs/).
+           (written to --health-inputs, default reports/health_inputs/), with
+           the kept ledger head check (stock_lab.job): the head hash is kept
+           in --ledger-head-backup, by default stock_lab_ledger_head beside
+           the store (a copy kept elsewhere is stronger).
        Until the owner records A1, A2 and A4, steps 2 and 4 are not built: the
-       job does steps 1, 3 and 5, records itself as skipped with the reason,
-       and refuses the flags --authorized, --inference-window and
-       --record-real.
+       job does steps 1, 3 and 5, records itself as skipped and not yet
+       authorized (Model Health reads that as not activated, never as a
+       degraded job; a run that stops still shows as overdue), and refuses
+       the flags --authorized, --inference-window and --record-real.
 
 Scheduling: run it once a day after the availability time, for example with
 the launchd agent printed by `scripts/stock_lab_schedule.py` (the owner
@@ -49,12 +53,13 @@ from stock_agent.calendars.nyse import CalendarRefused
 from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
 from stock_agent.stock_lab import scoring
 from stock_agent.stock_lab.contracts import DataClass
-from stock_agent.stock_lab.job import record_run
+from stock_agent.stock_lab.job import NOT_AUTHORIZED, record_run
 from stock_agent.stock_lab.replay import ReplayRefused, run_replay
 from stock_agent.stock_lab.store import StockLabStore, stamp, utc_now
 from stock_agent.stock_lab.synthetic import DEMO_IDS
 
 REPLAY_CALENDAR = "synthetic_weekdays"
+KEPT_HEAD_NAME = "stock_lab_ledger_head"
 
 PROJECT = Path(__file__).resolve().parents[1]
 DEFAULT_HEALTH_INPUTS = PROJECT / "reports" / "health_inputs"
@@ -125,9 +130,11 @@ def main(
     parser.add_argument("--inference-window", action="store_true")
     parser.add_argument("--record-real", action="store_true")
     parser.add_argument("--health-inputs", type=Path, default=DEFAULT_HEALTH_INPUTS)
+    parser.add_argument("--ledger-head-backup", type=Path, default=None)
     args = parser.parse_args(argv)
     store = store_factory()
     started = clock()
+    kept_head = args.ledger_head_backup or store.path.with_name(KEPT_HEAD_NAME)
 
     if args.demo_replay is not None:
         if not 1 <= args.demo_replay <= 60:
@@ -153,6 +160,7 @@ def main(
                 sessions=weekdays,
                 calendar_id=REPLAY_CALENDAR,
                 code_sha=code_sha(),
+                kept_head=kept_head,
             )
 
         try:
@@ -212,6 +220,8 @@ def main(
         code_sha=code_sha(),
         next_expected_at=next_expected(finished),
         skipped=skipped,
+        activation=NOT_AUTHORIZED,
+        kept_head=kept_head,
     )
     print(f"expected session {expected.date()}; {scored} targets scored; {status}", file=out)
     for line in skipped:

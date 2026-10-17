@@ -19,7 +19,12 @@ The demo stocks' last `sessions` synthetic sessions play the "future":
        recorded like a real day's.
 
 Every record is labelled synthetic; the simulated clock is synthetic too
-(each session's 21:00 UTC). Nothing here is evidence about any real stock.
+(each session's 21:00 UTC). The store itself runs on that clock
+(`SimulatedClock`), so every record carries the simulated time at which
+the store wrote it, exactly as a real day's records carry the real time.
+No record is backdated: the store refuses that. Each day's forecast is a
+new forecast for a new as-of session, so it supersedes nothing. Nothing
+here is evidence about any real stock.
 """
 
 from __future__ import annotations
@@ -50,6 +55,21 @@ class ReplayRefused(ValueError):
     """The store already holds replay records; a replay never writes over or beside them."""
 
 
+class SimulatedClock:
+    """The replay's store clock: a synthetic time the replay moves forward, never back."""
+
+    def __init__(self, start: pd.Timestamp) -> None:
+        self.now = pd.Timestamp(start)
+
+    def __call__(self) -> pd.Timestamp:
+        return self.now
+
+    def advance(self, to: pd.Timestamp) -> None:
+        if to < self.now:
+            raise ValueError("the simulated clock never moves back")
+        self.now = pd.Timestamp(to)
+
+
 def _weekdays(first: pd.Timestamp, last: pd.Timestamp) -> pd.DatetimeIndex:
     return pd.bdate_range(first, last, tz="UTC").as_unit("us")
 
@@ -64,7 +84,10 @@ def run_replay(
     sessions: int = 20,
     record_day: Callable[..., None] | None = None,
 ) -> tuple[ReplayDay, ...]:
-    """Replay the last `sessions` synthetic sessions (module docstring)."""
+    """
+    Replay the last `sessions` synthetic sessions (module docstring).
+    `record_day` receives the replay's store, which runs on the simulated clock.
+    """
 
     from stock_agent.stock_lab import scoring  # the scorer reads only stored records
 
@@ -77,6 +100,8 @@ def run_replay(
     any_bars = next(iter(full.values()))
     first = len(any_bars) - sessions - 1
     start = any_bars["session"].iloc[first]
+    clock = SimulatedClock(_clock(start, 0))
+    store = StockLabStore(store.path, clock=clock)
     for stock_id, bars in full.items():
         store.record_prices(
             stock_id,
@@ -86,6 +111,7 @@ def run_replay(
             data_class=DataClass.SYNTHETIC,
             vintage_note=NOTE,
         )
+    clock.advance(_clock(start, 1))
     config = EvaluationConfig(outcome_end=start)
     history = {stock_id: bars.iloc[: first + 1] for stock_id, bars in full.items()}
     record = evaluate(
@@ -100,11 +126,11 @@ def run_replay(
 
     def forecast_all(index: int) -> int:
         as_of = any_bars["session"].iloc[index]
+        clock.advance(_clock(as_of, 5))
         visible = {stock_id: bars.iloc[: index + 1] for stock_id, bars in full.items()}
         panel = build_panel(visible, config)
         for stock_id in full:
             targets = pd.bdate_range(as_of + pd.Timedelta(days=1), periods=5)
-            previous = store.latest_forecast(stock_id)
             forecast = forecast_stock(
                 panel,
                 stock_id,
@@ -119,7 +145,6 @@ def run_replay(
                     "last_close_session": as_of.strftime("%Y-%m-%d"),
                 },
                 data_class=DataClass.SYNTHETIC.value,
-                supersedes=None if previous is None else previous["forecast_id"],
             )
             store.record_forecast(forecast)
         return len(full)
@@ -128,6 +153,7 @@ def run_replay(
     for step in range(1, sessions + 1):
         index = first + step
         session = any_bars["session"].iloc[index]
+        clock.advance(_clock(session, 0))
         for stock_id, bars in full.items():  # the day's close arrives
             store.record_prices(
                 stock_id,
@@ -137,9 +163,11 @@ def run_replay(
                 data_class=DataClass.SYNTHETIC,
                 vintage_note=NOTE,
             )
+        clock.advance(_clock(session, 2))
         scored = scoring.score_store(store, list(full), calendar=_weekdays)  # closed only
         made = forecast_all(index)  # then today's forecasts, from today's close
         days.append(ReplayDay(session.strftime("%Y-%m-%d"), made, scored))
         if record_day is not None:
+            clock.advance(_clock(session, 11))
             record_day(as_of=session, store=store, record=record, model=model)
     return tuple(days)

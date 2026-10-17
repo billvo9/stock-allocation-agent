@@ -76,8 +76,11 @@ def test_real_stocks_are_refused_without_the_owners_evaluation_decision(tmp_path
 
 def test_stored_records_are_write_once_and_checked(demo_store, tmp_path):
     record = copy.deepcopy(demo_store.latest_forecast("DEMO_CALM"))
-    with pytest.raises(sqlite3.IntegrityError):
-        demo_store.record_forecast(record)  # the same id twice
+    with pytest.raises(StoreRefused, match="backdating"):
+        demo_store.record_forecast(record)  # the same record again, later: backdated
+    again = StockLabStore(demo_store.path, clock=lambda: pd.Timestamp(record["created_at"]))
+    with pytest.raises(StoreRefused, match="live forecast"):
+        again.record_forecast(record)  # the same id twice: its key already has a live forecast
     real_name = {**record, "symbol": "AAPL"}
     real_name["forecast_id"] = artifact.forecast_id(real_name)
     with pytest.raises(StoreRefused, match="demo identifiers"):
@@ -87,6 +90,8 @@ def test_stored_records_are_write_once_and_checked(demo_store, tmp_path):
     with pytest.raises(artifact.ForecastRefused):
         StockLabStore(tmp_path / DB_NAME).record_forecast(broken)
     connection = sqlite3.connect(demo_store.path)
+    with pytest.raises(sqlite3.IntegrityError, match="write-once"):
+        connection.execute("INSERT INTO forecasts SELECT * FROM forecasts LIMIT 1")
     with pytest.raises(sqlite3.IntegrityError, match="write-once"):
         connection.execute("UPDATE forecasts SET record = '{}'")
     with pytest.raises(sqlite3.IntegrityError, match="write-once"):
