@@ -41,6 +41,12 @@ error, with its variant (bundle, config hash, model id and version) and the
 outcome window's lineage. The window runs from the earliest pending as-of
 session to the scoring close, read with retrieved_by = scored_at. Forecast
 entries are never edited; a row is scored once.
+
+Zero realized volatility (zero_vol.py). Scoring uses the rule in force
+(`zero_vol.CURRENT`: a zero outcome is outside the band) unless research code
+passes the unapproved option `zero_vol.B2`; the job never does. Every scored
+volatility row records the rule, sigma_raw, measured_zero, floored and
+sigma_floor, and a ledger is never scored under two rules.
 """
 
 from __future__ import annotations
@@ -53,7 +59,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from stock_agent.forecasting.prospective import frozen, ledger, series, window
+from stock_agent.forecasting.prospective import frozen, ledger, series, window, zero_vol
 from stock_agent.forecasting.prospective.config import parse_config
 from stock_agent.model_diagnostics import inference as inf
 from stock_agent.model_diagnostics.record import sha256_json
@@ -61,7 +67,7 @@ from stock_agent.registry import EntryRef, RegistryReader
 from stock_agent.registry.stages import STAGES
 
 FORECAST_SCHEMA_VERSION = "1.0"
-SCORE_SCHEMA_VERSION = "1.0"
+SCORE_SCHEMA_VERSION = "1.1"  # 1.1: volatility rows record the zero-volatility rule and flags
 ALLOWED_STAGES = STAGES[:2]  # engineering_only, development_evaluated; never higher
 UNITS = {
     "total_log_return": "total log return over the horizon (F5.1, distributions reinvested)",
@@ -392,7 +398,14 @@ def pending_rows(entries: Sequence[ledger.LedgerEntry]) -> list[tuple[ledger.Led
     ]
 
 
-def _outcome(win: window.InferenceWindow, asset: str, as_of, entry_lag: int, horizon: int):
+def _outcome(
+    win: window.InferenceWindow,
+    asset: str,
+    as_of,
+    entry_lag: int,
+    horizon: int,
+    rule: str = zero_vol.DEFAULT,
+):
     sessions = list(win.sessions)
     if as_of not in sessions:
         return None, "as_of_outside_window"
@@ -406,23 +419,44 @@ def _outcome(win: window.InferenceWindow, asset: str, as_of, entry_lag: int, hor
     g = returns["log_return"].to_numpy(np.float64)
     if not np.isfinite(g[position + entry_lag + 1 : exit_position + 1]).all():
         return None, "outcome_inputs_unavailable"
-    # The training labels' arithmetic (series.labels_from_log_returns), at the as-of row.
-    values = {}
-    for target in ("total_log_return", "log_realized_volatility"):
-        labels = series.labels_from_log_returns(
+    # The training labels' arithmetic (series.labels_from_log_returns and
+    # zero_vol.volatility_labels under the same rule), at the as-of row.
+    labels = {
+        "total_log_return": series.labels_from_log_returns(
             returns["date"],
             returns["log_return"],
             horizon=horizon,
             entry_lag=entry_lag,
-            target=target,
-        )
-        value = float(labels["target_return"].iloc[position])
+            target="total_log_return",
+        ),
+        "log_realized_volatility": zero_vol.volatility_labels(
+            returns["date"],
+            returns["log_return"],
+            zero_vol.as_of_closes(returns["date"], win.prices, asset),
+            horizon=horizon,
+            entry_lag=entry_lag,
+            rule=rule,
+        ),
+    }
+    values = {}
+    for target, frame in labels.items():
+        value = float(frame["target_return"].iloc[position])
         values[target] = value if np.isfinite(value) else None
-    flat = values["log_realized_volatility"] is None  # every return in the window was 0
+    flags = labels["log_realized_volatility"].iloc[position]
+    sigma_floor = float(flags["sigma_floor"])
+    diagnostics = {
+        "zero_vol_rule": rule,
+        "sigma_raw": float(flags["sigma_raw"]),
+        "measured_zero": bool(flags["measured_zero"]),
+        "floored": bool(flags["floored"]),
+        "sigma_floor": sigma_floor if np.isfinite(sigma_floor) else None,
+    }
+    flat = values["log_realized_volatility"] is None and diagnostics["measured_zero"]
     return {
         "zero_volatility": flat,
         "entry_session": sessions[position + entry_lag],
         "exit_session": sessions[exit_position],
+        "volatility_diagnostics": diagnostics,
         **values,
     }, None
 
@@ -436,14 +470,21 @@ def score_matured(
     scored_at: pd.Timestamp,
     code: Mapping[str, object],
     calendar: window.Calendar,
+    zero_vol_rule: str = zero_vol.DEFAULT,
 ) -> tuple[ledger.LedgerEntry | None, list[dict[str, object]]]:
     """
     Score every matured, unscored forecast row (one "score" entry), and
     return the rows left pending with their reason (not_matured,
     close_not_available, outcome_inputs_unavailable, as_of_outside_window).
+
+    `zero_vol_rule` is the rule in force unless research code passes the
+    unapproved `zero_vol.B2`; a ledger already scored under another rule is
+    refused (`zero_vol_rule_mismatch`), so two rules are never pooled.
     """
 
+    zero_vol.check_rule(zero_vol_rule)
     entries = ledger.read_ledger(ledger_path)
+    _refuse_other_rule(entries, zero_vol_rule)
     pending = pending_rows(entries)
     if not pending:
         return None, []
@@ -475,7 +516,12 @@ def score_matured(
     for entry, row in pending:
         as_of = pd.Timestamp(entry.payload["as_of_session"], tz="UTC").as_unit("ns")
         outcome, reason = _outcome(
-            win, row["asset"], as_of, int(row["entry_lag"]), int(row["horizon"])
+            win,
+            row["asset"],
+            as_of,
+            int(row["entry_lag"]),
+            int(row["horizon"]),
+            zero_vol_rule,
         )
         key = {
             "forecast_entry_sha256": entry.entry_sha256,
@@ -501,6 +547,9 @@ def score_matured(
             left.append({**key, "reason": "close_not_available"})
             continue
         value = outcome[row["target"]]
+        flags = (
+            outcome["volatility_diagnostics"] if row["target"] == "log_realized_volatility" else {}
+        )
         if value is None and outcome["zero_volatility"]:
             # Realized volatility 0: its log is -inf, below every band's lower end. It is
             # scored as outside the band, never left pending (that would bias coverage up).
@@ -522,6 +571,7 @@ def score_matured(
                     "null_error": None,
                     "squared_error": None,
                     "null_squared_error": None,
+                    **flags,
                 }
             )
             continue
@@ -535,7 +585,7 @@ def score_matured(
                 "exit_session": str(outcome["exit_session"].date()),
                 "exit_close_available_at": available.isoformat(),
                 "outcome": value,
-                "outcome_note": None,
+                "outcome_note": "floored_realized_volatility" if flags.get("floored") else None,
                 "point": row["point"],
                 "band_low": row["band_low"],
                 "band_high": row["band_high"],
@@ -546,6 +596,7 @@ def score_matured(
                 "null_error": value - row["null"],
                 "squared_error": (value - row["point"]) ** 2,
                 "null_squared_error": (value - row["null"]) ** 2,
+                **flags,
             }
         )
     if not scores:
@@ -576,6 +627,25 @@ def score_matured(
     }
     written = ledger.append_entry(ledger_path, "score", payload, recorded_at=stamp, guard=guard)
     return written, left
+
+
+def _refuse_other_rule(entries: Sequence[ledger.LedgerEntry], rule: str) -> None:
+    """Refuse scoring under `rule` when earlier volatility scores used another rule."""
+
+    for entry in entries:
+        if entry.kind != "score":
+            continue
+        for score in entry.payload["scores"]:
+            if score["target"] != "log_realized_volatility":
+                continue
+            # Scores written before the rule was recorded used the rule in force.
+            used = score.get("zero_vol_rule", zero_vol.CURRENT)
+            if used != rule:
+                raise ForecastRefused(
+                    "zero_vol_rule_mismatch",
+                    f"entry {entry.sequence} scored volatility under {used!r}, not {rule!r}; "
+                    "two zero-volatility rules are never pooled in one ledger",
+                )
 
 
 # --- the cumulative report ---

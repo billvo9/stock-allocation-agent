@@ -239,6 +239,7 @@ def _fit_record(data, dev, config, asset, horizon, target, checks: list[dict]) -
             "first_date": train["date"].min().isoformat(),
             "last_date": train["date"].max().isoformat(),
             "max_label_end": pd.Timestamp(ends.max()).isoformat(),
+            "zero_volatility_rule": data.zero_vol_rule,
         },
         "development": {
             **development_summary(dev, config, asset, horizon, target),

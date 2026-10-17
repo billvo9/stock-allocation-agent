@@ -156,6 +156,8 @@ Per record:
 - **When a row is scored.** Once its exit session (entry + h) is in the store, as read with `retrieved_by` = the scoring time, and that close is available (18:00 New York). The outcome window runs from the earliest pending as-of session to the scoring close, and its lineage is recorded. It is recorded with its outcome, whether the outcome is inside the band, and the model's and the null's errors.
 - **When a row waits.** A row whose inputs are incomplete (a missing close in its window) is left pending with its reason, never scored as missing.
 - **Zero realized volatility.** If every return in a volatility outcome's window is 0 (possible for SHV, whose close moves in $0.01 steps), the log volatility is minus infinity, below every band. It is scored as outside the band, with no error, and never left pending: leaving such outcomes out would bias coverage upward.
+  - Every scored volatility row also records the zero-volatility rule, `sigma_raw`, `measured_zero`, `floored` and `sigma_floor` (score schema 1.1), and a ledger is never scored under two rules.
+  - The research-only floor B2 and its development check are in `docs/research/zero_vol_floor.md`. The rule in force is unchanged until the owner decides.
 - **The cumulative report.** Each scoring run stores it:
   - per variant (bundle, config hash, model id and version), asset, horizon and target: n, hits, coverage and a Wilson 95% interval. A re-freeze is never pooled with earlier forecasts;
   - mean absolute errors of the model and the null;
@@ -198,8 +200,8 @@ These synthetic numbers verify the pipeline. They are not evidence about the fun
 - The dev residuals come from expanding-window fits on less data than the frozen fit, so the frozen band may be slightly wide.
 - A complete window can still leave a feature undefined (no price movement, or a total return the approved formulas cannot give, such as cash on a split date without its share basis). Such a feature is imputed with the training median, as in training, and listed per row (`imputed_features`). A missing close is never imputed: that asset is refused.
 - **Flat windows in training.** A development row whose h returns are all 0 has no log volatility. Both of its labels are dropped, which biases development coverage upward, and a flat 5-session feature window is imputed as typical volatility.
-  - Each fit records `zero_volatility_rows_dropped`; it is 0 on the GARCH fixture.
-  - For real SHV data in 2010-2015 it may not be small. Check it after freezing.
+  - Each fit records `zero_volatility_rows_dropped` and `training.zero_volatility_rule`; the count is 0 on the GARCH fixture.
+  - For real SHV data in 2010-2015 it may not be small. `scripts/check_zero_vol_floor.py check` measures it on the stored development batch before any freeze (`docs/research/zero_vol_floor.md`, section 6).
 - No permutation nulls, and no Kupiec or Christoffersen tests yet.
 - Selective recording (forecasting only on some days) cannot be prevented, only seen: the ledger lists every as-of session recorded.
 - The ledger shows edits but not truncation; the head hash must be kept elsewhere.
@@ -209,14 +211,14 @@ These synthetic numbers verify the pipeline. They are not evidence about the fun
 
 - Kupiec (unconditional) and Christoffersen (independence) coverage tests per asset, once enough non-overlapping scores exist.
 - Diebold-Mariano or Clark-West comparisons of the model and the null on the prospective record, after a pre-registered burn-in.
-- A pre-registered forecasting cadence (for example every 5 sessions), so missed sessions are visible as gaps.
+- A pre-registered forecasting cadence, so missed sessions are visible as gaps: proposed in `docs/research/prospective_registration.md` (every session, 18 forecasts), awaiting approval.
 - Fund-level evidence rules (owner decision) before any fund entry can reach `development_evaluated`.
-- **Owner decision before freezing on real data: flat windows.** Options:
+- **Owner decision before freezing on real data: flat windows.** Options considered:
   - keep dropping them, with the count reported;
-  - floor realized volatility at one price tick (0.01 / close);
+  - floor realized volatility at a price tick;
   - count flat development outcomes as misses.
 
-  This is a target-formula choice, so it waits for approval.
+  The proposal is rule B2: half a tick at the as-of close, divided by √h, in training labels, calibration and scoring alike. It is implemented as a non-default research option with a development check whose acceptance criteria are fixed in advance (`docs/research/zero_vol_floor.md`). This is a target-formula choice, so it waits for approval.
 - **F1 pay dates (existing open owner question).** A late-December 2024 ex-date paid in January 2025 refuses its whole F1 batch today, and training would refuse it too. The F1 decision (lock on ex-date and declaration date, or stay fail-closed) applies here unchanged.
 
 ## Learning Notes

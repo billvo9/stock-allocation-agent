@@ -25,12 +25,16 @@ The frozen refit fits ridge once per (asset, h, target) on every training
 row, its penalty chosen by the same nested selection on the last inner
 windows before the lockbox, and keeps the fitted statistics, the null's
 value and the band quantiles as plain numbers (frozen.py).
+
+Zero realized volatility (zero_vol.py): the labels follow the rule in force
+(`zero_vol.CURRENT`) unless research code passes the unapproved option
+`zero_vol.B2` to `training_data`. Freezing always uses the rule in force.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
@@ -52,7 +56,7 @@ from stock_agent.features.training import (
 )
 from stock_agent.forecasting import etf, etf_data
 from stock_agent.forecasting import metrics as em
-from stock_agent.forecasting.prospective import bands, series
+from stock_agent.forecasting.prospective import bands, series, zero_vol
 from stock_agent.forecasting.prospective.config import ProspectiveConfig
 from stock_agent.forecasting.prospective.synthetic import FIXTURE_ADAPTER_ID
 from stock_agent.model_diagnostics import inference as inf
@@ -107,8 +111,13 @@ class TrainingData:
     max_session: pd.Timestamp
     # (asset, horizon) -> rows whose return label exists but whose realized volatility is 0
     # (every return in the window was 0): log volatility is undefined, so both labels are
-    # dropped. Counted, because dropping them biases development coverage upward.
+    # dropped. Counted, because dropping them biases development coverage upward. Always 0
+    # under the research option B2, which drops nothing.
     zero_volatility_rows: Mapping[tuple[str, int], int]
+    zero_vol_rule: str = zero_vol.DEFAULT
+    # (asset, horizon) -> date, symbol, sigma_raw, measured_zero, floored and sigma_floor of
+    # every row of that frame: measured zeros stay distinguishable from the modeling floor.
+    volatility_diagnostics: Mapping[tuple[str, int], pd.DataFrame] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, eq=False)
@@ -158,9 +167,16 @@ def training_data(
     splits: pd.DataFrame,
     batches: pd.DataFrame,
     config: ProspectiveConfig,
+    *,
+    zero_vol_rule: str = zero_vol.DEFAULT,
 ) -> TrainingData:
-    """Frames for every (asset, horizon) from F1 research-store tables."""
+    """
+    Frames for every (asset, horizon) from F1 research-store tables, with the
+    log-volatility label under `zero_vol_rule` (the rule in force by default;
+    `zero_vol.B2` is a research-only option the owner has not approved).
+    """
 
+    zero_vol.check_rule(zero_vol_rule)
     last = config.training_end
     _refuse_after("price sessions", prices["session_date"], last)
     for column in ("ex_date", "declaration_date", "record_date", "pay_date"):
@@ -201,17 +217,31 @@ def training_data(
     contracts = {name: etf_data.CONTRACTS_BY_NAME[name] for name in FEATURES}
     frames: dict[tuple[str, int], pd.DataFrame] = {}
     zero_volatility: dict[tuple[str, int], int] = {}
+    diagnostics: dict[tuple[str, int], pd.DataFrame] = {}
+    diagnostic_columns = list(zero_vol.DIAGNOSTIC_COLUMNS)
     for asset, frame in base.items():
+        closes = zero_vol.as_of_closes(frame["date"], selected["prices"], asset)
         for horizon in config.horizons:
             labeled = frame.copy()
             for target in config.targets:
-                labels = series.labels_from_log_returns(
-                    frame["date"],
-                    frame["log_return"],
-                    horizon=horizon,
-                    entry_lag=config.entry_lag,
-                    target=target,
-                )
+                if target == "log_realized_volatility":
+                    labels = zero_vol.volatility_labels(
+                        frame["date"],
+                        frame["log_return"],
+                        closes,
+                        horizon=horizon,
+                        entry_lag=config.entry_lag,
+                        rule=zero_vol_rule,
+                    )
+                    flags = labels.loc[:, diagnostic_columns]
+                else:
+                    labels = series.labels_from_log_returns(
+                        frame["date"],
+                        frame["log_return"],
+                        horizon=horizon,
+                        entry_lag=config.entry_lag,
+                        target=target,
+                    )
                 labeled[f"y_{target}"] = labels[TARGET_RETURN_COLUMN]
                 labeled[TARGET_START_COLUMN] = labels[TARGET_START_COLUMN]
                 labeled[TARGET_END_COLUMN] = labels[TARGET_END_COLUMN]
@@ -226,10 +256,15 @@ def training_data(
                 zero_volatility[(asset, horizon)] = int(flat.sum())
             for column in targets:  # labeled only when every target is
                 labeled.loc[~both, column] = np.nan
+            if "log_realized_volatility" in config.targets:
+                labeled = labeled.join(flags)
             labeled = labeled.loc[labeled["close_observed"]].merge(
                 keys, on=["date", "symbol"], how="inner", validate="one_to_one"
             )
             labeled = labeled.reset_index(drop=True)
+            if "log_realized_volatility" in config.targets:
+                diagnostics[(asset, horizon)] = labeled.loc[:, ["date", "symbol", *flags]]
+                labeled = labeled.drop(columns=diagnostic_columns)
             labeled[TARGET_RETURN_COLUMN] = labeled[targets[0]]
             validate_feature_contracts(labeled, list(FEATURES), contracts)
             frames[(asset, horizon)] = labeled
@@ -250,17 +285,34 @@ def training_data(
     batch_ids = tuple(sorted(set(batches["batch_id"])))
     max_session = max(frame["date"].max() for frame in base.values())
     return TrainingData(
-        frames, universe, data_class, batch_ids, fingerprints, max_session, zero_volatility
+        frames,
+        universe,
+        data_class,
+        batch_ids,
+        fingerprints,
+        max_session,
+        zero_volatility,
+        zero_vol_rule,
+        diagnostics,
     )
 
 
-def load_training_data(store_root, config: ProspectiveConfig) -> TrainingData:
+def load_training_data(
+    store_root, config: ProspectiveConfig, *, zero_vol_rule: str = zero_vol.DEFAULT
+) -> TrainingData:
     """`training_data` from an F1 research store, read by its fail-closed reader."""
 
     from stock_agent.data.funds.reader import read_store
 
     store = read_store(store_root)
-    return training_data(store.prices, store.distributions, store.splits, store.batches, config)
+    return training_data(
+        store.prices,
+        store.distributions,
+        store.splits,
+        store.batches,
+        config,
+        zero_vol_rule=zero_vol_rule,
+    )
 
 
 def _design(config: ProspectiveConfig) -> nested.InnerDesign:
