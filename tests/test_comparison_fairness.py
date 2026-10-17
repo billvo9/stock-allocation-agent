@@ -235,6 +235,15 @@ def test_a_strategy_with_any_deviation_fails_the_contract(mutant):
         contract({"equal_weight": honest, mutant: make()})
 
 
+@pytest.mark.parametrize("mutant", sorted(MUTANTS))
+def test_a_deviating_strategy_checked_alone_fails_the_contract(mutant):
+    # The runner checks each strategy on its own, so no honest strategy is there to compare
+    # with: the record must be refused against the registered environment alone.
+    make, _ = MUTANTS[mutant]
+    with pytest.raises(FairnessError):
+        contract({mutant: make()})
+
+
 def test_a_lag_other_than_the_registered_one_is_refused(monkeypatch):
     monkeypatch.setattr(fairness, "execution_lag", lambda: 0)
     with pytest.raises(FairnessError, match="registered execution lag"):

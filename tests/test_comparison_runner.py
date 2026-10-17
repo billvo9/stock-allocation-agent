@@ -12,6 +12,7 @@ import copy
 import json
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from comparison_helpers import (
     CODE,
@@ -24,7 +25,11 @@ from comparison_helpers import (
 )
 
 from stock_agent.comparison import report, runner
-from stock_agent.comparison.fairness import SelectionError, check_no_test_selection
+from stock_agent.comparison.fairness import (
+    FairnessError,
+    SelectionError,
+    check_no_test_selection,
+)
 from stock_agent.comparison.ledger import EvaluationLog, LogUnreadable, RepeatLookError
 from stock_agent.comparison.protocol import ProtocolError, comparison_config_from_dict
 from stock_agent.health.backtest import backtest_checks
@@ -252,6 +257,26 @@ def test_the_same_configuration_and_seeds_give_the_same_artifact(tmp_path):
 def test_parallel_training_freezes_the_same_selection(completed, tmp_path):
     path = _train(tmp_path, workers=2)
     assert json.loads(path.read_text()) == completed.selection
+
+
+def test_a_result_its_own_decisions_do_not_reproduce_is_refused(trained, monkeypatch):
+    # The 0x, 1x and 2x replays drive the recorded decisions through the environment again;
+    # at 1x they must reproduce the run exactly, or nothing is published.
+    real = runner.ScriptedPolicy
+
+    class Nudged(real):
+        def decide(self, observation):
+            target = super().decide(observation)
+            if target is None:
+                return None
+            cash = np.zeros_like(target)
+            cash[-1] = 1.0
+            return 0.99 * target + 0.01 * cash
+
+    monkeypatch.setattr(runner, "ScriptedPolicy", Nudged)
+    with pytest.raises(FairnessError, match="not determined by its decisions"):
+        _evaluate(trained)
+    assert not list((trained / "reports").glob("*/comparison.json"))
 
 
 # --- the write-once evaluation log ---
