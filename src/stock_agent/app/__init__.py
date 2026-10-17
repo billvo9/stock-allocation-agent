@@ -1,9 +1,9 @@
 """
 The Portfolio Lab: the product app, separate from the research dashboard.
 
-Six destinations share one top navigation (`run`, `navigation`, one page
+Seven destinations share one top navigation (`run`, `navigation`, one page
 script each in `destinations/`): Overview, Explore, Portfolio Builder,
-Experiments, Model Health and Evidence.
+Stock Probability, Experiments, Model Health and Evidence.
 
 Modules:
     history       typed view inputs: a fund's daily records and their labels
@@ -29,6 +29,10 @@ Modules:
                   with the health center's strict reader, grouped into areas (pure)
     model_health  the Model Health page (Streamlit)
     evidence      the Evidence page: provenance and assumptions (Streamlit)
+    stock_lab     the Stock Probability page: the saved watchlist and each stock's
+                  daily history (Streamlit; experimental, `stock_agent.stock_lab`)
+    stock_figures the Stock Probability page's Plotly figures (pure)
+    stock_wording the Stock Probability page's copy
     navigation    the destinations' page scripts
     run           Streamlit entry point (launch with scripts/run_portfolio_lab.py)
 
@@ -39,7 +43,8 @@ from `static/`.
 Boundary (tested): the app imports only `stock_agent.ui`,
 `stock_agent.portfolio`, the health center's summary reader and view model
 (`stock_agent.health.model`, `stock_agent.health.view`, standard library
-only), its own modules, pandas, numpy, plotly, streamlit and the standard
+only), the Stock Lab's store and descriptive modules (never its Tiingo
+adapter), its own modules, pandas, numpy, plotly, streamlit and the standard
 library. It never imports the research dashboard, models, raw
 data, features or the publication writer, and it computes no financial
 formula itself: every return, growth, decline and calendar-year figure comes

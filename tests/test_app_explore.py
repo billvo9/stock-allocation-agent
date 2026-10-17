@@ -667,15 +667,24 @@ DESTINATIONS = [f"destinations/{path.name}" for path in (PACKAGE / "destinations
 # and view model (standard library only); no other health module, and never a
 # collector (which reads private stores).
 HEALTH_MODULES = ("stock_agent.health.model", "stock_agent.health.view")
+# The Stock Probability page reads the Stock Lab's private store and computes its
+# descriptive views (standard library, numpy and pandas only); never its Tiingo
+# adapter, which only the owner-run fetch script uses.
+STOCK_LAB_MODULES = tuple(
+    f"stock_agent.stock_lab.{name}"
+    for name in ("contracts", "symbols", "prices", "runs", "features", "store", "synthetic", "view")
+)
 APP_PROJECT_PREFIXES = (
     "stock_agent.app",
     "stock_agent.ui",
     "stock_agent.portfolio",
     *HEALTH_MODULES,
+    *STOCK_LAB_MODULES,
 )
-# Loaded with them: the health package itself (a docstring only).
-APP_PROJECT_PACKAGES = {"stock_agent", "stock_agent.health"}
+# Loaded with them: the health and Stock Lab packages themselves (docstrings only).
+APP_PROJECT_PACKAGES = {"stock_agent", "stock_agent.health", "stock_agent.stock_lab"}
 FORBIDDEN = (
+    "stock_agent.stock_lab.tiingo",
     "stock_agent.health.collect",
     "stock_agent.health.github",
     "stock_agent.health.ledger",
@@ -753,14 +762,24 @@ def test_rendering_the_app_loads_no_forbidden_module():
         if m not in APP_PROJECT_PACKAGES and not m.startswith(APP_PROJECT_PREFIXES)
     ]
     assert not outside, outside
-    for module in ("explore", "overview", "builder", "experiments", "model_health", "evidence"):
+    for module in (
+        "explore",
+        "overview",
+        "builder",
+        "stock_lab",
+        "experiments",
+        "model_health",
+        "evidence",
+    ):
         assert f"stock_agent.app.{module}" in loaded, module
     assert {*HEALTH_MODULES, "stock_agent.app.health_summary"} <= loaded
+    assert {"stock_agent.stock_lab.store", "stock_agent.stock_lab.view"} <= loaded
 
 
-def test_the_health_package_init_imports_nothing():
-    # The app may load `stock_agent.health` only because its __init__ runs no import.
-    source = (SOURCE / "stock_agent" / "health" / "__init__.py").read_text(encoding="utf-8")
+@pytest.mark.parametrize("package", ["health", "stock_lab"])
+def test_the_health_and_stock_lab_package_inits_import_nothing(package):
+    # The app may load these packages only because their __init__ runs no import.
+    source = (SOURCE / "stock_agent" / package / "__init__.py").read_text(encoding="utf-8")
     assert not [n for n in ast.parse(source).body if isinstance(n, ast.Import | ast.ImportFrom)]
 
 
