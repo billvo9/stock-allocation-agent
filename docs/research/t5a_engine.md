@@ -23,6 +23,7 @@ later change, and comparison tables stay withheld until it releases them.
 | Common build date and schedule (`build_date`, `require_common_schedule`) | `src/stock_agent/evaluation/baseline.py` | D3, D7 |
 | Reward (`log_growth_reward`) | `src/stock_agent/environment/reward.py`, `src/stock_agent/rl/reward.py` | D8 (a) |
 | Health input (`backtest_summary`) | `src/stock_agent/portfolio/backtest_summary.py` | agreed format v1.0 |
+| Build report (`build_report`, `SimulationResult.build_report`) | `src/stock_agent/portfolio/construction.py` | D5 as confirmed 2026-10-17 |
 
 Every simulator calls `portfolio_step`:
 
@@ -87,9 +88,9 @@ attribution (section 2). No module under `src/` imports or reimplements it
   (`FeasibleTarget`) keeps the requested target, the executed one, their
   one-way distance, the binding constraints and α. Defaults: `w_max = 1`, no
   `tau_max`. Drift above the cap between rebalances is kept and reported.
-  The clause awaiting confirmation is handled as the packet states: one
-  registered constraint set applies identically to every policy in a
-  comparison (the RL environment's `EnvConfig.max_weight` and `max_turnover`
+  The owner confirmed on 2026-10-17: "D5: A stricter registered constraint
+  set applies identically to every compared policy, not only learned
+  policies." (the RL environment's `EnvConfig.max_weight` and `max_turnover`
   are shared by every method in a harness run).
 - **D6** ("Defer a whole rebalance when any held or targeted asset lacks an
   executable close. A newer valid target supersedes an older deferred
@@ -116,10 +117,15 @@ attribution (section 2). No module under `src/` imports or reimplements it
   log(1 + R_net). The penalised `calculate_reward`, which subtracted costs a
   second time and is not an approved reward, is removed.
 
-### Interpretations pending the owner's confirmation
+### Interpretations confirmed by the owner (2026-10-17)
 
-Each is the simplest reading consistent with the owner's words, implemented
-identically in the engine, the oracle and the tests.
+Each was the simplest reading consistent with the owner's words, implemented
+identically in the engine, the oracle and the tests. The owner confirmed both
+on 2026-10-17 (verbatim in `t5a_open_decisions.md`): "D6: A hold/no-target
+decision preserves an already deferred target. A new valid target supersedes
+it." and "D5: An explicitly registered turnover cap also applies to the
+initial build. Report actual executed weights, uninvested cash and any
+incomplete construction so results are not misleading."
 
 - **(a) A hold does not supersede.** A decision of None ("keep the drifted
   holdings") is not a target, so it does not replace a deferred target,
@@ -130,6 +136,19 @@ identically in the engine, the oracle and the tests.
   partial: a 50/50 build with τ_max = 0.25 executes (0.125, 0.125, 0.75 cash).
   This matches the reference oracle written to the packet. The plain
   baselines register no limit, so it does not arise there.
+  **Build reporting** (the owner's 2026-10-17 request):
+  `portfolio.construction.build_report` reads the executed targets' D5
+  records and reports the build's requested and executed weights, its
+  uninvested cash (the cap's excess, the part of a turnover-limited build not
+  yet invested, and any cash asked for), `incomplete_construction` (the
+  turnover limit bound at the build) and the first execution where the limit
+  no longer bound, with the sessions from the build to it (None when it bound
+  at every execution through the end, for example a portfolio that trades
+  once). `SimulationResult.build_report(cash_index)` gives it for the engine,
+  and every `backtest_summary` carries it as `build` (an extra field the
+  health reader ignores). Example: the 50/50 build above, rebalanced to 50/50
+  every two sessions on flat returns, executes 1/4, then 1/3 and 1/2 of the
+  remaining way, and is fully built at the fourth execution.
 
 Other details, by the packet's own rules: weight changes below 1e-12 are dust
 and no trade (spec 2 (f)); the cash entry of `cost_rate` is never charged,

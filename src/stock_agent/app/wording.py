@@ -9,7 +9,9 @@ capability is named as pending, with the date it was recorded. Two
 exceptions show forecasts, each labelled unvalidated with no demonstrated
 skill and beside a simple baseline: the Experiments page's prospective ETF
 forecasts, and the Stock Probability page's experimental probabilities
-(`stock_wording`); still no advice and no trading verbs.
+(`stock_wording`); still no advice and no trading verbs. The Experiments
+page also shows the registered synthetic strategy comparison, labelled
+synthetic and an engineering evaluation, in registered order, never ranked.
 """
 
 from __future__ import annotations
@@ -169,8 +171,8 @@ EXPLORE_LINK = "See each fund's history"
 EXPERIMENTS_EYEBROW = "Research"
 EXPERIMENTS_TITLE = "Experiments"
 EXPERIMENTS_LEDE = (
-    "Machine-learning and reinforcement-learning experiments will appear here once they "
-    "produce results this lab can show, each with its evidence status."
+    "Machine-learning and reinforcement-learning experiments appear here when they produce "
+    "results this lab can show, each with its evidence status."
 )
 EXPERIMENTS_EMPTY_BADGE = "No experiments yet"
 EXPERIMENTS_EMPTY_TITLE = "No experiment to show yet"
@@ -250,6 +252,139 @@ PROSPECTIVE_COLUMNS = {
     "outcome": "Outcome",
     "inside": "Inside the band",
 }
+# The registered synthetic strategy comparison (Experiments; `comparison`).
+COMPARISON_TITLE = "Synthetic strategy comparison (engineering evaluation)"
+COMPARISON_SCOPE_BADGE = "Synthetic scenarios only — not evidence of real investment performance"
+COMPARISON_EVALUATION_BADGE = "Engineering evaluation"
+COMPARISON_INTRO = (
+    "Every strategy here ran through the same approved simulator: a decision at one close and "
+    "its trade at the next, the same trading costs, the same rebalance schedule, a build from "
+    "100% cash on one common date, and one registered constraint set applied to all of them. "
+    "Learned strategies were trained, and their checkpoints chosen, on development scenarios "
+    "only; the test scenarios were evaluated once, and every training seed is shown."
+)
+COMPARISON_NO_CLAIM = (
+    "Nothing here ranks the strategies or claims skill or profitability: the scenarios are "
+    "synthetic, and this checks the simulator and the comparison protocol."
+)
+COMPARISON_NOT_REPORTED = (
+    "Not shown: compound annual growth rates, Sharpe ratios and confidence intervals, whose "
+    "formulas are not approved."
+)
+COMPARISON_EMPTY_BADGE = "Not run yet"
+COMPARISON_EMPTY_TITLE = "No registered comparison has been run yet"
+COMPARISON_EMPTY = (
+    "No comparison file exists. Nothing is estimated or filled in while that is so. The "
+    "registered comparison runs from the repository root with "
+    "`.venv/bin/python scripts/run_ppo_comparison.py` (train, then evaluate)."
+)
+COMPARISON_WITHHELD = (
+    "Withheld: {file} ({reason}). Only results of the registered comparison protocol are shown."
+)
+COMPARISON_SET_LABEL = "Constraint set"
+COMPARISON_SCENARIO_LABEL = "Scenario"
+COMPARISON_SET = "{name}: cap {cap:.0%} per fund, {turnover}"
+COMPARISON_NO_TURNOVER_LIMIT = "no turnover limit"
+COMPARISON_TURNOVER_LIMIT = "one-way turnover limit {limit:g} per rebalance, the build included"
+COMPARISON_FACT_PROTOCOL = "Registered configuration {name} ({sha})."
+COMPARISON_FACT_LOOK = (
+    "Test scenarios, look {number}{repeat} of {recorded} recorded for this configuration, "
+    "evaluated {generated}."
+)
+COMPARISON_FACT_LOG = (
+    "The private evaluation log verifies this look; its last entry is {head}, and it records "
+    "{dev} look(s) at the development scenarios."
+)
+COMPARISON_REPEAT = " (a recorded repeat)"
+COMPARISON_FACT_CODE = "Code {sha}{dirty}."
+COMPARISON_DIRTY = " with uncommitted changes"
+COMPARISON_FACT_SIMULATOR = (
+    "Simulator: each trade executes {lag} session after its decision; a decision every {every} "
+    "sessions at offset {offset}."
+)
+COMPARISON_UNITS = (
+    "Terminal wealth is the value at the last close per 1.0 of initial cash, before taxes: the "
+    "median over the scenario's test paths (for learned strategies, over every training seed's "
+    "paths), with the lowest and highest in brackets. Other cells show medians."
+)
+COMPARISON_DRAWDOWN_NOTE = (
+    "Drawdown duration runs from the peak to the recovery, or to the last session when there "
+    "was none. A path with sessions the simulator could not value (a fund without a close) "
+    "reports only its largest observed decline, never a full-period maximum drawdown; such "
+    "paths are counted."
+)
+COMPARISON_TURNOVER_NOTE = (
+    "Turnover is one-way (a full switch is 1). Construction covers the build until the "
+    "portfolio first reaches its target (all of it when it never does); rebalancing is "
+    "everything after, also shown per rebalance. Nothing is annualized: synthetic sessions "
+    "have no calendar dates, so the window's length in sessions is shown. Traded notional is "
+    "the summed weight traded in the funds, the build included."
+)
+COMPARISON_COSTS_NOTE = (
+    "The 0×, 1× and 2× columns replay the same decisions at zero, the registered and twice the "
+    "registered trading costs."
+)
+COMPARISON_INCOMPLETE = " ({n} incomplete)"
+COMPARISON_SEEDS_TITLE = "Learned strategies across training seeds"
+COMPARISON_SEEDS_NOTE = (
+    "Each training seed's mean terminal wealth over this scenario's test paths, for every seed. "
+    "The spread is part of the result; no seed is singled out."
+)
+COMPARISON_BUILD_TITLE = "The build under this constraint set"
+COMPARISON_BUILD_NOTE = (
+    "Weights executed at the build close (equity / bond / short-Treasury fund / cash), the cash "
+    "left uninvested, and whether a turnover limit left the build incomplete, with the sessions "
+    "until the portfolio first reached its target. A registered turnover limit applies to the "
+    "build too (confirmed by the owner on 2026-10-17)."
+)
+COMPARISON_STRATEGIES_TITLE = "Strategies and their registry stage"
+COMPARISON_KINDS = {"rule": "Rule", "optimizer": "Optimizer", "learned": "Learned"}
+COMPARISON_STRATEGY_COLUMNS = {
+    "strategy": "Strategy",
+    "kind": "Kind",
+    "rule": "Rule",
+    "seeds": "Training seeds",
+    "stage": "Registry stage",
+}
+COMPARISON_RESULT_COLUMNS = {
+    "strategy": "Strategy",
+    "runs": "Runs",
+    "wealth": "Terminal wealth",
+    "return": "Total return",
+    "drawdown": "Maximum drawdown",
+    "duration": "Drawdown duration (sessions)",
+    "construction": "Construction turnover",
+    "rebalance": "Rebalance turnover",
+    "per_rebalance": "Turnover per rebalance",
+    "sessions": "Sessions",
+    "notional": "Traded notional",
+    "zero": "Wealth at 0× costs",
+    "one": "Wealth at 1× costs",
+    "two": "Wealth at 2× costs",
+    "cap": "Cap hits",
+    "limit": "Turnover-limit hits",
+    "fallbacks": "Fallbacks",
+}
+COMPARISON_SEED_COLUMNS = {
+    "strategy": "Strategy",
+    "seeds": "Seeds",
+    "min": "Lowest",
+    "q1": "Lower quartile",
+    "median": "Median",
+    "q3": "Upper quartile",
+    "max": "Highest",
+    "values": "Every seed",
+}
+COMPARISON_BUILD_COLUMNS = {
+    "strategy": "Strategy",
+    "weights": "Executed at the build (median)",
+    "cash": "Uninvested cash at the build",
+    "incomplete": "Incomplete construction",
+    "never": "Never fully built",
+    "sessions": "Sessions until fully built (median)",
+    "end_cash": "Uninvested cash at the end",
+}
+
 DASHBOARD_TITLE = "Research diagnostics dashboard"
 DASHBOARD_TEXT = (
     "Saved model-diagnostics runs are read by a separate local research dashboard. Start it "

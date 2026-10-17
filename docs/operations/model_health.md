@@ -188,6 +188,11 @@ never as a failure of the run itself.
   leaves those checks `insufficient_evidence`): `constraint_violations` and
   `fallback_events` (integers >= 0), `fallback_reasons` `{reason: int}`, and
   `measures.volatility` (the risk measure, once its formula is approved).
+  Optional, informational, not read by any check (added 2026-10-17, schema
+  still "1.0"): `build`, the build's executed weights, uninvested cash and
+  incomplete construction (`portfolio.construction`, the owner's 2026-10-17
+  D5 request). The engine writes one build per summary; the registered
+  comparison writes a summary of builds over its episodes.
 
 Other inputs the local monitor reads where their producers write them:
 

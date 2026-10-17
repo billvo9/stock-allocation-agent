@@ -1,6 +1,6 @@
 # T5a: the open financial decisions (v2, 2026-10-14)
 
-**Status: D1-D8 APPROVED by the owner on 2026-10-15, as recorded below (D9 is not part of this packet and stays pending). One D5 clause awaits the owner's confirmation (see D5 below).**
+**Status: D1-D8 APPROVED by the owner on 2026-10-15, as recorded below (D9 is not part of this packet and stays pending). The D5 clause and two interpretations were confirmed by the owner on 2026-10-17 (below).**
 
 ## Owner approval record (2026-10-15, verbatim, in the lead session)
 
@@ -16,6 +16,16 @@ The owner approved "the following D1-D8 choices, provided they exactly match the
 | D6 | "Defer a whole rebalance when any held or targeted asset lacks an executable close. A newer valid target supersedes an older deferred target. Never fabricate intermediate wealth or a return through an unresolved distribution gap." | Matches D6 as corrected on 2026-10-14. It also settles the sub-question: the newer target supersedes (`superseded_deferred_target`). |
 | D7 | "Common initial build date, registered rebalance offset and consistent schedules across comparisons." | Matches D7. |
 | D8 | "D8(a): PPO reward equals net log-wealth growth, without double-counting already incurred transaction costs." | Matches D8 (a). Option (b) is not approved. |
+
+### Owner confirmations (2026-10-17, verbatim, in the lead session)
+
+The owner approved "the following interpretations of the existing D1–D8 contract":
+
+- "D5: A stricter registered constraint set applies identically to every compared policy, not only learned policies."
+- "D6: A hold/no-target decision preserves an already deferred target. A new valid target supersedes it."
+- "D5: An explicitly registered turnover cap also applies to the initial build. Report actual executed weights, uninvested cash and any incomplete construction so results are not misleading."
+
+"These are confirmations of the existing approved simulator rules, not authorization for different financial formulas."
 
 Not approved here: D9 (the Builder's buy-and-hold mix), D4 (b) (group C cash returns), D8 (b) and (c), and groups C and D of `t5_portfolio_formulas.md`.
 

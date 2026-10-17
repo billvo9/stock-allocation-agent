@@ -59,6 +59,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from stock_agent.portfolio.construction import BuildReport, build_report
 from stock_agent.portfolio.descriptive import DISTRIBUTION_IN_GAP
 from stock_agent.portfolio.schedule import (
     BUILD,
@@ -146,6 +147,14 @@ class SimulationResult:
         """The wealth at the last valued session (None when it is unavailable)."""
 
         return self.wealth[-1] if self.wealth else None
+
+    def build_report(self, cash_index: int) -> BuildReport | None:
+        """
+        The build's executed weights, uninvested cash and any incomplete
+        construction (D5, confirmed 2026-10-17; `portfolio.construction`).
+        """
+
+        return build_report([(t.session, t.feasibility) for t in self.trades], cash_index)
 
 
 def collect_targets(
