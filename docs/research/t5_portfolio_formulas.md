@@ -503,7 +503,7 @@ The owner approved the T5a open decisions D1-D8, recorded verbatim against each 
 
 ### Group C and D decision packets (2026-10-17, pending)
 
-Groups C and D are prepared for approval as decision packets in the T5a D1–D8 format: `group_c_decisions.md` (C1–C8: cash and T-bill returns, the risk-free rate, availability and vintages, benchmarks, `return_basis`, reference portfolios, the window start) and `group_d_decisions.md` (M1–M9: CAGR, volatility and Sharpe, intervals and their coverage simulation, drawdown reuse and stress windows, turnover per calendar year, participation, multiple testing, and the reporting contract with power figures). The index and a suggested reply are in `group_c_d_decision_index.md`. Every formula in this specification stays pending until its approval is recorded here.
+Groups C and D are prepared for approval as decision packets in the T5a D1–D8 format: `group_c_decisions.md` (C1–C9: cash and T-bill returns, the risk-free rate, availability and vintages, benchmarks, `return_basis`, reference portfolios, the window start, and the booked-state exception) and `group_d_decisions.md` (M1–M9: CAGR, volatility and Sharpe, intervals and their coverage simulation, drawdown reuse and stress windows, turnover per calendar year, participation, multiple testing, and the reporting contract with power figures). The index and a suggested reply are in `group_c_d_decision_index.md`. Every formula in this specification stays pending until its approval is recorded here.
 
 ### Decision groups (how to approve)
 

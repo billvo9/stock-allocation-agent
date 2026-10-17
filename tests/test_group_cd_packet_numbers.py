@@ -1,8 +1,9 @@
 """
 The group C and group D decision packets quote numbers computed by
 `scripts/group_cd_packet_numbers.py`. These tests keep each packet in step with
-the script, and recompute the key numbers independently: with the existing
-risk-free accrual (`prepare_risk_free_returns`) and with closed forms.
+the script in both directions (every computed value is quoted, and every bold
+number is computed), and recompute the key numbers independently: with the
+existing risk-free accrual (`prepare_risk_free_returns`) and with closed forms.
 """
 
 from __future__ import annotations
@@ -56,6 +57,24 @@ def test_every_computed_number_appears_in_its_packet(numbers, packet):
 
     missing = {key: value for key, value in numbers.items() if not quoted(value)}
     assert not missing, f"{packet} does not quote: {missing}"
+
+
+# A bold number: optional sign, digits with separators and decimals, optional exponent and unit.
+BOLD_NUMBER = re.compile(
+    r"\*\*([+-]?\d[\d,]*(?:\.\d+)?(?:e-\d+)?(?:%| bp| pt| pp| percentage points)?)\*\*"
+)
+
+
+@pytest.mark.parametrize(
+    ("numbers", "packet"),
+    [(GROUP_C, "group_c_decisions.md"), (GROUP_D, "group_d_decisions.md")],
+)
+def test_every_bold_number_in_a_packet_is_computed_by_the_script(numbers, packet):
+    """The other direction: a bold number cannot be hand-derived or left stale."""
+
+    computed = set(numbers.values())
+    stray = sorted({value for value in BOLD_NUMBER.findall(_packet(packet))} - computed)
+    assert not stray, f"{packet} has bold numbers the script does not compute: {stray}"
 
 
 def _rates(rows: list[tuple[str, float]]) -> pd.DataFrame:
@@ -140,7 +159,7 @@ def test_expected_maximum_of_five_normals():
 def test_the_power_table_uses_the_stated_formula():
     z = NormalDist().inv_cdf(0.975) + NormalDist().inv_cdf(0.80)
     assert GROUP_D["M9.z_sum"] == f"{z:.4f}"
-    assert GROUP_D["M9.mde_sr_normal_rho0.9_t10"] == f"{z * math.sqrt(2 * 0.1 / 10):.2f}"
+    assert GROUP_D["M9.mde_sr_normal_rho0.9_t10"] == f"{z * math.sqrt(2 * 0.1 / 10):.3f}"
 
 
 def test_no_source_module_imports_the_packet_script():

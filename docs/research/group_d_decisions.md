@@ -5,13 +5,13 @@
 **Why now.** The owner's 2026-10-17 request: make future real-data comparisons of PPO against the baselines defensible. The synthetic comparison (`ppo_comparison.md`) reported no group D statistic because group D is unapproved: no CAGR, no Sharpe ratio, no interval and no test. A real comparison needs all of them, decided before any real result exists, so that no statistic is chosen after seeing which one flatters a strategy.
 
 **How to read it.**
-- Decision ids M1–M9 are new ("M" for metrics; D1–D8 remain the T5a ids, and group C's decisions are C1–C8 in `group_c_decisions.md`). The combined index with a suggested reply is `group_c_d_decision_index.md`.
+- Decision ids M1–M9 are new ("M" for metrics; D1–D8 remain the T5a ids, and group C's decisions are C1–C9 in `group_c_decisions.md`). The combined index with a suggested reply is `group_c_d_decision_index.md`.
 - Formula ids (F2.4, F6.x, F7.3) refer to `t5_portfolio_formulas.md`. Each decision gives the rule, the exact equation, a worked example, the options and a recommendation, as in `t5a_open_decisions.md`.
-- Every number below is computed by `scripts/group_cd_packet_numbers.py` (keys `M1.*` to `M9.*`), and `tests/test_group_cd_packet_numbers.py` fails if a number here no longer matches. Inputs are synthetic or stated assumptions. The interval example reuses T2's existing bootstrap code (`model_diagnostics/inference.py`).
+- **Every number in bold** is computed by `scripts/group_cd_packet_numbers.py` (keys `M1.*` to `M9.*`), and so is every number in the tables. `tests/test_group_cd_packet_numbers.py` checks both directions: every computed value appears here, and every bold number here is a computed value. Numbers not in bold are stated inputs or assumptions, restatements of a computed number, or figures quoted from approved documents. The interval example reuses T2's existing bootstrap code (`model_diagnostics/inference.py`).
 - **Every power, sample-size and detection figure here is a planning figure** (risk register STAT-16): computed under stated i.i.d. assumptions, with its finite-sample behaviour not yet checked by simulation.
 - Evidence tags: **[A]** an assumption to approve; **[I]** from memory, unverified.
 
-**Already decided, and not asked again.** F6.5 (drawdown, its duration and dollar size; A6) with R5c (incomplete histories show only the "largest observed decline"); F6.6 (calendar-year returns, partial years labelled; A7), including its rule that CAGR is never divided by volatility; OD8.13 ("Before taxes and transaction costs"; A8); F2.4's one-way turnover (approved in group B; M6 asks only how "annualized per calendar year" is read); F7.2 (rebalance offsets are one variant with a k-member sensitivity family; D7); D8 (a) (the PPO reward is log(1 + R_net)). The PRD's section 15 sets the direction for a learned policy (an intersection-union test against each baseline, "tested by date with fold-block inference", seeds reported as a distribution, a deflated Sharpe ledger); it is approved direction with details under review, and where this packet departs from its wording (M3, M8, M9) it says so.
+**Already decided, and not asked again.** F6.5 (drawdown, its duration and dollar size; A6) with R5c (incomplete histories show only the "largest observed decline"); F6.6 (calendar-year returns, partial years labelled; A7), including its rule that CAGR is never divided by volatility; OD8.13 ("Before taxes and transaction costs"; A8); F2.4's one-way turnover (approved in group B; M6 asks only how "annualized per calendar year" is read); F7.2 (rebalance offsets are one variant with a k-member sensitivity family; D7); D8 (a) (the PPO reward is log(1 + R_net)). The PRD's section 15 sets the direction for a learned policy (an intersection-union test against each baseline, "tested by date with fold-block inference", seeds reported as a distribution, a deflated Sharpe ledger); it is approved direction with details under review. Where a recommendation here departs from its wording (M3's headline interval; M8's effective-trial rule and DSR denominator) it says so, and so does every non-recommended option that would (M9's cash contrast).
 
 **Notation.** R_t is a strategy's net return for the span ending at close t (from `portfolio_step`); rf_t the risk-free return for the same span (C3); e_t = R_t − rf_t; n the number of return sessions; D the calendar days of the window; b the block length and k = ⌈n/b⌉ the blocks per bootstrap replicate.
 
@@ -58,7 +58,7 @@ SR    = √252 × mean(e_t) / sd(e_t),           e_t = R_t − rf_t   (rf from C
 - Not proposed: Sortino, Calmar and the information ratio. They are reported only if approved later (the paired differences in M3 carry the same information as an information ratio).
 
 **Examples.**
-- A per-session Sharpe ratio of 0.05 is **0.794** a year. Over ten years (n = 2,520), its i.i.d. standard error (Lo 2002) is **0.316**, so the i.i.d. 95% interval is **[0.17, 1.41]**. Ten years of daily data cannot pin down a Sharpe ratio better than about ±0.6.
+- A per-session Sharpe ratio of 0.05 is **0.794** a year. Over ten years (n = 2,520), its i.i.d. standard error (Lo 2002) is **0.316**, so the i.i.d. 95% interval is **[0.17, 1.41]**. Ten years of daily data cannot pin down a Sharpe ratio better than about ±**0.62**.
 - Friday → Monday, a portfolio returns 0.60% and the risk-free return at 5% is **0.0411%** (three days), so the excess return is **0.5589%**. A weekend accrues in both terms.
 
 **Options.** **√252 per session (recommended)**; Lo's autocorrelation-adjusted annualization (one more estimated quantity); calendar-day scaling (mixes the weekend accrual into the volatility scale).
@@ -84,7 +84,7 @@ SR    = √252 × mean(e_t) / sd(e_t),           e_t = R_t − rf_t   (rf from C
 **Example (synthetic, seed 20261017).** 1,260 sessions of i.i.d. normal log returns (mean 0.0003, sd 0.01) over **1,830** calendar days, so **251.5** sessions per calendar year; **20** blocks of 63, so t = **2.093**. The true values built into the series are shown for comparison.
 - **CAGR:** **8.14%**, interval **[−4.28%, 22.17%]** (true **7.84%**).
 - **Sharpe:** **0.58**, bootstrap SE **0.371**, interval **[−0.20, 1.35]** (true **0.56**). The percentile interval would be [−0.16, 1.32]; Lo's i.i.d. SE is **0.447**.
-  - The bootstrap SE (0.371) differs from the i.i.d. SE (0.447) by sampling noise alone: with 20 blocks, an SE estimate is itself uncertain by roughly 1/√(2 × 19) ≈ 16%. That is why the t critical value has k − 1 degrees of freedom, and why M4 must check coverage before the settings are fixed.
+  - The bootstrap SE (0.371) differs from the i.i.d. SE (0.447) by sampling noise alone: with 20 blocks, an SE estimate is itself uncertain by roughly 1/√(2 × 19) ≈ **16%**. That is why the t critical value has k − 1 degrees of freedom, and why M4 must check coverage before the settings are fixed.
 - **Paired difference** against a second series correlated 0.9 with the first: **8.04%** a year, paired SE **3.03%**, interval **[1.70%, 14.38%]** (true **2.51%**). Treating the two series as independent would give an SE of **7.90%**: pairing on the same draws is what makes a comparison informative.
 - The t critical value is **2.365** at the 8-block minimum, and **1.994** at 72 blocks (a window starting with SHV in 2007, 4,527 return sessions).
 
@@ -115,11 +115,13 @@ SR    = √252 × mean(e_t) / sd(e_t),           e_t = R_t − rf_t   (rf from C
 
 | True coverage in every cell | Per cell, 2,000 reps | All 120 cells, 2,000 reps | Per cell, 5,000 reps | All 120 cells, 5,000 reps |
 |---|---|---|---|---|
-| 95% | 100.0% | 99.8% | 100.0% | 100.0% |
-| 94% | 97.0% | 2.6% | 99.9% | 84.0% |
-| 92% | 5.0% | 0.0% | 0.5% | 0.0% |
+| 95% | 100.0% | 99.5% | 100.0% | 100.0% |
+| 94% | 97.1% | 2.9% | 99.8% | 82.2% |
+| 92% | 5.2% | 0.0% | 0.4% | 0.0% |
 
-  At 2,000 replications a method with a true 94% coverage would almost surely fail somewhere by Monte Carlo noise alone; at 5,000 it passes 84.0% of the time, while a method at 92% still fails. That is why 5,000 is recommended.
+  - **How the table is computed.** Per cell: the exact binomial probability that the observed coverage reaches 93%. All cells: the product of the 120 per-cell values, which **assumes the cells are independent**. They are not: the statistics of one process and sample size are computed on the same simulated paths, so the joint values are indicative only. A normal approximation instead of the exact binomial gives 84.0% and 2.6% for the two 94% entries.
+  - At 2,000 replications a method with a true 94% coverage would almost surely fail somewhere by Monte Carlo noise alone; at 5,000 it passes about four times in five, while a method at 92% still fails. That is why 5,000 is recommended.
+- **Compute budget.** 120 cells × 5,000 replications × 999 bootstrap replicates × 3 block lengths = **1,798,200,000** bootstrap statistics; the three methods reuse each cell's replicates. T2's block sums (`resampled_sums`) make each statistic a few array operations, but the run is long, which is one more reason to run it once, as registered.
 - **A failing cell.** It is reported, and a setting may change only by the registered rule (for example the smallest block length that passes everywhere), never by looking at real-data results. Real data cannot be assigned to one simulated process, so **if any process fails, every real-data interval carries the label** "under-covers in simulation under <process> dependence", not only some of them.
 
 **Options.**
@@ -135,7 +137,7 @@ SR    = √252 × mean(e_t) / sd(e_t),           e_t = R_t − rf_t   (rf from C
 
 **Rule.**
 - F6.5 as approved (A6), with R5c: the maximum drawdown as a point estimate, its duration in sessions and calendar days or "not recovered", its dollar size on $10,000, no interval, and a close-to-close label.
-- **New here:** three stress windows, registered before any strategy is run, reported beside it for every strategy and benchmark: the return and the maximum drawdown inside each window. Their dates are the S&P 500's peak and trough closes [I], fixed by market history, not by any strategy's results:
+- **New here (a proposal [A]):** three stress windows, registered before any strategy is run, reported beside it for every strategy and benchmark: the return and the maximum drawdown inside each window. The proposed dates are the S&P 500's peak and trough closes [I], fixed by market history, not by any strategy's results, and to be checked against index data before registration:
 
 | Window | Start (peak) | End (trough) | Sessions |
 |---|---|---|---|
@@ -147,7 +149,14 @@ A window outside a comparison's registered window is reported as `outside_window
 
 **Example (approved F6.5).** Wealth 100, 110, 99, 105, 111 gives a maximum drawdown of 10.0% and a duration of 3 sessions; on a $10,000 start, the worst decline is $1,100.
 
-**Options.** **(a) F6.5 plus the three registered windows (recommended)**; (b) F6.5 alone; (c) a bootstrap interval for maximum drawdown (rejected in F6.5: drawdown depends on episodes longer than a block).
+**Options.**
+- **(a) F6.5 plus the three proposed peak-to-trough windows (recommended).** Fixed dates, comparable across comparisons.
+- (b) F6.5 plus windows defined another way:
+  - calendar years 2008, 2020 and 2022: no choice of peak or trough, but they dilute each crash with its recovery;
+  - NBER recession dates (2007-12 to 2009-06; 2020-02 to 2020-04) [I]: official, but monthly and partly after the market trough;
+  - a rule: the registered benchmark's k largest drawdown episodes inside the comparison's window (by F6.5), for example k = 3 with a depth of at least 10% [A]. It adapts to any window, but the windows then differ between comparisons.
+- (c) F6.5 alone.
+- (d) A bootstrap interval for maximum drawdown (rejected in F6.5: drawdown depends on episodes longer than a block).
 
 **Recommend: (a).**
 
@@ -204,8 +213,12 @@ MDV_i = median over the 20 sessions ending at decision session d of (raw close �
 
 **Rule.**
 1. **The primary claim** (PRD section 15): the policy beats **each** registered baseline, on the primary estimand only (the paired difference in annualized log growth, M9). It is an intersection-union test: every paired one-sided test at α = 0.025 (one-sided p from M3), and the claim holds only if all of them reject. It needs no multiplicity adjustment: if any baseline is in fact not beaten, the chance that all tests reject is at most that baseline's own α.
-2. **How it relates to per-baseline statements.** When the intersection-union test rejects, the primary claim holds, and with it each of its components ("beats baseline j"); nothing more is tested. When it fails, a statement about one baseline ("PPO beats inverse volatility") is a secondary claim, made only if it survives Holm's adjustment across the registered contrasts at one-sided 0.025. So the two never contradict each other in the report. With p = 0.02 against each of four baselines, the report says "beats each of the four baselines" (every test rejects), even though Holm alone, starting at 0.00625, would support no single-baseline claim.
-3. **A headline Sharpe ratio** of a strategy chosen among several registrations evaluated on the same window carries the deflated Sharpe ratio (DSR), with N the effective number of trials from the ledger. A DSR below **0.975** (the one-sided 2.5% level the PRD uses throughout) is labelled "not distinguishable from selection among N trials".
+2. **Per-baseline statements, and the overall error rate (a sub-question).** When the intersection-union test rejects, the primary claim holds, and with it each of its components ("beats baseline j"). What happens when it fails decides the overall chance of a false claim:
+   - **(i) No fallback claims (recommended).** No claim is made against any single baseline; the paired intervals are still shown, as estimates. The chance of any false claim is the intersection-union test's alone: at most α, by construction.
+   - (ii) A Holm fallback: a statement about one baseline ("PPO beats inverse volatility") is made if it survives Holm's adjustment at one-sided 0.025. The two branches are disjoint, but their error rates add: at most **0.050** (2α) by the union bound, and at most **0.025625** (α + α²) when the p-values are independent; **0.0375** (1.5α) is reachable when they are negatively dependent (two baselines that are in fact not beaten). The report would have to state that bound.
+   - (iii) Split α: the intersection-union test at α/2 and Holm at α/2. At most α by the union bound, with less power for both.
+   - (iv) Holm alone, with "beats every baseline" only when Holm rejects every contrast. At most α, with less power for the primary claim than the intersection-union test.
+3. **A headline Sharpe ratio** of a strategy chosen among several registrations evaluated on the same window carries the deflated Sharpe ratio (DSR), with N the effective number of trials from the ledger. A DSR below **0.975** (the one-sided 2.5% level the PRD uses throughout) is labelled "not distinguishable from selection among N trials". How the DSR handles dependence is a sub-question (below the equations).
 4. **The effective-trial rule** (risk register STAT-5), a choice for the owner. Recommended:
    - a trial is a registered configuration whose test-window results were looked at;
    - a recorded repeat look that reproduces its previous look exactly adds no trial (like the synthetic comparison's look 2); a repeat that changed anything does;
@@ -227,6 +240,11 @@ SR₀ = √V × [ (1 − γ) Φ⁻¹(1 − 1/N) + γ Φ⁻¹(1 − 1/(N·e)) ], 
 
 γ₃ is skewness and γ₄ the ordinary kurtosis (3 for a normal). pandas `kurt()` returns excess kurtosis, so 3 must be added: an easy silent bug.
 
+**Dependence (a sub-question).** The √(n − 1) term, and the variance formula under it, assume serially independent returns, which M3 rejects (daily returns cluster in volatility). Options:
+- (i) The published formula with n, shown labelled "assumes independent returns".
+- (ii) n replaced by an effective sample size n_eff from T2's `effective_sample_size` (Bartlett weights). It keeps the published formula, but it corrects only for autocorrelation in returns, which is small for daily returns, not for volatility clustering.
+- (iii) **Recommended:** the denominator replaced by M3's block-bootstrap standard error of the Sharpe ratio (in per-session units), and V's noise approximation by that standard error squared. This adapts the published method so that it carries M3's dependence handling. The published value (i) is shown beside it.
+
 **Examples.**
 - **DSR.** An annual Sharpe ratio of 0.80 over 1,260 sessions, skewness −0.5, kurtosis 6, trials that were pure noise (V = 1/n):
 
@@ -241,10 +259,11 @@ SR₀ = √V × [ (1 − γ) Φ⁻¹(1 − 1/N) + γ Φ⁻¹(1 − 1/(N·e)) ], 
 - **Holm and the intersection-union test.** One-sided p-values against four baselines of 0.010, 0.020, 0.030 and 0.200:
   - read unadjusted at 0.025, they claim **2** wins;
   - Holm's first threshold is 0.025/4 = **0.00625**, so it makes **0** rejections;
-  - the primary claim fails too: two p-values exceed 0.025, so no claim is made against any baseline.
+  - the primary claim fails too: two p-values exceed 0.025, so under (i) no claim is made against any baseline;
+  - with p = 0.02 against each of four baselines, every test rejects, so the report says "beats each of the four baselines", even though Holm alone, starting at 0.00625, would support no single-baseline claim. The two procedures answer different questions; (i) keeps only one of them.
 
 **Options.**
-- **(a) The intersection-union test for the primary claim, Holm for secondary claims when it fails, and the DSR for headline Sharpe ratios at the effective N, with the full-count DSR beside it (recommended).**
+- **(a) The intersection-union test for the primary claim with no fallback claims (i), and the DSR for headline Sharpe ratios with the bootstrap standard error (iii), at the effective N, with the full-count DSR beside it (recommended).**
 - (b) The DSR only.
 - (c) Bonferroni (valid, more conservative than Holm).
 - (d) The Reality Check or SPA now (needs every variant's stored path).
@@ -270,9 +289,12 @@ SR₀ = √V × [ (1 − γ) Φ⁻¹(1 − 1/N) + γ Φ⁻¹(1 − 1/(N·e)) ], 
 Against each registered baseline, the benchmark **and the C1 cash account**, on the same bootstrap draws:
 - **the primary estimand**: the paired difference in annualized log growth, the certainty equivalent of a log-utility investor and the D8 (a) objective, with its interval, a one-sided p-value, and the **minimum detectable effect** for that window beside it (STAT-1);
 - the paired Sharpe difference with its interval;
-- the intersection-union result, Holm-adjusted secondary results when it fails, the DSR for any headline Sharpe ratio, and the ledger's trial counts (M8).
+- the intersection-union result, any per-baseline claims M8 allows, the DSR for any headline Sharpe ratio, and the ledger's trial counts (M8).
 
-The contrast with the cash account answers the PRD's warning that a policy and its reference "could lose to cash". It is reported, not part of the intersection-union claim unless the registration names the cash account as a baseline.
+**Value against cash (a sub-question).** The PRD (section 15) says any claim of value, and any scaling up, needs both superiority over every registered baseline (the intersection-union test) and **positive value against cash**: the net certainty-equivalent return minus the T-bill return over the same dates, "judged on the point estimate and its interval", a necessary condition rather than a test.
+- **(i) Follow the PRD (recommended).** A value claim is made only when the intersection-union test rejects **and** the paired difference in annualized log growth against the C1 cash account has a positive point estimate; its interval is shown beside it. Without both, the report makes no value claim.
+- (ii) Add the cash account to the intersection-union baselines. That turns the PRD's necessary condition into a test, which is far stricter: showing a Sharpe ratio of 0.5 over cash takes about 31.4 years (below).
+- (iii) Report the cash contrast without making it a condition. This was the first draft of this packet; it **departs from the PRD**.
 
 **Learned policies and seeds.** The headline is a seed ensemble declared before the run (PRD section 15). Every seed is also reported, with the spread (min, quartiles, max); the best seed is never shown alone (with five seeds, the best beats the seed mean by about **1.163** seed standard deviations from selection alone). How the ensemble is formed is a sub-question:
 - **(i) Averaged targets (recommended).** At each decision the ensemble's target is the mean of the seeds' targets. It runs as one registered policy through the same feasibility map (D5) and `portfolio_step`: one account, netted trades, one constraint application. That is what would be deployed.
@@ -297,7 +319,9 @@ The contrast with the cash account answers the PRD's warning that a policy and i
 | 0.9 | 0.79 | 0.59 | 0.41 | 0.30 |
 | 0.95 | 0.56 | 0.42 | 0.29 | 0.21 |
 
-  With normal quantiles instead (2.8016), ρ = 0.9 gives 0.72 over 3 years and 0.40 over 10: the PRD's planning figures (0.71 and 0.39) agree within rounding. The t version is wider because a 3-year window has only 12 blocks.
+  The t version is wider than a normal-quantile figure because a 3-year window has only 12 blocks. With normal quantiles (2.8016), ρ = 0.9 gives **0.723** over 3 years and **0.396** over 10.
+  - **The PRD's planning figures differ slightly.** It gives 0.71 and 0.39. Those match **0.712** and **0.390**: the values obtained by counting 260 sessions a year (every weekday) while annualizing with √252, which understates the detectable difference by about 1.6%.
+  - **Proposed PRD wording** (not edited here; the PRD is the owner's document): "about 0.40 over 10 years and 0.72 over 3 years (normal quantiles, 252 sessions a year; about 0.41 and 0.79 with t quantiles over 63-session blocks)".
 - **The smallest detectable difference in annualized log growth**, for a tracking error TE between the two strategies: (t_{k−1, 0.975} + t_{k−1, 0.80}) × TE/√T, with the same k (t quantiles with k − 1 degrees of freedom stand in for both the test and the power):
 
 | TE | 3 years | 5 years | 10 years | 18 years |
@@ -311,7 +335,7 @@ The contrast with the cash account answers the PRD's warning that a policy and i
 
 **What this means.** On a five-year real test window, a policy whose returns correlate 0.9 with a baseline must beat it by about 0.59 in Sharpe ratio, or by about 6.6% a year in log growth at a 5% tracking error, to be detected with 80% power. Realistic edges are smaller. So a real comparison is an **estimation exercise with intervals**, not a ranking: a non-detection is the expected outcome, and the report says so in advance. Dependence beyond the i.i.d. assumptions (volatility clustering, regimes) widens every figure above.
 
-**Options.** **(a) The contract as stated, with averaged targets as the seed ensemble (recommended)**; (b) point estimates only (today's synthetic practice, which the owner's request rules out for real data); (c) the contract with sub-accounts or the median seed as the headline.
+**Options.** **(a) The contract as stated, with value against cash as the PRD states it (i) and averaged targets as the seed ensemble (recommended)**; (b) point estimates only (today's synthetic practice, which the owner's request rules out for real data); (c) the contract with sub-accounts or the median seed as the headline, or with the cash contrast as a test (ii) or as context only (iii).
 
 **Recommend: (a).**
 
@@ -347,4 +371,4 @@ The contrast with the cash account answers the PRD's warning that a policy and i
 
 **Bounded exercise (optional, after approval).** Using `draw_circular_blocks` and `bootstrap_mean`, reproduce M3's paired SE (3.03%) and unpaired SE (7.90%) from the seed and inputs stated there, then explain in two sentences why they differ.
 
-**Suggested reply:** "Approve M1 as stated; M2 with (i) for incomplete histories; M3 with `fold_block_t` beside the bootstrap; M4 (a) with 5,000 replications; M5 (a); M6 (a); M7 (a) with N = $1,000,000; M8 (a); M9 (a) with averaged targets as the seed ensemble", or amend any item.
+**Suggested reply:** "Approve M1 as stated; M2 with (i) for incomplete histories; M3 with `fold_block_t` beside the bootstrap; M4 (a) with 5,000 replications; M5 (a); M6 (a); M7 (a) with N = $1,000,000; M8 (a) with no fallback claims and the bootstrap-SE DSR; M9 (a) with value against cash as in the PRD and averaged targets as the seed ensemble", or amend any item.

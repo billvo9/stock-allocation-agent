@@ -97,6 +97,20 @@ def expected_max_of_normals(k: int) -> float:
     return float(np.trapezoid(integrand, grid))
 
 
+def binomial_upper_tail(k0: int, n: int, p: float) -> float:
+    """P(X >= k0) for X ~ Binomial(n, p), summed exactly in log space."""
+
+    log_terms = (
+        math.lgamma(n + 1)
+        - math.lgamma(k + 1)
+        - math.lgamma(n - k + 1)
+        + k * math.log(p)
+        + (n - k) * math.log(1.0 - p)
+        for k in range(k0, n + 1)
+    )
+    return sum(math.exp(term) for term in log_terms)
+
+
 def deflated_sharpe(
     sr: float, n: int, skew: float, kurtosis: float, trials: int, trial_variance: float
 ) -> tuple[float, float]:
@@ -130,6 +144,7 @@ def group_c_numbers() -> dict[str, str]:
     out["C1.discount_yield"] = pct(discount_yield, 4)
     out["C1.discount_as_investment"] = pct(discount_yield * days / 365.0, 4)
     out["C1.discount_as_investment_error"] = bp(discount_yield * days / 365.0 - hpr)
+    out["C1.discount_as_investment_error_year"] = bp(4 * (discount_yield * days / 365.0 - hpr), 1)
     out["C1.investment_on_360_error"] = bp(investment_yield * days / 360.0 - hpr)
     out["C1.bey_from_discount"] = pct(bey_from_discount, 4)
 
@@ -146,6 +161,8 @@ def group_c_numbers() -> dict[str, str]:
     cash_2023 = per_session_cash_returns(0.05, "2022-12-30", "2023-12-29")
     out["C1.daily_compounding"] = pct(daily, 4)
     out["C1.quarterly_roll"] = pct(quarterly_roll, 4)
+    out["C1.roll_91_day"] = pct((1.0 + 0.05 * 91 / 365.0) ** (365.0 / 91) - 1.0, 4)
+    out["C1.daily_over_quarterly"] = bp(daily - quarterly_roll, 1)
     out["C1.sessions_2023"] = str(len(cash_2023))
     out["C1.cash_2023_growth"] = pct(float(np.prod(1.0 + cash_2023) - 1.0), 4)
 
@@ -233,6 +250,7 @@ def group_d_numbers() -> dict[str, str]:
     out["M2.lo_se"] = fixed(lo_se, 3)
     out["M2.iid_low"] = fixed(sr_annual - Z_TWO_SIDED_5 * lo_se, 2)
     out["M2.iid_high"] = fixed(sr_annual + Z_TWO_SIDED_5 * lo_se, 2)
+    out["M2.iid_half_width"] = fixed(Z_TWO_SIDED_5 * lo_se, 2)
     weekend_rf = act365_accrual(0.05, date(2023, 12, 15), date(2023, 12, 18))
     out["M2.weekend_rf"] = pct(weekend_rf, 4)
     out["M2.weekend_excess"] = pct(0.006 - weekend_rf, 4)
@@ -257,6 +275,7 @@ def group_d_numbers() -> dict[str, str]:
 
     out["M3.blocks"] = str(k)
     out["M3.t_critical"] = fixed(t_crit, 3)
+    out["M3.se_relative_noise"] = pct(1.0 / math.sqrt(2.0 * (k - 1)), 0)
     out["M3.span_days"] = f"{span_days:,}"
     out["M3.cagr_point"] = pct(to_cagr(growth.estimate), 2)
     out["M3.cagr_low"] = pct(to_cagr(growth.ci_low), 2)
@@ -298,16 +317,21 @@ def group_d_numbers() -> dict[str, str]:
         half_width = Z_TWO_SIDED_5 * math.sqrt(0.95 * 0.05 / reps)
         out[f"M4.half_width_{reps}"] = f"{half_width * 100:.2f} pp"
     # Acceptance at 93% per cell, alone and jointly over the design's 120 cells per method and
-    # block length (5 processes x 4 sample sizes x 6 statistics).
+    # block length (5 processes x 4 sample sizes x 6 statistics). Per cell: the exact binomial
+    # tail. Jointly: the product, which assumes independent cells (they share simulated paths).
     cells = 5 * 4 * 6
     out["M4.cells"] = str(cells)
     for reps in (2000, 5000):
+        threshold = -(-93 * reps // 100)
         for true_coverage in (0.95, 0.94, 0.92):
-            se = math.sqrt(true_coverage * (1 - true_coverage) / reps)
-            per_cell = 1.0 - normal_cdf((0.93 - true_coverage) / se)
+            per_cell = binomial_upper_tail(threshold, reps, true_coverage)
             label = f"{reps}_{round(true_coverage * 100)}"
             out[f"M4.cell_pass_{label}"] = pct(per_cell, 1)
             out[f"M4.all_pass_{label}"] = pct(per_cell**cells, 1)
+            se = math.sqrt(true_coverage * (1 - true_coverage) / reps)
+            normal = 1.0 - normal_cdf((0.93 - true_coverage) / se)
+            out[f"M4.all_pass_normal_{label}"] = pct(normal**cells, 1)
+    out["M4.bootstrap_statistics"] = f"{cells * 5000 * 999 * 3:,}"
 
     # M5: registered stress windows (peak and trough sessions of the S&P 500).
     windows = {
@@ -348,6 +372,11 @@ def group_d_numbers() -> dict[str, str]:
     p_values = [0.010, 0.020, 0.030, 0.200]
     holm = [p <= 0.025 / (len(p_values) - i) for i, p in enumerate(sorted(p_values))]
     out["M8.holm_first_threshold"] = fixed(0.025 / len(p_values), 5)
+    alpha = 0.025
+    out["M8.dsr_threshold"] = fixed(1.0 - alpha, 3)
+    out["M8.error_union_bound"] = fixed(2 * alpha, 3)
+    out["M8.error_independent_bound"] = fixed(alpha + alpha**2, 6)
+    out["M8.error_negative_dependence"] = fixed(1.5 * alpha, 4)
     out["M8.holm_rejections"] = str(next((i for i, ok in enumerate(holm) if not ok), len(holm)))
     out["M8.unadjusted_rejections"] = str(sum(p <= 0.025 for p in p_values))
 
@@ -363,7 +392,11 @@ def group_d_numbers() -> dict[str, str]:
             mde = zt * math.sqrt(2 * (1 - rho) / years)
             out[f"M9.mde_sr_rho{rho}_t{years}"] = fixed(mde, 2)
     for years in (3, 10):
-        out[f"M9.mde_sr_normal_rho0.9_t{years}"] = fixed(z * math.sqrt(0.2 / years), 2)
+        normal = z * math.sqrt(0.2 / years)
+        out[f"M9.mde_sr_normal_rho0.9_t{years}"] = fixed(normal, 3)
+        # The PRD's planning figures match 260 sessions a year annualized with sqrt(252).
+        prd = z * math.sqrt(0.2 / (260 * years)) * math.sqrt(SESSIONS_PER_YEAR)
+        out[f"M9.mde_sr_prd_260_rho0.9_t{years}"] = fixed(prd, 3)
     for te in (0.02, 0.05, 0.10):
         for years in (3, 5, 10, 18):
             blocks = years * SESSIONS_PER_YEAR // 63
