@@ -401,7 +401,7 @@ are never recomputed here.
 <a id="forecast-stock-lab-job"></a>
 ### Stock Lab daily update (`forecast.stock_lab_job`)
 
-- **What it means.** The last daily-job run's status as recorded by the job: ok is healthy, partial or skipped degraded, failed failed. Until the owner records decisions A1, A2 and A4, a real run records itself as skipped, with the reason.
+- **What it means.** The last daily-job run's status as recorded by the job: ok is healthy, partial or skipped degraded, failed failed. Until the owner records decisions A1, A2 and A4, a real run records itself as skipped, with the reason. Failed (`job_overdue`) when the monitor runs more than 6 hours past the run the job said was next: the scheduled job may have stopped, and its last file would otherwise stay green.
 - **Likely causes.** Skipped: approvals pending. Failed: a provider error, an unreadable store, a ledger that does not verify.
 - **Diagnose.** The detail gives the last success and the next expected run; the private store's job runs keep every run's reason.
 - **Safe retry.** Re-run the job after fixing the cause.

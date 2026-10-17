@@ -46,6 +46,14 @@ class ReplayDay:
     scored: int
 
 
+class ReplayRefused(ValueError):
+    """The store already holds replay records; a replay never writes over or beside them."""
+
+
+def _weekdays(first: pd.Timestamp, last: pd.Timestamp) -> pd.DatetimeIndex:
+    return pd.bdate_range(first, last, tz="UTC").as_unit("us")
+
+
 def _clock(session: pd.Timestamp, minutes: int) -> pd.Timestamp:
     return session + pd.Timedelta(hours=21, minutes=minutes)
 
@@ -60,6 +68,11 @@ def run_replay(
 
     from stock_agent.stock_lab import scoring  # the scorer reads only stored records
 
+    if any(store.batches(stock_id) for stock_id in synthetic.DEMO_IDS):
+        raise ReplayRefused(
+            "this store already holds synthetic demo prices; records are write-once, so a "
+            "second replay would collide with the first: use a new STOCK_AGENT_STOCK_LAB_HOME"
+        )
     full = dict(synthetic.demo_histories())
     any_bars = next(iter(full.values()))
     first = len(any_bars) - sessions - 1
@@ -124,7 +137,7 @@ def run_replay(
                 data_class=DataClass.SYNTHETIC,
                 vintage_note=NOTE,
             )
-        scored = scoring.score_store(store, list(full))  # only outcomes now closed
+        scored = scoring.score_store(store, list(full), calendar=_weekdays)  # closed only
         made = forecast_all(index)  # then today's forecasts, from today's close
         days.append(ReplayDay(session.strftime("%Y-%m-%d"), made, scored))
         if record_day is not None:

@@ -21,10 +21,11 @@ from stock_agent.health import fixtures as health_fixtures
 from stock_agent.health.inputs import load_latest
 from stock_agent.health.model import HealthState
 from stock_agent.health.stock_lab import ARTIFACT, MIN_SCORED, stock_lab_checks
+from stock_agent.stock_lab import forecast as artifact
 from stock_agent.stock_lab import monitoring, scoring, synthetic
 from stock_agent.stock_lab.contracts import DataClass
 from stock_agent.stock_lab.scores import rps
-from stock_agent.stock_lab.store import DB_NAME, StockLabStore
+from stock_agent.stock_lab.store import DB_NAME, StockLabStore, StoreRefused
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -92,22 +93,90 @@ def test_a_session_not_yet_closed_is_pending_and_nothing_is_written_for_it(repla
     latest = store.latest_forecast("DEMO_CALM")
     assert not [s for s in store.scores("DEMO_CALM") if s["forecast_id"] == latest["forecast_id"]]
     bars = store.bars("DEMO_CALM")
-    batch_of = {
-        row.session.strftime("%Y-%m-%d"): (row.batch_id, "x") for row in bars.bars.itertuples()
-    }
-    pending = scoring.score_forecast(latest, bars.bars.drop(columns=["batch_id"]), batch_of)
+    batch_of = {row.session.strftime("%Y-%m-%d"): row.batch_id for row in bars.bars.itertuples()}
+    pending = scoring.score_forecast(
+        latest, bars.bars.drop(columns=["batch_id"]), batch_of, seen_before=set()
+    )
     assert {s.status for s in pending} == {scoring.PENDING}
 
 
-def test_an_outcome_retrieved_before_the_forecast_is_never_scored(replayed):
-    store, _ = replayed
-    record = store.forecasts("DEMO_SWING")[0]
-    bars = store.bars("DEMO_SWING")
-    early = {row.session.strftime("%Y-%m-%d"): (row.batch_id, "2000-01-01T00:00:00.000000Z")
-             for row in bars.bars.itertuples()}  # fmt: skip
-    results = scoring.score_forecast(record, bars.bars.drop(columns=["batch_id"]), early)
-    closed = [s for s in results if s.status != scoring.PENDING]
-    assert closed and {s.reason for s in closed} == {"outcome_retrieved_before_forecast"}
+# A small store: DEMO_CALM's first `known` sessions stored at T0, a forecast made after them,
+# then later sessions downloaded at T1 (optionally re-downloading sessions already known).
+T0 = pd.Timestamp("2026-10-01T22:00:00Z")
+T1 = pd.Timestamp("2026-10-09T22:00:00Z")
+
+
+def _setup(tmp_path, *, known: int, later: slice, cumulative=(0.2, 0.6, 0.2)):
+    store = StockLabStore(tmp_path / DB_NAME)
+    bars = synthetic.demo_bars("DEMO_CALM")
+    kwargs = {"source": "f", "data_class": DataClass.SYNTHETIC, "vintage_note": "v"}
+    store.record_prices("DEMO_CALM", bars.iloc[:known], retrieved_at=T0, **kwargs)
+    as_of = 99  # forecasts are made as of session 99; targets are sessions 100..104
+    record = artifact.build(
+        symbol="DEMO_CALM",
+        data_class="synthetic",
+        as_of_session=bars["session"].iloc[as_of].strftime("%Y-%m-%d"),
+        created_at="2026-10-01T22:05:00.000000Z",
+        target_sessions=[
+            d.strftime("%Y-%m-%d") for d in bars["session"].iloc[as_of + 1 : as_of + 6]
+        ],
+        daily=[[0.2, 0.6, 0.2]] * 5,
+        cumulative=list(cumulative),
+        band=0.005,
+        cumulative_band=0.005 * 5**0.5,
+        estimator="B1",
+        model_version="test",
+        feature_version="stock_lab_features_v1",
+        evaluation_run_id=None,
+        data={},
+        evidence_status="synthetic_demo",
+        calibration_status="test",
+        signals={},
+        limitations=[],
+    )
+    store.record_forecast(record)
+    store.record_prices("DEMO_CALM", bars.iloc[later], retrieved_at=T1, **kwargs)
+    return store, bars, record
+
+
+def _by_target(store):
+    return {s["target"]: s for s in store.scores("DEMO_CALM")}
+
+
+def test_a_later_re_download_never_makes_an_already_seen_outcome_scorable(tmp_path):
+    # Sessions 100-102 (targets 1-3) were stored BEFORE the forecast; a later window
+    # re-downloads 95..104. Only targets 4 and 5, and nothing spanning 1-3, may be scored.
+    store, _, _ = _setup(tmp_path, known=103, later=slice(95, 105))
+    scoring.score_store(store, ["DEMO_CALM"])
+    scores = _by_target(store)
+    for target in ("1", "2", "3"):
+        assert scores[target]["reason"] == "outcome_retrieved_before_forecast", target
+    assert scores["4"]["status"] == scores["5"]["status"] == "scored"
+    assert scores["cum"]["reason"] == "outcome_retrieved_before_forecast"
+
+
+def test_the_five_session_total_uses_its_own_band_and_base(tmp_path):
+    store, bars, record = _setup(tmp_path, known=100, later=slice(100, 105))
+    scoring.score_store(store, ["DEMO_CALM"])
+    total = _by_target(store)["cum"]
+    level = bars["close"] * bars["split_factor"].cumprod()
+    expected = level.iloc[104] / level.iloc[99] - 1
+    assert total["realized_return"] == pytest.approx(expected)
+    tau = record["cumulative_band"]
+    code = 2 if expected > tau else 0 if expected < -tau else 1
+    assert total["outcome"] == code
+
+
+def test_a_gap_found_by_the_calendar_is_never_scored_as_one_session(tmp_path):
+    store, _, _ = _setup(tmp_path, known=100, later=slice(101, 105))  # session 100 missing
+    calendar = lambda a, b: pd.bdate_range(a, b, tz="UTC").as_unit("us")
+    scoring.score_store(store, ["DEMO_CALM"], calendar=calendar)
+    scores = _by_target(store)
+    assert (
+        scores["2"]["status"] == "unscorable" and scores["2"]["reason"] == "previous_close_missing"
+    )
+    assert scores["cum"]["reason"] == "window_incomplete"
+    assert scores["3"]["status"] == "scored"
 
 
 def test_scores_are_write_once_and_scoring_again_adds_nothing(replayed):
@@ -138,6 +207,13 @@ def test_the_ledger_covers_every_record_and_verifies(replayed):
         ("UPDATE scores SET outcome = 2, rps = 0.0 WHERE rowid = 1", "score record"),
         ("DELETE FROM scores WHERE rowid = 1", "missing score"),
         ("UPDATE job_runs SET status = 'ok', record = replace(record, 'ok', 'failed')", "record"),
+        (
+            (
+                "INSERT INTO forecasts SELECT forecast_id || 'x', symbol, as_of_session, "
+                "created_at, data_class, supersedes, record FROM forecasts LIMIT 1"
+            ),
+            "no ledger entry",
+        ),
     ],
 )
 def test_editing_the_store_outside_the_lab_breaks_the_chain(replayed, tmp_path, tamper, message):
@@ -321,5 +397,107 @@ def test_the_schedule_is_printed_never_installed(tmp_path):
     times = plan["StartCalendarInterval"]
     assert [t["Weekday"] for t in times] == [1, 2, 3, 4, 5]
     assert {(t["Hour"], t["Minute"]) for t in times} == {(20, 30)}
-    assert schedule.local_time("America/Los_Angeles") == (17, 30)
+    assert schedule.local_time("America/Los_Angeles") == (17, 30, 0)
+    tokyo = plistlib.loads(schedule.plist("Asia/Tokyo").encode())["StartCalendarInterval"]
+    assert [t["Weekday"] for t in tokyo] == [2, 3, 4, 5, 6]  # Tuesday-Saturday morning there
+    assert {(t["Hour"], t["Minute"]) for t in tokyo} == {(10, 30)}
     assert "launchctl" not in Path(schedule.__file__).read_text().split('"""', 2)[2]  # never run
+
+
+def test_the_freshness_counts_sessions_behind_the_expected_one(tmp_path):
+    from stock_agent.stock_lab.job import freshness
+
+    store = StockLabStore(tmp_path / DB_NAME)
+    bars = synthetic.demo_bars("DEMO_CALM").iloc[:50]
+    store.record_prices("DEMO_CALM", bars, source="f", retrieved_at=T0,
+                        data_class=DataClass.SYNTHETIC, vintage_note="v")  # fmt: skip
+    expected = bars["session"].iloc[-1] + pd.offsets.BDay(2)
+    calendar = lambda a, b: pd.bdate_range(a, b, tz="UTC")
+    rows = freshness(store, ["DEMO_CALM", "DEMO_SWING"], expected, calendar)
+    assert rows[0]["sessions_behind"] == 2 and rows[1]["sessions_behind"] is None
+
+
+def test_a_real_job_never_reports_a_synthetic_success(replayed, tmp_path):
+    store, _ = replayed
+    inputs = tmp_path / "inputs"
+    code = daily.main(["--health-inputs", str(inputs)], store_factory=lambda: store,
+                      clock=lambda: pd.Timestamp("2026-10-17T01:00:00Z"), out=io.StringIO())  # fmt: skip
+    assert code == 0
+    document = load_latest(inputs / ARTIFACT, ARTIFACT).document
+    assert document["schedule"]["last_success_at"] is None  # the replay's runs are synthetic
+    assert document["ledger"]["head"] == store.ledger_head()
+
+
+def test_a_second_replay_into_the_same_store_is_refused_before_writing(replayed):
+    store, _ = replayed
+    before = store.verify_ledger()
+    out = io.StringIO()
+    assert daily.main(["--demo-replay", "3"], store_factory=lambda: store, out=out) == 2
+    assert "STOCK_AGENT_STOCK_LAB_HOME" in out.getvalue() and store.verify_ledger() == before
+
+
+def test_a_job_that_stopped_is_failed_as_overdue(tmp_path):
+    from datetime import UTC, datetime
+
+    document = health_fixtures.stock_lab_monitor()
+    document["schedule"]["next_expected_at"] = "2025-01-02T01:00:00.000000Z"
+    health_fixtures.write_input(tmp_path, document)
+    late = datetime(2025, 1, 3, 12, tzinfo=UTC)
+    checks = {
+        c.check_id: c for c in stock_lab_checks(tmp_path / ARTIFACT, allow_synthetic=True, now=late)
+    }
+    assert (checks["forecast.stock_lab_job"].state, checks["forecast.stock_lab_job"].reason) == (
+        HealthState.FAILED,
+        "job_overdue",
+    )
+    on_time = datetime(2025, 1, 2, 3, tzinfo=UTC)
+    checks = {
+        c.check_id: c
+        for c in stock_lab_checks(tmp_path / ARTIFACT, allow_synthetic=True, now=on_time)
+    }
+    assert checks["forecast.stock_lab_job"].state is HealthState.HEALTHY
+
+
+def test_overlapping_targets_count_once_per_session_for_the_rolling_score(tmp_path):
+    document = health_fixtures.stock_lab_monitor()
+    document["scores"].update(n=300, sessions=20)  # 300 targets but only 20 sessions settled
+    health_fixtures.write_input(tmp_path, document)
+    checks = {c.check_id: c for c in stock_lab_checks(tmp_path / ARTIFACT, allow_synthetic=True)}
+    assert checks["forecast.stock_lab_scores"].reason == "too_few_scored"
+
+
+def test_a_forecast_dated_in_the_future_is_refused(tmp_path):
+    store, _, record = _setup(tmp_path, known=100, later=slice(100, 101))
+    future = {**record, "created_at": "2099-01-01T00:00:00.000000Z"}
+    future["forecast_id"] = artifact.forecast_id(future)
+    with pytest.raises(StoreRefused, match="future"):
+        store.record_forecast(future)
+
+
+@pytest.mark.parametrize(
+    ("now", "due"),
+    [
+        ("2026-10-16T20:00:00Z", "2026-10-17T00:00:00.000000Z"),  # Friday 16:00 ET: tonight
+        ("2026-10-17T01:00:00Z", "2026-10-20T00:00:00.000000Z"),  # Friday 21:00 ET: Monday
+    ],
+)
+def test_the_next_expected_update_is_tonight_before_the_close_is_due(now, due):
+    assert daily.next_expected(pd.Timestamp(now)) == due
+
+
+def test_a_calendar_refusal_is_recorded_as_a_failed_run(tmp_path, monkeypatch):
+    from stock_agent.calendars.nyse import CalendarRefused
+
+    def refuse(now):
+        raise CalendarRefused("outside_coverage", "past 2027")
+
+    monkeypatch.setattr(daily, "expected_session", refuse)
+    store = StockLabStore(tmp_path / DB_NAME)
+    assert (
+        daily.main(
+            ["--health-inputs", str(tmp_path)], store_factory=lambda: store, out=io.StringIO()
+        )
+        == 1
+    )
+    run = store.latest_job_run()
+    assert run["status"] == "failed" and "calendar" in run["reason"]

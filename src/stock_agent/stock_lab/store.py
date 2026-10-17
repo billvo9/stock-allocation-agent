@@ -845,6 +845,8 @@ class StockLabStore:
         """
 
         checked = forecast_artifact.check(record)
+        if pd.Timestamp(checked["created_at"]) > self._clock() + pd.Timedelta(minutes=5):
+            raise StoreRefused("a forecast cannot be created in the future")
         if checked["data_class"] == DataClass.REAL.value and real_authorized is not True:
             raise StoreRefused("real forecasts need the owner's decisions A2 and A4")
         demo = "_" in checked["symbol"]
@@ -988,6 +990,17 @@ class StockLabStore:
     def latest_job_run(self) -> dict | None:
         runs = self.job_runs()
         return runs[-1] if runs else None
+
+    def ledger_head(self) -> str | None:
+        """The newest ledger entry's hash (kept in every monitor file, to spot truncation)."""
+
+        with self._read() as connection:
+            if connection is None:
+                return None
+            row = connection.execute(
+                "SELECT entry_sha256 FROM ledger_entries ORDER BY seq DESC LIMIT 1"
+            ).fetchone()
+        return None if row is None else row[0]
 
     def verify_ledger(self) -> tuple[int, str | None]:
         """(entries, None) when the chain verifies, else (entries, the first problem)."""

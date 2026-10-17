@@ -459,8 +459,11 @@ How the ledger works:
 
 **Scoring** (`scoring`):
 
-- A target is scored only from a price batch retrieved **after** the
-  forecast was created, against the forecast's own band.
+- A target is scored only when every session it needs was **absent** from
+  the store when the forecast was created, so it was first downloaded
+  afterwards. This holds even if a later re-download supplies the session
+  again. Scoring uses the forecast's own band and the exchange calendar, so
+  a gap is never read as one session.
 - A target whose session has not closed is pending, and nothing is written
   for it.
 - A gap or an outcome seen before the forecast is recorded as unscorable,
