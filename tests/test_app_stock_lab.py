@@ -152,4 +152,137 @@ def test_saved_page_state_does_not_grow_across_reruns(home):
         app.run()
     saved = app.session_state["stock_lab_saved"]
     assert not any(isinstance(value, dict) for value in saved.values())
-    assert set(saved) <= {"stock-lab-search", "stock-lab-stock", "stock-lab-band", "stock-lab-rule"}
+    assert set(saved) <= {
+        "stock-lab-search",
+        "stock-lab-stock",
+        "stock-lab-band",
+        "stock-lab-rule",
+        "stock-lab-rev-direction",
+        "stock-lab-rev-k",
+        "stock-lab-move-x",
+        "stock-lab-move-sign",
+    }
+
+
+def _demo_store(home: Path) -> None:
+    import importlib.util
+    import io
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "stock_lab_evaluate.py"
+    spec = importlib.util.spec_from_file_location("stock_lab_evaluate_app", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    store = StockLabStore(home / DB_NAME)
+    now = pd.Timestamp("2026-10-16T22:00:00Z")
+    code = module.main(
+        ["--demo"], store_factory=lambda: store, clock=lambda: now, out=io.StringIO()
+    )
+    assert code == 0
+
+
+def test_without_stored_records_the_modelled_tabs_say_how_to_get_them(home):
+    text = text_of(page())
+    assert words.FORECAST_NONE_DEMO_TITLE in text and words.DEMO_COMMAND in text
+    assert words.DIAGNOSTICS_NONE in text
+    assert "%" not in "".join(m.value for m in page().metric if m.label in ("Increase", "Decrease"))
+
+
+def test_demo_forecasts_show_five_sessions_beside_the_usual_mix_and_their_tests(home):
+    _demo_store(home)
+    app = page()
+    text = text_of(app)
+    assert words.FORECAST_BADGE in text and words.SYNTHETIC_BADGE in text
+    assert "in 10 for a rise beyond ±0.5%" in text and "usual mix" in text
+    cards = [m for m in app.metric if m.label in ("Increase", "Stable", "Decrease")]
+    assert len(cards) == 6  # the next session, and the five-session total
+    assert words.DAILY_NOTE in text and words.TRACK_NOTE in text
+    five = next(t.value for t in app.table if t.value.index.name == "Session")
+    assert len(five) == 5 and five["Sessions ahead"].tolist() == [1, 2, 3, 4, 5]
+    assert "Synthetic demo stock: not a real company." in text
+    charts = [str(c.proto.spec) for c in app.get("plotly_chart")]
+    assert sum(words.SYNTHETIC_CHART in c for c in charts) == len(charts)  # every chart says so
+    assert "beat the recent-weighted" in text or "B1 is kept" in text
+    assert words.DIAGNOSTICS_SYNTHETIC in text
+    scan_for_advice(text)
+
+
+def test_reversal_and_trap_tabs_describe_the_selected_stock(home):
+    app = page()
+    app.selectbox[0].set_value("DEMO_TREND").run()
+    text = text_of(app)
+    assert words.REVERSALS_LEDE in text and words.TRAPS_LEDE in text
+    assert "Step 1" in text and "Failure" in text
+    assert "Setup failure rate" in text and "for every breakout" in text
+    streaks = next(t.value for t in app.table if t.value.index.name == "After")
+    assert len(streaks) == 7 and "Cases" in streaks.columns
+    app.radio[1].set_value("increase").run()
+    assert not app.exception
+    scan_for_advice(text_of(app))
+
+
+def test_a_real_stock_has_no_probabilities_until_the_approvals(home):
+    store = StockLabStore(home / DB_NAME)
+    store.add(parse_tickers("AAPL"))
+    bars = synthetic.demo_bars("DEMO_CALM").copy()
+    bars["session"] = pd.bdate_range(end="2024-12-31", periods=len(bars), tz="UTC").as_unit("us")
+    store.record_prices(
+        "AAPL",
+        bars,
+        source="fixture",
+        retrieved_at=pd.Timestamp("2026-10-16T22:00:00Z"),
+        data_class=DataClass.REAL,
+        vintage_note="fixture",
+    )
+    _demo_store(home)
+    app = page()
+    assert app.selectbox[0].value == "AAPL"
+    text = text_of(app)
+    assert words.FORECAST_NONE_REAL_TITLE in text
+    assert words.DIAGNOSTICS_NONE in text  # no real evaluation: the synthetic one is not shown
+    assert words.FORECAST_BADGE not in text
+
+
+def _replay(home: Path, sessions: int = 4) -> StockLabStore:
+    import importlib.util
+    import io
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "stock_lab_daily.py"
+    spec = importlib.util.spec_from_file_location("stock_lab_daily_app", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    store = StockLabStore(home / DB_NAME)
+    argv = ["--demo-replay", str(sessions), "--health-inputs", str(home / "inputs")]
+    assert module.main(argv, store_factory=lambda: store, out=io.StringIO()) == 0
+    return store
+
+
+def test_the_forecast_history_shows_what_happened_beside_each_stored_forecast(home):
+    _replay(home)
+    app = page()
+    history = next(t.value for t in app.table if t.value.index.name == "As of")
+    assert history["What happened"].iloc[0] == "pending"  # the newest session has not closed
+    assert set(history["What happened"].iloc[1:]) <= {"Increase", "Stable", "Decrease"}
+    text = text_of(app)
+    assert "session targets scored so far" in text and "Last update: ok" in text
+    assert words.REPLAY_NOTE not in text  # scores exist, so no replay prompt
+    scan_for_advice(text)
+
+
+def test_a_forecast_older_than_the_expected_session_is_labelled_stale_never_replaced(home):
+    store = _replay(home)
+    latest = store.latest_forecast("DEMO_CALM")
+    store.record_job_run(
+        {
+            "run_id": "replay-later",
+            "started_at": "2025-01-03T21:10:00.000000Z",
+            "finished_at": "2025-01-03T21:11:00.000000Z",
+            "status": "failed",
+            "reason": "planted",
+            "expected_session": "2025-01-03",
+            "data_class": "synthetic",
+        }
+    )
+    app = page()
+    warning = " ".join(w.value for w in app.warning)
+    assert f"Stale: made as of {latest['as_of_session']}" in warning and "(failed)" in warning
+    assert store.latest_forecast("DEMO_CALM") == latest  # nothing was invented

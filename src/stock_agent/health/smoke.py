@@ -43,7 +43,15 @@ from stock_agent.data.funds.schema import (
     batches_frame,
     empty,
 )
-from stock_agent.health import backtest, data_quality, fixtures, forecast, registry, training
+from stock_agent.health import (
+    backtest,
+    data_quality,
+    fixtures,
+    forecast,
+    registry,
+    stock_lab,
+    training,
+)
 from stock_agent.health.contracts import FUND_END, FUND_RETRIEVED_AT, FUND_SESSIONS, FUND_START
 from stock_agent.health.model import CONSTRAINT_BREACHED, Area, Better, Check, HealthState
 
@@ -167,6 +175,13 @@ def input_reader_results(directory: Path) -> list[tuple[str, bool, str]]:
     approved["transition_status"] = "approved"
     point_only = fixtures.registry_export()
     point_only["forecast_evaluation"] = point_only["forecast_evaluation"][1:]
+    stock_lab_broken = fixtures.stock_lab_monitor()
+    stock_lab_broken["run_id"] = "synthetic-stock-lab-broken"
+    stock_lab_broken["job"].update(status="failed", reason="the price update timed out")
+    stock_lab_broken["freshness"][1]["sessions_behind"] = 2
+    stock_lab_broken["scores"]["n"] = 12
+    stock_lab_broken["inputs_drift"][0]["psi"] = 0.4
+    stock_lab_broken["ledger"].update(verified=False, reason="entry 7 does not match its hash")
     breach = fixtures.backtest_summary()
     breach["measures"]["max_weight"] = 0.55
     healthy = ("healthy", None)
@@ -227,9 +242,31 @@ def input_reader_results(directory: Path) -> list[tuple[str, bool, str]]:
             },
         ),
         (
+            "stock lab monitor",
+            lambda: stock_lab.stock_lab_checks(
+                inputs("s1", fixtures.stock_lab_monitor()) / stock_lab.ARTIFACT,
+                allow_synthetic=True,
+            ),
+            {check_id: healthy for check_id in stock_lab.TITLES},
+        ),
+        (
+            "stock lab with a failed update, a stale stock and a broken ledger",
+            lambda: stock_lab.stock_lab_checks(
+                inputs("s2", stock_lab_broken) / stock_lab.ARTIFACT, allow_synthetic=True
+            ),
+            {
+                "data.stock_lab_freshness": ("degraded", "stale_prices"),
+                "forecast.stock_lab_job": ("failed", "job_failed"),
+                "forecast.stock_lab_scores": ("insufficient_evidence", "too_few_scored"),
+                "forecast.stock_lab_drift": ("degraded", "input_drift"),
+                "forecast.stock_lab_ledger": ("failed", "ledger_broken"),
+            },
+        ),
+        (
             "absent inputs",
             lambda: (
-                training.training_checks(directory / "absent" / training.ARTIFACT)
+                stock_lab.stock_lab_checks(directory / "absent" / stock_lab.ARTIFACT)
+                + training.training_checks(directory / "absent" / training.ARTIFACT)
                 + registry.registry_checks(directory / "absent", now=SMOKE_AS_OF.to_pydatetime)
                 + forecast.forecast_checks(directory / "absent" / forecast.ARTIFACT)
                 + backtest.backtest_checks(directory / "absent" / backtest.ARTIFACT)
@@ -241,6 +278,7 @@ def input_reader_results(directory: Path) -> list[tuple[str, bool, str]]:
                     *registry.CHECKS,
                     *forecast.CHECKS,
                     *backtest.MEASURES,
+                    *stock_lab.TITLES,
                 )
             },
         ),
