@@ -705,6 +705,7 @@ FORBIDDEN = (
     "stock_agent.stock_lab.logistic",
     "stock_agent.stock_lab.evaluation",
     "stock_agent.stock_lab.predict",
+    "stock_agent.stock_lab.size_simulation",
     "scipy",
     "stock_agent.health.collect",
     "stock_agent.health.github",

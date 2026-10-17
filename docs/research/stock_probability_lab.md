@@ -212,6 +212,11 @@ hard-coded.
 - The B2 design changed after review. A Dirichlet transition chain fitted on
   full-history counts converges to its long-run distribution within 2–3
   steps, so it would collapse to B0 for h ≥ 2.
+- Per-stock tilts δ_i in B2 are not built. The only admissible evidence of
+  a calibration benefit is the real development evaluation (A3, pending).
+  A synthetic panel has whatever streak structure its generator put in, and
+  a variant added after seeing results counts against the multiplicity
+  budget.
 - Gradient-boosted trees and HMMs are added only if walk-forward testing
   shows an incremental benefit.
 
@@ -253,8 +258,42 @@ hard-coded.
   - Newey-West with lag 10 (at least h − 1), and a circular block bootstrap
     (block 20) as a second view.
   - Holm correction across the pre-registered comparisons against B1.
-  - Not built yet (follow-ups): the fold-block t, and simulated size checks
-    of each method on this panel.
+  - Beside Newey-West, reported only: the fold-block t (a t-test on the
+    test years' means, t(folds − 1)) and the circular block bootstrap's
+    one-sided p. Newey-West still decides; `size_simulation.one_sided_tests`
+    computes all three for every comparison.
+  - **Simulated size** (`size_simulation`, recorded with every evaluation).
+    No-skill panels have the evaluation's own number of stocks and test
+    years (after a three-year warm-up). Returns are independent over time
+    and equicorrelated across stocks (ρ = 0.4, Student-t₅, 1.5% daily).
+    The challenger is a placebo: B1 read from the next stock's history,
+    at each pre-registered half-life. It is compared with two references.
+    - Another stock's B1 (the previous one). The differential is
+      symmetric, so its size measures the tests alone.
+    - The stock's own B1. That one keeps learning from the very sessions it
+      is scored on, and the placebo does not. The real comparisons have
+      this imbalance too.
+    - Each date's differential has mean exactly zero under both (checked:
+      within one Monte Carlo SE of zero everywhere).
+
+    At the watchlist's shape (20 stocks, 15 test years, 1,000 panels,
+    Monte Carlo SE about 0.7 pp), the one-sided false-positive rate at a
+    nominal 5% was:
+
+    | Placebo | Newey-West (lag 10) | Fold-block t | Block bootstrap |
+    |---|---|---|---|
+    | Symmetric | 6.0–6.4% | 5.2–5.6% | 5.2–5.8% |
+    | Own history | 6.5–8.1% | 6.2–8.0% | 5.9–7.2% |
+
+    - Newey-West at lag 10 is mildly liberal: its variance is about 16%
+      too small.
+    - The fold-block t holds its size.
+    - The learning imbalance adds 1–3 pp to every test, in the
+      challenger's favour, most at H = 252.
+    - On the three demo stocks over three years, every test reaches 8–10%
+      under the own-history placebo, and Newey-West 6–7.5% under the
+      symmetric one.
+    - Which test decides is owner decision A7.
 - **Selection.**
   - Keep B1 unless a challenger beats it (Holm).
   - Then take the simplest such challenger (order B0, B1, B3, B2, M1).
@@ -271,8 +310,15 @@ hard-coded.
   development-test forecasts in the same range came true. Its Jeffreys
   interval counts distinct dates, not rows, because rows on one date move
   together.
-- **Sensitivity.** B1's score at every half-life is reported and never used
-  for selection. Sensitivity to τ is a follow-up.
+- **Sensitivity.** Reported, never used for selection:
+  - B1's score at every half-life.
+  - B1 and B3 re-run at τ = 0.25% and 1% on the same folds and rows. Each
+    band uses its own categories and targets, B1's half-life is chosen
+    inside each fold by the same rule, and B3 uses the same
+    standardized-return distributions (z = r/σ does not depend on τ).
+  - RPS levels are not comparable across bands, because a wider band makes
+    Stable more common. Compare B3 − B1 within a band.
+  - The τ variants count as variants tried.
 
 ### Expected power
 
@@ -336,7 +382,8 @@ Daily direction is nearly unpredictable.
 | `scores` | Brier, log loss, RPS, the moving and direction decompositions, the Jeffreys interval, reliability bins, the calibration line, Holm |
 | `reversal` | streak and move events, outcomes over 1/3/5 sessions, regimes, Kaplan-Meier durations |
 | `traps` | the registered rule, statuses, base rate, lift, precision, recall and false-alarm rate, bear traps |
-| `evaluation` | the protocol in the module docstring (yearly folds through 2024, development mode) and a strict-JSON record |
+| `evaluation` | the protocol in the module docstring (yearly folds through 2024, development mode) and a strict-JSON record (schema 1.1 adds the fold-block t and bootstrap p per comparison, `sensitivity_band` and `size_simulation`) |
+| `size_simulation` | the three one-sided tests used for every comparison, and their simulated size on no-skill panels shaped like the evaluation's (two placebos, every pre-registered half-life; seeded and cached per design) |
 | `predict` and `forecast` | the frozen final fit and the checked `StockProbabilityForecast` artifact |
 | `forecast_view` | the page's modelled views, computed from stored records only |
 
@@ -363,6 +410,11 @@ The demo generator has volatility regimes and mild momentum, so beating B1
 is expected there. On independent, identically distributed synthetic
 returns, the test asserts that no streak skill is selected (B2 is not
 significant after Holm).
+
+The Model diagnostics tab shows each comparison's three p-values, and two
+expanders: the simulated sizes for both placebos, and the band sensitivity.
+On the demo stocks, B3 − B1 was −0.0005, −0.0009 and −0.0012 at τ = 0.25%,
+0.5% and 1%, with Stable shares of 21%, 39% and 64%.
 
 ## 6. Forecast artifact and ledger (PR 3)
 
@@ -474,6 +526,7 @@ How the ledger works:
 | A4 | Recording real forecasts in the private ledger and scoring them only on outcomes after each forecast's creation, separate from OD16 | PR 3 on real data |
 | A5 | Definitions: τ·√5 for the five-session total; a Stable session ends a streak by default; the bull-trap parameters | final confirmation |
 | A6 | Whether real prices after 2024 may be shown on the page (descriptive statistics in the sealed period). Default: no; the page stops at 2024-12-31 | showing recent real history |
+| A7 | Which test decides "beats B1": Newey-West (lag 10, as pre-registered; 6–8% simulated size at a nominal 5%) or the fold-block t (closest to nominal in simulation, as on the ETF track), or Newey-West against a simulated critical value | A3 |
 
 ### A1, the authorization request
 
@@ -511,6 +564,9 @@ the plan.
     observations carry.
   - Fréchet bounds give what marginals allow for joints.
   - Kaplan-Meier estimates durations when some runs are unfinished.
+  - A test's size is its false-positive rate when the null is true. It is
+    measured by simulation on panels where the null holds by construction,
+    not assumed from the test's asymptotics.
 - **Assumptions.** Direction is close to independent day to day;
   volatility clusters; censoring at the end of the data is unrelated to
   duration.
@@ -534,7 +590,9 @@ the plan.
   Diebold-Mariano and block bootstrap tests, reliability diagrams with the
   Murphy decomposition, and prospective scoring.
 - **What to learn next.** The Murphy decomposition of the Brier score;
-  discrete-time survival hazards; Hansen's SPA test for many comparisons.
+  discrete-time survival hazards; Hansen's SPA test for many comparisons;
+  fixed-b asymptotics for Newey-West, which explain why a short lag
+  over-rejects.
 - **Exercise.** Show that under the "breaks" rule the per-session view
   reports, at each run's last session, that run's length. That is the
   property tested in `test_every_run_row_matches_the_per_session_view_at_its_end`.

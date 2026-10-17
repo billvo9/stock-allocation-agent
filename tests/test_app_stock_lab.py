@@ -203,6 +203,11 @@ def test_demo_forecasts_show_five_sessions_beside_the_usual_mix_and_their_tests(
     assert sum(words.SYNTHETIC_CHART in c for c in charts) == len(charts)  # every chart says so
     assert "beat the recent-weighted" in text or "B1 is kept" in text
     assert words.DIAGNOSTICS_SYNTHETIC in text
+    # Reported beside the results, never used to select: the other tests, their
+    # simulated sizes and the band sensitivity.
+    assert "One-sided p (fold-block t)" in text and words.SIZE_TITLE in text
+    assert "Placebo half-life (sessions)" in text and "Newey-West (decides)" in text
+    assert words.BAND_TITLE in text and "±0.5% (in use)" in text and "±0.25%" in text
     scan_for_advice(text)
 
 
