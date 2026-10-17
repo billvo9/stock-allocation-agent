@@ -308,7 +308,28 @@ Daily direction is nearly unpredictable.
   - a decline of at least 10% from the 60-session high;
   - a rebound of at least 5% off the 20-session low;
   - a close above the prior 20-session closing high;
-  - failure: a close below that high × (1 − f) within W = 10 sessions.
+  - failure: a close below that high × (1 − f) within W = 10 sessions,
+    with f = 2% (`TrapRule.failure_margin`; awaiting the owner's
+    confirmation before real-data flags, below).
+
+  The failure rule exactly, on the split-consistent price L:
+
+  ```text
+  H_d       = max(L_(d-20), ..., L_(d-1))          the prior 20-session closing high
+  breakout  : L_d > H_d
+  failed    : min(L_(d+1), ..., L_(d+10)) < H_d * (1 - f)
+  unresolved: fewer than 10 sessions after d have closed (or a gap, or the cutoff)
+  ```
+
+  Example (f = 2%). The prior 20-session high close is H_d = 100.00, and
+  the breakout session closes at 102.50. The failure level is
+  100.00 × 0.98 = 98.00. If the next closes are 101.20, 99.60, 97.85, ...,
+  the third (97.85 < 98.00) confirms a failed breakout, a bull trap. Had
+  the lowest of the ten closes been 98.40, the breakout would have held.
+  A smaller f calls more breakouts failures; for a stock with daily
+  volatility σ, a 2% margin is about 2%/σ typical daily moves (two for a
+  1%-volatility stock, under one for a 3% one). That is why the base rate
+  is volatility-matched.
 - A present-day setup is "unresolved" until its window closes, never
   "confirmed".
 - Breakouts are declustered first, and every setup is one of those
@@ -467,41 +488,68 @@ How the ledger works:
 - The history shows each stored forecast's next-session probabilities as
   recorded, beside what happened and its score.
 
-## 7. Owner decisions needed
+## 7. Owner decisions (recorded 2026-10-16)
 
-| Id | Decision | Needed before |
-|---|---|---|
-| A1 | Live Tiingo data (authorization request below) | the first real data |
-| A2 | Models frozen on data through 2024. At forecast time, the trailing 252 sessions (reaching into the sealed period) are used **only as inference inputs**, never to train, calibrate, select or score | real forecasts |
-| A3 | Walk-forward evaluation of the watchlist stocks on pre-2025 history, labelled hindsight-selected and non-confirmatory. This is an exception to the 2026-10-13 "no new real-stock scoring experiments" for this feature only | real-stock scores |
-| A4 | Recording real forecasts in the private ledger and scoring them only on outcomes after each forecast's creation, separate from OD16 | PR 3 on real data |
-| A5 | Definitions: τ·√5 for the five-session total; a Stable session ends a streak by default; the bull-trap parameters | final confirmation |
-| A6 | Whether real prices after 2024 may be shown on the page (descriptive statistics in the sealed period). Default: no; the page stops at 2024-12-31 | showing recent real history |
+The owner answered A1-A6 on 2026-10-16. In paraphrase, with the conditions
+that bind the implementation:
 
-### A1, the authorization request
+| Id | Decision | Conditions | Status |
+|---|---|---|---|
+| A1 | Tiingo Starter and the private watchlist store: approved | **Staged:** inspection and persistence are separate. The first live operation is the read-only command below, run only after the owner confirms the token is configured and authorizes that exact command. The 30-ticker cap holds. No vendor-adjusted fields, no unauthorized history, no redistribution. After a successful coverage and corporate-action audit, storage (`--store`) is a separate approval. | awaiting the token and authorization of the read-only command |
+| A2 | Trailing 252-session inference window: approved in principle | Fit, tune, select and calibrate only on eligible pre-2025 data. Recent observations from the protected period serve only as inputs to a previously frozen model, kept in a separately controlled prospective/inference store. Protected outcomes are never used for retrospective selection, training or backtest claims. The sealed ETF period and its protections are unchanged. Strict as-of and retrieval-time records. A scoped authorization, not an unlocking of the 2025+ holdout. | to build: the inference store and reader |
+| A3 | Exploratory walk-forward evaluation of the saved watchlist on pre-2025 history: approved | Marked hindsight-selected and non-confirmatory. Every challenger is compared with B0/B1, with proper scores, calibration, stock-level coverage, uncertainty and multiple-comparison treatment. No claim of profitable trading or reliable direction. | runnable after storage (`scripts/stock_lab_evaluate.py --real --authorized-evaluation`) |
+| A4 | The write-once forecast and scoring protocol: approved | Activation needs successful data validation, a frozen registered model, verified decision timestamps and a successful end-to-end dry run. No backdating, rewriting of probabilities, or scoring of outcomes that existed before a forecast. Daily updates record skipped tickers, stale observations, model failures and missing outcomes in Model Health. Separate from ETF OD16 and PPO promotion. | protocol built; activation pending |
+| A5 | Version-1 definitions: approved | Daily band ±0.5%. Five-session band ±0.5% × √5 ≈ ±1.12%, shown as different. A Stable session ends a streak by default, and the pause rule is identified whenever used. The bull-trap setup (10% drawdown, 5% rebound, prior 20-session high, 10-session window) may be used for research. **The failure margin f awaits confirmation** (formula and example in section 5) before real-data risk flags. Price returns stay distinct from total returns, and ex-dividend moves are identified. | f to confirm |
+| A6 | Recent observed prices on the private dashboard: supported | Only after the retrieval and storage permissions. An isolated descriptive reader that cannot expose protected outcomes to development, training, tuning or backtesting. Recent observed history is kept distinct from research evidence, and current forecasts from completed outcomes. The holdout policies are not modified. | to build after A1 storage and the A2 store |
 
-Approve one owner-run command on this computer:
+### A1 step 1: the read-only audit (awaiting the owner's authorization)
+
+```bash
+.venv/bin/python scripts/stock_lab_fetch.py --authorized
+```
+
+- **Before it:** save up to 30 tickers in the Lab's watchlist, set
+  `TIINGO_API_KEY` in the shell, and run the command without
+  `--authorized`. That prints the exact plan (the ticker list and every
+  request URL) and makes no request.
+- **Requests, in order, at least 2 seconds apart, at most 1 + N for N
+  tickers:**
+  1. `GET https://apimedia.tiingo.com/docs/tiingo/daily/supported_tickers.zip`,
+     with no key.
+  2. For each watched ticker the listing classifies as a supported US stock:
+     `GET https://api.tiingo.com/tiingo/daily/<TICKER>/prices?startDate=2003-01-02&endDate=2024-12-31&format=json&resampleFreq=daily&columns=date,open,high,low,close,volume,divCash,splitFactor`,
+     with the key only in the Authorization header.
+- **Output:** the listing's size and each ticker's classification, then each
+  ticker's coverage and corporate-action audit (`stock_lab.audit`):
+  - sessions served and missing;
+  - null fields and low/high sanity;
+  - every split with its raw and split-consistent close ratios and a
+    verdict;
+  - ex-dividend dates and the largest yield;
+  - large moves without a split;
+  - unavailable returns, and a ready / review line.
+
+  A final summary lists which tickers are ready. No price series and no key
+  is printed.
+- **Local side effects:** no record is written. Reading the watchlist may
+  create SQLite's `-shm`/`-wal` companion files beside the store.
+
+### A1 step 2: storage (a separate approval, after a good audit)
 
 ```bash
 .venv/bin/python scripts/stock_lab_fetch.py --authorized --store
 ```
 
-Exact scope:
-
-- Tiingo Starter, with the key in `TIINGO_API_KEY`.
-- 1 request for the supported-tickers listing (no key sent). It is used
-  only to classify tickers.
-- 1 prices request per supported ticker of the saved watchlist (at most 30;
-  a longer list is refused before any request; the script has no option to
-  add other tickers or raise the cap) for 2003-01-02 to 2024-12-31: raw open,
-  high, low, close, volume, divCash and splitFactor. No adjusted fields and
-  no date after 2024.
-- Writes into the private store only: the whole listing (every row, kept as
-  the classification's audit trail), the checks, and one write-once batch
-  per ticker.
-
-Run it without `--store` first for a read-only check, or with no flags for
-the plan.
+- It repeats the same requests and the audit.
+- It writes the listing, the checks and one write-once batch per ticker
+  **whose audit is ready**. A ticker that needs review is reported and not
+  stored.
+- There is deliberately no override yet. A large move without a split can
+  be a real move or an unrecorded split (an unrecorded 2-for-1 split reads
+  as a fall of about 50%), and only the owner can tell which. If the audit
+  holds any ticker for review, the storage request will list each one with
+  its finding and propose how to handle it: drop it from the watchlist, or
+  store it with the finding recorded.
 
 ## 8. Learning notes
 
