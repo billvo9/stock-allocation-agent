@@ -34,7 +34,7 @@ import math
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -109,9 +109,18 @@ class Condition(StrEnum):
 
 # Worst first; it keeps the state precedence (every condition of a worse state is worse).
 CONDITION_PRECEDENCE = tuple(Condition)
+# A summary older than this is stale: the private monitor runs daily, so a fresh
+# summary is at most a day and two hours old. The Lab page, the technical page and
+# scripts/setup_health_schedule.py --status share this one threshold.
+STALE_AFTER = timedelta(hours=26)
+# The reason a view gives a summary older than STALE_AFTER (degraded, stale): it is
+# never shown as healthy, whatever its checks said when they were measured.
+STALE_SUMMARY = "stale_summary"
 # Degraded reasons that mean "measured, but older than its limit" (tested against
 # every `stale_*` reason the checks emit).
-STALE_REASONS = frozenset({"stale_data", "stale_evidence", "stale_prices", "daily_run_overdue"})
+STALE_REASONS = frozenset(
+    {"stale_data", "stale_evidence", "stale_prices", "daily_run_overdue", STALE_SUMMARY}
+)
 NOT_ACTIVATED_REASONS = frozenset({"not_authorized"})
 
 

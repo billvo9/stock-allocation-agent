@@ -19,14 +19,20 @@ Modes
                not Python 3.12. It prints the launchctl commands for the owner.
     --status   read-only: whether the job is loaded (`launchctl print`, the only
                launchctl call this script makes), its run count and last exit
-               code, when the last summary was written and whether it is fresh
-               (at most FRESH_HOURS old), stale or missing, and its overall
-               state by condition.
+               code with its meaning (EXIT_MEANINGS), when the last summary was
+               written and whether it is fresh (at most model.STALE_AFTER, 26
+               hours, old: the Lab page uses the same limit), stale or missing,
+               and its overall state by condition.
 
-What the job runs: `scripts/health_check.py local --output-dir
-~/stock-agent-private/health`, with PATH and PYTHONPATH set (launchd passes no
-shell environment, and the venv's editable install may point at another
-checkout), plus:
+What the job runs. launchd starts `/bin/zsh -f run.sh`: -f reads none of the
+user's zsh startup files, so nothing exported in ~/.zshenv reaches the job.
+run.sh refuses to run anything unless the checkout is a clean main (exit 3,
+with a dated reason on stderr), then runs `scripts/health_check.py local
+--output-dir ~/stock-agent-private/health` under `env -i` with only HOME,
+USER, LOGNAME, TMPDIR, an absolute PATH and PYTHONPATH (this checkout's src:
+the venv's editable install may point at another checkout), so no variable
+from a shell profile or `launchctl setenv` reaches the monitor, verify.py or
+pytest. Its options:
     --run-verify            unless --no-verify (the full gates, several minutes)
     --github                when gh is on PATH, unless --no-github; gh's sign-in
                             is not checked here (that would contact GitHub)
@@ -35,6 +41,7 @@ checkout), plus:
     --fund-store D          the F1 fund store, when found or given
     --anchors F             when given, or when STOCK_AGENT_ANCHORS is set here
     --ledger F              when given, or when STOCK_AGENT_PROSPECTIVE_LEDGER is set
+                            (the job's environment holds neither variable)
 A given path that does not exist yet is still passed (its check then says it
 is missing); a default that does not exist is left out, and its checks stay
 insufficient evidence. The inputs health_check reads from fixed places (the
@@ -78,6 +85,7 @@ from stock_agent.forecasting.prospective.ledger import DEFAULT_LEDGER
 from stock_agent.health import backtest, forecast, stock_lab, training
 from stock_agent.health.model import (
     CONDITION_PRECEDENCE,
+    STALE_AFTER,
     SummaryRefused,
     read_summary,
 )
@@ -87,8 +95,19 @@ PROJECT = Path(__file__).resolve().parents[1]
 LABEL = "local.stock-agent.health"
 PRIVATE = "stock-agent-private"  # ~/stock-agent-private: every private store and output
 DEFAULT_AT = "07:30"  # local time; after the 06:17 UTC daily workflow on most US clocks
-FRESH_HOURS = 26  # a daily job's summary older than this is stale
 SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+DEFAULT_GIT = "/usr/bin/git"
+MAIN_BRANCH = "main"
+REFUSED_EXIT = 3  # run.sh's exit status when the checkout is not a clean main
+# What the monitor's environment holds (`env -i`): nothing else from launchd or a shell.
+KEPT_VARIABLES = ("HOME", "USER", "LOGNAME", "TMPDIR")
+# health_check.py's exit statuses, and run.sh's refusal, as --status explains them.
+EXIT_MEANINGS = {
+    "0": "ok",
+    "1": "the summary's overall state is failed",
+    "2": "health_check.py refused to run (see the stderr log)",
+    str(REFUSED_EXIT): "refused: the checkout is not a clean main (see the stderr log)",
+}
 # Other modules' names, kept here so this script imports nothing from the prospective
 # side or another script (tests check each against its source).
 ANCHORS_ENV = "STOCK_AGENT_ANCHORS"
@@ -96,6 +115,21 @@ ANCHORS_DEFAULT = Path("data/raw/issuer_sources/anchors.csv")
 PROSPECTIVE_LEDGER_ENV = "STOCK_AGENT_PROSPECTIVE_LEDGER"
 STOCK_LAB_LABEL = "local.stock-lab.daily"
 STOCK_LAB_KEPT_HEAD = "stock_lab_ledger_head"
+
+# run.sh's guard (zsh; `repo` and `git` are set above it): refuse, run nothing, exit
+# REFUSED_EXIT and say why on stderr, unless the checkout is a clean main.
+GUARD = """\
+refuse() {{
+  print -u2 -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) health job refused: $1; nothing was run"
+  exit {code}
+}}
+branch=$("$git" -C "$repo" symbolic-ref --quiet --short HEAD) \\
+  || refuse "$repo has a detached HEAD, not {main}"
+[[ "$branch" == {main} ]] || refuse "$repo is on branch $branch, not {main}"
+changes=$("$git" -C "$repo" status --porcelain) || refuse "git status failed in $repo"
+[[ -z "$changes" ]] || refuse "$repo has uncommitted or untracked changes (git status --porcelain)"
+cd "$repo" || refuse "cannot enter $repo"
+"""
 
 Runner = Callable[..., subprocess.CompletedProcess]
 
@@ -181,6 +215,7 @@ class Plan:
     python_version: str | None
     worktree: bool
     gh: str | None
+    git: str
     hour: int
     minute: int
     path_dirs: tuple[str, ...]
@@ -206,6 +241,24 @@ def venv_version(repo: Path) -> str | None:
         if key.strip() in {"version", "version_info"} and value.strip():
             return value.strip()
     return None
+
+
+def absolute_tool(found: str | None) -> str | None:
+    """A tool `which` found, as an absolute path (a relative PATH entry is resolved now)."""
+
+    if found is None:
+        return None
+    return found if os.path.isabs(found) else os.path.abspath(found)
+
+
+def checked_out_branch(repo: Path) -> str | None:
+    """The branch a main checkout has checked out, from .git/HEAD; None when detached."""
+
+    try:
+        head = (repo / ".git" / "HEAD").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return head.removeprefix("ref: refs/heads/") if head.startswith("ref: refs/heads/") else None
 
 
 def parse_at(text: str) -> tuple[int, int]:
@@ -259,8 +312,8 @@ def _env_option(flag: str, given: Path | None, variable: str, machine: Machine, 
             flag,
             str(path),
             True,
-            f"{variable} is set here, but launchd jobs do not inherit the shell's environment, "
-            "so the path is passed explicitly"
+            f"{variable} is set here, but the job's environment holds only the variables run.sh "
+            "names, so the path is passed explicitly"
             + ("" if path.exists() else f" ({path} does not exist yet)"),
         )
     return Option(flag, None, False, f"not given and {variable} is not set: the default is read")
@@ -365,8 +418,8 @@ def detect(machine: Machine, arguments: argparse.Namespace) -> Plan:
     python = repo / ".venv" / "bin" / "python"
     version = venv_version(repo)
     worktree = (repo / ".git").is_file()
-    gh = None if arguments.no_github else machine.which("gh")
-    git = machine.which("git")
+    gh = None if arguments.no_github else absolute_tool(machine.which("gh"))
+    git = absolute_tool(machine.which("git")) or DEFAULT_GIT
     if gh is not None:
         github = (
             f"gh found at {gh}: ci.main_runs and ci.daily_health record the latest runs on main "
@@ -420,9 +473,19 @@ def detect(machine: Machine, arguments: argparse.Namespace) -> Plan:
             "--ledger", given("ledger"), PROSPECTIVE_LEDGER_ENV, machine, "forecast.ledger*"
         ),
     ]
+    # Absolute directories only: the job runs after `cd` into the repository, where a
+    # relative PATH entry would name a directory inside the checkout.
     dirs = [str(Path(tool).parent) for tool in (gh, git) if tool]
-    path_dirs = tuple(dict.fromkeys([*dirs, *SYSTEM_PATH]))
+    path_dirs = tuple(
+        entry for entry in dict.fromkeys([*dirs, *SYSTEM_PATH]) if os.path.isabs(entry)
+    )
     stock_lab_found, warnings = _stock_lab(machine)
+    branch = checked_out_branch(repo)
+    if not worktree and branch != MAIN_BRANCH:
+        warnings.append(
+            f"{repo} is on {branch or 'a detached HEAD'}, not {MAIN_BRANCH}: the job refuses to "
+            f"run (exit {REFUSED_EXIT}) until the checkout is a clean {MAIN_BRANCH}."
+        )
     refusals = []
     if worktree:
         main = main_checkout(repo)
@@ -449,6 +512,7 @@ def detect(machine: Machine, arguments: argparse.Namespace) -> Plan:
         python_version=version,
         worktree=worktree,
         gh=gh,
+        git=git,
         hour=arguments.at[0],
         minute=arguments.at[1],
         path_dirs=path_dirs,
@@ -476,7 +540,7 @@ def render_run_sh(plan: Plan) -> str:
                 option.flag if option.value is None else f"{option.flag} {q(option.value)}"
             )
     lines = [
-        "#!/bin/zsh",
+        "#!/bin/zsh -f",
         f"# Model Health: the private local monitor, run daily by launchd ({LABEL}).",
         "# Written by scripts/setup_health_schedule.py, which never overwrites a different",
         "# file: to change it, unload the job, move this file aside and run the setup again.",
@@ -487,13 +551,25 @@ def render_run_sh(plan: Plan) -> str:
     if omitted:
         lines.append("# Options left out:")
         lines += [f"#   {option.flag}: {option.reason.split(':')[0]}" for option in omitted]
+    kept = [f'{name}="${{{name}:-}}"' for name in KEPT_VARIABLES]
+    environment = [
+        "/usr/bin/env -i " + " ".join(kept),
+        f"PATH={q(':'.join(plan.path_dirs))} PYTHONPATH={q(str(repo / 'src'))}",
+    ]
     lines += [
+        "# zsh -f reads none of the user's startup files (~/.zshenv and the others), and",
+        "# env -i passes the monitor only the variables named below, so no secret exported",
+        "# in a shell profile or with launchctl setenv reaches it, verify.py or pytest.",
         "set -u",
         "umask 077",
-        f"export PATH={q(':'.join(plan.path_dirs))}",
-        f"export PYTHONPATH={q(str(repo / 'src'))}",
-        f"cd {q(str(repo))} || exit 2",
-        "exec " + " \\\n  ".join(parts),
+        f"repo={q(str(repo))}",
+        f"git={q(plan.git)}",
+        "# Only a clean main checkout runs: the job is unattended and uses gh's sign-in, so",
+        "# it never executes a feature branch or uncommitted code. A refusal runs nothing,",
+        f"# exits {REFUSED_EXIT} and writes the reason to stderr (launchd.err.log), which",
+        "# scripts/setup_health_schedule.py --status shows.",
+        GUARD.format(main=MAIN_BRANCH, code=REFUSED_EXIT).rstrip("\n"),
+        "exec " + " \\\n  ".join([*environment, *parts]),
     ]
     return "\n".join(lines) + "\n"
 
@@ -501,7 +577,7 @@ def render_run_sh(plan: Plan) -> str:
 def render_plist(plan: Plan) -> bytes:
     document = {
         "Label": LABEL,
-        "ProgramArguments": ["/bin/zsh", str(plan.places.run_sh)],
+        "ProgramArguments": ["/bin/zsh", "-f", str(plan.places.run_sh)],
         "StartCalendarInterval": {"Hour": plan.hour, "Minute": plan.minute},
         "RunAtLoad": False,
         "Umask": 0o077,
@@ -716,7 +792,9 @@ def status(machine: Machine, out: TextIO) -> int:
     else:
         say(f"  job       {LABEL}: loaded ({fields.get('state', 'state unknown')})")
         say(f"  runs      {fields.get('runs', 'unknown')}")
-        say(f"  last exit {fields.get('last exit code', 'unknown')}")
+        code = fields.get("last exit code", "unknown")
+        meaning = EXIT_MEANINGS.get(code)
+        say(f"  last exit {code}" + (f": {meaning}" if meaning else ""))
         if "path" in fields:
             say(f"  plist     {fields['path']}")
     for label, path in (("run.sh", where.run_sh), ("plist", where.plist)):
@@ -734,13 +812,14 @@ def status(machine: Machine, out: TextIO) -> int:
         else:
             age = machine.now() - summary.generated_at
             hours = age / timedelta(hours=1)
-            fresh = age <= timedelta(hours=FRESH_HOURS)
+            fresh = age <= STALE_AFTER
             word = "fresh" if fresh else "stale"
             say(
                 f"  last run  {summary.generated_at:%Y-%m-%d %H:%M} UTC, {hours:.1f} hours ago "
                 f"(latest.json)"
             )
-            say(f"  summary   {word} (a daily job's summary is stale after {FRESH_HOURS} hours)")
+            limit = int(STALE_AFTER / timedelta(hours=1))
+            say(f"  summary   {word} (a daily job's summary is stale after {limit} hours)")
             conditions = Counter(check.condition for check in summary.checks)
             counts = ", ".join(
                 f"{conditions[item]} {item.value}"

@@ -9,6 +9,13 @@ reads. `write_monitor` writes it once to
 `<health_inputs>/stock_lab_monitor/<run_id>.json` (exclusive create, strict
 JSON). Health recomputes nothing: every number here is measured by the job.
 
+`symbols` (each watched ticker's listing status) is an optional, additive
+field, added 2026-10-17. SCHEMA_VERSION stays "1.0" on purpose: the agreed
+envelope ignores extra fields, so earlier files and readers stay valid,
+whereas a new version would make the current reader (which accepts "1.0"
+only) refuse every file. A reader that finds no `symbols` reports the
+tickers' status as not recorded.
+
 Input drift is the population stability index of a few model inputs over
 the most recent RECENT sessions against the development distribution (bins
 from development deciles; empty bins floored), a standard, distribution-free

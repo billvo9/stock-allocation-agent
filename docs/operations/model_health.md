@@ -75,7 +75,7 @@ state and reason.
 |---|---|---|
 | `failed`, `unavailable` | Failed, Unavailable | the state |
 | `degraded` | Degraded | `degraded`, any reason but staleness |
-| `stale` | Stale | `degraded` with `stale_data`, `stale_evidence`, `stale_prices` or `daily_run_overdue` |
+| `stale` | Stale | `degraded` with `stale_data`, `stale_evidence`, `stale_prices`, `daily_run_overdue`, or `stale_summary` (the view's reason for a summary older than 26 hours, below) |
 | `no_evidence` | Insufficient evidence | `insufficient_evidence`, any reason but `not_authorized` |
 | `not_activated` | Not activated | `insufficient_evidence` with `not_authorized` (a job not authorized yet) |
 | `healthy` | Healthy | the state |
@@ -83,6 +83,15 @@ state and reason.
 Conditions keep the state precedence (every condition of a worse state is
 worse), so the worst condition always belongs to the overall state. A test
 holds every `stale_*` reason a check emits to the stale condition.
+
+**A stale summary is never healthy.** The private monitor runs daily, so a
+summary older than `model.STALE_AFTER` (26 hours) is stale. The view treats
+it as degraded with reason `stale_summary`: when nothing worse shows, its
+overall word is "Stale" and its headline "The latest summary is stale", with
+its age and the next step (check the scheduled job); a worse condition
+(degraded, unavailable, failed) still leads, with the age warning. The Lab
+page, the technical page and `setup_health_schedule.py --status` share this
+one limit. The stored summary itself is unchanged.
 
 ## The summary (schema 1.0)
 
@@ -233,12 +242,18 @@ Other inputs the local monitor reads where their producers write them:
 - **The Stock Lab's monitor files** (`stock_lab_monitor`), written by
   `scripts/stock_lab_daily.py`: the job's status, each watched stock's
   freshness, the rolling scores beside the baseline, input drift, trap
-  outcomes, the ledger's verification and the lineage, and (optional,
-  added 2026-10-17, format still "1.0") `symbols`, each watched ticker's
-  latest provider-listing status (`stock_agent.health.stock_lab` documents
-  the fields). The job measures; health only judges. A file without
-  `symbols` leaves `data.stock_lab_tickers` insufficient evidence
-  (`not_recorded`).
+  outcomes, the ledger's verification and the lineage, and `symbols`, each
+  watched ticker's latest provider-listing status
+  (`stock_agent.health.stock_lab` documents the fields). The job measures;
+  health only judges.
+  - `symbols` is an **optional, additive** field (added 2026-10-17, PR #90).
+    The format stays "1.0": the agreed envelope says extra fields are
+    ignored, so files written before it, and readers that do not know it,
+    remain valid. A version bump would instead make every current reader
+    refuse the files (`INPUT_VERSIONS` is `{"1.0"}`).
+  - A file without `symbols` leaves `data.stock_lab_tickers` insufficient
+    evidence (`not_recorded`); a file with it is checked strictly (an
+    unknown status makes the Stock Lab checks unavailable).
 - **The prospective store and anchors**, through the sources the script
   passes in: the anchors file in the prospective scope (sha256, counts), and
   `load_inference_window` over the window from `WINDOW_START` to the last
@@ -338,28 +353,53 @@ the owner's `launchctl` commands, `--status`, then the Lab.
   every path, the schedule (07:30 local time by default, `--at HH:MM`),
   each `health_check.py local` option it passes or leaves out with the
   reason, and the exact `run.sh` and plist. It writes nothing.
-- **What it writes (`--write`).** `~/stock-agent-private/health/run.sh`
-  (mode 700: `set -u`, `umask 077`, an explicit `PATH` with `gh`'s
-  directory, `PYTHONPATH` set to this checkout's `src`, then `exec` of the
-  venv's Python on `health_check.py local --output-dir
-  ~/stock-agent-private/health` with the chosen options) and
-  `~/Library/LaunchAgents/local.stock-agent.health.plist` (mode 644: label,
-  `/bin/zsh run.sh`, a daily `StartCalendarInterval`, `RunAtLoad` false,
-  umask 077 and the two logs beside `latest.json`). Each is created only
-  when absent; an identical file is left alone and a different file or a
-  symlink is never replaced. launchd passes no shell environment, so
-  `STOCK_AGENT_ANCHORS` and `STOCK_AGENT_PROSPECTIVE_LEDGER`, when set, are
-  written out as `--anchors` and `--ledger`.
+- **What it writes (`--write`).** Each file is created only when absent; an
+  identical file is left alone and a different file or a symlink is never
+  replaced.
+  - `~/Library/LaunchAgents/local.stock-agent.health.plist` (mode 644):
+    label, `/bin/zsh -f run.sh`, a daily `StartCalendarInterval`,
+    `RunAtLoad` false, umask 077 and the two logs beside `latest.json`.
+  - `~/stock-agent-private/health/run.sh` (mode 700, `#!/bin/zsh -f`):
+    `set -u`, `umask 077`, the guard below, then `exec` of the venv's
+    Python on `health_check.py local --output-dir
+    ~/stock-agent-private/health` with the chosen options, under `env -i`.
+- **The job's environment.** launchd starts a job with its own small
+  environment (`HOME`, `USER`, `PATH` and a few others), not the variables
+  a login shell exports, but it does pass anything set with `launchctl
+  setenv`, and a plain `zsh` would also read `~/.zshenv`. So `zsh -f` reads
+  none of the user's zsh startup files (only a system `/etc/zshenv`, if
+  there is one), and `env -i` hands the monitor exactly `HOME`, `USER`,
+  `LOGNAME`, `TMPDIR`, an absolute `PATH` (`gh`'s and `git`'s directories,
+  then the system directories; a relative entry is never copied) and
+  `PYTHONPATH` (this checkout's `src`: the venv's editable install may point
+  at another checkout). No secret exported in a profile or with `launchctl
+  setenv`, `TIINGO_API_KEY` for example, reaches `health_check.py`,
+  `verify.py` or pytest. `STOCK_AGENT_ANCHORS` and
+  `STOCK_AGENT_PROSPECTIVE_LEDGER`, when set at setup, are therefore written
+  out as `--anchors` and `--ledger`.
+- **Only a clean main runs.** The job is unattended and uses `gh`'s
+  sign-in, so before anything from the checkout runs, `run.sh` asks git
+  for the branch and `git status --porcelain`. On a feature branch, a
+  detached HEAD, or with any uncommitted or untracked file (an untracked
+  `conftest.py` would run under pytest) it runs nothing and exits 3 with a
+  dated `health job refused: <reason>; nothing was run` line on stderr
+  (`launchd.err.log`). It never skips silently: launchd records exit 3,
+  `--status` explains it and shows the line, and the Lab page shows the
+  previous summary as Stale once it is older than 26 hours. The dry run
+  warns when the checkout is not on main.
 - **Never.** It never runs `launchctl bootstrap`, `kickstart` or `bootout`;
-  it prints them for the owner. `--status` is read-only: `launchctl print`,
-  the age of `latest.json` (fresh at most 26 hours, else stale; or
-  missing), its overall state by condition and the last stderr line.
+  it prints them for the owner. `--status` is read-only: `launchctl print`
+  (the last exit code with its meaning: 0 ok, 1 the overall state is
+  failed, 2 `health_check.py` refused, 3 refused as not a clean main), the
+  age of `latest.json` (fresh at most 26 hours, the same limit as the
+  page, else stale; or missing), its overall state by condition and the
+  last stderr line.
 - A missing input is left out with its reason and its checks stay
   insufficient evidence (or unavailable for a path given but missing), so
   the summary never shows healthy for something it did not measure.
 
 Notes: launchd runs a missed calendar job when the Mac wakes. The monitor
-checks whatever is checked out in that directory; the summary records the
+runs only a clean `main` in that directory (above); the summary records the
 commit and whether the tree had uncommitted changes. `gh` uses the owner's
 own login. Without `--github` (or `--ci-runs`) the GitHub run checks are
 `insufficient_evidence` (`not_collected`); with `--github` but no working
