@@ -319,7 +319,18 @@ def status_slug(level: str) -> str:
 def css() -> str:
     """The dashboard's CSS layer. Stable hooks only: data-testid and keyed containers."""
 
-    return _shared_css(COLOURS, RADIUS, CONTENT_MAX_WIDTH, TYPE["mono"])
+    shared = _shared_css(COLOURS, RADIUS, CONTENT_MAX_WIDTH, TYPE["mono"])
+    return f"""
+{shared}
+/* Streamlit draws an unselected radio's ring in borderColor, 1.35:1 at most on
+   these surfaces, below WCAG 1.4.11's 3:1 for a control. Redraw only the enabled,
+   unselected rings, in the subtle text token (4.7:1 or more on every surface);
+   every other widget border keeps borderColor. */
+[data-testid="stRadioOption"]:not([data-selected]):not([data-disabled])
+  > div > div:first-child {{
+  background-color: var(--sa-text-subtle);
+}}
+""".strip()
 
 
 def _shared_css(colours, radius, max_width: str, mono: str, status=STATUS) -> str:
