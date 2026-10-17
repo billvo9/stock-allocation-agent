@@ -138,8 +138,12 @@ def calendar_year_figure(
                 marker={
                     "color": identity.colour,
                     "line": {"color": identity.colour, "width": 1},
+                    # Surface-coloured lines over the fund's colour ("overlay"):
+                    # Plotly's default fill mode draws them on a transparent
+                    # background, where they vanish into the chart.
                     "pattern": {
                         "shape": ["/" if flag else "" for flag in partial],
+                        "fillmode": "overlay",
                         "fgcolor": tokens["surface"],
                     },
                 },
