@@ -553,3 +553,27 @@ def test_a_calendar_refusal_is_recorded_as_a_failed_run(tmp_path, monkeypatch):
     )
     run = store.latest_job_run()
     assert run["status"] == "failed" and "calendar" in run["reason"]
+
+
+def test_a_monitor_file_without_symbols_is_still_a_valid_v1_0_file(tmp_path):
+    # `symbols` is additive: a file written before it keeps every other check's verdict.
+    document = health_fixtures.stock_lab_monitor()
+    with_symbols = {
+        c.check_id: (c.state, c.reason)
+        for c in stock_lab_checks(
+            health_fixtures.write_input(tmp_path / "with", document).parent, allow_synthetic=True
+        )
+    }
+    document.pop("symbols")
+    assert document["schema_version"] == "1.0"
+    without = {
+        c.check_id: (c.state, c.reason)
+        for c in stock_lab_checks(
+            health_fixtures.write_input(tmp_path / "without", document).parent,
+            allow_synthetic=True,
+        )
+    }
+    tickers = "data.stock_lab_tickers"
+    assert without.pop(tickers) == (HealthState.INSUFFICIENT_EVIDENCE, "not_recorded")
+    assert with_symbols.pop(tickers) == (HealthState.HEALTHY, None)
+    assert without == with_symbols

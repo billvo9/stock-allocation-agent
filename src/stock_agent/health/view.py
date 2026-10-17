@@ -16,6 +16,12 @@ check's state and reason, so "no evidence", "not activated", "stale" and
 "failed" never share a word: stale data is degraded with a stale reason and
 says "Stale"; a producer that is not authorized yet says "Not activated".
 
+A summary older than `model.STALE_AFTER` (26 hours: the private monitor runs
+daily) is itself stale: the view treats it as degraded with reason
+`stale_summary`, so its overall word and headline say "Stale" rather than
+"Healthy" or "Insufficient evidence", with its age in words. A worse
+condition (degraded, unavailable, failed) still leads, with the age warning.
+
 Standard library only (no Streamlit, no pandas), so it is tested directly.
 """
 
@@ -26,6 +32,8 @@ from datetime import datetime, timedelta
 
 from stock_agent.health.model import (
     CONDITION_PRECEDENCE,
+    STALE_AFTER,
+    STALE_SUMMARY,
     AlertKind,
     Area,
     Check,
@@ -33,10 +41,10 @@ from stock_agent.health.model import (
     HealthState,
     HealthSummary,
     Scope,
+    condition,
 )
 
 RUNBOOK_BASE_URL = "https://github.com/billvo9/stock-allocation-agent/blob/main/"
-OLD_AFTER = timedelta(days=2)
 NOT_MEASURED = "not measured"
 CAVEAT = (
     "Alerts are informational. Nothing on this page trades, retrains, promotes a model, "
@@ -94,6 +102,8 @@ HEADLINES = {
     HealthState.UNAVAILABLE: "Some measurements could not be taken",
     HealthState.FAILED: "Something is broken",
 }
+# The headline when the summary itself is older than STALE_AFTER and nothing worse shows.
+STALE_SUMMARY_HEADLINE = "The latest summary is stale"
 # The headline when the worst condition is one of these (otherwise the state's).
 CONDITION_HEADLINES = {
     Condition.STALE: "Working, but some data or evidence is stale",
@@ -265,9 +275,21 @@ def _ordered(summary: HealthSummary) -> list[Check]:
     return sorted(summary.checks, key=lambda c: (rank[c.condition], areas.index(c.area)))
 
 
-def _next_action(summary: HealthSummary) -> str:
+def _age_text(age: timedelta) -> str:
+    if age >= timedelta(days=2):
+        return f"{age.days} days"
+    return f"{int(age / timedelta(hours=1))} hours"
+
+
+def _next_action(summary: HealthSummary, *, stale_age: timedelta | None = None) -> str:
     state = summary.overall_state
     ordered = _ordered(summary)
+    if stale_age is not None:
+        return (
+            f"Run the monitor again: this summary is {_age_text(stale_age)} old, and the daily "
+            "run should have replaced it. Check the scheduled job with "
+            "scripts/setup_health_schedule.py --status. Nothing was changed automatically."
+        )
     if not summary.checks:
         return "Run scripts/health_check.py to measure something; this summary holds no check."
     first = ordered[0]
@@ -362,12 +384,20 @@ def build_view(
 ) -> HealthView:
     state = summary.overall_state
     age = now - summary.generated_at
+    stale = age > STALE_AFTER
     age_warning = (
-        f"This summary is {age.days} days old (generated {_stamp(summary.generated_at)}); "
+        f"This summary is {_age_text(age)} old (generated {_stamp(summary.generated_at)}); "
         "it describes the code and data as they were then."
-        if age > OLD_AFTER
+        if stale
         else None
     )
+    own = worst_condition(summary.checks)
+    overall, headline, stale_age = own, CONDITION_HEADLINES.get(own, HEADLINES[state]), None
+    summary_stale = condition(HealthState.DEGRADED, STALE_SUMMARY)
+    if stale and CONDITION_PRECEDENCE.index(summary_stale) < CONDITION_PRECEDENCE.index(own):
+        # Nothing worse than stale shows: the summary's age decides (degraded, stale).
+        state, overall, stale_age = HealthState.DEGRADED, summary_stale, age
+        headline = STALE_SUMMARY_HEADLINE
     areas = []
     for area in Area:
         checks = tuple(check for check in summary.checks if check.area is area)
@@ -395,19 +425,18 @@ def build_view(
         for alert in summary.alerts
     )
     total = len(summary.checks)
-    overall = worst_condition(summary.checks)
     return HealthView(
         state=state,
         state_word=CONDITION_WORDS[overall],
         level=CONDITION_LEVELS[overall],
         notice=NOTICE_LEVELS[state],
-        headline=CONDITION_HEADLINES.get(overall, HEADLINES[state]),
+        headline=headline,
         summary=(
             f"{total} checks: {_counts(summary.checks)}."
             if total
             else "This summary has no checks."
         ),
-        next_action=_next_action(summary),
+        next_action=_next_action(summary, stale_age=stale_age),
         age_warning=age_warning,
         scope_note=SCOPE_NOTES[summary.scope],
         caveat=CAVEAT,

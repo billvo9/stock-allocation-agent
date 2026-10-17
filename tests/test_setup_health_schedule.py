@@ -70,6 +70,8 @@ def fake(
     platform="darwin",
     launchctl=None,
     now=NOW,
+    branch="main",
+    git="/usr/bin/git",
 ):
     repo = tmp_path / "repo"
     repo.mkdir(exist_ok=True)
@@ -82,6 +84,8 @@ def fake(
         (repo / ".git").write_text(f"gitdir: {main}/.git/worktrees/x\n", encoding="utf-8")
     else:
         (repo / ".git").mkdir(exist_ok=True)
+        head = f"ref: refs/heads/{branch}" if branch else "1" * 40
+        (repo / ".git" / "HEAD").write_text(head + "\n", encoding="utf-8")
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     runner = launchctl or Launchctl()
@@ -91,7 +95,7 @@ def fake(
         env=env or {},
         uid=UID,
         platform=platform,
-        which={"gh": gh, "git": "/usr/bin/git"}.get,
+        which={"gh": gh, "git": git}.get,
         runner=runner,
         now=lambda: now,
     )
@@ -186,7 +190,7 @@ def test_variables_launchd_will_not_pass_are_made_explicit(tmp_path):
     plan = plan_of(machine)
     options = {option.flag: option for option in plan.options}
     assert (options["--anchors"].enabled, options["--anchors"].value) == (True, str(anchors))
-    assert "launchd jobs do not inherit" in options["--anchors"].reason
+    assert "holds only the variables run.sh names" in options["--anchors"].reason
     assert options["--ledger"].value == str(machine.home / "ledgers" / "etf.jsonl")
     assert any("STOCK_AGENT_STOCK_LAB_HOME is set here" in warning for warning in plan.warnings)
     lab = {item.name: item for item in plan.stock_lab}
@@ -209,22 +213,54 @@ def test_without_gh_or_with_the_opt_outs_the_flags_are_left_out(tmp_path):
     assert "\n  --github" not in script and "\n  --run-verify" not in script
 
 
-def test_the_run_script_sets_the_environment_launchd_does_not_give(tmp_path):
+def test_the_run_script_starts_clean_and_passes_only_named_variables(tmp_path):
     machine, _ = fake(tmp_path)
     plan = plan_of(machine)
     script = setup.render_run_sh(plan)
     lines = script.splitlines()
-    assert lines[0] == "#!/bin/zsh"
+    assert lines[0] == "#!/bin/zsh -f"  # none of the user's zsh startup files
     assert "set -u" in lines and "umask 077" in lines
-    assert "export PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" in lines
-    assert f"export PYTHONPATH={machine.repo / 'src'}" in lines  # this checkout's code
-    assert f"cd {machine.repo} || exit 2" in lines
+    assert f"repo={machine.repo}" in lines and "git=/usr/bin/git" in lines
     health = machine.home / "stock-agent-private" / "health"
     assert (
-        f"exec {machine.repo / '.venv/bin/python'} scripts/health_check.py local \\\n"
+        'exec /usr/bin/env -i HOME="${HOME:-}" USER="${USER:-}" LOGNAME="${LOGNAME:-}" '
+        'TMPDIR="${TMPDIR:-}" \\\n'
+        f"  PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin PYTHONPATH={machine.repo / 'src'}"
+        " \\\n"
+        f"  {machine.repo / '.venv/bin/python'} scripts/health_check.py local \\\n"
         f"  --output-dir {health} \\\n  --run-verify \\\n  --github\n"
     ) in script
-    assert "launchctl" not in script
+    commands = [line for line in lines if not line.startswith("#")]
+    assert not [line for line in commands if "export " in line]  # nothing exported to the job
+    assert not [line for line in commands if "launchctl" in line]
+    # The guard comes before anything runs from the checkout.
+    assert script.index("refuse() {") < script.index('cd "$repo"') < script.index("exec ")
+    assert '[[ "$branch" == main ]] || refuse' in script and "status --porcelain" in script
+
+
+def test_relative_path_entries_never_reach_the_job(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    machine, _ = fake(tmp_path, gh="tools/gh", git="bin/git")  # found through relative PATH
+    plan = plan_of(machine)
+    assert plan.gh == str(tmp_path / "tools" / "gh") and plan.git == str(tmp_path / "bin" / "git")
+    assert all(os.path.isabs(entry) for entry in plan.path_dirs)
+    assert plan.path_dirs[:2] == (str(tmp_path / "tools"), str(tmp_path / "bin"))
+    script = setup.render_run_sh(plan)
+    path = re.search(r"PATH=(\S+) PYTHONPATH", script).group(1)
+    assert all(entry.startswith("/") for entry in path.split(":"))
+
+
+def test_the_dry_run_warns_when_the_checkout_is_not_main(tmp_path):
+    machine, _ = fake(tmp_path, branch="feature/x")
+    plan = plan_of(machine)
+    assert any("is on feature/x, not main: the job refuses" in w for w in plan.warnings)
+    assert plan.refusals == ()  # the owner may switch to main after writing the files
+    (tmp_path / "detached").mkdir()
+    machine, _ = fake(tmp_path / "detached", branch=None)
+    assert any("a detached HEAD" in w for w in plan_of(machine).warnings)
+    (tmp_path / "on-main").mkdir()
+    machine, _ = fake(tmp_path / "on-main")
+    assert not any("not main" in w for w in plan_of(machine).warnings)
 
 
 @pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh is not installed")
@@ -244,7 +280,7 @@ def test_the_plist_is_valid_and_holds_only_the_reviewed_keys(tmp_path):
     health = machine.home / "stock-agent-private" / "health"
     assert document == {
         "Label": "local.stock-agent.health",
-        "ProgramArguments": ["/bin/zsh", str(health / "run.sh")],
+        "ProgramArguments": ["/bin/zsh", "-f", str(health / "run.sh")],
         "StartCalendarInterval": {"Hour": 6, "Minute": 5},
         "RunAtLoad": False,
         "Umask": 0o077,
@@ -436,7 +472,7 @@ def test_status_of_a_loaded_job_with_a_fresh_summary(tmp_path):
 def test_status_names_a_stale_summary_and_the_last_error(tmp_path):
     machine, _ = fake(tmp_path, launchctl=Launchctl(loaded=True, text=PRINTED))
     where = setup.places(machine)
-    _summary(where.latest, NOW - timedelta(hours=setup.FRESH_HOURS + 4))
+    _summary(where.latest, NOW - setup.STALE_AFTER - timedelta(hours=4))
     where.err_log.write_text("health_check: refused: something\n", encoding="utf-8")
     code, out = run(machine, "--status")
     assert code == 1
@@ -472,3 +508,145 @@ def test_the_scripts_copies_of_other_modules_names_match_their_sources():
     assert real.health == collect.DEFAULT_PRIVATE_DIR
     assert real.run_sh.parent == real.health and real.plist.parent.name == "LaunchAgents"
     assert os.fspath(setup.PROJECT) == os.fspath(REPO)
+
+
+# --- the generated job, run as launchd starts it ----------------------------------------
+
+GIT = shutil.which("git")
+needs_shell = pytest.mark.skipif(
+    not Path("/bin/zsh").exists() or GIT is None, reason="needs /bin/zsh and git"
+)
+# Stands in for the venv's Python: prints the environment it was given and its arguments.
+FAKE_PYTHON = '#!/bin/sh\n/usr/bin/env\necho "argv: $*"\n'
+SECRET = "planted-secret-value"
+# Variables a POSIX shell sets for itself when the fake Python starts.
+SHELL_OWN = {"PWD", "OLDPWD", "SHLVL", "_"}
+
+
+def _git(repo: Path, *args: str) -> None:
+    identity = {"GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "test"}
+    identity |= {"GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "test"}
+    environment = {"PATH": os.environ["PATH"], "HOME": str(repo.parent), **identity}
+    environment |= {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    subprocess.run([GIT, "-C", str(repo), *args], env=environment, capture_output=True, check=True)
+
+
+@pytest.fixture
+def job(tmp_path):
+    """A real checkout on a clean main with a fake venv Python, and its job installed."""
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / ".gitignore").write_text(".venv\n", encoding="utf-8")
+    (repo / "README").write_text("health\n", encoding="utf-8")
+    python = repo / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text(FAKE_PYTHON, encoding="utf-8")
+    python.chmod(0o755)
+    (repo / ".venv" / "pyvenv.cfg").write_text("version = 3.12.2\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "start")
+    home = tmp_path / "home"
+    home.mkdir()
+    # A profile that would leak a variable and leave a trace if zsh read it.
+    marker = home / "zshenv-was-read"
+    (home / ".zshenv").write_text(
+        f"touch {marker}\nexport FROM_ZSHENV={SECRET}\n", encoding="utf-8"
+    )
+    machine = setup.Machine(
+        repo=repo,
+        home=home,
+        env={},
+        uid=UID,
+        platform="darwin",
+        which={"gh": None, "git": GIT}.get,
+        runner=Launchctl(),
+        now=lambda: NOW,
+    )
+    plan = plan_of(machine)
+    where = setup.places(machine)
+    where.health.mkdir(parents=True)
+    where.run_sh.write_text(setup.render_run_sh(plan), encoding="utf-8")
+    where.run_sh.chmod(0o700)
+    arguments = plistlib.loads(setup.render_plist(plan))["ProgramArguments"]
+    return repo, home, arguments, marker
+
+
+def _launch(arguments, home: Path) -> subprocess.CompletedProcess:
+    """The plist's command with a launchd-like environment and a secret set for the job."""
+
+    environment = {
+        "HOME": str(home),
+        "USER": "someone",
+        "LOGNAME": "someone",
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "TMPDIR": str(home),
+        "TIINGO_API_KEY": SECRET,  # as if set with launchctl setenv
+    }
+    return subprocess.run(
+        arguments, env=environment, capture_output=True, text=True, timeout=60, check=False
+    )
+
+
+@needs_shell
+def test_the_job_reads_no_profile_and_passes_only_the_named_variables(job):
+    repo, home, arguments, marker = job
+    assert arguments[:2] == ["/bin/zsh", "-f"]
+    done = _launch(arguments, home)
+    assert done.returncode == 0, done.stderr
+    assert not marker.exists()  # ~/.zshenv was never read
+    assert SECRET not in done.stdout and "TIINGO_API_KEY" not in done.stdout
+    lines = done.stdout.splitlines()
+    names = {line.split("=", 1)[0] for line in lines if "=" in line and not line.startswith("argv")}
+    assert names - SHELL_OWN == {"HOME", "USER", "LOGNAME", "TMPDIR", "PATH", "PYTHONPATH"}
+    assert f"PYTHONPATH={repo / 'src'}" in lines and f"HOME={home}" in lines
+    health = home / "stock-agent-private" / "health"
+    assert f"argv: scripts/health_check.py local --output-dir {health} --run-verify" in lines
+
+
+@needs_shell
+@pytest.mark.parametrize(
+    "change, reason",
+    [
+        (lambda repo: _git(repo, "checkout", "-q", "-b", "feature/x"), "is on branch feature/x"),
+        (lambda repo: _git(repo, "checkout", "-q", "--detach"), "has a detached HEAD"),
+        (
+            lambda repo: (repo / "conftest.py").write_text("print('hi')\n", encoding="utf-8"),
+            "has uncommitted or untracked changes",
+        ),
+        (
+            lambda repo: (repo / "README").write_text("edited\n", encoding="utf-8"),
+            "has uncommitted or untracked changes",
+        ),
+    ],
+    ids=["feature-branch", "detached", "untracked-file", "modified-file"],
+)
+def test_the_job_refuses_anything_but_a_clean_main_and_runs_nothing(job, change, reason):
+    repo, home, arguments, _ = job
+    change(repo)
+    done = _launch(arguments, home)
+    assert done.returncode == setup.REFUSED_EXIT == 3
+    assert "argv:" not in done.stdout  # the monitor never started
+    (line,) = done.stderr.strip().splitlines()
+    assert re.fullmatch(
+        rf"\d{{4}}-\d\d-\d\dT\d\d:\d\d:\d\dZ health job refused: {re.escape(str(repo))} "
+        rf"{re.escape(reason)}.*; nothing was run",
+        line,
+    ), line
+
+
+def test_status_explains_a_refused_run(tmp_path):
+    printed = PRINTED.replace("last exit code = 0", "last exit code = 3")
+    machine, _ = fake(tmp_path, launchctl=Launchctl(loaded=True, text=printed))
+    where = setup.places(machine)
+    _summary(where.latest, NOW - timedelta(hours=30))
+    where.err_log.write_text(
+        "2026-10-17T14:30:00Z health job refused: /repo is on branch x, not main; nothing was "
+        "run\n",
+        encoding="utf-8",
+    )
+    code, out = run(machine, "--status")
+    assert code == 1
+    assert "last exit 3: refused: the checkout is not a clean main" in out
+    assert "summary   stale" in out and "is on branch x, not main" in out

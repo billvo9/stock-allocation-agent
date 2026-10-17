@@ -457,6 +457,19 @@ def test_no_evidence_not_activated_stale_and_failed_render_with_distinct_words(t
     assert "1 stale" in text and "1 not activated" in text and "1 insufficient evidence" in text
 
 
+def test_a_stale_healthy_summary_shows_stale_never_healthy(tmp_path):
+    from stock_agent.health.model import STALE_AFTER
+
+    checks = [_health_check("ci.verify", HealthState.HEALTHY)]
+    old = HEALTH_NOW - STALE_AFTER - timedelta(hours=1)
+    app = _render_health(_write_summary(tmp_path / "latest.json", checks, generated_at=old))
+    pills = _pill_words(app)
+    assert pills[0] == (theme.status_slug("WARNING"), "Stale")
+    text = text_of(app)
+    assert "The latest summary is stale" in text and "This summary is 27 hours old" in text
+    assert "Everything measured is healthy" not in text
+
+
 def test_a_summary_with_nothing_measured_shows_nothing_green(tmp_path):
     checks = [
         _health_check(check_id, HealthState.INSUFFICIENT_EVIDENCE)

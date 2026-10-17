@@ -23,11 +23,14 @@ Fields besides the envelope (`inputs`):
                   not_in_ledger or ledger_deleted
     lineage      {estimator, model_version, feature_version, evaluation_run_id}
     schedule     {last_success_at, next_expected_at}
-    symbols      optional (added 2026-10-17, format still 1.0): {tickers:
-                  [{ticker, status, reason}]}, each watched ticker's latest
-                  check against the provider's listing (status: supported,
-                  unsupported, inactive, delisted, ambiguous, or unverified
-                  when never checked; stock_lab.contracts.SymbolStatus)
+    symbols      optional and additive (added 2026-10-17; the format stays 1.0
+                  because the envelope ignores extra fields, so earlier files
+                  stay valid): {tickers: [{ticker, status, reason}]}, each
+                  watched ticker's latest check against the provider's
+                  listing (status: supported, unsupported, inactive,
+                  delisted, ambiguous, or unverified when never checked;
+                  stock_lab.contracts.SymbolStatus). Absent: the tickers
+                  check is not_recorded; present: checked strictly
 
 Checks (each says it is an experimental, unvalidated forecaster):
 

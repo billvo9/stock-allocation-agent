@@ -272,3 +272,49 @@ def test_a_job_not_activated_yet_is_named_apart_from_missing_evidence():
     assert (only.state, only.state_word) == (HealthState.INSUFFICIENT_EVIDENCE, "Not activated")
     assert only.headline == "Nothing measured is wrong; some jobs are not activated yet"
     assert "Healthy" not in {area.state_word for area in only.areas if area.area is Area.FORECAST}
+
+
+# --- a stale summary never reads healthy ---------------------------------------------
+
+
+def test_a_summary_older_than_the_staleness_limit_reads_stale_not_healthy():
+    from stock_agent.health.model import STALE_AFTER
+
+    assert STALE_AFTER == timedelta(hours=26)
+    fresh = build(check("ci.tests"), generated=NOW - STALE_AFTER)
+    assert (fresh.state, fresh.state_word, fresh.age_warning) == (
+        HealthState.HEALTHY,
+        "Healthy",
+        None,
+    )
+    old = NOW - STALE_AFTER - timedelta(hours=1)
+    stale = build(check("ci.tests"), generated=old)
+    assert (stale.state, stale.state_word, stale.level, stale.notice) == (
+        HealthState.DEGRADED,
+        "Stale",
+        "WARNING",
+        "warning",
+    )
+    assert stale.headline == "The latest summary is stale"
+    assert stale.age_warning.startswith("This summary is 27 hours old (generated")
+    assert stale.next_action.startswith("Run the monitor again: this summary is 27 hours old")
+    assert "scripts/setup_health_schedule.py --status" in stale.next_action
+    waiting = build(_waiting("forecast.ledger", "input_missing", "Ledger"), generated=old)
+    assert (waiting.state_word, waiting.headline) == ("Stale", "The latest summary is stale")
+
+
+def test_a_worse_condition_still_leads_a_stale_summary():
+    old = NOW - timedelta(days=3)
+    broken = build(
+        check("deps.pins", HealthState.FAILED, title="Pins", summary="Pins broke."),
+        generated=old,
+    )
+    assert (broken.state, broken.state_word, broken.headline) == (
+        HealthState.FAILED,
+        "Failed",
+        "Something is broken",
+    )
+    assert broken.age_warning.startswith("This summary is 3 days old")
+    assert broken.next_action.startswith("Start with “Pins”")
+    warned = build(check("data.coverage", HealthState.DEGRADED, reason="low"), generated=old)
+    assert (warned.state_word, warned.headline) == ("Degraded", "Working, with warnings")

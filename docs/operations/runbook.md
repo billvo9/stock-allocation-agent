@@ -61,10 +61,14 @@ these never share a word:
 | Failed | `failed` | A hard limit or contract is broken |
 | Unavailable | `unavailable` | A configured input could not be read, or a tool did not run |
 | Degraded | `degraded` | Outside a warning threshold |
-| Stale | `stale` | Degraded because data or evidence is older than its limit (`stale_data`, `stale_evidence`, `stale_prices`, `daily_run_overdue`) |
+| Stale | `stale` | Degraded because data or evidence is older than its limit (`stale_data`, `stale_evidence`, `stale_prices`, `daily_run_overdue`), or the whole summary is older than 26 hours (`stale_summary`) |
 | Insufficient evidence | `no_evidence` | No input yet, or too few observations |
 | Not activated | `not_activated` | Insufficient evidence because the job is not authorized yet (`not_authorized`) |
 | Healthy | `healthy` | Measured, within its threshold |
+
+A summary older than 26 hours (`model.STALE_AFTER`, one limit for the page
+and `--status`) is stale: when nothing worse shows, the page's overall word
+is "Stale" and its headline "The latest summary is stale", never "Healthy".
 
 An input that was never there is never healthy, stale or failed: it is
 insufficient evidence, or unavailable when it was configured and cannot be
@@ -76,8 +80,23 @@ deletion, and fails.)
 The private monitor runs once a day under launchd, on the owner's Mac only.
 `scripts/setup_health_schedule.py` prepares it; installing it is the
 owner's step. Run every command from the main checkout, never from a
-worktree: the job monitors whatever is checked out where it runs, and the
-script refuses to write from a linked worktree.
+worktree: the script refuses to write from a linked worktree.
+
+**The job runs only a clean `main`.** It runs unattended and uses `gh`'s
+sign-in, so before anything from the checkout runs, `run.sh` checks the
+branch and `git status --porcelain`. On a feature branch, a detached HEAD or
+with any uncommitted or untracked file, it runs nothing and exits 3 with a
+dated line on stderr: `health job refused: <reason>; nothing was run`.
+Before the scheduled time, keep the main checkout on `main` with nothing
+uncommitted or untracked (commit, remove, or add to `.gitignore`); work on
+branches in worktrees. The dry run warns when the checkout is not on main.
+
+**Its environment.** launchd starts `/bin/zsh -f run.sh`: `-f` reads none of
+your zsh startup files, so nothing in `~/.zshenv` runs or is exported.
+`run.sh` then starts the monitor under `env -i` with only `HOME`, `USER`,
+`LOGNAME`, `TMPDIR`, an absolute `PATH` and `PYTHONPATH`, so no secret from
+a profile or `launchctl setenv` (for example `TIINGO_API_KEY`) reaches
+`health_check.py`, `verify.py` or pytest.
 
 1. **Dry run.** Nothing is written:
 
@@ -125,11 +144,18 @@ script refuses to write from a linked worktree.
    launchctl print gui/$(id -u)/local.stock-agent.health
    ```
 
-5. **Status.** Read-only: loaded or not, runs, last exit code, when
-   `latest.json` was written, whether it is fresh (at most 26 hours old),
-   stale or missing, and its overall state by condition. Exit 0 means
-   loaded and fresh; with a loaded job and a stale summary, read
-   `~/stock-agent-private/health/launchd.err.log`.
+5. **Status.** Read-only: loaded or not, runs, the last exit code and what
+   it means, when `latest.json` was written, whether it is fresh (at most 26
+   hours old, the same limit as the page), stale or missing, its overall
+   state by condition, and the last stderr line. Exit 0 means loaded and
+   fresh. Last exit codes:
+
+   | Code | Meaning | Do |
+   |---|---|---|
+   | 0 | The run finished; the overall state is not failed | Nothing |
+   | 1 | The run finished; the overall state is failed | Open the Lab page's first failed check and its runbook entry |
+   | 2 | `health_check.py` refused (for example an output directory Git would track) | Read the last stderr line |
+   | 3 | Refused: the checkout is not a clean `main`; nothing ran | Switch the main checkout to `main` and clean it, then `launchctl kickstart -k gui/$(id -u)/local.stock-agent.health` |
 
    ```bash
    .venv/bin/python scripts/setup_health_schedule.py --status
