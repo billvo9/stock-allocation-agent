@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import datetime as dt
+import re
 import tomllib
 from pathlib import Path
 
@@ -353,6 +354,39 @@ def test_keyboard_focus_is_visible():
     css = theme.css()
     assert ":focus-visible" in css and "outline: 2px solid var(--sa-accent)" in css
     assert theme.contrast_ratio(theme.COLOURS["accent"], theme.COLOURS["canvas"]) >= 3.0
+
+
+# Streamlit 1.64's radio option: a label (data-selected / data-disabled when
+# set) holding a visually hidden input and a row whose first child is the ring.
+RADIO_RING = (
+    '[data-testid="stRadioOption"]:not([data-selected]):not([data-disabled])'
+    " > div > div:first-child"
+)
+
+
+def _radio_ring_role() -> str:
+    css = " ".join(theme.css().split())
+    assert css.count(f"{RADIO_RING} {{") == 1
+    rule = css.split(f"{RADIO_RING} {{")[1].split("}")[0]
+    variable = re.fullmatch(r" background-color: var\(--sa-([a-z-]+)\); ", rule)
+    assert variable, rule
+    return variable.group(1).replace("-", "_")
+
+
+@pytest.mark.parametrize("surface", SURFACES)
+def test_unselected_radio_rings_meet_3_to_1_on_every_surface(surface):
+    # WCAG 1.4.11: a control's boundary needs 3:1 against what is next to it.
+    # Streamlit draws the ring in borderColor (1.35:1 at most); the ring sits on
+    # the canvas, a card or the sidebar and around a disc in the page background.
+    ratio = theme.contrast_ratio(theme.COLOURS[_radio_ring_role()], theme.COLOURS[surface])
+    assert ratio >= 3.0, (surface, ratio)
+
+
+def test_only_the_radio_rings_change_and_other_widget_borders_keep_their_colour():
+    assert _radio_ring_role() != "border"
+    tables = theme.streamlit_theme()
+    assert tables["theme"]["borderColor"] == theme.COLOURS["border"]
+    assert tables["theme.sidebar"]["borderColor"] == theme.COLOURS["border"]
 
 
 def test_status_treatments_are_legible_and_spelled_out():
