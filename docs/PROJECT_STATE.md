@@ -625,8 +625,45 @@ the owner's answers and messages in session:
     the exact scope and command (given in
     `docs/research/stock_probability_lab.md`, section 7; not yet answered);
   - do not alter the PPO reward or the portfolio simulator.
+- 2026-10-16, the Stock Lab decisions A1-A6 (owner; the full conditions
+  are in `docs/research/stock_probability_lab.md`, section 7):
+  - A1: "I approve the proposed Tiingo Starter provider and the architecture
+    for a private watchlist data store", staged: "separate data inspection
+    from persistence"; the read-only command runs only after the owner
+    confirms the token and "explicitly authorize[s] that command"; storage
+    is "a separate" approval after "a successful coverage and
+    corporate-action audit"; the 30-ticker cap; "No vendor-adjusted price
+    fields, unauthorized history or data redistribution."
+  - A2: the trailing 252-session input window "approved in principle":
+    models fitted, tuned, selected and calibrated only on eligible pre-2025
+    data; protected-period observations "only as inputs to a previously
+    frozen model", kept "in the separately controlled prospective/inference
+    store"; "a scoped authorization for the Stock Probability Lab, not a
+    general unlocking of the 2025+ holdout."
+  - A3: exploratory walk-forward evaluation of the saved watchlist on
+    eligible pre-2025 history, "hindsight-selected and non-confirmatory";
+    every challenger against B0/B1 with proper scores, calibration,
+    stock-level coverage, uncertainty and multiple-comparison treatment.
+  - A4: the write-once forecast and scoring protocol approved; activation
+    "contingent on successful data validation, a frozen registered model,
+    verified decision timestamps and a successful end-to-end dry run";
+    separate from ETF OD16 and PPO promotion.
+  - A5: the version-1 definitions (±0.5% daily; ±0.5% × √5 for the
+    five-session total; a Stable session ends a streak by default; the
+    bull-trap setup parameters for research); the failure parameter f is to
+    be confirmed "with an exact formula and numerical example before
+    enabling real-data risk flags".
+  - A6: recent observed prices on the private dashboard, through "an
+    isolated descriptive reader", after the retrieval and storage
+    permissions; "Do not silently modify the existing holdout policies".
+  - Unchanged: the PPO reward, T5a portfolio economics, ETF prospective
+    governance and the main model-evidence rules.
 - Pending:
-  - the Stock Lab decisions A1-A6 (open item 10);
+  - Stock Lab: the authorization of the A1 read-only audit command (after
+    the token is configured), then the separate storage approval, the
+    confirmation of the bull-trap f, A7 (which test decides "beats B1",
+    raised by the simulated size checks merged in #83), and A4 activation
+    (open item 10);
   - the rest of OD3;
   - OD8 groups C-D (cash returns and benchmarks; statistics and
     reporting). Group B, the D1-D8 packet, was approved on 2026-10-15
@@ -1169,15 +1206,22 @@ streamlit 1.64.0, plotly 7.1.0, scikit-learn 1.9.1, scipy 1.18.1, torch
      fold-block coverage was 0.753 at a nominal 80%. The prospective
      forecasters use pre-registered split-conformal bands instead (PR #74).
 10. Stock Lab (`docs/research/stock_probability_lab.md`):
-   - **Owner decisions A1-A6** (section 7) gate every real-data step: A1
-     live Tiingo data (`scripts/stock_lab_fetch.py --authorized --store`),
-     A2 recent prices as inference inputs only, A3 real development
-     evaluation, A4 recording real forecasts, A5 the definitions (the
-     five-session band tau x sqrt 5, the streak rule, the trap
-     parameters), A6 showing real prices after 2024.
-   - Not built until A1, A2 and A4: the daily job's real price update and
-     real forecasts (the job records itself skipped; the store refuses
-     real forecasts).
+   - **Owner decisions A1-A6 were recorded on 2026-10-16** (section 7 of the
+     doc; quoted under "Owner decisions"). Still pending:
+     - the authorization of the read-only audit
+       `scripts/stock_lab_fetch.py --authorized`, after the owner sets
+       `TIINGO_API_KEY` and saves at most 30 tickers;
+     - then a separate storage approval (`--store`);
+     - the confirmation of the bull-trap f;
+     - A7, which test decides "beats B1" (doc section 7), before the A3
+       evaluation selects;
+     - A4 activation, after validation, a frozen registered model, verified
+       decision timestamps and a dry run.
+   - To build under A2 and A6: the separately controlled inference store
+     for protected-period observations, its frozen-model reader, and an
+     isolated descriptive reader for the dashboard. Then the daily job's
+     real update and real forecasts. Until then the job records itself
+     skipped, and the store refuses real forecasts.
    - Statistical follow-ups: the fold-block t and simulated size checks,
      tau sensitivity, per-stock B2 tilts (a follow-up session was started
      on 2026-10-16).
@@ -1213,9 +1257,16 @@ streamlit 1.64.0, plotly 7.1.0, scikit-learn 1.9.1, scipy 1.18.1, torch
    constraint sets, then PPO on the approved transition and the first
    registered comparison table across the baselines, the optimizer,
    simple RL and PPO.
-3. **Stock Lab** (owner-gated; open item 10): merge the landing branch
-   `feat/stock-lab-land-pr2-pr3`, then the owner's decisions A1-A6, then
-   the daily job's real update path.
+3. **Stock Lab** (open item 10; #81 merged 2026-10-16 as `ebba0d7`):
+   1. Owner: set `TIINGO_API_KEY`, save the watchlist and authorize the
+      read-only audit.
+   2. Owner: approve storage after a good audit.
+   3. Lead: the A3 exploratory evaluation, then freeze and register the
+      first model.
+   4. Lead: the A2 inference store and the A6 descriptive reader.
+   5. Owner: confirm f and approve A4 activation after a dry run.
+   6. Lead: the first prospective five-session forecast, then daily
+      updates, scoring and monitoring.
 4. **Small engineering follow-ups:**
    - the guardrail worktree fix (owner-gated);
    - review-branch cleanup (owner approval).

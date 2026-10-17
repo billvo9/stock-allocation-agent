@@ -56,7 +56,14 @@ def prices():
 def test_without_authorization_it_prints_the_plan_and_makes_no_request(store):
     code, text, transport = run(store, [])
     assert code == 0 and transport.calls == []
-    assert "no request made" in text and "2024-12-31" in text and "AAPL, VOO" in text
+    assert "no request made" in text and "AAPL, VOO" in text
+    assert "1. GET https://apimedia.tiingo.com/docs/tiingo/daily/supported_tickers.zip" in text
+    assert (
+        "2. GET https://api.tiingo.com/tiingo/daily/AAPL/prices?startDate=2003-01-02&endDate=2024-12-31"
+        in text
+    )
+    assert "local side effects of --authorized without --store: none" in text
+    assert "token=" not in text  # the key never travels in a URL (Tiingo also accepts ?token=)
 
 
 def test_store_without_authorization_is_refused(store):
@@ -78,7 +85,22 @@ def test_the_script_has_no_option_beyond_the_authorized_scope(store):
         run(store, ["--authorized", "--max-tickers", "500"])
 
 
+def test_a_storing_run_stores_only_tickers_whose_audit_is_ready(store):
+    rows = [price_row(day) for day in ("2024-01-02", "2024-01-03", "2024-01-05")]
+    rows[2]["low"] = 200.0  # a low above the close: the audit asks for review
+    code, text, _ = run(
+        store,
+        ["--authorized", "--store"],
+        [(200, listing_zip(LISTING)), (200, json.dumps(rows).encode())],
+    )
+    assert code == 0, text
+    assert "not stored: the audit needs review first" in text and store.batches("AAPL") == ()
+    assert "audit summary: 0 ready" in text
+
+
 def test_a_read_only_run_classifies_requests_pre_2025_prices_and_stores_nothing(store):
+    database = store.path.read_bytes()
+    events = store.events()
     code, text, transport = run(
         store, ["--authorized"], [(200, listing_zip(LISTING)), (200, prices())]
     )
@@ -86,8 +108,12 @@ def test_a_read_only_run_classifies_requests_pre_2025_prices_and_stores_nothing(
     urls = [url for url, _ in transport.calls]
     assert len(urls) == 2 and "AAPL/prices?startDate=2003-01-02&endDate=2024-12-31" in urls[1]
     assert "VOO: unsupported (not_a_stock)" in text
-    assert "1 missing NYSE sessions" in text
+    assert "1 missing NYSE sessions" in text and "audit: ready to store" in text
+    assert "nothing was written" in text
     assert store.batches("AAPL") == () and store.latest_listing() is None
+    # The database file and its records are unchanged (reading may add SQLite's
+    # -shm/-wal companion files, which hold no record).
+    assert store.path.read_bytes() == database and store.events().equals(events)
 
 
 def test_a_storing_run_writes_the_listing_checks_and_a_batch_with_the_gap_kept(store):
