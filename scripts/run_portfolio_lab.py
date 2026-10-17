@@ -6,10 +6,12 @@ interfaces) and usage statistics are off. The lab runs in synthetic demo
 mode: every fund is synthetic demo data, not real fund performance, and the
 metrics are the approved descriptive calculations (OD8 group A).
 
-The Lab's editorial theme, its bundled fonts and static file serving come
-from the script-level config next to the app (src/stock_agent/app/
-.streamlit/config.toml). This checkout's `src` is put first on PYTHONPATH,
-so the app always runs this checkout's code.
+The Lab's editorial theme (light and dark variants), its bundled fonts and
+static file serving come from the script-level config next to the app
+(src/stock_agent/app/.streamlit/config.toml); no flag overrides it, so the
+Settings menu offers System, Light and Dark, and System follows the
+operating system. This checkout's `src` is put first on PYTHONPATH, so the
+app always runs this checkout's code.
 
 The Model Health page reads two summaries, passed in environment variables
 (the page itself makes no network call and runs no check):
@@ -62,8 +64,6 @@ def command(port: int) -> list[str]:
         "false",
         "--client.toolbarMode",
         "viewer",
-        "--theme.base",
-        "light",
     ]
 
 

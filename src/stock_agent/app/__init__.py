@@ -33,8 +33,8 @@ Modules:
     run           Streamlit entry point (launch with scripts/run_portfolio_lab.py)
 
 The Lab's theme is the script-level `.streamlit/config.toml` next to run.py
-(generated from `stock_agent.ui.theme`), with the bundled OFL fonts served
-from `static/`.
+(generated from `stock_agent.ui.theme`, with light and dark variants), with
+the bundled OFL fonts served from `static/`.
 
 Boundary (tested): the app imports only `stock_agent.ui`,
 `stock_agent.portfolio`, the health center's summary reader and view model

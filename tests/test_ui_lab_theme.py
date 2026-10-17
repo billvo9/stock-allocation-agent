@@ -1,10 +1,13 @@
 """
 The Portfolio Lab's editorial variant of the shared design system:
-WCAG contrast of its tokens and chart identities, the bundled OFL fonts and
-their licence, the script-level Streamlit config generated from the tokens,
-local-only font serving, motion that respects prefers-reduced-motion, the
-phone layout rules, and backward compatibility of the shared components the
-research dashboard and the Model Health Center use.
+WCAG contrast of its light and dark tokens and chart identities, the bundled
+OFL fonts and their licence, the script-level Streamlit config generated
+from the tokens (matching light and dark variants, with no research value
+leaking in), local-only font serving, CSS that follows the viewer's active
+theme, charts drawn in the viewer's colour scheme, motion that respects
+prefers-reduced-motion, the phone layout rules, and backward compatibility
+of the shared components the research dashboard and the Model Health Center
+use.
 """
 
 from __future__ import annotations
@@ -15,16 +18,19 @@ import os
 import re
 import tomllib
 from pathlib import Path
+from types import SimpleNamespace
 
+import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
-from stock_agent.app import figures
+from stock_agent.app import figures, synthetic
 from stock_agent.ui import components, style, theme
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "src" / "stock_agent" / "app"
 LAB_CONFIG = APP / ".streamlit" / "config.toml"
+RESEARCH_CONFIG = REPO / ".streamlit" / "config.toml"
 FONTS = APP / "static" / theme.FONT_DIRECTORY
 SURFACES = ("canvas", "surface", "surface_muted")
 
@@ -33,27 +39,51 @@ SURFACES = ("canvas", "surface", "surface_muted")
 
 
 def test_the_lab_tokens_name_the_same_roles_as_the_research_tokens():
-    assert set(theme.LAB_COLOURS) == set(theme.COLOURS)
+    assert set(theme.LAB_COLOURS) == set(theme.COLOURS) == set(theme.LAB_DARK_COLOURS)
+    assert set(theme.LAB_PALETTES) == set(theme.LAB_STATUS) == set(theme.SCHEMES)
+    assert theme.LAB_PALETTES["light"] is theme.LAB_COLOURS
+    assert theme.LAB_STATUS["light"] is theme.STATUS
 
 
+def test_the_dark_status_treatments_mirror_the_light_ones():
+    assert list(theme.LAB_DARK_STATUS) == list(theme.STATUS)
+    for level, tones in theme.LAB_DARK_STATUS.items():
+        assert list(tones) == list(theme.STATUS[level]), level
+    # One hue per status in the dark too, so Unavailable never reads as Warning.
+    assert len({tones["fg"] for tones in theme.LAB_DARK_STATUS.values()}) == len(theme.STATUS)
+
+
+@pytest.mark.parametrize("scheme", theme.SCHEMES)
 @pytest.mark.parametrize("surface", SURFACES)
-def test_lab_text_and_accent_meet_wcag_aa_on_every_surface(surface):
+def test_lab_text_and_accent_meet_wcag_aa_on_every_surface(scheme, surface):
+    colours = theme.LAB_PALETTES[scheme]
     for text in ("text", "text_muted", "text_subtle", "accent"):
-        ratio = theme.contrast_ratio(theme.LAB_COLOURS[text], theme.LAB_COLOURS[surface])
-        assert ratio >= 4.5, (text, surface, ratio)
+        ratio = theme.contrast_ratio(colours[text], colours[surface])
+        assert ratio >= 4.5, (scheme, text, surface, ratio)
 
 
-def test_lab_muted_text_and_soft_accents_stay_legible():
-    colours = theme.LAB_COLOURS
-    for tones in theme.STATUS.values():  # captions sit on alert backgrounds too
+@pytest.mark.parametrize("scheme", theme.SCHEMES)
+def test_lab_muted_text_and_soft_accents_stay_legible(scheme):
+    colours = theme.LAB_PALETTES[scheme]
+    for tones in theme.LAB_STATUS[scheme].values():  # captions sit on alert backgrounds too
         assert theme.contrast_ratio(colours["text_muted"], tones["bg"]) >= 4.5
     assert theme.contrast_ratio(colours["accent"], colours["accent_soft"]) >= 4.5  # chosen tags
     assert theme.contrast_ratio(colours["accent"], colours["canvas"]) >= 3.0  # the focus ring
 
 
-def test_chart_identities_keep_3_to_1_contrast_on_the_lab_chart_surface():
-    for colour in figures.FUND_COLOURS:
-        assert theme.contrast_ratio(colour, theme.LAB_COLOURS["surface"]) >= 3.0, colour
+@pytest.mark.parametrize("scheme", theme.SCHEMES)
+def test_lab_status_treatments_are_legible_in_both_schemes(scheme):
+    for level, tones in theme.LAB_STATUS[scheme].items():
+        assert theme.contrast_ratio(tones["fg"], tones["bg"]) >= 4.5, (scheme, level)
+
+
+@pytest.mark.parametrize("scheme", theme.SCHEMES)
+def test_chart_identities_keep_3_to_1_contrast_on_the_lab_chart_surface(scheme):
+    surface = theme.LAB_PALETTES[scheme]["surface"]
+    colours = figures.FUND_PALETTES[scheme]
+    assert len(set(colours)) == len(figures.FUND_COLOURS) == 5
+    for colour in (*colours, theme.LAB_PALETTES[scheme]["reference_line"]):
+        assert theme.contrast_ratio(colour, surface) >= 3.0, (scheme, colour)
 
 
 def test_the_lab_chart_layout_uses_the_editorial_tokens_and_never_tweens():
@@ -66,6 +96,55 @@ def test_the_lab_chart_layout_uses_the_editorial_tokens_and_never_tweens():
     research = style.base_layout("t")
     assert research["font"]["family"] == theme.TYPE["sans"]
     assert research["plot_bgcolor"] == theme.COLOURS["surface"]
+
+
+@pytest.mark.parametrize("scheme", theme.SCHEMES)
+def test_the_lab_chart_layout_draws_in_the_scheme_it_is_given(scheme):
+    colours = theme.LAB_PALETTES[scheme]
+    layout = go.Figure().update_layout(**style.lab_layout("t", subtitle="s", scheme=scheme)).layout
+    assert layout.plot_bgcolor == layout.paper_bgcolor == colours["surface"]
+    assert layout.font.color == colours["text"]
+    assert layout.title.subtitle.font.color == colours["text_muted"]
+    for axis in (layout.xaxis, layout.yaxis):
+        assert axis.gridcolor == axis.zerolinecolor == colours["grid"]
+        assert axis.linecolor == colours["border_strong"]
+    assert style.lab_layout("t") == style.lab_layout("t", scheme="light")
+
+
+@pytest.mark.parametrize("scheme", theme.SCHEMES)
+def test_the_explore_figures_draw_in_the_scheme_they_are_given(scheme):
+    colours, identities = theme.LAB_PALETTES[scheme], figures.FUND_PALETTES[scheme]
+    history = synthetic.demo_histories()[0]
+    growth = pd.Series(
+        [10_000.0, 10_200.0], index=pd.DatetimeIndex(["2021-01-04", "2021-01-05"], tz="UTC")
+    )
+    styles = figures.fund_styles([history], scheme)
+    assert styles[history.fund_id].colour == identities[0]
+    drawn = figures.growth_figure([(history, growth)], styles, start_value=1e4, scheme=scheme)
+    assert drawn.layout.paper_bgcolor == colours["surface"]
+    assert drawn.data[0].line.color == drawn.data[0].marker.color == identities[0]
+    assert drawn.layout.shapes[0].line.color == colours["reference_line"]
+    assert drawn.layout.annotations[0].font.color == colours["text_muted"]
+    table = pd.DataFrame(
+        {"year": [2021], "total_return": [0.02], "partial": [True], "losing": [False]}
+    )
+    calendar = figures.calendar_year_figure([(history, table)], styles, scheme=scheme)
+    assert calendar.layout.paper_bgcolor == colours["surface"]
+    assert calendar.data[0].marker.pattern.fgcolor == colours["surface"]  # hatching
+    assert calendar.layout.yaxis.zerolinecolor == colours["reference_line"]
+    # Light stays the default for any caller that names no scheme.
+    assert figures.fund_styles([history]) == figures.fund_styles([history], "light")
+
+
+@pytest.mark.parametrize(
+    ("reported", "scheme"), [("dark", "dark"), ("light", "light"), (None, "light")]
+)
+def test_the_colour_scheme_is_the_viewers_active_theme(monkeypatch, reported, scheme):
+    # st.context.theme.type is None outside a browser session (and in AppTest).
+    monkeypatch.setattr(
+        components.st, "context", SimpleNamespace(theme=SimpleNamespace(type=reported))
+    )
+    assert components.colour_scheme() == scheme
 
 
 # --- fonts, licence and local serving ---
@@ -100,7 +179,10 @@ def test_the_lab_config_is_generated_from_the_tokens_and_serves_fonts_locally():
     expected = theme.lab_streamlit_theme()
     assert config["theme"] == {
         **expected["theme"],
-        "sidebar": expected["theme.sidebar"],
+        **{
+            scheme: {**expected[f"theme.{scheme}"], "sidebar": expected[f"theme.{scheme}.sidebar"]}
+            for scheme in theme.SCHEMES
+        },
         "fontFaces": expected["theme.fontFaces"],
     }
     assert config["server"]["enableStaticServing"] is True
@@ -110,6 +192,60 @@ def test_the_lab_config_is_generated_from_the_tokens_and_serves_fonts_locally():
     families = {face["family"] for face in config["theme"]["fontFaces"]}
     assert config["theme"]["headingFont"].split(",")[0] in families
     assert config["theme"]["font"].split(",")[0] in families
+
+
+def test_the_lab_config_offers_matching_light_and_dark_variants():
+    tables = theme.lab_streamlit_theme()
+    light, dark = tables["theme.light"], tables["theme.dark"]
+    # A key missing from one variant would silently fall back to [theme] there.
+    assert list(light) == list(dark)
+    assert list(tables["theme.light.sidebar"]) == list(tables["theme.dark.sidebar"])
+    # [theme] holds type and shape only: no colour, and no base, which would
+    # pin one variant (Streamlit forces each variant's base itself).
+    assert "base" not in tables["theme"] and not set(tables["theme"]) & set(light)
+    assert "theme.sidebar" not in tables
+    for scheme, table in (("light", light), ("dark", dark)):
+        colours = theme.LAB_PALETTES[scheme]
+        assert table["backgroundColor"] == colours["canvas"]
+        assert table["textColor"] == colours["text"]
+        assert table["primaryColor"] == colours["accent"]
+        assert table["redBackgroundColor"] == theme.LAB_STATUS[scheme]["INVALID/BLOCKED"]["bg"]
+        sidebar = tables[f"theme.{scheme}.sidebar"]
+        assert sidebar["backgroundColor"] == colours["surface_muted"]
+
+
+def test_no_research_theme_value_reaches_the_lab():
+    # Streamlit reads the repository's config (the research theme, which the
+    # launcher's working directory picks up) and then the Lab's, option by
+    # option. Every research option must be overridden in [theme] or in both
+    # variants; the research base ("light") is overridden by each variant.
+    research = tomllib.loads(RESEARCH_CONFIG.read_text(encoding="utf-8"))["theme"]
+    lab = tomllib.loads(LAB_CONFIG.read_text(encoding="utf-8"))["theme"]
+    for key in set(research) - {"base", "sidebar"}:
+        assert key in lab or all(key in lab[scheme] for scheme in theme.SCHEMES), key
+    for key in research["sidebar"]:
+        assert all(key in lab[scheme]["sidebar"] for scheme in theme.SCHEMES), key
+
+
+def test_the_lab_css_follows_the_viewers_active_theme():
+    css = theme.lab_css()
+    root = css.split(":root {")[1].split("}")[0]
+    for name, light in theme.LAB_COLOURS.items():
+        dark = theme.LAB_DARK_COLOURS[name]
+        assert f"--sa-{name.replace('_', '-')}: light-dark({light}, {dark});" in root, name
+    for level, tones in theme.STATUS.items():
+        for part, light in tones.items():
+            dark = theme.LAB_DARK_STATUS[level][part]
+            variable = f"--sa-{theme.status_slug(level)}-{part}"
+            assert f"{variable}: light-dark({light}, {dark});" in root, variable
+    # Every colour has both values, so nothing stays light on a dark page.
+    paired = re.sub(r"light-dark\(#[0-9A-F]{6}, #[0-9A-F]{6}\)", "", css)
+    assert not re.search(r"#[0-9A-Fa-f]{3,8}\b", paired)
+    # light-dark() reads the color-scheme Streamlit sets from the active theme;
+    # the operating system's preference never overrides a Settings choice.
+    assert "prefers-color-scheme" not in css and "color-scheme:" not in css
+    # The research dashboard stays light.
+    assert "light-dark(" not in theme.css()
 
 
 def test_no_style_reaches_another_host():
@@ -230,3 +366,8 @@ def test_the_launcher_runs_this_checkouts_code(monkeypatch):
     monkeypatch.delenv("PYTHONPATH")
     assert module.environment()["PYTHONPATH"] == str(module.SOURCE)
     assert module.APP == APP / "run.py"
+
+
+def test_the_launcher_leaves_the_colour_scheme_to_the_viewer():
+    # The theme comes only from the generated config; a --theme flag would override it.
+    assert not [part for part in _launcher().command(8502) if part.startswith("--theme.")]
