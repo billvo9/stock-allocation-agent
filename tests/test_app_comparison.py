@@ -161,6 +161,7 @@ def test_choosing_the_strict_set_shows_its_incomplete_builds(directory):
         (lambda d: d["fairness"].update(contract="failed"), True, "fairness"),
         (lambda d: d.update(protocol="ad_hoc"), True, "registered comparison protocol"),
         (lambda d: d["look"].update(number=0), True, "on record"),
+        (lambda d: d.update(schema_version="1.0.0"), True, "not a ppo_comparison 1.1.0 artifact"),
     ],
 )
 def test_anything_outside_the_registered_protocol_is_withheld(directory, edit, rehash, reason):

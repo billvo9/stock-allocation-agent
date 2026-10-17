@@ -115,7 +115,7 @@ def verified(text: str) -> dict:
     if not isinstance(document, dict):
         raise ComparisonWithheld("it is not a comparison artifact")
     if (document.get("schema"), document.get("schema_version")) != (SCHEMA, SCHEMA_VERSION):
-        raise ComparisonWithheld("it is not a ppo_comparison 1.0.0 artifact")
+        raise ComparisonWithheld(f"it is not a {SCHEMA} {SCHEMA_VERSION} artifact")
     if document.get("protocol") != PROTOCOL:
         raise ComparisonWithheld("it was not produced by the registered comparison protocol")
     body = {key: value for key, value in document.items() if key != "content_sha256"}

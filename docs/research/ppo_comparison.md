@@ -1,6 +1,7 @@
 # The registered synthetic comparison: baselines against PPO
 
-Status (2026-10-17): implemented and run once on the test fold.
+Status (2026-10-17): implemented; the test fold was evaluated twice (look 2,
+a recorded repeat after an independent review, reproduces look 1 exactly).
 
 > **Synthetic scenarios only — not evidence of real investment performance.**
 > This is an **engineering evaluation** of the approved simulator and of the
@@ -73,27 +74,49 @@ name, never an edit.
 
 Every strategy is evaluated through one API: `harness.run_comparison`, so
 `replay.rollout` on `AllocationEnv` with the approved `portfolio_step`.
-`comparison.fairness.check_contract` then checks **every booked step of every
-strategy and episode** before a single measure is computed:
+
+**One registered setup, derived inside the check.** For each constraint set
+and cost multiplier, `comparison.fairness.RegisteredSetup` derives ONE
+common setup from the registered configuration alone: the transition, lag,
+D2 rates times the multiplier, schedule and offset, build date, evaluation
+window and the full D5 set (cap and turnover limit). It also regenerates the
+scenario data from the registered generator. Nothing the runner was given
+can change what is expected. A `ContractCheck` per (set, run or replay,
+multiplier) then checks **every booked step of every strategy and episode**
+against that setup. Its `close()` compares all registered entries together:
+- every rule and every learned seed was checked exactly once;
+- all of them share the registered fingerprint (setup, booked and decision
+  sessions, build close, cost rates) of every episode.
+
+The runner also requires exactly one evaluation per registered entry and
+episode, so a strategy run twice on the test fold (an uncounted look) is
+refused.
+
+*(Added 2026-10-17 after an independent review. Earlier, each strategy was
+checked alone against the setup the runner passed in, so a runner that ran
+PPO at another offset, over a later window, without the cap, or best of two
+offsets, passed the contract.)*
 
 | Guarantee | How it is checked |
 |---|---|
-| One API | The record is an `EpisodeRecord` whose identity is the registered environment's |
+| One API | The record is an `EpisodeRecord` whose identity is the registered setup's |
 | One transition | Each step is replayed through `portfolio_step` from its own inputs and must agree bit for bit; wealth compounds by each net return; each reward is log(1 + R_net) (D8 (a)) |
 | Timing (D1) | A decision at complete session c_j executes at c_{j+1}; no other row carries a target |
-| Schedule and offset (D7) | The decisions and booked sessions are the registered schedule's |
+| Schedule, offset and window (D7) | The decisions and booked sessions are the registered schedule's over the registered window |
 | Costs (D2) | Every row's rates are the provisional rates times the regime times the registered multiplier |
-| Build (D3) | 100% cash until the common build close, where every first decision executes |
+| Build (D3) | 100% cash until the registered build close, where every first decision executes |
 | Constraint set (D5) | Every target's D5 record equals `feasible_target(target, w_pre, registered set)`, and the transition received it |
+| Together, once | Every registered entry checked once per episode, all sharing the registered fingerprint |
 | Determinism | The 1x replay of each strategy's recorded decisions reproduces its run exactly |
 
-**Mutation probes.** `tests/test_comparison_fairness.py` runs fourteen
+**Mutation probes.** `tests/test_comparison_fairness.py` runs sixteen
 mutants, each a strategy with exactly one advantage or deviation, planted
 through the same environment API wherever possible: another API (the
 engine's `SimulationResult`), a half-cost transition, a free build,
 same-close execution (lag 0), a daily schedule, another offset, a cheaper
-cost model, a portfolio that starts invested, another constraint set, a
-constraint set claimed but not applied, a skipped feasibility map, fabricated
+cost model, a portfolio that starts invested, another constraint set, the
+strict set without its cap, a later window, a constraint set claimed but not
+applied, a skipped feasibility map, fabricated
 wealth, a reward that counts the cost twice, and a missing episode. The
 contract refuses every one, for its own reason, both beside an honest
 strategy and checked alone (as the runner checks each strategy), and the
@@ -101,34 +124,39 @@ honest strategy alone passes. A lag other than the registered one is refused
 too.
 
 **Source mutation probes (2026-10-17).** Each probe removed one guard from a
-scratch copy of the code and ran the targeted tests against it; a canary that
-breaks the fairness module confirms the tests import the mutated copy.
+scratch copy of the code and ran the targeted tests against it. A canary
+that breaks the fairness module confirms the tests import the mutated copy.
 
-- **37 single-guard probes** covering:
-  - every contract rule;
-  - the no-test-selection check;
-  - the training guard on the test fold;
-  - the evaluation log (repeat looks, its hash chain);
-  - the 1x replay and the cost multipliers;
-  - the registered-configuration rules;
-  - build reporting;
-  - the Lab's withholding rules.
+- **The review's runner mutants:**
+  1. PPO evaluated at offset 1;
+  2. PPO's window starting 5 sessions later;
+  3. PPO under `strict` without the 0.5 cap;
+  4. the better of two offsets chosen on the test fold (an uncounted look).
 
-  32 were killed on the first run. One survivor was a real gap (no test
-  produced a result that its own decisions do not reproduce), so a test now
-  does (`test_a_result_its_own_decisions_do_not_reproduce_is_refused`), and
-  that probe is killed: **33 of 37**.
-- **The other four survivors are redundant guards, enforced twice:**
-  - the identity comparison (schedule, offset, set and cost changes also fail
-    the row checks);
-  - the decision-index check (the decision-session check catches the same
-    mutants);
-  - the per-row cost-rate record (the bit-for-bit replay recomputes the cost
-    from the registered rates);
-  - the frozen-seed coverage check (the per-scenario seed check and the
-    recomputed spreads catch a dropped seed).
-- **Five combined probes**, each removing every guard of one guarantee
-  (schedule, costs, constraint set, build from cash, seed reporting), are all
+  On the earlier code (`9599bc3`), mutants 1 to 3 survived: each strategy was
+  checked alone against the setup the runner passed. On the current code all
+  four are killed, as is a best-of-two run that brings its own data loader.
+  New tests cover them: the three setup changes, the best-of-two choice, a
+  strategy run twice even when the registered run is kept, and an exact
+  rollout count.
+- **New guards, on the current code:**
+  - killed: the joint close, the once-per-entry check, the run count, the
+    look log's binding to its configuration, the Lab's log check and match,
+    the construction split, and the cost multiplier;
+  - the one survivor is the explicit shared-fingerprint comparison, which is
+    redundant: every fingerprint component is already checked per record
+    against the same registered reference.
+- **The 37 single-guard probes, rerun on the current code: 32 killed.** The
+  five survivors are guards enforced twice:
+  - the API type check, both when a strategy is added and per record;
+  - the D2 base-rate check, also covered by the scenario fingerprint in the
+    identity;
+  - the decision-index check, beside the decision-session check;
+  - the per-row cost-rate record, beside the bit-for-bit replay;
+  - the frozen-seed coverage check, beside the per-scenario seed check and
+    the recomputed spreads.
+- **Six combined probes**, each removing every guard of one guarantee (API,
+  schedule, costs, constraint set, build from cash, seed reporting), are all
   killed.
 
 ## 4. Folds, selection and the evaluation log
@@ -141,12 +169,21 @@ breaks the fairness module confirms the tests import the mutated copy.
    while anything is chosen (`test_training_never_builds_the_test_fold`, and
    a trainer that peeks is refused). The frozen selection, `selection.json`,
    records each member's checkpoint hash and dev selection record.
-2. **Evaluate** (`run_ppo_comparison.py evaluate`). The look is appended to
-   `reports/comparison/evaluation_log.jsonl` (write-once, hash-chained; an
-   edited line refuses the whole log) **before** any evaluation data exists,
-   so a failed run still counts. The test fold is evaluated once per
-   registered configuration; a second look is refused unless it is recorded,
-   counted and labelled as a repeat. Dev looks are unlimited and counted.
+2. **Evaluate** (`run_ppo_comparison.py evaluate`). The look is appended,
+   **before** any evaluation data exists (so a failed run still counts), to
+   the configuration's private evaluation log
+   `~/stock-agent-private/comparison/looks/<config_sha256>.jsonl`.
+   - The log is write-once and hash-chained: an edited line refuses the
+     whole log.
+   - It has one file per registered configuration, in one place per machine
+     whatever `--reports-root` is, so a fresh reports directory cannot
+     restart the count. The environment variable
+     `STOCK_AGENT_COMPARISON_LOOKS` exists for the test suite only.
+   - The test fold is evaluated once per registered configuration. A second
+     look is refused unless it is recorded, counted and labelled as a
+     repeat. Dev looks are unlimited and counted.
+   - The Lab re-verifies this log and withholds an artifact whose look it
+     does not find.
 3. **No selection on test results.** Every frozen member is reported on
    every episode, and `check_no_test_selection` recomputes every seed spread
    and every learned summary from all members' rows, independently of the
@@ -167,9 +204,17 @@ seed:
   path with sessions the simulator does not value (the missing-closes
   scenario) reports only its **largest observed decline**, labelled
   incomplete, never a full-period maximum drawdown.
-- **Turnover (F2.4)**: one-way turnover summed over every execution, the
-  build's share, and the turnover after the build **per synthetic year of 252
-  sessions**; traded notional summed the same way.
+- **Turnover (F2.4)**: one-way turnover (a full switch is 1) summed over
+  every execution, split into two parts:
+  - **construction turnover**: from the build until the portfolio first
+    reaches its target (the build alone without a turnover limit; every
+    execution if the target is never reached);
+  - **rebalance turnover**: everything after, with the number of rebalance
+    executions and the turnover per rebalance.
+
+  Traded notional is split the same way, and the window's length in sessions
+  is reported. **Nothing is annualized**: F2.4 annualizes per calendar year,
+  and synthetic sessions carry no calendar dates.
 - **Costs (D2)**: the summed cost paid as a fraction of initial wealth, and
   terminal wealth and total return with the same decisions replayed at 0x,
   1x and 2x the registered rates.
@@ -183,14 +228,13 @@ seed:
   quartiles (linear interpolation), the median and max. Never only the best
   seed.
 
-**Key decision: the F2.4 annualization basis.** F2.4 (approved 2026-10-15)
-says one-way turnover is "annualized per calendar year". Synthetic sessions
-have no calendar dates, so the comparison uses the scenario generator's own
-year (`SESSIONS_PER_YEAR` = 252, which defines every regime's annual drift and
-volatility) and reports the un-annualized total beside it. The engine's
-health summary leaves turnover un-annualized because a real calendar basis
-is a group D matter (`t5a_engine.md`, section 3); for real data that remains
-open.
+**The F2.4 annualization basis.** F2.4 (approved 2026-10-15) says one-way
+turnover is "annualized per calendar year". A calendar basis needs dated
+sessions, and the synthetic scenarios have none, so no turnover here is
+annualized. Construction and rebalance turnover are reported separately, so
+a turnover-limited build is never read as rebalancing; under the `strict`
+set it otherwise would be. Annualizing per calendar year waits for dated
+(real) sessions; any other basis needs the owner's approval.
 
 ## 6. Build reporting (D5, confirmed 2026-10-17)
 
@@ -216,9 +260,13 @@ comparison reports exactly that rather than a number that looks invested.
 ## 7. Outputs and the Lab
 
 - `reports/comparison/<artifact_id>/comparison.json`: the versioned artifact
-  (`ppo_comparison` 1.0.0, write-once, `content_sha256` over its canonical
+  (`ppo_comparison` 1.1.0, write-once, `content_sha256` over its canonical
   JSON), with every row, the summaries, the seed spreads, the build reports,
-  the fairness record, the look number and the labels.
+  the fairness record (with the registered setups), the look and its log
+  entry, and the labels. Version 1.1.0 (2026-10-17) splits construction from
+  rebalance turnover, drops the annualized turnover, and records the look
+  log and each learned member's parameter hash; the Lab shows 1.1.0 only and
+  withholds a 1.0.0 file.
 - `reports/health_inputs/backtest_summary/`: one summary per (fold,
   constraint set, strategy), each measure the worst over the strategy's 1x
   episodes; turnover rounded to the engine's 1e-12 dust so floating-point
@@ -232,8 +280,9 @@ comparison reports exactly that rather than a number that looks invested.
   constraint set and scenario in registered order (never sorted by a
   result), every learned seed and the build. A file outside the registered
   protocol (edited, unlabelled, not synthetic, not the test fold, a stage
-  above `development_evaluated`, an unapproved transition or a failed
-  contract) is **withheld** with its reason. Without one, the panel says no
+  above `development_evaluated`, an unapproved transition, a failed
+  contract, or a look the private evaluation log does not verify) is
+  **withheld** with its reason. Without one, the panel says no
   registered comparison has been run. Everything outside this protocol keeps
   the earlier behaviour: `rl.harness` still withholds comparison tables and
   `evaluate_rl.py` writes engineering reports only.
@@ -253,25 +302,61 @@ The same configuration, code and library versions give the same artifact
 (`test_the_same_configuration_and_seeds_give_the_same_artifact`); the number
 of training workers does not change the selection.
 
+**Checkpoint hashes.** A PPO checkpoint file's SHA-256 differs between two
+identical trainings. stable-baselines3 stores the training start time
+(`start_time`, in nanoseconds) in the archive's `data` entry; the weights
+(`policy.pth`) and the optimizer state are byte-identical
+(`test_identical_trainings_give_identical_parameters_though_the_archives_differ`).
+The file hash still proves that the evaluated file is the frozen one. Each
+member also records a deterministic `parameters_sha256` over its parameters
+(PPO: every tensor of the policy in name order; CEM: its canonical
+parameters). Two identical trainings give the same parameter hash, and the
+evaluation checks it against the frozen selection whenever the selection
+records one.
+
 ## 8. Results (synthetic, engineering evaluation)
 
 > Synthetic scenarios only — not evidence of real investment performance.
 > Engineering evaluation. Nothing below ranks the strategies, tests a
 > difference or claims skill: four test paths per scenario, one 240-session
-> window, and no statistical procedure (group D is not approved).
+> window, and no statistical procedure (group D is not approved). Where
+> learned seeds' ranges overlap, no comparative statement is made.
 
-- **Artifact:** `reports/comparison/ppo_comparison_v1-test-look001-20261017T034147659125Z/comparison.json`
-  (ignored by Git; `content_sha256` `a964b4c82eee...`). **Look 1** at the test
-  fold of `ppo_comparison_v1` (`4f45f7d08416...`), the only look.
-- **Code:** members trained from `6a1dfb3` and evaluated from `95c2f9d`, each on
-  a clean tree. Every PPO seed's training health is `healthy`.
-- **Fairness contract:** passed for all 42 strategy entries (six rules plus
-  three learned groups of five seeds, under two sets), 315,084 booked steps
-  and 4,032 cost-sensitivity replays, the 1x replays identical to the runs.
-- **Variants searched** (multiple-testing ledger): CEM 10 members, 2,400
-  candidates on the train fold and 100 checkpoints compared on dev; PPO 10
-  members and 110 checkpoints compared on dev; 1 test look.
-- **Health inputs:** 18 `backtest_summary` files (one per set and strategy).
+**Looks at the test fold of `ppo_comparison_v1` (`4f45f7d08416...`).** Two
+looks are recorded in the configuration's private evaluation log. Its head,
+look 2's entry, is `9a78b4d28767...`, and it records 0 development-fold
+looks.
+
+1. **Look 1:** `ppo_comparison_v1-test-look001-20261017T034147659125Z`, from
+   `95c2f9d` (schema 1.0.0). It was recorded first in
+   `reports/comparison/evaluation_log.jsonl` and carried into the private
+   log when the log moved there.
+2. **Look 2**, a recorded repeat:
+   `ppo_comparison_v1-test-look002-20261017T044941380492Z`, from `ed04df1`
+   (schema 1.1.0, `content_sha256` `e7065c219774...`). It is the same frozen
+   selection (members trained from `6a1dfb3`), evaluated again after an
+   independent review changed the fairness check and the turnover fields.
+
+   Look 2 reproduces look 1 exactly on every field both report, for all
+   1,344 rows: terminal wealth, total return, drawdown, total turnover,
+   traded notional, costs, cost sensitivity, interventions, fallbacks, the
+   build and the checkpoints. Nothing was chosen between the looks. The
+   tables below are from look 2.
+
+- **Fairness contract:** passed. There are 42 registered entries per set
+  (six rules plus three learned groups of five seeds), and each is evaluated
+  exactly once per episode: 1,344 runs and 4,032 cost replays. Every record
+  was checked against the registered setup of its set and multiplier, and
+  each setup closed over all entries together: 1,260,336 booked steps across
+  the run and replay checks.
+- **Training health:** every PPO seed's training health is `healthy`.
+- **Variants searched** (multiple-testing ledger):
+  - CEM: 10 members, 2,400 candidates on the train fold, 100 checkpoints
+    compared on dev;
+  - PPO: 10 members, 110 checkpoints compared on dev;
+  - 2 test looks, the second a recorded repeat.
+- **Health inputs:** one `backtest_summary` per set and strategy for each
+  look.
 
 **Median terminal wealth per 1.0 of initial cash, `plain` set (1x costs)**
 
@@ -326,19 +411,33 @@ of training workers does not change the selection.
 | strict | PPO without forecast inputs | 1.021 / 1.024 / 1.032 | 0.974 / 0.989 / 0.996 | 0.959 / 0.960 / 0.968 | 1.022 / 1.053 / 1.056 | 1.012 / 1.020 / 1.024 | 0.998 / 1.004 / 1.011 | 0.997 / 1.004 / 1.012 | 1.017 / 1.032 / 1.044 |
 | strict | PPO with the health gate | 1.021 / 1.024 / 1.032 | 0.974 / 0.989 / 0.996 | 0.959 / 0.960 / 0.968 | 1.016 / 1.043 / 1.055 | 1.014 / 1.022 / 1.024 | 0.998 / 1.004 / 1.011 | 0.997 / 1.004 / 1.012 | 1.017 / 1.032 / 1.044 |
 
-**Cost sensitivity: median terminal wealth with the same decisions at 0x / 1x / 2x the registered rates, `plain` set**
+**Cost sensitivity, `plain` set: median terminal wealth with the same decisions at 0x / 1x / 2x the registered rates**
 
-| Strategy | calm | high costs | Median turnover per year (calm) |
-|---|---|---|---|
-| 60/30/10, held without rebalancing | 1.038 / 1.038 / 1.037 | 1.005 / 1.005 / 1.004 | 0.00 |
-| Equal weight | 1.032 / 1.032 / 1.031 | 1.015 / 1.014 / 1.013 | 0.19 |
-| 60/30/10, rebalanced | 1.041 / 1.040 / 1.039 | 1.008 / 1.007 / 1.006 | 0.20 |
-| Inverse volatility | 1.022 / 1.022 / 1.021 | 1.020 / 1.019 / 1.018 | 0.25 |
-| Mean-variance | 1.014 / 1.006 / 0.996 | 0.931 / 0.906 / 0.882 | 11.08 |
-| 100% short-Treasury fund | 1.020 / 1.019 / 1.019 | 1.016 / 1.016 / 1.016 | 0.00 |
-| Linear-softmax (CEM) | 1.021 / 1.020 / 1.020 | 1.017 / 1.014 / 1.012 | 0.25 |
-| PPO without forecast inputs | 1.029 / 1.025 / 1.022 | 1.017 / 1.011 / 1.004 | 3.74 |
-| PPO with the health gate | 1.029 / 1.025 / 1.022 | 1.017 / 1.011 / 1.004 | 3.74 |
+| Strategy | calm | high costs |
+|---|---|---|
+| 60/30/10, held without rebalancing | 1.038 / 1.038 / 1.037 | 1.005 / 1.005 / 1.004 |
+| Equal weight | 1.032 / 1.032 / 1.031 | 1.015 / 1.014 / 1.013 |
+| 60/30/10, rebalanced | 1.041 / 1.040 / 1.039 | 1.008 / 1.007 / 1.006 |
+| Inverse volatility | 1.022 / 1.022 / 1.021 | 1.020 / 1.019 / 1.018 |
+| Mean-variance | 1.014 / 1.006 / 0.996 | 0.931 / 0.906 / 0.882 |
+| 100% short-Treasury fund | 1.020 / 1.019 / 1.019 | 1.016 / 1.016 / 1.016 |
+| Linear-softmax (CEM) | 1.021 / 1.020 / 1.020 | 1.017 / 1.014 / 1.012 |
+| PPO without forecast inputs | 1.029 / 1.025 / 1.022 | 1.017 / 1.011 / 1.004 |
+| PPO with the health gate | 1.029 / 1.025 / 1.022 | 1.017 / 1.011 / 1.004 |
+
+**Turnover in the calm scenario (median one-way over the 240-session window; not annualized: synthetic sessions have no calendar dates)**
+
+| Strategy | `plain`: construction | `plain`: rebalance | `plain`: per rebalance | `strict`: construction | `strict`: rebalance | `strict`: per rebalance |
+|---|---|---|---|---|---|---|
+| 60/30/10, held without rebalancing | 1.00 | 0.00 | — | 0.25 | 0.00 | — |
+| Equal weight | 1.00 | 0.18 | 0.0038 | 1.00 | 0.16 | 0.0038 |
+| 60/30/10, rebalanced | 1.00 | 0.19 | 0.0041 | 0.90 | 0.18 | 0.0042 |
+| Inverse volatility | 1.00 | 0.23 | 0.0050 | 0.63 | 0.23 | 0.0052 |
+| Mean-variance | 1.00 | 10.33 | 0.2246 | 0.50 | 5.51 | 0.1253 |
+| 100% short-Treasury fund | 1.00 | 0.00 | 0.0000 | 0.50 | 0.01 | 0.0002 |
+| Linear-softmax (CEM) | 0.94 | 0.23 | 0.0050 | 0.84 | 0.57 | 0.0129 |
+| PPO without forecast inputs | 0.77 | 3.49 | 0.0758 | 0.79 | 3.43 | 0.0797 |
+| PPO with the health gate | 0.77 | 3.49 | 0.0758 | 0.79 | 3.43 | 0.0797 |
 
 **The build under the `strict` set (all 32 test paths; learned strategies over 5 seeds)**
 
@@ -369,35 +468,39 @@ of training workers does not change the selection.
 | strict | PPO without forecast inputs | 384 | 470 | 0 | 0 |
 | strict | PPO with the health gate | 392 | 487 | 85 | 0 |
 
-**What the numbers describe (not why, and not which is better):**
+**What the numbers describe (structural facts only):**
 
 - **The generator's quirk shows.** The short-Treasury fund drifts 2% a year
   at 0.6% volatility in every regime while cash earns 0% (D4 (a)). Holdings
-  that lean on it (the 100% fund, inverse volatility, the CEM baseline) have
-  small drawdowns in every scenario, crash included. That is a property of
-  the synthetic generator (`rl_ppo.md`, learning note 7), not a finding about
-  any strategy.
-- **Turnover and costs.** Mean-variance trades the most (a median of 11 one-
-  way turnovers per synthetic year in calm) and moves most with costs: in the
-  high-cost scenario its median terminal wealth is 0.931, 0.906 and 0.882 at
-  0x, 1x and 2x. The held 60/30/10 and the 100% fund barely move.
-- **Seeds.** The five PPO seeds sit closer together than the five CEM seeds
-  in most scenarios (extreme volatility, `plain`: CEM 0.945 to 1.017, PPO
-  1.021 to 1.062). With five seeds and four paths, the spreads are themselves
-  noisy.
+  that lean on it have small median drawdowns in every scenario, crash
+  included: the 100% fund at most 0.5%, inverse volatility at most 1.4%. That
+  is a property of the synthetic generator (`rl_ppo.md`, learning note 7),
+  not a finding about any strategy.
+- **Turnover and costs.** Mean-variance trades the most: a median one-way
+  rebalance turnover of 10.33 over the 240-session calm window, 0.22 per
+  rebalance. Its terminal wealth moves most with the cost multiplier: in the
+  high-cost scenario, the median is 0.931, 0.906 and 0.882 at 0x, 1x and 2x.
+  The held 60/30/10 and the 100% fund barely trade after construction and
+  barely move with costs.
+- **Construction is not rebalancing.** Under `strict`, construction turnover
+  is reported apart from rebalance turnover. Equal weight's rebalance
+  turnover is 0.16 (`strict`) against 0.18 (`plain`): the build's
+  completion, spread over four executions, is construction.
 - **The health gate.** Under each set, the fallback decided 85 times: stale
-  inputs and non-finite features in the stale-observations scenario, out-of-
-  distribution features in extreme volatility. The guarded and raw PPO rows
-  differ only there.
+  inputs and non-finite features in the stale-observations scenario, and
+  out-of-distribution features in extreme volatility. The guarded and raw PPO
+  rows differ only in those two scenarios.
 - **The build under `strict`.** Every build from cash is incomplete: the 0.25
   limit lets a quarter of the portfolio in at the first close, leaving 75%
   uninvested. Rebalancing strategies are fully built 5 to 20 sessions later
-  (medians 5 to 15).
-  The 60/30/10 held without rebalancing never is: it ends with a median 76%
-  in cash, so its `strict` row describes a mostly-cash portfolio, which the
-  build table says. The cap leaves the 100% fund and mean-variance with about
-  half their wealth in 0% cash at the end.
-
+  (medians 5 to 15). The 60/30/10 held without rebalancing never is: it ends
+  with a median 76% in cash, so its `strict` row describes a mostly-cash
+  portfolio, as the build table says. The cap leaves the 100% fund and
+  mean-variance with about half their wealth in 0% cash at the end.
+- **Seeds.** Every training seed is listed with the spread of its seeds' mean
+  terminal wealth. With five seeds and four paths per scenario, these
+  spreads are themselves noisy and often overlap between learned strategies,
+  so no ordering of them is stated.
 
 ## 9. Limitations
 
@@ -445,9 +548,12 @@ of training workers does not change the selection.
    the spread (min, quartiles, max) is the result; picking the best test seed
    would be selection on noise, and a test fails if the code does it.
 5. **Multiple testing.** Each seed, each dev checkpoint compared and each CEM
-   candidate is a variant; the artifact counts them (`variants`), and the
-   test fold is looked at once per registered configuration, every look
-   counted.
+   candidate is a variant; the artifact counts them (`variants`). The test
+   fold is meant to be looked at once per registered configuration, and
+   every look is counted. Here a review changed the reporting after look 1,
+   so look 2 is recorded as a repeat. It is harmless only because the frozen
+   selection did not change and look 2 reproduces look 1 exactly; a repeat
+   that chose anything would be selection on the test fold.
 6. **Ways results could mislead.** A strict set changes every strategy's
    exposure (the cap's excess sits in 0% cash), so a gap between sets
    measures the constraints as much as the policies. One rebalance offset is
