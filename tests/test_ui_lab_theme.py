@@ -24,7 +24,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
-from stock_agent.app import figures, synthetic
+from stock_agent.app import figures, stock_figures, synthetic
+from stock_agent.stock_lab.contracts import StableBand
 from stock_agent.ui import components, style, theme
 
 REPO = Path(__file__).resolve().parents[1]
@@ -134,6 +135,120 @@ def test_the_explore_figures_draw_in_the_scheme_they_are_given(scheme):
     assert calendar.layout.yaxis.zerolinecolor == colours["reference_line"]
     # Light stays the default for any caller that names no scheme.
     assert figures.fund_styles([history]) == figures.fund_styles([history], "light")
+
+
+def _hex_colours(value) -> set[str]:
+    if isinstance(value, dict):
+        return set().union(*map(_hex_colours, value.values()))
+    if isinstance(value, list | tuple):
+        return set().union(*map(_hex_colours, value))
+    is_hex = isinstance(value, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", value)
+    return {value.upper()} if is_hex else set()
+
+
+def _scheme_only(scheme: str) -> set[str]:
+    """Colours of `scheme`'s palettes that the other scheme never uses."""
+
+    def palette(name):
+        return {
+            *theme.LAB_PALETTES[name].values(),
+            *theme.DIRECTION_PALETTES[name].values(),
+            *figures.FUND_PALETTES[name],
+        }
+
+    other = "dark" if scheme == "light" else "light"
+    research = set(theme.COLOURS.values()) if scheme == "light" else set()
+    return {colour.upper() for colour in (palette(scheme) | research) - palette(other)}
+
+
+def _lab_figures(scheme: str) -> dict[str, go.Figure]:
+    """Every Lab figure builder, on small frames, in `scheme`."""
+
+    history = synthetic.demo_histories()[0]
+    sessions = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"], tz="UTC")
+    styles = figures.fund_styles([history], scheme)
+    calendar = pd.DataFrame(
+        {"year": [2023, 2024], "total_return": [0.1, -0.02], "partial": [True, False]}
+    ).assign(losing=lambda frame: frame["total_return"] < 0)
+    five = pd.DataFrame(
+        {
+            "category": "increase",
+            "horizon": [1, 2],
+            "usual": [0.3, 0.3],
+            "probability": [0.32, 0.31],
+            "range_low": [0.25, None],
+            "range_high": [0.4, None],
+            "session": ["2025-01-02", "2025-01-03"],
+        }
+    )
+    profile = pd.DataFrame(
+        {
+            "length": [1, 2],
+            "fell": [0.4, 0.5],
+            "fell_low": [0.3, 0.2],
+            "fell_high": [0.5, 0.8],
+            "events": [120, 12],
+            "status": ["ok", "thin"],
+        }
+    )
+    reliability = pd.DataFrame(
+        {
+            "model": ["M1", "B1"],
+            "category": [2, 2],
+            "mean_predicted": [0.3, 0.32],
+            "observed": [0.31, 0.3],
+            "ci_low": [0.25, 0.24],
+            "ci_high": [0.37, 0.36],
+            "n": [400, 400],
+            "bin_low": [0.2, 0.2],
+            "bin_high": [0.4, 0.4],
+        }
+    )
+    recent = pd.DataFrame(
+        {
+            "session": sessions,
+            "price_return": [0.01, -0.012, 0.001],
+            "category": ["increase", "decrease", "stable"],
+        }
+    )
+    price = pd.DataFrame({"session": sessions, "display_level": [10.0, 10.2, 10.1]})
+    growth = pd.Series([1e4, 1.01e4, 1.02e4], index=sessions)
+    kw = {"synthetic": True, "scheme": scheme}
+    return {
+        "growth": figures.growth_figure(
+            [(history, growth)], styles, start_value=1e4, scheme=scheme
+        ),
+        "calendar": figures.calendar_year_figure([(history, calendar)], styles, scheme=scheme),
+        "price": stock_figures.price_figure(price, **kw),
+        "recent": stock_figures.recent_figure(recent, StableBand(), **kw),
+        "five": stock_figures.five_session_figure(five, "increase", **kw),
+        "streak": stock_figures.streak_figure(profile, "increase", 1, **kw),
+        "reliability": stock_figures.reliability_figure(reliability, "M1", "B1", 2, **kw),
+        "counts": stock_figures.forecast_count_figure(reliability, "M1", 2, **kw),
+    }
+
+
+@pytest.mark.parametrize("scheme", theme.SCHEMES)
+def test_every_lab_figure_draws_only_in_its_own_scheme(scheme):
+    surface = theme.LAB_PALETTES[scheme]["surface"]
+    other = _scheme_only("dark" if scheme == "light" else "light")
+    for name, figure in _lab_figures(scheme).items():
+        assert figure.layout.paper_bgcolor == figure.layout.plot_bgcolor == surface, name
+        leaked = _hex_colours(figure.to_plotly_json()) & other
+        assert not leaked, (scheme, name, leaked)
+
+
+def test_every_lab_figure_builder_takes_the_colour_scheme():
+    builders = [
+        getattr(module, name)
+        for module in (figures, stock_figures)
+        for name in dir(module)
+        if name.endswith("_figure") and callable(getattr(module, name))
+    ]
+    assert len(builders) == len(_lab_figures("light"))  # every builder is exercised above
+    for builder in builders:
+        parameter = inspect.signature(builder).parameters.get("scheme")
+        assert parameter is not None and parameter.default == "light", builder.__name__
 
 
 @pytest.mark.parametrize(

@@ -374,7 +374,9 @@ def _forecast(store: StockLabStore, selected: Selected | None) -> None:
     for column, category in zip(columns, ("increase", "stable", "decrease"), strict=True):
         with column:
             ui.chart(
-                stock_figures.five_session_figure(frame, category, synthetic=selected.synthetic),
+                stock_figures.five_session_figure(
+                    frame, category, synthetic=selected.synthetic, scheme=ui.colour_scheme()
+                ),
                 key=f"{PREFIX}five-{category}",
             )
     with st.expander(words.AS_TABLE.format(chart=words.FIVE_TABLE)):
@@ -467,7 +469,9 @@ def _reversals(selected: Selected | None) -> None:
         say(sentence)
     marked = length if current == direction else None
     ui.chart(
-        stock_figures.streak_figure(profile, direction, marked, synthetic=selected.synthetic),
+        stock_figures.streak_figure(
+            profile, direction, marked, synthetic=selected.synthetic, scheme=ui.colour_scheme()
+        ),
         key=f"{PREFIX}streak-chart",
     )
     with st.expander(words.AS_TABLE.format(chart=words.STREAK_TABLE)):
@@ -601,13 +605,15 @@ def _diagnostics(store: StockLabStore, selected: Selected | None) -> None:
         with left:
             ui.chart(
                 stock_figures.reliability_figure(
-                    frame, chosen, "B1", code, synthetic=synthetic_data
+                    frame, chosen, "B1", code, synthetic=synthetic_data, scheme=ui.colour_scheme()
                 ),
                 key=f"{PREFIX}reliability-{code}",
             )
         with right:
             ui.chart(
-                stock_figures.forecast_count_figure(frame, chosen, code, synthetic=synthetic_data),
+                stock_figures.forecast_count_figure(
+                    frame, chosen, code, synthetic=synthetic_data, scheme=ui.colour_scheme()
+                ),
                 key=f"{PREFIX}counts-{code}",
             )
     with st.expander(words.FOLDS_TITLE):
