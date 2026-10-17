@@ -15,6 +15,10 @@ limit; it recomputes nothing.
     units       {measure: definition}
     assumptions {the registered cost rates and multiplier, cash return,
                  lag, schedule}  (extra: ignored by the health reader)
+    build       the build's executed weights, uninvested cash and any
+                incomplete construction (`portfolio.construction`; D5 as
+                confirmed by the owner on 2026-10-17), or null when no
+                target executed (extra: ignored by the health reader)
 
 Measures are computed from the engine's `StepResult`s only:
 
@@ -135,6 +139,7 @@ def summary_record(
         raise ValueError("code_sha must be a 40-hex git SHA or None")
     if generated_at.utcoffset() is None:
         raise ValueError("generated_at must be timezone-aware")
+    build = result.build_report(constraints.cash_index)
     return {
         "artifact": ARTIFACT,
         "schema_version": SCHEMA_VERSION,
@@ -154,6 +159,7 @@ def summary_record(
         "measures": measures(result, constraints.cash_index),
         "units": dict(UNITS),
         "assumptions": {"cash_return": CASH_RETURN_LABEL, **assumptions},
+        "build": None if build is None else build.to_dict(),
         "status": result.status,
         "status_reason": result.reason,
     }

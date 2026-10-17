@@ -1,0 +1,84 @@
+# The registered synthetic comparison of the baselines against PPO (engineering evaluation).
+# Registered on 2026-10-17, before any result of it existed. Every strategy runs through the
+# approved T5a simulator with the same schedule, costs, build and constraint set.
+# Synthetic scenarios only: nothing produced from this file is evidence of real performance.
+schema_version: 1
+protocol: registered_synthetic_comparison
+name: ppo_comparison_v1
+
+strategies:
+  - buy_and_hold
+  - equal_weight
+  - fixed_balanced
+  - inverse_volatility
+  - mean_variance
+  - all_shv
+  - linear_softmax_cem
+  - ppo
+  - ppo_guarded
+
+# D5: each set applies identically to every strategy; learned policies train, select and are
+# evaluated under the set. "plain" is the D5 default; "strict" is the stricter registered set.
+constraint_sets:
+  - name: plain
+    max_weight: 1.0
+    max_turnover: null
+  - name: strict
+    max_weight: 0.5 # per-fund cap; the excess goes to uninvested cash
+    max_turnover: 0.25 # one-way turnover per rebalance, the build included
+
+cost_multipliers: [0.0, 1.0, 2.0] # D2 sensitivity, never chosen; 1x is the headline run
+
+cem_seeds: [0, 1, 2, 3, 4] # reported as a distribution, never the best seed
+
+rl:
+  split_plan: default # train on mixed (seeds 0-15), dev seeds 100-103, test seeds 200-203
+
+  features:
+    return_windows: [5, 20, 60]
+    vol_windows: [20, 60]
+    include_cost_regime: true
+    min_fraction: 0.5
+
+  env:
+    rebalance_every: 5 # one decision per five complete sessions, for every strategy
+    rebalance_offset: 0 # the registered offset (D7)
+
+  training:
+    seeds: [0, 1, 2, 3, 4] # PPO seeds, reported as a distribution, never the best seed
+    total_timesteps: 204800 # per seed: 100 rollouts of n_steps x n_envs
+    n_envs: 4
+    episode_sessions: 252
+    eval_every: 20480 # dev-fold checkpoint evaluation interval (timesteps)
+
+  ppo:
+    learning_rate: 0.0003
+    n_steps: 512
+    batch_size: 128
+    n_epochs: 10
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_range: 0.2
+    ent_coef: 0.0
+    vf_coef: 0.5
+    max_grad_norm: 0.5
+    net_arch: [64, 64]
+    log_std_init: -0.5
+    target_kl: null
+
+  cem:
+    iterations: 10
+    population: 24
+    elite_fraction: 0.25
+    init_std: 1.0
+    min_std: 0.05
+
+  gate:
+    max_obs_age: 2
+    z_limit: 8.0
+
+  health:
+    max_param_abs: 10000.0
+    kl_warning: 0.1
+    clip_fraction_warning: 0.5
+    min_action_std: 0.01

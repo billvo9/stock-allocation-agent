@@ -560,7 +560,7 @@ def test_the_cash_entry_of_cost_rate_is_never_charged(cash_rate):
 
 
 def test_interpretation_b_the_turnover_limit_also_limits_the_build():
-    # Pending the owner's confirmation: one feasibility map for every target, the build
+    # Confirmed by the owner on 2026-10-17: one feasibility map for every target, the build
     # included. A 50/50 build from cash with tau_max = 0.25 executes a quarter of the way.
     record = feasible_target(
         np.array([0.5, 0.5, 0.0]), np.array([0.0, 0.0, 1.0]), Constraints(2, tau_max=0.25)
@@ -579,7 +579,7 @@ def test_interpretation_b_the_turnover_limit_also_limits_the_build():
 
 
 def test_interpretation_a_a_hold_does_not_supersede_a_deferred_build():
-    # Pending the owner's confirmation: a buy-and-hold whose build is deferred still builds.
+    # Confirmed by the owner on 2026-10-17: a deferred build survives a hold.
     # A has no close at the build's execution close (1) or at 2; the holds are due at 2 and 3.
     returns = np.array([[NAN] * 3, [NAN, 0.0, 0.0], [NAN, 0.01, 0.0], [0.02, 0.01, 0.0], [0.0] * 3])
     result = engine.simulate(
