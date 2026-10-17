@@ -1,7 +1,7 @@
 """
 Small synthetic examples of every producer input the health readers accept:
-a training-health file, a backtest summary and a registry export in the
-agreed formats v1.0 (written by `write_input` where producers write them),
+a training-health file, a backtest summary, a registry export and a Stock
+Lab monitor file in the agreed formats v1.0 (written by `write_input` where producers write them),
 and a model registry built through the ML track's own write API
 (`stock_agent.registry.Registry`). They are the worked examples in
 docs/operations/model_health.md, the inputs of the `smoke.input_readers`
@@ -166,6 +166,42 @@ _REGISTRY_EXPORT = {
         },
     ],
 }
+
+
+_STOCK_LAB = {
+    "artifact": "stock_lab_monitor",
+    **_ENVELOPE,
+    "synthetic": True,
+    "run_id": "synthetic-stock-lab-day",
+    "job": {
+        "status": "ok",
+        "started_at": "2024-12-31T21:10:00.000000Z",
+        "finished_at": "2024-12-31T21:11:00.000000Z",
+        "expected_session": "2024-12-31",
+        "reason": None,
+        "failed": [],
+        "skipped": [],
+    },
+    "freshness": [
+        {"ticker": "DEMO_CALM", "last_session": "2024-12-31", "sessions_behind": 0},
+        {"ticker": "DEMO_SWING", "last_session": "2024-12-31", "sessions_behind": 0},
+    ],
+    "scores": {"n": 300, "rps": 0.205, "baseline_rps": 0.207, "brier": 0.61, "log_loss": 1.05},
+    "inputs_drift": [{"feature": "ewma_vol", "psi": 0.08}, {"feature": "ret_20", "psi": 0.03}],
+    "traps": {"resolved": 2, "failed": 1, "pending": 1},
+    "ledger": {"entries": 450, "verified": True, "reason": None},
+    "lineage": {
+        "estimator": "B1",
+        "model_version": "synthetic",
+        "feature_version": "stock_lab_features_v1",
+        "evaluation_run_id": "S-synthetic",
+    },
+    "schedule": {"last_success_at": "2024-12-31T21:11:00.000000Z", "next_expected_at": None},
+}
+
+
+def stock_lab_monitor() -> dict[str, Any]:
+    return copy.deepcopy(_STOCK_LAB)
 
 
 def training_health() -> dict[str, Any]:

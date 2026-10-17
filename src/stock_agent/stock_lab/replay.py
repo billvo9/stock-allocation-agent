@@ -1,0 +1,132 @@
+"""
+A synthetic replay of the daily job (research side; no network, synthetic
+data only): it shows the whole forecast-record-score loop working before any
+real stock is involved, without ever letting a model see the sessions it is
+scored on.
+
+The demo stocks' last `sessions` synthetic sessions play the "future":
+
+    1. Before the replay, only the history through the replay's first as-of
+       session is stored (a synthetic batch "retrieved" just after that
+       close), and the estimators are evaluated and frozen with every
+       outcome censored at that session (`EvaluationConfig.outcome_end`).
+    2. The first forecasts are made as of that session. Each replay day then
+       reveals the next session as a new synthetic batch, scores every
+       forecast whose target sessions have now closed (only on batches
+       retrieved after the forecast was created; scoring.py), and makes the
+       day's forecasts from the new close, as a real day would.
+    3. The job run, the ledger and the Model Health monitor input are
+       recorded like a real day's.
+
+Every record is labelled synthetic; the simulated clock is synthetic too
+(each session's 21:00 UTC). Nothing here is evidence about any real stock.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+
+import pandas as pd
+
+from stock_agent.stock_lab import synthetic
+from stock_agent.stock_lab.contracts import DataClass
+from stock_agent.stock_lab.evaluation import EvaluationConfig, build_panel, evaluate
+from stock_agent.stock_lab.predict import fit_final, forecast_stock
+from stock_agent.stock_lab.store import StockLabStore, stamp
+
+SOURCE = "synthetic_replay"
+NOTE = "synthetic replay: generated sessions revealed one per simulated day"
+
+
+@dataclass(frozen=True)
+class ReplayDay:
+    as_of: str
+    forecasts: int
+    scored: int
+
+
+def _clock(session: pd.Timestamp, minutes: int) -> pd.Timestamp:
+    return session + pd.Timedelta(hours=21, minutes=minutes)
+
+
+def run_replay(
+    store: StockLabStore,
+    *,
+    sessions: int = 20,
+    record_day: Callable[..., None] | None = None,
+) -> tuple[ReplayDay, ...]:
+    """Replay the last `sessions` synthetic sessions (module docstring)."""
+
+    from stock_agent.stock_lab import scoring  # the scorer reads only stored records
+
+    full = dict(synthetic.demo_histories())
+    any_bars = next(iter(full.values()))
+    first = len(any_bars) - sessions - 1
+    start = any_bars["session"].iloc[first]
+    for stock_id, bars in full.items():
+        store.record_prices(
+            stock_id,
+            bars.iloc[: first + 1],
+            source=SOURCE,
+            retrieved_at=_clock(start, 0),
+            data_class=DataClass.SYNTHETIC,
+            vintage_note=NOTE,
+        )
+    config = EvaluationConfig(outcome_end=start)
+    history = {stock_id: bars.iloc[: first + 1] for stock_id, bars in full.items()}
+    record = evaluate(
+        history,
+        config,
+        data_class=DataClass.SYNTHETIC.value,
+        run_id=f"S-replay-{start.strftime('%Y%m%d')}",
+        created_at=_clock(start, 1),
+    )
+    store.record_evaluation(record)
+    model = fit_final(build_panel(history, config), config, record)
+
+    def forecast_all(index: int) -> int:
+        as_of = any_bars["session"].iloc[index]
+        visible = {stock_id: bars.iloc[: index + 1] for stock_id, bars in full.items()}
+        panel = build_panel(visible, config)
+        for stock_id in full:
+            targets = pd.bdate_range(as_of + pd.Timedelta(days=1), periods=5)
+            previous = store.latest_forecast(stock_id)
+            forecast = forecast_stock(
+                panel,
+                stock_id,
+                model,
+                record,
+                target_sessions=[d.strftime("%Y-%m-%d") for d in targets],
+                created_at=_clock(as_of, 5),
+                data={
+                    "source": SOURCE,
+                    "batch_ids": [b.batch_id for b in store.batches(stock_id)][-1:],
+                    "retrieved_at": stamp(_clock(as_of, 0)),
+                    "last_close_session": as_of.strftime("%Y-%m-%d"),
+                },
+                data_class=DataClass.SYNTHETIC.value,
+                supersedes=None if previous is None else previous["forecast_id"],
+            )
+            store.record_forecast(forecast)
+        return len(full)
+
+    days = [ReplayDay(start.strftime("%Y-%m-%d"), forecast_all(first), 0)]
+    for step in range(1, sessions + 1):
+        index = first + step
+        session = any_bars["session"].iloc[index]
+        for stock_id, bars in full.items():  # the day's close arrives
+            store.record_prices(
+                stock_id,
+                bars.iloc[index : index + 1],
+                source=SOURCE,
+                retrieved_at=_clock(session, 0),
+                data_class=DataClass.SYNTHETIC,
+                vintage_note=NOTE,
+            )
+        scored = scoring.score_store(store, list(full))  # only outcomes now closed
+        made = forecast_all(index)  # then today's forecasts, from today's close
+        days.append(ReplayDay(session.strftime("%Y-%m-%d"), made, scored))
+        if record_day is not None:
+            record_day(as_of=session, store=store, record=record, model=model)
+    return tuple(days)

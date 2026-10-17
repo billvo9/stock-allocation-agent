@@ -119,6 +119,7 @@ token, secret or other variable is read.
 | Forecast ledger | `forecast.ledger`, `forecast.ledger_backup`, `forecast.ledger_sessions` | local | the prospective ledger (the job's own reader), the owner's kept head copy, the rules calendar |
 | Portfolio | `portfolio.turnover`, `portfolio.costs`, `portfolio.concentration`, `portfolio.drawdown` | local | the newest backtest summary per policy (the worst policy decides; each keeps its own line) |
 | Policy safety | `portfolio.violations`, `portfolio.fallbacks`, `portfolio.diagnostics` | local | the newest backtest summary per policy and the newest RL evaluation report |
+| Stock Lab | `data.stock_lab_freshness`, `forecast.stock_lab_job`, `forecast.stock_lab_scores`, `forecast.stock_lab_drift`, `forecast.stock_lab_ledger` | local | the newest `stock_lab_monitor` file written by the Stock Lab's daily job (experimental, unvalidated forecaster; tracking only) |
 
 Thresholds are operator defaults written in the code next to each check and
 in the runbook; they are not owner-approved policy and change together. The
@@ -143,6 +144,7 @@ make the check at least degraded. CI reads only the synthetic fixtures.
 
 ```text
 artifact        "rl_training_health" | "model_registry" | "backtest_summary"
+                | "stock_lab_monitor"
 schema_version  "1.0"
 generated_at    "YYYY-MM-DDTHH:MM:SS.ffffffZ"
 code_sha        40-hex or null
@@ -202,6 +204,12 @@ Other inputs the local monitor reads where their producers write them:
   `ledger.jsonl`), read with the job's own verifying reader, and the
   owner's kept copy of its head hash (`--ledger-head-backup`: a file whose
   first line is the hash the job printed after its last append).
+- **The Stock Lab's monitor files** (`stock_lab_monitor`), written by
+  `scripts/stock_lab_daily.py`: the job's status, each watched stock's
+  freshness, the rolling scores beside the baseline, input drift, trap
+  outcomes, the ledger's verification and the lineage
+  (`stock_agent.health.stock_lab` documents the fields). The job measures;
+  health only judges.
 - **The prospective store and anchors**, through the sources the script
   passes in: the anchors file in the prospective scope (sha256, counts), and
   `load_inference_window` over the window from `WINDOW_START` to the last

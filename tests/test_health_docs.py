@@ -22,6 +22,7 @@ from stock_agent.health import (
     policy,
     prospective,
     registry,
+    stock_lab,
 )
 from stock_agent.health.model import runbook_for
 
@@ -51,6 +52,7 @@ CHECK_IDS = [
     *ledger.TITLES,
     *backtest.MEASURES,
     *policy.TITLES,
+    *stock_lab.TITLES,
 ]
 
 
@@ -63,7 +65,7 @@ def sections() -> dict[str, str]:
 def test_every_check_has_a_runbook_entry_and_no_entry_is_orphaned():
     anchors = sections()
     expected = {runbook_for(check_id).split("#")[1] for check_id in CHECK_IDS}
-    assert len(CHECK_IDS) == len(set(CHECK_IDS)) == 36
+    assert len(CHECK_IDS) == len(set(CHECK_IDS)) == 41
     assert set(anchors) == expected
 
 

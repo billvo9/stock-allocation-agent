@@ -543,3 +543,82 @@ def fold_table(evaluation: Mapping) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows).set_index("Test window")
+
+
+# --- the forecast record (PR 3) ---
+
+
+def staleness(record: Mapping, job_run: Mapping | None) -> str | None:
+    """
+    The words for a stale forecast, or None: stale when the latest job run of
+    the same kind of data expected a later session than the forecast's
+    as-of session (its newest close never arrived, so no new forecast was
+    made and none is invented).
+    """
+
+    if job_run is None or job_run.get("data_class") != record["data_class"]:
+        return None
+    expected = job_run.get("expected_session")
+    if expected and expected > record["as_of_session"]:
+        return (
+            f"Stale: made as of {record['as_of_session']}; the latest update expected "
+            f"{expected} ({job_run['status']}). It stays the last valid forecast until a new close "
+            "arrives."
+        )
+    return None
+
+
+OUTCOME_WORDS = {0: "Decrease", 1: "Stable", 2: "Increase"}
+
+
+def history_table(
+    forecasts: Sequence[Mapping], scores: Sequence[Mapping], limit: int = 30
+) -> pd.DataFrame:
+    """
+    The latest forecasts, newest first: as-of session, estimator, the next
+    session's three probabilities, and what happened when it has closed
+    (its category and the ranked probability score of the stored
+    probabilities); "pending" until then. Stored probabilities are shown as
+    recorded: nothing is recomputed or rewritten.
+    """
+
+    settled = {(s["forecast_id"], s["target"]): s for s in scores}
+    rows = []
+    for record in list(forecasts)[::-1][:limit]:
+        if record["refusal"] is not None or not record["daily"]:
+            continue
+        first = record["daily"][0]
+        score = settled.get((record["forecast_id"], "1"))
+        if score is None:
+            outcome, rps_text = "pending", DASH
+        elif score["status"] != "scored":
+            outcome, rps_text = f"not scored ({score['reason']})", DASH
+        else:
+            outcome = OUTCOME_WORDS[score["outcome"]]
+            rps_text = f"{score['rps']:.3f}"
+        rows.append(
+            {
+                "As of": record["as_of_session"],
+                "For": first["session"],
+                "Estimator": record["estimator"],
+                "Increase": pct(first["p_increase"]),
+                "Stable": pct(first["p_stable"]),
+                "Decrease": pct(first["p_decrease"]),
+                "What happened": outcome,
+                "Score (RPS)": rps_text,
+            }
+        )
+    return pd.DataFrame(rows).set_index("As of") if rows else pd.DataFrame()
+
+
+def scored_summary(scores: Sequence[Mapping]) -> dict | None:
+    """Counts and mean scores of the scored daily targets (None before any)."""
+
+    daily = [s for s in scores if s["status"] == "scored" and s["target"] != "cum"]
+    if not daily:
+        return None
+    return {
+        "targets": len(daily),
+        "rps": float(np.mean([s["rps"] for s in daily])),
+        "brier": float(np.mean([s["brier"] for s in daily])),
+    }

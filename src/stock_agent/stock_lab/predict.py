@@ -57,7 +57,7 @@ def fit_final(panel: pd.DataFrame, config: EvaluationConfig, record: Mapping) ->
     half_life = chosen_half_life(record)
     matured = panel["target_end_date"].notna().to_numpy()
     if config.outcome_end is not None:
-        matured &= (panel["target_end_date"] <= config.outcome_end).to_numpy()
+        matured = matured & (panel["target_end_date"] <= config.outcome_end).to_numpy()
     params = est.FrequencyParams(config.alpha_prior, half_life, config.kappa)
     _, b1, _ = _frequency_state(panel, "category_code", params)
     states = est.states_of(panel)

@@ -389,6 +389,81 @@ How the ledger works:
   as historically available.
 - The PPO reward and the portfolio simulator are unchanged.
 
+### Implementation (PR 3)
+
+**The private store's record tables** (write-once by triggers):
+
+- `forecasts` holds the forecasts.
+- `scores` holds one row per forecast and target once its session closes:
+  the category, the realized return, and the Brier score, log loss and RPS
+  of the stored probabilities.
+- `job_runs` holds each daily run: its status, the expected session and
+  the per-stock freshness.
+- `ledger_entries` is a hash chain over every forecast, score and job run.
+  - Each entry is the sha256 of its canonical fields, names the previous
+    entry's hash, and covers the record's own sha256.
+  - `verify_ledger` re-checks the sequence, the chain, each entry against
+    its record, and that no record lacks an entry.
+
+**Scoring** (`scoring`):
+
+- A target is scored only from a price batch retrieved **after** the
+  forecast was created, against the forecast's own band.
+- A target whose session has not closed is pending, and nothing is written
+  for it.
+- A gap or an outcome seen before the forecast is recorded as unscorable,
+  with the reason.
+
+**The daily job** (`job`, `scripts/stock_lab_daily.py`):
+
+- **Expected session:** the last NYSE session (rules calendar, passed in by
+  the script) whose close is at least 20:00 New York time old.
+- **Freshness:** a stock whose newest close is not the expected session
+  keeps its last valid forecast, labelled stale on the page. Nothing is
+  invented.
+- **Until decisions A1, A2 and A4:**
+  - the real job scores whatever is stored;
+  - it records itself as `skipped`, with the reason, and writes its Model
+    Health input;
+  - it refuses the real-update flags.
+- **The price update and real forecasts** are built after those approvals.
+
+**The synthetic replay** (`replay`, `--demo-replay N`):
+
+- The demo stocks' last N sessions are revealed one simulated day at a time.
+- Models are fitted with every outcome censored at the replay's start.
+- Each day: the close arrives, closed targets are scored, and the day's
+  forecasts are made.
+- This demonstrates the forecast-record-score loop without any real stock
+  and without any model seeing what it is scored on.
+
+**Model Health** (`monitoring`, `stock_agent.health.stock_lab`):
+
+- The job writes `reports/health_inputs/stock_lab_monitor/<run_id>.json`
+  (envelope v1.0, write-once) with the fields Health reads.
+- Five checks join the private monitor:
+  - `data.stock_lab_freshness`;
+  - `forecast.stock_lab_job`;
+  - `forecast.stock_lab_scores` (insufficient evidence below 250 scored
+    targets; degraded when worse than the baseline; tracking only);
+  - `forecast.stock_lab_drift` (PSI, degraded above 0.25);
+  - `forecast.stock_lab_ledger`.
+- Their runbook entries are in `docs/operations/runbook.md`. Public CI
+  reads only the synthetic fixtures.
+
+**Scheduling** (`scripts/stock_lab_schedule.py`):
+
+- It prints a launchd agent for 20:30 New York time on weekdays; the owner
+  installs it.
+- The job itself skips holidays through the calendar.
+
+**The page:**
+
+- The job's last status, a stale warning when the latest run expected a
+  later session than the forecast, and the forecast history.
+- The history shows each stored forecast's next-session probabilities as
+  recorded, beside what happened and its score.
+
 ## 7. Owner decisions needed
 
 | Id | Decision | Needed before |

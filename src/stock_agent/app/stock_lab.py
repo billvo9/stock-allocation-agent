@@ -40,14 +40,17 @@ from stock_agent.stock_lab.forecast_view import (
     five_session_frame,
     five_session_table,
     fold_table,
+    history_table,
     model_words,
     move_table,
     next_session_cards,
     plain_sentence,
     regime_table,
     reliability_frame,
+    scored_summary,
     scores_table,
     selection_sentence,
+    staleness,
     streak_profile,
     streak_table,
     trap_view,
@@ -352,6 +355,9 @@ def _forecast(store: StockLabStore, selected: Selected | None) -> None:
     if record["refusal"] is not None:
         say(words.FORECAST_REFUSED.format(detail=record["refusal"]["detail"]), "warning")
         return
+    stale = staleness(record, store.latest_job_run())
+    if stale:
+        say(stale, "warning")
     record_band = StableBand(record["band"])
     say(words.FORECAST_BAND.format(band=record_band.words()), "caption")
     say(plain_sentence(record))
@@ -391,10 +397,41 @@ def _forecast(store: StockLabStore, selected: Selected | None) -> None:
         ),
         "caption",
     )
-    earlier = len(store.forecasts(selected.stock_id)) - 1
+    history = store.forecasts(selected.stock_id)
+    earlier = len(history) - 1
     if earlier:
         say(words.SUPERSEDED.format(count=earlier), "caption")
     bullets(record["limitations"])
+    _record_history(store, selected, history)
+
+
+def _record_history(store: StockLabStore, selected: Selected, history) -> None:
+    section(words.HISTORY_TITLE)
+    job = store.latest_job_run()
+    if job is not None and job.get("data_class") == history[-1]["data_class"]:
+        say(
+            words.JOB_STATUS.format(
+                status=job["status"],
+                finished=job["finished_at"][:16].replace("T", " ") + " UTC",
+                expected=job["expected_session"],
+            ),
+            "caption",
+        )
+    scored = store.scores(selected.stock_id)
+    summary = scored_summary(scored)
+    say(
+        words.HISTORY_NOTE.format(
+            summary=words.HISTORY_NONE
+            if summary is None
+            else words.HISTORY_SUMMARY.format(**summary)
+        )
+    )
+    table = history_table(history, scored)
+    if len(table):
+        st.table(table)
+    if selected.synthetic and summary is None:
+        say(words.REPLAY_NOTE, "caption")
+        st.code(words.REPLAY_COMMAND, language="bash")
 
 
 def _reversals(selected: Selected | None) -> None:

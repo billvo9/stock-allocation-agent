@@ -30,6 +30,16 @@ Tables
     forecasts          each StockProbabilityForecast (forecast.py), checked
                        before it is stored and again when read; a newer
                        forecast names the one it supersedes, which stays
+    scores             one row per (forecast, target) once its session has
+                       closed (scoring.py): the outcome and the scores of the
+                       stored probabilities, which are never rewritten
+    job_runs           each daily-job run: status, expected session, the
+                       per-stock results (write-once)
+    ledger_entries     a hash chain over every forecast, score and job run:
+                       entry_sha256 = sha256 of the canonical JSON of the
+                       entry's other fields, each naming the previous hash
+                       (GENESIS first); `verify_ledger` re-checks the chain
+                       and each entry against the row it names
     price_batches      one retrieval of one ticker's bars (write-once), with
     price_bars         its rows: a vintage. Later retrievals never overwrite
                        earlier ones; reads choose, per session, the latest
@@ -77,6 +87,9 @@ WRITE_ONCE_TABLES = (
     "price_bars",
     "evaluations",
     "forecasts",
+    "scores",
+    "job_runs",
+    "ledger_entries",
 )
 
 SCHEMA = (
@@ -147,6 +160,40 @@ CREATE TABLE IF NOT EXISTS forecasts (
     record TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS forecasts_symbol ON forecasts (symbol, created_at);
+CREATE TABLE IF NOT EXISTS scores (
+    forecast_id TEXT NOT NULL REFERENCES forecasts (forecast_id),
+    target TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    session TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('scored', 'unscorable')),
+    reason TEXT,
+    outcome INTEGER,
+    realized_return REAL,
+    brier REAL,
+    log_loss REAL,
+    rps REAL,
+    batch_id TEXT,
+    scored_at TEXT NOT NULL,
+    PRIMARY KEY (forecast_id, target)
+);
+CREATE TABLE IF NOT EXISTS job_runs (
+    run_id TEXT PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('ok', 'partial', 'failed', 'skipped')),
+    expected_session TEXT,
+    data_class TEXT NOT NULL CHECK (data_class IN ('real', 'synthetic')),
+    record TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS ledger_entries (
+    seq INTEGER PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('forecast', 'score', 'job_run')),
+    ref TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    prev_entry_sha256 TEXT NOT NULL,
+    entry_sha256 TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS price_bars (
     batch_id TEXT NOT NULL REFERENCES price_batches (batch_id),
     session TEXT NOT NULL,
@@ -195,6 +242,15 @@ WHEN EXISTS (SELECT 1 FROM evaluations WHERE run_id = NEW.run_id)
 BEGIN SELECT RAISE(ABORT, 'write-once table'); END;
 CREATE TRIGGER IF NOT EXISTS forecasts_no_replace BEFORE INSERT ON forecasts
 WHEN EXISTS (SELECT 1 FROM forecasts WHERE forecast_id = NEW.forecast_id)
+BEGIN SELECT RAISE(ABORT, 'write-once table'); END;
+CREATE TRIGGER IF NOT EXISTS scores_no_replace BEFORE INSERT ON scores
+WHEN EXISTS (SELECT 1 FROM scores WHERE forecast_id = NEW.forecast_id AND target = NEW.target)
+BEGIN SELECT RAISE(ABORT, 'write-once table'); END;
+CREATE TRIGGER IF NOT EXISTS job_runs_no_replace BEFORE INSERT ON job_runs
+WHEN EXISTS (SELECT 1 FROM job_runs WHERE run_id = NEW.run_id)
+BEGIN SELECT RAISE(ABORT, 'write-once table'); END;
+CREATE TRIGGER IF NOT EXISTS ledger_entries_no_replace BEFORE INSERT ON ledger_entries
+WHEN EXISTS (SELECT 1 FROM ledger_entries WHERE seq = NEW.seq)
 BEGIN SELECT RAISE(ABORT, 'write-once table'); END;
 CREATE TRIGGER IF NOT EXISTS price_bars_complete BEFORE INSERT ON price_bars
 WHEN (SELECT COUNT(*) FROM price_bars WHERE batch_id = NEW.batch_id)
@@ -795,6 +851,7 @@ class StockLabStore:
         if (checked["data_class"] == DataClass.SYNTHETIC.value) != demo:
             raise StoreRefused("synthetic forecasts only under demo identifiers, and only they")
         with self._write() as connection:
+            text = forecast_artifact.canonical(dict(checked))
             connection.execute(
                 "INSERT INTO forecasts VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
@@ -804,9 +861,10 @@ class StockLabStore:
                     checked["created_at"],
                     checked["data_class"],
                     checked["supersedes"],
-                    forecast_artifact.canonical(dict(checked)),
+                    text,
                 ),
             )
+            _append_ledger(connection, "forecast", checked["forecast_id"], text, self._clock())
         return checked["forecast_id"]
 
     def evaluation(self, run_id: str) -> dict | None:
@@ -840,6 +898,147 @@ class StockLabStore:
         found = self.forecasts(symbol)
         return found[-1] if found else None
 
+    # --- scores, job runs and the ledger ---
+
+    def record_scores(self, scores) -> int:
+        rows = []
+        now = stamp(self._clock())
+        for score in scores:
+            row = score.as_row() if hasattr(score, "as_row") else dict(score)
+            if row["status"] not in ("scored", "unscorable"):
+                raise StoreRefused("only scored or unscorable targets are recorded")
+            rows.append(row)
+        if not rows:
+            return 0
+        with self._write() as connection:
+            for row in rows:
+                connection.execute(
+                    "INSERT INTO scores VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        row["forecast_id"],
+                        row["target"],
+                        row["symbol"],
+                        row["session"],
+                        row["status"],
+                        row["reason"],
+                        row["outcome"],
+                        row["realized_return"],
+                        row["brier"],
+                        row["log_loss"],
+                        row["rps"],
+                        row["batch_id"],
+                        now,
+                    ),
+                )
+                payload = _strict_json({**row, "scored_at": now})
+                _append_ledger(
+                    connection,
+                    "score",
+                    f"{row['forecast_id']}:{row['target']}",
+                    payload,
+                    self._clock(),
+                )
+        return len(rows)
+
+    def scores(self, symbol: str | None = None) -> tuple[dict, ...]:
+        columns = SCORE_COLUMNS
+        with self._read() as connection:
+            if connection is None:
+                return ()
+            query = f"SELECT {', '.join(columns)} FROM scores"
+            rows = (
+                connection.execute(query + " ORDER BY session, forecast_id, target").fetchall()
+                if symbol is None
+                else connection.execute(
+                    query + " WHERE symbol = ? ORDER BY session, forecast_id, target", (symbol,)
+                ).fetchall()
+            )
+        return tuple(dict(zip(columns, row, strict=True)) for row in rows)
+
+    def scored_keys(self, symbol: str) -> set[tuple[str, str]]:
+        return {(row["forecast_id"], row["target"]) for row in self.scores(symbol)}
+
+    def record_job_run(self, run: dict) -> str:
+        text = _strict_json(run)
+        with self._write() as connection:
+            connection.execute(
+                "INSERT INTO job_runs VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run["run_id"],
+                    run["started_at"],
+                    run["finished_at"],
+                    run["status"],
+                    run.get("expected_session"),
+                    DataClass(run["data_class"]).value,
+                    text,
+                ),
+            )
+            _append_ledger(connection, "job_run", run["run_id"], text, self._clock())
+        return run["run_id"]
+
+    def job_runs(self) -> tuple[dict, ...]:
+        with self._read() as connection:
+            if connection is None:
+                return ()
+            rows = connection.execute(
+                "SELECT record FROM job_runs ORDER BY finished_at, run_id"
+            ).fetchall()
+        return tuple(json.loads(row[0]) for row in rows)
+
+    def latest_job_run(self) -> dict | None:
+        runs = self.job_runs()
+        return runs[-1] if runs else None
+
+    def verify_ledger(self) -> tuple[int, str | None]:
+        """(entries, None) when the chain verifies, else (entries, the first problem)."""
+
+        with self._read() as connection:
+            if connection is None:
+                return 0, None
+            entries = connection.execute(
+                "SELECT seq, kind, ref, recorded_at, payload_sha256, prev_entry_sha256, "
+                "entry_sha256 FROM ledger_entries ORDER BY seq"
+            ).fetchall()
+            payloads = {
+                "forecast": dict(connection.execute("SELECT forecast_id, record FROM forecasts")),
+                "job_run": dict(connection.execute("SELECT run_id, record FROM job_runs")),
+            }
+            score_rows = connection.execute(
+                f"SELECT {', '.join(SCORE_COLUMNS)} FROM scores"
+            ).fetchall()
+        previous = GENESIS
+        # Each score's ledger payload is rebuilt from its stored row, so an edited
+        # score (a changed outcome or score) breaks the chain like an edited forecast.
+        scored = {
+            f"{row[0]}:{row[1]}": hashlib.sha256(
+                _strict_json(dict(zip(SCORE_COLUMNS, row, strict=True))).encode("utf-8")
+            ).hexdigest()
+            for row in score_rows
+        }
+        for number, (seq, kind, ref, recorded_at, payload_sha, prev, entry_sha) in enumerate(
+            entries, start=1
+        ):
+            if seq != number:
+                return len(entries), f"entry {seq} is out of sequence"
+            if prev != previous:
+                return len(entries), f"entry {seq} does not name the previous entry"
+            expected = _entry_sha(seq, kind, ref, recorded_at, payload_sha, prev)
+            if expected != entry_sha:
+                return len(entries), f"entry {seq} does not match its hash"
+            if kind in payloads:
+                text = payloads[kind].get(ref)
+                if text is None or hashlib.sha256(text.encode("utf-8")).hexdigest() != payload_sha:
+                    return len(entries), f"entry {seq} does not match its {kind} record"
+            elif ref not in scored:
+                return len(entries), f"entry {seq} names a missing score"
+            elif scored[ref] != payload_sha:
+                return len(entries), f"entry {seq} does not match its score record"
+            previous = entry_sha
+        counted = len(payloads["forecast"]) + len(payloads["job_run"]) + len(scored)
+        if counted != len(entries):
+            return len(entries), "a record has no ledger entry"
+        return len(entries), None
+
 
 def _plain(value):
     """JSON-ready values: a non-finite number becomes null (missing), numpy scalars plain."""
@@ -857,3 +1056,54 @@ def _plain(value):
 
 def _strict_json(record: dict) -> str:
     return json.dumps(_plain(record), sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+
+GENESIS = "0" * 64
+SCORE_COLUMNS = (
+    "forecast_id",
+    "target",
+    "symbol",
+    "session",
+    "status",
+    "reason",
+    "outcome",
+    "realized_return",
+    "brier",
+    "log_loss",
+    "rps",
+    "batch_id",
+    "scored_at",
+)
+
+
+def _entry_sha(seq, kind, ref, recorded_at, payload_sha, prev) -> str:
+    content = {
+        "seq": seq,
+        "kind": kind,
+        "ref": ref,
+        "recorded_at": recorded_at,
+        "payload_sha256": payload_sha,
+        "prev_entry_sha256": prev,
+    }
+    return hashlib.sha256(_strict_json(content).encode("utf-8")).hexdigest()
+
+
+def _append_ledger(connection, kind: str, ref: str, payload: str, now) -> None:
+    last = connection.execute(
+        "SELECT seq, entry_sha256 FROM ledger_entries ORDER BY seq DESC LIMIT 1"
+    ).fetchone()
+    seq, previous = (1, GENESIS) if last is None else (last[0] + 1, last[1])
+    recorded = stamp(now)
+    payload_sha = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    connection.execute(
+        "INSERT INTO ledger_entries VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            seq,
+            kind,
+            ref,
+            recorded,
+            payload_sha,
+            previous,
+            _entry_sha(seq, kind, ref, recorded, payload_sha, previous),
+        ),
+    )

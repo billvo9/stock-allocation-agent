@@ -389,6 +389,51 @@ one line per policy with that policy's own state. Backtests are simulated,
 never a track record. Measures come from the approved T5a formulas only and
 are never recomputed here.
 
+<a id="data-stock-lab-freshness"></a>
+### Stock Lab data freshness (`data.stock_lab_freshness`)
+
+- **What it means.** Whether every watched stock in the Stock Lab has the session the daily job expected (the last NYSE session whose close is at least 20:00 New York time old). Degraded (`stale_prices`) when any stock is behind: its last valid forecast is kept and shown as stale, never replaced by an invented one. Insufficient evidence without a watchlist or before the job has run.
+- **Likely causes.** The price update is not authorized yet (decisions A1 and A2); a provider outage; a ticker that stopped trading; the job ran before the close was published.
+- **Diagnose.** The detail lists each stock's last stored session and how many sessions it is behind; the job run in the private store says what was skipped and why.
+- **Safe retry.** Run `scripts/stock_lab_daily.py` again after the availability time; it is idempotent (scores and runs are write-once).
+- **Fallback.** Leave the stale forecasts labelled stale; never edit a stored forecast.
+
+<a id="forecast-stock-lab-job"></a>
+### Stock Lab daily update (`forecast.stock_lab_job`)
+
+- **What it means.** The last daily-job run's status as recorded by the job: ok is healthy, partial or skipped degraded, failed failed. Until the owner records decisions A1, A2 and A4, a real run records itself as skipped, with the reason.
+- **Likely causes.** Skipped: approvals pending. Failed: a provider error, an unreadable store, a ledger that does not verify.
+- **Diagnose.** The detail gives the last success and the next expected run; the private store's job runs keep every run's reason.
+- **Safe retry.** Re-run the job after fixing the cause.
+- **Fallback.** The last valid forecasts stay as they are, labelled stale.
+
+<a id="forecast-stock-lab-scores"></a>
+### Stock Lab rolling forecast scores (`forecast.stock_lab_scores`)
+
+- **What it means.** The rolling ranked probability score of scored daily targets beside the recent-weighted baseline's development-test score. Insufficient evidence below 250 scored targets; degraded (`worse_than_baseline`) when worse than the baseline. This is tracking, never evidence of skill: the forecaster is experimental and unvalidated.
+- **Likely causes.** Too few sessions since forecasting began; a regime the development data did not contain; drifted inputs.
+- **Diagnose.** Compare with `forecast.stock_lab_drift`; the Model diagnostics tab shows the development tests.
+- **Safe retry.** Re-run the job; scores accrue as sessions close.
+- **Fallback.** Read the baseline's probabilities instead; the model is never promoted on these scores.
+
+<a id="forecast-stock-lab-drift"></a>
+### Stock Lab input drift (`forecast.stock_lab_drift`)
+
+- **What it means.** The largest population stability index among a few model inputs, recent sessions against the development distribution. Degraded (`input_drift`) above 0.25, conventionally a material shift.
+- **Likely causes.** A change of volatility regime; a corporate event; a data problem (check freshness and revisions first).
+- **Diagnose.** The detail names the feature; look at the stock's History tab.
+- **Safe retry.** Nothing to retry: drift is measured, not fixed.
+- **Fallback.** Treat the probabilities with extra caution while drift persists; never refit on sealed data to make it pass.
+
+<a id="forecast-stock-lab-ledger"></a>
+### Stock Lab forecast ledger (`forecast.stock_lab_ledger`)
+
+- **What it means.** Whether the Stock Lab ledger's hash chain verifies: every forecast, score and job run has one entry, each naming the previous entry's hash and matching the record it covers. Failed (`ledger_broken`) at the first entry that does not.
+- **Likely causes.** The private store was edited outside the Lab; a copy was restored from an older backup.
+- **Diagnose.** The detail names the first failing entry; compare with a backup of the store.
+- **Safe retry.** None: a broken chain is never repaired in place.
+- **Fallback.** Stop recording forecasts, keep the store for inspection, and start a new store only with the owner's decision.
+
 <a id="portfolio-turnover"></a>
 ### Portfolio turnover (`portfolio.turnover`)
 
