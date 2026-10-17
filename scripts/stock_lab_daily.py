@@ -45,11 +45,12 @@ from typing import TextIO
 
 import pandas as pd
 
+from stock_agent.calendars.nyse import CalendarRefused
 from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
 from stock_agent.stock_lab import scoring
 from stock_agent.stock_lab.contracts import DataClass
 from stock_agent.stock_lab.job import record_run
-from stock_agent.stock_lab.replay import run_replay
+from stock_agent.stock_lab.replay import ReplayRefused, run_replay
 from stock_agent.stock_lab.store import StockLabStore, stamp, utc_now
 from stock_agent.stock_lab.synthetic import DEMO_IDS
 
@@ -75,12 +76,24 @@ def expected_session(now: pd.Timestamp) -> pd.Timestamp:
 
 
 def next_expected(now: pd.Timestamp) -> str:
+    """The next time a new close should be available: today's AVAILABILITY on a session
+    day before it, else the next session's."""
+
     local = now.tz_convert("America/New_York")
-    upcoming = sessions(pd.Timestamp(local.date()) + pd.Timedelta(days=1),
-                        pd.Timestamp(local.date()) + pd.Timedelta(days=10))  # fmt: skip
     hour, minute = (int(part) for part in AVAILABILITY.split(":"))
-    nxt = pd.Timestamp(upcoming[0].date(), tz="America/New_York").replace(hour=hour, minute=minute)
-    return stamp(nxt.tz_convert("UTC"))
+    today = pd.Timestamp(local.date())
+    upcoming = sessions(today, today + pd.Timedelta(days=10))
+    for day in upcoming:
+        due = pd.Timestamp(day.date(), tz="America/New_York").replace(hour=hour, minute=minute)
+        if due > local:
+            return stamp(due.tz_convert("UTC"))
+    raise CalendarRefused("outside_coverage", "no session in the next ten days")
+
+
+def calendar_sessions(first: pd.Timestamp, last: pd.Timestamp) -> pd.DatetimeIndex:
+    """NYSE sessions between two sessions (for scoring: a missing session is a gap)."""
+
+    return sessions(first.date(), last.date())
 
 
 def code_sha() -> str | None:
@@ -142,7 +155,11 @@ def main(
                 code_sha=code_sha(),
             )
 
-        days = run_replay(store, sessions=args.demo_replay, record_day=record_day)
+        try:
+            days = run_replay(store, sessions=args.demo_replay, record_day=record_day)
+        except ReplayRefused as error:
+            print(f"refused: {error}", file=out)
+            return 2
         scored = sum(day.scored for day in days)
         print(f"synthetic replay: {len(days)} sessions, {scored} targets scored", file=out)
         return 0
@@ -155,21 +172,29 @@ def main(
         )
         return 2
     tickers = store.watched()
-    expected = expected_session(started)
+    try:
+        expected = expected_session(started)
+    except CalendarRefused as error:  # e.g. past the calendar's coverage: record the failure
+        store.record_job_run(
+            {
+                "run_id": f"job-{started.strftime('%Y%m%dT%H%M%S%fZ')}",
+                "started_at": stamp(started),
+                "finished_at": stamp(clock()),
+                "status": "failed",
+                "reason": f"calendar: {error}",
+                "expected_session": None,
+                "data_class": DataClass.REAL.value,
+            }
+        )
+        print(f"failed: the NYSE calendar refused ({error}); the run is recorded", file=out)
+        return 1
     skipped = [
         "prices: the recent-window update needs decisions A1 and A2",
         "forecasts: recording real forecasts needs decision A4",
     ]
     # Step 3: scoring runs on whatever is stored (real forecasts exist only after A4).
-    scored = scoring.score_store(store, tickers)
+    scored = scoring.score_store(store, tickers, calendar=calendar_sessions)
     status, reason = "skipped", "; ".join(skipped)
-    if args.authorized or args.inference_window or args.record_real:
-        print(
-            "refused: the real price update and forecasts are not implemented until the owner "
-            "records decisions A1, A2 and A4",
-            file=out,
-        )
-        return 2
     finished = clock()
     path = record_run(
         store,
@@ -182,7 +207,7 @@ def main(
         tickers=tickers,
         data_class=DataClass.REAL,
         health_inputs=args.health_inputs,
-        sessions=lambda start, end: sessions(start.date(), end.date()),
+        sessions=calendar_sessions,
         calendar_id=CALENDAR_ID,
         code_sha=code_sha(),
         next_expected_at=next_expected(finished),

@@ -35,24 +35,28 @@ LABEL = "local.stock-lab.daily"
 NEW_YORK_TIME = (20, 30)
 
 
-def local_time(zone: str) -> tuple[int, int]:
-    """20:30 New York time in `zone` (on a winter weekday; launchd has no time zones)."""
+def local_time(zone: str) -> tuple[int, int, int]:
+    """
+    20:30 New York time in `zone` as (hour, minute, day shift), on a winter
+    weekday (launchd has no time zones): a zone east of New York may reach the
+    next calendar day, so its weekdays shift by one.
+    """
 
     new_york = datetime(2026, 1, 6, *NEW_YORK_TIME, tzinfo=ZoneInfo("America/New_York"))
     local = new_york.astimezone(ZoneInfo(zone))
-    return local.hour, local.minute
+    return local.hour, local.minute, (local.date() - new_york.date()).days
 
 
 def plist(zone: str = "America/New_York", home: Path | None = None) -> str:
     home = home or Path.home()
     logs = home / "stock-agent-private" / "stock_lab" / "logs"
-    hour, minute = local_time(zone)
+    hour, minute, shift = local_time(zone)
     python = PROJECT / ".venv" / "bin" / "python"
     script = PROJECT / "scripts" / "stock_lab_daily.py"
     days = "".join(
         f"""
     <dict>
-      <key>Weekday</key><integer>{day}</integer>
+      <key>Weekday</key><integer>{(day + shift) % 7}</integer>
       <key>Hour</key><integer>{hour}</integer>
       <key>Minute</key><integer>{minute}</integer>
     </dict>"""

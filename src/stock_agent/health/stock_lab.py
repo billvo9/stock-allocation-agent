@@ -40,6 +40,7 @@ In the private scope a synthetic input is at most insufficient_evidence.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 from stock_agent.health.inputs import (
@@ -53,11 +54,13 @@ from stock_agent.health.inputs import (
     require,
     worst_finding,
 )
-from stock_agent.health.model import Area, Better, Check, HealthState
+from stock_agent.health.model import Area, Better, Check, HealthState, parse_timestamp
 
 ARTIFACT = "stock_lab_monitor"
 JOB_STATUSES = frozenset({"ok", "partial", "failed", "skipped"})
 MIN_SCORED = 250
+MIN_SESSIONS = 50  # distinct settled sessions: overlapping targets are not independent
+OVERDUE = 6  # hours past the next expected run before a silent job counts as overdue
 PSI_WARNING = 0.25
 EXPERIMENTAL = "Experimental, unvalidated forecaster; tracking only, never evidence of skill."
 TITLES = {
@@ -115,7 +118,9 @@ def _check(check_id, state, reason, *, measured, value, unit, threshold, summary
     )
 
 
-def stock_lab_checks(directory: Path | None, *, allow_synthetic: bool = False) -> list[Check]:
+def stock_lab_checks(
+    directory: Path | None, *, allow_synthetic: bool = False, now=None
+) -> list[Check]:
     loaded = load_latest(directory, ARTIFACT)
     evidence = None if directory is None else str(directory)
     if isinstance(loaded, NotRead):
@@ -220,7 +225,20 @@ def stock_lab_checks(directory: Path | None, *, allow_synthetic: bool = False) -
         ),
     }
     state, reason, text = states[status]
-    finding = worst_finding([Finding(state, reason, text), *common])
+    findings = [Finding(state, reason, text), *common]
+    next_expected = document["schedule"].get("next_expected_at")
+    if now is not None and next_expected:
+        due = parse_timestamp("next_expected_at", next_expected)
+        if now > due + timedelta(hours=OVERDUE):
+            findings.append(
+                Finding(
+                    HealthState.FAILED,
+                    "job_overdue",
+                    f"No daily update since {loaded.generated_at:%Y-%m-%d %H:%M} UTC; the next was "
+                    f"due {due:%Y-%m-%d %H:%M} UTC. The scheduled job may have stopped.",
+                )
+            )
+    finding = worst_finding(findings)
     schedule = document["schedule"]
     checks.append(
         _check(
@@ -241,12 +259,13 @@ def stock_lab_checks(directory: Path | None, *, allow_synthetic: bool = False) -
     # Rolling scores
     scores = document["scores"]
     n = scores["n"]
-    if n < MIN_SCORED:
+    settled = scores.get("sessions", n)
+    if n < MIN_SCORED or settled < MIN_SESSIONS:
         finding = Finding(
             HealthState.INSUFFICIENT_EVIDENCE,
             "too_few_scored",
-            f"{n} scored forecasts so far; at least {MIN_SCORED} are needed "
-            "before a rolling score means anything.",
+            f"{n} scored targets over {settled} sessions so far; at least {MIN_SCORED} targets "
+            f"over {MIN_SESSIONS} sessions are needed before a rolling score means anything.",
         )
     elif (
         scores.get("rps") is not None
@@ -275,7 +294,8 @@ def stock_lab_checks(directory: Path | None, *, allow_synthetic: bool = False) -
             measured=measured,
             value=scores.get("rps") if n else None,
             unit="ranked probability score",
-            threshold=f">= {MIN_SCORED} scored and no worse than the baseline",
+            threshold=f">= {MIN_SCORED} targets over {MIN_SESSIONS} sessions, no worse than the "
+            "baseline",
             summary=finding.summary,
             detail=described,
             evidence=evidence,

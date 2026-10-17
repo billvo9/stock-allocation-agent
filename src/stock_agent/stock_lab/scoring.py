@@ -7,9 +7,11 @@ A forecast is scored against outcomes it could not have seen:
     - each target session's outcome is the category of that session's
       split-consistent price return, against the forecast's own band (the
       five-session total against its cumulative band);
-    - the outcome must come from a price batch retrieved AFTER the forecast
-      was created (so a forecast is never scored on data it was made with,
-      and a rebuilt "forecast" can never score itself);
+    - every session a target needs (the target session, or all five for the
+      total) must be ABSENT from the store when the forecast was created:
+      it was first downloaded afterwards, by any vintage (so a forecast is
+      never scored on data it could have seen, even after a later
+      re-download, and a rebuilt "forecast" can never score itself);
     - a session without a usable return (a gap, an unverified split) is
       left unscored with its reason, never filled;
     - a score is written once per (forecast, target) and never rewritten:
@@ -22,7 +24,8 @@ Brier score, log loss and RPS of the stored probabilities.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 import numpy as np
@@ -64,22 +67,47 @@ def _probabilities(record: Mapping, target: str) -> np.ndarray:
     return np.array([[row["p_decrease"], row["p_stable"], row["p_increase"]]])
 
 
+def _score(common: Mapping, session: str, status: str, reason: str | None, batch_id=None, *,
+           outcome=None, value=None, p=None) -> Score:  # fmt: skip
+    if status != SCORED:
+        return Score(**common, session=session, status=status, reason=reason, outcome=None,
+                     realized_return=None, brier=None, log_loss=None, rps=None,
+                     batch_id=batch_id)  # fmt: skip
+    y = np.array([outcome])
+    return Score(
+        **common,
+        session=session,
+        status=SCORED,
+        reason=None,
+        outcome=outcome,
+        realized_return=float(value),
+        brier=float(brier(p, y)[0]),
+        log_loss=float(log_loss(p, y)[0]),
+        rps=float(rps(p, y)[0]),
+        batch_id=batch_id,
+    )
+
+
 def score_forecast(
     record: Mapping,
     bars: pd.DataFrame,
-    batch_of: Mapping[str, tuple[str, str]],
+    batch_of: Mapping[str, str],
     *,
+    seen_before: AbstractSet[str],
     sessions: Sequence[pd.Timestamp] | None = None,
 ) -> tuple[Score, ...]:
     """
-    Every target of one forecast against `bars` (prices.BAR_COLUMNS), where
-    `batch_of` maps a session (YYYY-MM-DD) to (batch_id, retrieved_at) of the
-    vintage that supplied it.
+    Every target of one forecast against `bars` (prices.BAR_COLUMNS).
+    `batch_of` maps a session (YYYY-MM-DD) to the batch that supplied it
+    (provenance only); `seen_before` holds every session the store already
+    had when the forecast was created, from ANY vintage: a target needing such
+    a session is never scored, even if a later download supplies it again.
+    `sessions` is the exchange calendar over the bars' span, so a missing
+    session is a gap, never a longer return read as one session.
     """
 
     if record["refusal"] is not None:
         return ()
-    created = record["created_at"]
     band = StableBand(record["band"])
     frame = session_returns(on_calendar(bars, sessions), band)
     by_day = {row.session.strftime("%Y-%m-%d"): row for row in frame.itertuples()}
@@ -87,88 +115,38 @@ def score_forecast(
     targets = [str(h) for h in range(1, 6)] + (["cum"] if record["cumulative"] else [])
     for target in targets:
         session = record["target_sessions"][-1 if target == "cum" else int(target) - 1]
+        needed = record["target_sessions"] if target == "cum" else [session]
         common = {
             "forecast_id": record["forecast_id"],
             "symbol": record["symbol"],
             "target": target,
         }
         row = by_day.get(session)
-        settled = batch_of.get(session)
-        if row is None or settled is None:
-            out.append(
-                Score(
-                    **common,
-                    session=session,
-                    status=PENDING,
-                    reason="not_closed_yet",
-                    outcome=None,
-                    realized_return=None,
-                    brier=None,
-                    log_loss=None,
-                    rps=None,
-                    batch_id=None,
-                )
-            )
+        if row is None or session not in batch_of:
+            out.append(_score(common, session, PENDING, "not_closed_yet"))
             continue
-        batch_id, retrieved_at = settled
-        if retrieved_at <= created:
-            out.append(
-                Score(
-                    **common,
-                    session=session,
-                    status=UNSCORABLE,
-                    reason="outcome_retrieved_before_forecast",
-                    outcome=None,
-                    realized_return=None,
-                    brier=None,
-                    log_loss=None,
-                    rps=None,
-                    batch_id=batch_id,
-                )
-            )
+        batch_id = batch_of[session]
+        if any(day in seen_before for day in needed):
+            out.append(_score(common, session, UNSCORABLE, "outcome_retrieved_before_forecast",
+                              batch_id))  # fmt: skip
             continue
         if target == "cum":
             start = by_day.get(record["as_of_session"])
-            window = [by_day.get(day) for day in record["target_sessions"]]
-            ok = start is not None and all(w is not None and w.reason == "ok" for w in window)
-            value = (row.level / start.level - 1.0) if ok else math.nan
+            window = [by_day.get(day) for day in needed]
+            if start is None or not all(w is not None and w.reason == "ok" for w in window):
+                out.append(_score(common, session, UNSCORABLE, "window_incomplete", batch_id))
+                continue
+            value = row.level / start.level - 1.0
             category = StableBand(record["cumulative_band"]).categorize(value)
         else:
             value = row.price_return if row.reason == "ok" else math.nan
             category = band.categorize(value)
         if category is None:
-            out.append(
-                Score(
-                    **common,
-                    session=session,
-                    status=UNSCORABLE,
-                    reason=row.reason,
-                    outcome=None,
-                    realized_return=None,
-                    brier=None,
-                    log_loss=None,
-                    rps=None,
-                    batch_id=batch_id,
-                )
-            )
+            out.append(_score(common, session, UNSCORABLE, row.reason, batch_id))
             continue
-        code = CATEGORY_CODES[category]
-        p = _probabilities(record, target)
-        y = np.array([code])
-        out.append(
-            Score(
-                **common,
-                session=session,
-                status=SCORED,
-                reason=None,
-                outcome=code,
-                realized_return=float(value),
-                brier=float(brier(p, y)[0]),
-                log_loss=float(log_loss(p, y)[0]),
-                rps=float(rps(p, y)[0]),
-                batch_id=batch_id,
-            )
-        )
+        out.append(_score(common, session, SCORED, None, batch_id,
+                          outcome=CATEGORY_CODES[category], value=value,
+                          p=_probabilities(record, target)))  # fmt: skip
     return tuple(out)
 
 
@@ -186,6 +164,9 @@ def rolling_summary(scores: Sequence[Mapping], window: int = 63) -> dict:
     outcomes = np.array([s["outcome"] for s in daily])
     return {
         "n": n,
+        # Targets overlap (five horizons of different forecasts settle on one
+        # session), so the number of distinct sessions is the honest sample size.
+        "sessions": len({s["session"] for s in daily}),
         "brier": float(np.mean([s["brier"] for s in daily])),
         "log_loss": float(np.mean([s["log_loss"] for s in daily])),
         "rps": float(np.mean([s["rps"] for s in daily])),
@@ -198,10 +179,17 @@ def rolling_summary(scores: Sequence[Mapping], window: int = 63) -> dict:
     }
 
 
-def score_store(store, symbols: Sequence[str], *, sessions=None) -> int:
+def score_store(
+    store,
+    symbols: Sequence[str],
+    *,
+    calendar: Callable[[pd.Timestamp, pd.Timestamp], pd.DatetimeIndex] | None = None,
+) -> int:
     """
     Score every stored forecast of `symbols` whose targets have closed and are
     not scored yet; appends the new scores (write-once). Returns how many.
+    `calendar(first, last)` gives the exchange sessions between two sessions
+    (the daily script passes the NYSE rules calendar; the replay weekdays).
     """
 
     added = 0
@@ -209,17 +197,26 @@ def score_store(store, symbols: Sequence[str], *, sessions=None) -> int:
         stored = store.bars(symbol)
         if stored is None:
             continue
-        retrieved = {batch.batch_id: batch.retrieved_at for batch in stored.batches}
         batch_of = {
-            row.session.strftime("%Y-%m-%d"): (row.batch_id, retrieved[row.batch_id])
-            for row in stored.bars.itertuples()
+            row.session.strftime("%Y-%m-%d"): row.batch_id for row in stored.bars.itertuples()
         }
         bars = stored.bars.drop(columns=["batch_id"])
+        sessions = None
+        if calendar is not None and len(bars):
+            sessions = calendar(bars["session"].iloc[0], bars["session"].iloc[-1])
         done = store.scored_keys(symbol)
         for record in store.forecasts(symbol):
+            if all((record["forecast_id"], t) in done for t in TARGETS):
+                continue
+            visible = store.bars(symbol, as_of=pd.Timestamp(record["created_at"]))
+            seen = (
+                set() if visible is None else set(visible.bars["session"].dt.strftime("%Y-%m-%d"))
+            )
             fresh = [
                 score
-                for score in score_forecast(record, bars, batch_of, sessions=sessions)
+                for score in score_forecast(
+                    record, bars, batch_of, seen_before=seen, sessions=sessions
+                )
                 if score.status != PENDING and (score.forecast_id, score.target) not in done
             ]
             if fresh:

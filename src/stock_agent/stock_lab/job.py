@@ -134,7 +134,11 @@ def record_run(
         if evaluation["config"].get("outcome_end"):
             development_end = pd.Timestamp(evaluation["config"]["outcome_end"], tz="UTC")
     frames = _frames(store, tickers)
-    runs = [run for run in store.job_runs() if run["status"] == "ok"]
+    runs = [
+        run
+        for run in store.job_runs()
+        if run["status"] == "ok" and run.get("data_class") == DataClass(data_class).value
+    ]
     document = monitoring.monitor_document(
         run_id=run_id,
         generated_at=finished,
@@ -156,7 +160,12 @@ def record_run(
         scores={**summary, "baseline_rps": baseline},
         inputs_drift=monitoring.input_drift(frames, development_end) if frames else [],
         traps=trap_outcomes(frames, first),
-        ledger={"entries": entries, "verified": problem is None, "reason": problem},
+        ledger={
+            "entries": entries,
+            "verified": problem is None,
+            "reason": problem,
+            "head": store.ledger_head(),
+        },
         lineage={}
         if latest is None
         else {
