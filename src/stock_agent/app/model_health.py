@@ -5,9 +5,9 @@ operator in the Lab's editorial style.
 Progressive disclosure:
     1. the overall state in words, the headline and the one next step;
     2. each area (code and tests, training and evaluation runs, models and
-       their evidence stage, the prospective forecast ledger, data quality,
-       policy limits and fallbacks, risk diagnostics) with its worst state
-       and one plain sentence;
+       their evidence stage, the prospective forecast ledger, the Stock Lab
+       daily job, data quality, policy limits and fallbacks, risk
+       diagnostics) with its worst condition and one plain sentence;
     3. per area, every check's state and sentence, with the exact value,
        threshold, time, reason code, evidence and runbook link in an
        expander;
@@ -19,7 +19,9 @@ nothing. With no summary it says "Not yet collected" and gives the command
 that creates one; a refused or unreadable summary is shown as refused, with
 nothing from it. A state is always written in words beside its colour, and a
 check that was never measured is never shown as healthy: the summary reader
-refuses such a check.
+refuses such a check. The words follow each check's condition
+(`health.view.CONDITION_WORDS`), so stale data ("Stale"), a job not
+authorized yet ("Not activated"), missing evidence and a failure differ.
 
 Text a summary carries (sentences, values, details, paths, alert messages)
 is written by producers, so it never goes through markdown, which would

@@ -434,6 +434,29 @@ def test_the_five_states_render_with_five_distinct_words(tmp_path):
     assert len({STATE_WORDS[state] for state in HealthState}) == 5
 
 
+def test_no_evidence_not_activated_stale_and_failed_render_with_distinct_words(tmp_path):
+    checks = [
+        _health_check("ci.verify", HealthState.HEALTHY),
+        _health_check("data.freshness", HealthState.DEGRADED, reason="stale_data"),
+        _health_check("forecast.ledger", HealthState.INSUFFICIENT_EVIDENCE, reason="input_missing"),
+        _health_check(
+            "forecast.stock_lab_job", HealthState.INSUFFICIENT_EVIDENCE, reason="not_authorized"
+        ),
+        _health_check("data.stock_lab_tickers", HealthState.FAILED, reason="planted_reason"),
+    ]
+    app = _render_health(_write_summary(tmp_path / "latest.json", checks))
+    pills = _pill_words(app)
+    words = {word for _, word in pills}
+    assert {"Healthy", "Stale", "Insufficient evidence", "Not activated", "Failed"} <= words
+    slug = {word: level for level, word in pills}
+    assert slug["Stale"] == theme.status_slug("WARNING")
+    assert slug["Not activated"] == theme.status_slug("NOTICE") != slug["Failed"]
+    text = text_of(app)
+    # The Stock Lab's checks have their own area, not "Other checks".
+    assert "Stock Lab daily job (experimental)" in text and "Other checks" not in text
+    assert "1 stale" in text and "1 not activated" in text and "1 insufficient evidence" in text
+
+
 def test_a_summary_with_nothing_measured_shows_nothing_green(tmp_path):
     checks = [
         _health_check(check_id, HealthState.INSUFFICIENT_EVIDENCE)

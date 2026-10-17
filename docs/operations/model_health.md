@@ -5,7 +5,8 @@ today, as machine-readable summaries and a page that reads them. The
 operator guide for each check is the [runbook](runbook.md).
 
 Code: `src/stock_agent/health/`. Scripts: `scripts/health_check.py` (build a
-summary), `scripts/run_portfolio_lab.py` (the Lab's Model Health page) and
+summary), `scripts/setup_health_schedule.py` (prepare the private daily
+schedule), `scripts/run_portfolio_lab.py` (the Lab's Model Health page) and
 `scripts/run_model_health.py` (the technical page). Workflow:
 `.github/workflows/health.yml`. Tests: `tests/test_health_*.py` and the
 Model Health tests in `tests/test_app_destinations.py`.
@@ -63,6 +64,26 @@ no evidence, the overall state cannot be healthy. The page says so in plain
 words ("nothing measured is wrong, but some areas have no evidence yet") and
 lists what it is waiting for.
 
+**Conditions** (`stock_agent.health.model.Condition`). The page, the
+console output and the scheduler's `--status` name each check by its
+condition, derived from its stored state and reason, so "no evidence",
+"not activated", "stale" and "failed" never share a word. The summary
+format is unchanged: a reader derives the same condition from the same
+state and reason.
+
+| Condition | Word | From |
+|---|---|---|
+| `failed`, `unavailable` | Failed, Unavailable | the state |
+| `degraded` | Degraded | `degraded`, any reason but staleness |
+| `stale` | Stale | `degraded` with `stale_data`, `stale_evidence`, `stale_prices` or `daily_run_overdue` |
+| `no_evidence` | Insufficient evidence | `insufficient_evidence`, any reason but `not_authorized` |
+| `not_activated` | Not activated | `insufficient_evidence` with `not_authorized` (a job not authorized yet) |
+| `healthy` | Healthy | the state |
+
+Conditions keep the state precedence (every condition of a worse state is
+worse), so the worst condition always belongs to the overall state. A test
+holds every `stale_*` reason a check emits to the stale condition.
+
 ## The summary (schema 1.0)
 
 One strict-JSON file (no NaN, no duplicate keys), refused as a whole by the
@@ -116,10 +137,10 @@ token, secret or other variable is read.
 | Training | `training.health`, `training.ml_runs` | local | the newest training-health input; the experiment runner's `reports/ml/ledger.jsonl` |
 | Registry | `registry.entries`, `registry.stages`, `registry.selection_history`, `registry.experiments` | local | the ML track's model registry, through its read API |
 | Forecasts | `forecast.coverage`, `forecast.calibration` | local | the newest registry export's forecast evaluations |
-| Forecast ledger | `forecast.ledger`, `forecast.ledger_backup`, `forecast.ledger_sessions` | local | the prospective ledger (the job's own reader), the owner's kept head copy, the rules calendar |
+| Forecast ledger | `forecast.ledger`, `forecast.ledger_backup`, `forecast.ledger_sessions`, `forecast.ledger_scores` | local | the prospective ledger (the job's own reader), the owner's kept head copy, the rules calendar; `forecast.ledger_scores` counts matured forecast rows without a score |
 | Portfolio | `portfolio.turnover`, `portfolio.costs`, `portfolio.concentration`, `portfolio.drawdown` | local | the newest backtest summary per policy (the worst policy decides; each keeps its own line) |
 | Policy safety | `portfolio.violations`, `portfolio.fallbacks`, `portfolio.diagnostics` | local | the newest backtest summary per policy and the newest RL evaluation report |
-| Stock Lab | `data.stock_lab_freshness`, `forecast.stock_lab_job`, `forecast.stock_lab_scores`, `forecast.stock_lab_drift`, `forecast.stock_lab_ledger` | local | the newest `stock_lab_monitor` file written by the Stock Lab's daily job (experimental, unvalidated forecaster; tracking only) |
+| Stock Lab | `data.stock_lab_freshness`, `data.stock_lab_tickers`, `forecast.stock_lab_job`, `forecast.stock_lab_scores`, `forecast.stock_lab_drift`, `forecast.stock_lab_ledger` | local | the newest `stock_lab_monitor` file written by the Stock Lab's daily job (experimental, unvalidated forecaster; tracking only); `data.stock_lab_tickers` reads each watched ticker's provider-listing status |
 
 Thresholds are operator defaults written in the code next to each check and
 in the runbook; they are not owner-approved policy and change together. The
@@ -212,9 +233,12 @@ Other inputs the local monitor reads where their producers write them:
 - **The Stock Lab's monitor files** (`stock_lab_monitor`), written by
   `scripts/stock_lab_daily.py`: the job's status, each watched stock's
   freshness, the rolling scores beside the baseline, input drift, trap
-  outcomes, the ledger's verification and the lineage
-  (`stock_agent.health.stock_lab` documents the fields). The job measures;
-  health only judges.
+  outcomes, the ledger's verification and the lineage, and (optional,
+  added 2026-10-17, format still "1.0") `symbols`, each watched ticker's
+  latest provider-listing status (`stock_agent.health.stock_lab` documents
+  the fields). The job measures; health only judges. A file without
+  `symbols` leaves `data.stock_lab_tickers` insufficient evidence
+  (`not_recorded`).
 - **The prospective store and anchors**, through the sources the script
   passes in: the anchors file in the prospective scope (sha256, counts), and
   `load_inference_window` over the window from `WINDOW_START` to the last
@@ -301,77 +325,38 @@ GitHub Actions).
 ### Scheduling it (owner steps; nothing here installs them)
 
 Installing a launchd job changes the owner's system, so it is the owner's
-step. Replace `YOU` and the paths, then:
+step. `scripts/setup_health_schedule.py` prepares it and the runbook's
+"Activate the scheduler" gives the sequence: dry run, review, `--write`,
+the owner's `launchctl` commands, `--status`, then the Lab.
 
-1. Create the private directory and a wrapper script
-   `~/stock-agent-private/health/run.sh`:
-
-   ```bash
-   mkdir -p ~/stock-agent-private/health && chmod 700 ~/stock-agent-private/health
-   ```
-
-   ```zsh
-   #!/bin/zsh
-   set -u
-   cd /Users/YOU/Desktop/OMSA/stock-allocation-agent || exit 2
-   .venv/bin/python scripts/health_check.py local --run-verify --github \
-     --ledger-head-backup /Users/YOU/stock-agent-private/ledger_head.txt \
-     --prospective-store /Users/YOU/stock-agent-private/prospective_store \
-     --fund-store /Users/YOU/stock-agent-private/funds
-   ```
-
-   Leave out an option whose input does not exist yet; its check then says
-   so. `gh` must be on the job's `PATH` (for Homebrew, add
-   `export PATH=/opt/homebrew/bin:$PATH` before the command).
-
-   ```bash
-   chmod 700 ~/stock-agent-private/health/run.sh
-   ```
-
-2. Save this as `~/Library/LaunchAgents/local.stock-agent.health.plist`:
-
-   ```xml
-   <?xml version="1.0" encoding="UTF-8"?>
-   <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-   <plist version="1.0">
-   <dict>
-     <key>Label</key><string>local.stock-agent.health</string>
-     <key>ProgramArguments</key>
-     <array>
-       <string>/bin/zsh</string>
-       <string>/Users/YOU/stock-agent-private/health/run.sh</string>
-     </array>
-     <key>StartCalendarInterval</key>
-     <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>30</integer></dict>
-     <key>StandardOutPath</key><string>/Users/YOU/stock-agent-private/health/launchd.out.log</string>
-     <key>StandardErrorPath</key><string>/Users/YOU/stock-agent-private/health/launchd.err.log</string>
-   </dict>
-   </plist>
-   ```
-
-3. Check, load, run once, inspect:
-
-   ```bash
-   plutil -lint ~/Library/LaunchAgents/local.stock-agent.health.plist
-   ```
-
-   ```bash
-   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.stock-agent.health.plist
-   ```
-
-   ```bash
-   launchctl kickstart -k gui/$(id -u)/local.stock-agent.health
-   ```
-
-   ```bash
-   launchctl print gui/$(id -u)/local.stock-agent.health
-   ```
-
-4. To remove it:
-
-   ```bash
-   launchctl bootout gui/$(id -u)/local.stock-agent.health
-   ```
+- **Dry run (default).** Detects the repository (refusing a linked
+  worktree for `--write`, since worktrees are temporary), the venv and its
+  Python version (from `pyvenv.cfg`), `gh` on `PATH`, and which private
+  inputs exist: the fund store, the prospective store and the ETF ledger's
+  kept head under `~/stock-agent-private/`, the inputs read from fixed
+  places, and the Stock Lab's store, kept head and daily agent. It prints
+  every path, the schedule (07:30 local time by default, `--at HH:MM`),
+  each `health_check.py local` option it passes or leaves out with the
+  reason, and the exact `run.sh` and plist. It writes nothing.
+- **What it writes (`--write`).** `~/stock-agent-private/health/run.sh`
+  (mode 700: `set -u`, `umask 077`, an explicit `PATH` with `gh`'s
+  directory, `PYTHONPATH` set to this checkout's `src`, then `exec` of the
+  venv's Python on `health_check.py local --output-dir
+  ~/stock-agent-private/health` with the chosen options) and
+  `~/Library/LaunchAgents/local.stock-agent.health.plist` (mode 644: label,
+  `/bin/zsh run.sh`, a daily `StartCalendarInterval`, `RunAtLoad` false,
+  umask 077 and the two logs beside `latest.json`). Each is created only
+  when absent; an identical file is left alone and a different file or a
+  symlink is never replaced. launchd passes no shell environment, so
+  `STOCK_AGENT_ANCHORS` and `STOCK_AGENT_PROSPECTIVE_LEDGER`, when set, are
+  written out as `--anchors` and `--ledger`.
+- **Never.** It never runs `launchctl bootstrap`, `kickstart` or `bootout`;
+  it prints them for the owner. `--status` is read-only: `launchctl print`,
+  the age of `latest.json` (fresh at most 26 hours, else stale; or
+  missing), its overall state by condition and the last stderr line.
+- A missing input is left out with its reason and its checks stay
+  insufficient evidence (or unavailable for a path given but missing), so
+  the summary never shows healthy for something it did not measure.
 
 Notes: launchd runs a missed calendar job when the Mac wakes. The monitor
 checks whatever is checked out in that directory; the summary records the
@@ -396,10 +381,11 @@ disclosure:
 
 1. the overall state in words, the headline and the one next step, the
    informational-only caveat and the scope note;
-2. "At a glance": each area with its worst state and one sentence (code
-   and tests; training and evaluation runs; models, versions and evidence
-   stage; the prospective forecast ledger; data quality and vendor basis;
-   policy limits and fallbacks; risk, turnover and drawdown diagnostics);
+2. "At a glance": each area with its worst condition and one sentence
+   (code and tests; training and evaluation runs; models, versions and
+   evidence stage; the prospective forecast ledger; the Stock Lab daily job;
+   data quality and vendor basis; policy limits and fallbacks; risk,
+   turnover and drawdown diagnostics);
 3. each area's checks, worst first, and an "Exact measurements" expander
    with every value, threshold, time, reason code, evidence, runbook link
    and detail (for example each model version's stage and blockers, or the

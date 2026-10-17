@@ -31,6 +31,16 @@ forecast.ledger_sessions
     every session is expected (an operator default, not owner policy): gaps
     are degraded and listed. The calendar is injected by the private script,
     because research code may not import the prospective side.
+forecast.ledger_scores
+    Matured forecast rows without a score: a row (asset, horizon, target of
+    a forecast entry) matures at its exit session, the entry_lag + horizon-th
+    rules-calendar session after its as-of session, and is due for scoring
+    once that session's recording deadline (09:30 America/New_York on the
+    next weekday, as above; an operator default) has passed. A due row with
+    no score entry is degraded (`scores_overdue`: the score step did not run,
+    or its outcome inputs are missing; nothing is filled); no row due yet is
+    insufficient_evidence (`none_matured`); every due row scored is healthy.
+    Only the identities in the ledger are read: never a forecast value.
 
 In the private scope a ledger whose records are all synthetic is at most
 insufficient_evidence (`synthetic_input`); a failure still shows. Health
@@ -63,7 +73,9 @@ TITLES = {
     "forecast.ledger": "Forecast ledger integrity",
     "forecast.ledger_backup": "Kept copy of the ledger head",
     "forecast.ledger_sessions": "Sessions with a forecast record",
+    "forecast.ledger_scores": "Matured forecasts with a score",
 }
+ROW_FIELDS = ("asset", "horizon", "target", "entry_lag", "status")
 RECORD_KINDS = ("forecast", "refusal")
 KINDS = ("forecast", "score", "refusal")
 DEADLINE_LOCAL = "09:30"
@@ -485,6 +497,211 @@ def _sessions(
     )
 
 
+def _scored(entries: Sequence[LedgerEntry]) -> set[tuple]:
+    """(forecast entry hash, asset, horizon, target) of every scored row."""
+
+    keys = set()
+    for entry in entries:
+        scores = entry.payload.get("scores") if entry.kind == "score" else None
+        for score in scores if isinstance(scores, list) else ():
+            if not isinstance(score, dict):
+                continue
+            try:
+                horizon = int(score.get("horizon"))
+            except (TypeError, ValueError):
+                continue
+            keys.add(
+                (
+                    score.get("forecast_entry_sha256"),
+                    score.get("asset"),
+                    horizon,
+                    score.get("target"),
+                )
+            )
+    return keys
+
+
+def _forecast_rows(entries: Sequence[LedgerEntry]) -> tuple[list[tuple[LedgerEntry, dict]], int]:
+    """The forecast rows that were made (status ok), and how many rows are unreadable."""
+
+    rows, unreadable = [], 0
+    for entry in entries:
+        if entry.kind != "forecast":
+            continue
+        payload_rows = entry.payload.get("rows")
+        if not isinstance(payload_rows, list) or _as_of(entry) is None:
+            unreadable += 1
+            continue
+        for row in payload_rows:
+            if not isinstance(row, dict) or any(field not in row for field in ROW_FIELDS):
+                unreadable += 1
+            elif row["status"] == "ok":
+                rows.append((entry, row))
+    return rows, unreadable
+
+
+def _scores(
+    read: _Read,
+    calendar: RulesCalendar | None,
+    *,
+    now: datetime,
+    evidence: str | None,
+    allow_synthetic: bool,
+) -> Check:
+    check_id = "forecast.ledger_scores"
+    threshold = (
+        "every forecast row whose exit session's 09:30 New York deadline (next weekday) has "
+        "passed has a score (operator default)"
+    )
+    common = {"threshold": threshold, "evidence": evidence}
+    if read.entries is None:
+        not_read = _Read(
+            None,
+            HealthState.UNAVAILABLE if read.state is HealthState.FAILED else read.state,
+            read.reason,
+            read.detail,
+        )
+        return _not_judged(
+            check_id,
+            not_read,
+            evidence=evidence,
+            summary="Scores cannot be counted while the ledger is not readable."
+            if read.state is HealthState.FAILED
+            else "No forecast has been recorded yet.",
+        )
+    rows, unreadable = _forecast_rows(read.entries)
+    if not rows and not unreadable:
+        return _check(
+            check_id,
+            state=HealthState.INSUFFICIENT_EVIDENCE,
+            reason="no_forecast_recorded",
+            measured_at=now,
+            value=None,
+            unit=None,
+            summary="No forecast row has been recorded yet, so nothing can be scored.",
+            detail=f"{len(read.entries)} entries, none a forecast with a made row.",
+            **common,
+        )
+    if calendar is None:
+        return _check(
+            check_id,
+            state=HealthState.INSUFFICIENT_EVIDENCE,
+            reason="calendar_not_configured",
+            measured_at=None,
+            value=None,
+            unit=None,
+            summary="No exchange calendar was given, so matured forecasts are not counted.",
+            detail="The private script passes the rules calendar; this run had none.",
+            **common,
+        )
+    stamp = pd.Timestamp(now)
+    first = min((pd.Timestamp(_as_of(entry), tz="UTC") for entry, _ in rows), default=None)
+    try:
+        sessions = (
+            calendar.sessions(first, stamp.tz_convert("UTC").normalize())
+            if first is not None
+            else pd.DatetimeIndex([])
+        )
+    except (CalendarRefused, ValueError) as error:
+        return _check(
+            check_id,
+            state=HealthState.UNAVAILABLE,
+            reason="calendar_refused",
+            measured_at=now,
+            value=None,
+            unit=None,
+            summary="The exchange calendar refused the date range, so scores are not counted.",
+            detail=f"{calendar.calendar_id}: {error}",
+            **common,
+        )
+    position = {f"{session:%Y-%m-%d}": index for index, session in enumerate(sessions)}
+    scored = _scored(read.entries)
+    done, pending, overdue, unplaced = 0, 0, [], 0
+    for entry, row in rows:
+        try:
+            horizon, lag = int(row["horizon"]), int(row["entry_lag"])
+        except (TypeError, ValueError):
+            unplaced += 1
+            continue
+        if (entry.entry_sha256, row["asset"], horizon, row["target"]) in scored:
+            done += 1
+            continue
+        start = position.get(_as_of(entry))
+        if start is None:
+            unplaced += 1
+        elif start + lag + horizon < len(sessions) and (
+            _deadline(sessions[start + lag + horizon]) <= stamp
+        ):
+            overdue.append((sessions[start + lag + horizon], _as_of(entry), row))
+        else:
+            pending += 1
+    overdue.sort(key=lambda item: item[0])
+    shown = "; ".join(
+        f"{as_of} {row['asset']} h{row['horizon']} {row['target']} (exit {exit:%Y-%m-%d})"
+        for exit, as_of, row in overdue[:SHOWN_DATES]
+    )
+    if len(overdue) > SHOWN_DATES:
+        shown += f" and {len(overdue) - SHOWN_DATES} more"
+    lines = [
+        f"calendar {calendar.calendar_id}; forecast rows made: {len(rows)}",
+        f"scored: {done}; not due yet: {pending}; due without a score: {len(overdue)}",
+        f"due without a score: {shown or 'none'}",
+        f"rows not placed on the calendar: {unplaced}; unreadable rows: {unreadable}",
+    ]
+    findings = []
+    if unreadable or unplaced:
+        findings.append(
+            Finding(
+                HealthState.UNAVAILABLE,
+                "unrecognized_rows",
+                f"{unreadable + unplaced} forecast rows could not be read or placed on the "
+                "calendar, so their scoring cannot be judged.",
+            )
+        )
+    if overdue:
+        findings.append(
+            Finding(
+                HealthState.DEGRADED,
+                "scores_overdue",
+                f"{len(overdue)} matured forecast rows have no score past their deadline (oldest "
+                f"exit session {overdue[0][0]:%Y-%m-%d}): the score step did not run or its "
+                "outcome is missing. Nothing is filled.",
+            )
+        )
+    elif done == 0:
+        findings.append(
+            Finding(
+                HealthState.INSUFFICIENT_EVIDENCE,
+                "none_matured",
+                f"No forecast row is due for scoring yet ({pending} rows waiting for their exit "
+                "session).",
+            )
+        )
+    else:
+        findings.append(
+            Finding(
+                HealthState.HEALTHY,
+                None,
+                f"Every forecast row due for scoring has a score ({done} scored, {pending} not "
+                "due yet).",
+            )
+        )
+    finding = _finish(findings, _records(read.entries), allow_synthetic)
+    return _check(
+        check_id,
+        state=finding.state,
+        reason=finding.reason,
+        measured_at=now,
+        value=len(overdue),
+        unit="matured rows without a score",
+        better=Better.LOWER,
+        tolerance=0,
+        summary=finding.summary,
+        detail="\n".join(lines),
+        **common,
+    )
+
+
 def ledger_checks(
     path: Path | None,
     *,
@@ -493,7 +710,10 @@ def ledger_checks(
     now: datetime,
     allow_synthetic: bool = False,
 ) -> list[Check]:
-    """`forecast.ledger`, `forecast.ledger_backup` and `forecast.ledger_sessions`."""
+    """
+    `forecast.ledger`, `forecast.ledger_backup`, `forecast.ledger_sessions` and
+    `forecast.ledger_scores`.
+    """
 
     read = _read(path)
     kept = None if backup is None else _kept_hash(backup)
@@ -514,6 +734,7 @@ def ledger_checks(
         _integrity(read, **common),
         _backup(read, backup, kept, **common),
         _sessions(read, calendar, **common),
+        _scores(read, calendar, **common),
     ]
 
 

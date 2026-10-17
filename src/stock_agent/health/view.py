@@ -11,6 +11,11 @@ shown, never collapsed.
 Every number on the page comes from the summary. A value the summary does not
 hold is shown as "not measured", never as zero or a placeholder.
 
+Words follow the operator condition (`model.Condition`), derived from each
+check's state and reason, so "no evidence", "not activated", "stale" and
+"failed" never share a word: stale data is degraded with a stale reason and
+says "Stale"; a producer that is not authorized yet says "Not activated".
+
 Standard library only (no Streamlit, no pandas), so it is tested directly.
 """
 
@@ -20,10 +25,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from stock_agent.health.model import (
-    PRECEDENCE,
+    CONDITION_PRECEDENCE,
     AlertKind,
     Area,
     Check,
+    Condition,
     HealthState,
     HealthSummary,
     Scope,
@@ -53,6 +59,26 @@ STATE_LEVELS = {
     HealthState.UNAVAILABLE: "UNAVAILABLE",
     HealthState.FAILED: "INVALID/BLOCKED",
 }
+# One word per operator condition: the state's word, except stale data and a producer
+# that is not activated yet, which have their own.
+CONDITION_WORDS = {
+    Condition.FAILED: STATE_WORDS[HealthState.FAILED],
+    Condition.UNAVAILABLE: STATE_WORDS[HealthState.UNAVAILABLE],
+    Condition.DEGRADED: STATE_WORDS[HealthState.DEGRADED],
+    Condition.STALE: "Stale",
+    Condition.NO_EVIDENCE: STATE_WORDS[HealthState.INSUFFICIENT_EVIDENCE],
+    Condition.NOT_ACTIVATED: "Not activated",
+    Condition.HEALTHY: STATE_WORDS[HealthState.HEALTHY],
+}
+CONDITION_LEVELS = {
+    Condition.FAILED: STATE_LEVELS[HealthState.FAILED],
+    Condition.UNAVAILABLE: STATE_LEVELS[HealthState.UNAVAILABLE],
+    Condition.DEGRADED: STATE_LEVELS[HealthState.DEGRADED],
+    Condition.STALE: STATE_LEVELS[HealthState.DEGRADED],
+    Condition.NO_EVIDENCE: STATE_LEVELS[HealthState.INSUFFICIENT_EVIDENCE],
+    Condition.NOT_ACTIVATED: STATE_LEVELS[HealthState.INSUFFICIENT_EVIDENCE],
+    Condition.HEALTHY: STATE_LEVELS[HealthState.HEALTHY],
+}
 NOTICE_LEVELS = {
     HealthState.HEALTHY: "success",
     HealthState.INSUFFICIENT_EVIDENCE: "notice",
@@ -67,6 +93,11 @@ HEADLINES = {
     HealthState.DEGRADED: "Working, with warnings",
     HealthState.UNAVAILABLE: "Some measurements could not be taken",
     HealthState.FAILED: "Something is broken",
+}
+# The headline when the worst condition is one of these (otherwise the state's).
+CONDITION_HEADLINES = {
+    Condition.STALE: "Working, but some data or evidence is stale",
+    Condition.NOT_ACTIVATED: "Nothing measured is wrong; some jobs are not activated yet",
 }
 AREA_TITLES = {
     Area.CI: "CI and tests",
@@ -125,6 +156,7 @@ class CheckView:
     check_id: str
     title: str
     state: HealthState
+    condition: Condition
     state_word: str
     level: str
     summary: str
@@ -185,8 +217,9 @@ def check_view(check: Check, *, base_url: str = RUNBOOK_BASE_URL) -> CheckView:
         check_id=check.check_id,
         title=check.title,
         state=check.state,
-        state_word=STATE_WORDS[check.state],
-        level=STATE_LEVELS[check.state],
+        condition=check.condition,
+        state_word=CONDITION_WORDS[check.condition],
+        level=CONDITION_LEVELS[check.condition],
         summary=check.summary,
         value=value_text(check),
         threshold=check.threshold or "none declared",
@@ -199,12 +232,23 @@ def check_view(check: Check, *, base_url: str = RUNBOOK_BASE_URL) -> CheckView:
 
 
 def _counts(checks: tuple[Check, ...]) -> str:
+    """Counts per operator condition, worst first: stale, not activated and no evidence apart."""
+
     parts = []
-    for state in PRECEDENCE:
-        count = sum(check.state is state for check in checks)
+    for item in CONDITION_PRECEDENCE:
+        count = sum(check.condition is item for check in checks)
         if count:
-            parts.append(f"{count} {STATE_WORDS[state].lower()}")
+            parts.append(f"{count} {CONDITION_WORDS[item].lower()}")
     return ", ".join(parts)
+
+
+def worst_condition(checks) -> Condition:
+    """The worst condition among checks (or check views); no evidence for none."""
+
+    present = [check.condition for check in checks]
+    if not present:
+        return Condition.NO_EVIDENCE
+    return min(present, key=CONDITION_PRECEDENCE.index)
 
 
 def _names(checks: list[Check], limit: int = 4) -> str:
@@ -217,8 +261,8 @@ def _ordered(summary: HealthSummary) -> list[Check]:
     """Checks worst first, then in area order, then as stored."""
 
     areas = list(Area)
-    rank = {state: index for index, state in enumerate(PRECEDENCE)}
-    return sorted(summary.checks, key=lambda c: (rank[c.state], areas.index(c.area)))
+    rank = {item: index for index, item in enumerate(CONDITION_PRECEDENCE)}
+    return sorted(summary.checks, key=lambda c: (rank[c.condition], areas.index(c.area)))
 
 
 def _next_action(summary: HealthSummary) -> str:
@@ -232,9 +276,15 @@ def _next_action(summary: HealthSummary) -> str:
             f"Start with “{first.title}”: {first.summary} Open its runbook entry for the "
             "diagnostic commands and the safe retry. Nothing was changed automatically."
         )
-    waiting = [check for check in ordered if check.state is HealthState.INSUFFICIENT_EVIDENCE]
+    waiting = [check for check in ordered if check.condition is Condition.NO_EVIDENCE]
+    inactive = [check for check in ordered if check.condition is Condition.NOT_ACTIVATED]
+    parts = []
     if waiting:
-        return f"No action needed for what was measured. Waiting for evidence: {_names(waiting)}."
+        parts.append(f"Waiting for evidence: {_names(waiting)}.")
+    if inactive:
+        parts.append(f"Not activated yet: {_names(inactive)}.")
+    if parts:
+        return " ".join(["No action needed for what was measured.", *parts])
     return "No action needed."
 
 
@@ -242,18 +292,15 @@ def _fact(summary: HealthSummary, check_id: str, label: str, value_of) -> Fact |
     check = summary.check(check_id)
     if check is None:
         return None
+    word = CONDITION_WORDS[check.condition]
     if check.value is None:
-        return Fact(label, "—", f"{STATE_WORDS[check.state]}: {check.summary}")
-    return Fact(
-        label,
-        value_of(check),
-        f"{STATE_WORDS[check.state]}; measured {_stamp(check.measured_at)}",
-    )
+        return Fact(label, "—", f"{word}: {check.summary}")
+    return Fact(label, value_of(check), f"{word}; measured {_stamp(check.measured_at)}")
 
 
 def _facts(summary: HealthSummary) -> tuple[Fact, ...]:
     total = len(summary.checks)
-    healthy = sum(check.state is HealthState.HEALTHY for check in summary.checks)
+    healthy = sum(check.condition is Condition.HEALTHY for check in summary.checks)
     facts = [
         # A summary is producer-written: a value or unit of an unexpected shape is shown
         # as stored, never allowed to break the page.
@@ -326,13 +373,13 @@ def build_view(
         checks = tuple(check for check in summary.checks if check.area is area)
         if not checks:
             continue
-        area_state = min((c.state for c in checks), key=PRECEDENCE.index)
+        area_condition = worst_condition(checks)
         areas.append(
             AreaView(
                 area=area,
                 title=AREA_TITLES[area],
-                state_word=STATE_WORDS[area_state],
-                level=STATE_LEVELS[area_state],
+                state_word=CONDITION_WORDS[area_condition],
+                level=CONDITION_LEVELS[area_condition],
                 counts=_counts(checks),
                 checks=tuple(check_view(check, base_url=base_url) for check in checks),
             )
@@ -348,12 +395,13 @@ def build_view(
         for alert in summary.alerts
     )
     total = len(summary.checks)
+    overall = worst_condition(summary.checks)
     return HealthView(
         state=state,
-        state_word=STATE_WORDS[state],
-        level=STATE_LEVELS[state],
+        state_word=CONDITION_WORDS[overall],
+        level=CONDITION_LEVELS[overall],
         notice=NOTICE_LEVELS[state],
-        headline=HEADLINES[state],
+        headline=CONDITION_HEADLINES.get(overall, HEADLINES[state]),
         summary=(
             f"{total} checks: {_counts(summary.checks)}."
             if total

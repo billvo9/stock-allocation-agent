@@ -9,23 +9,25 @@ from __future__ import annotations
 
 import io
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pandas as pd
 import pytest
 from test_stock_lab_ledger import AS_OF, MADE, PRICES, SESSIONS, T0, T1, _forecast, _setup, daily
 
 from stock_agent.health import fixtures as health_fixtures
+from stock_agent.health import stock_lab as stock_lab_health
 from stock_agent.health.inputs import load_latest
 from stock_agent.health.model import HealthState
 from stock_agent.health.stock_lab import ARTIFACT, stock_lab_checks
 from stock_agent.stock_lab import forecast as artifact
 from stock_agent.stock_lab import scoring, synthetic
 from stock_agent.stock_lab import store as store_module
-from stock_agent.stock_lab.contracts import DataClass
+from stock_agent.stock_lab.contracts import DataClass, SymbolReason, SymbolStatus
 from stock_agent.stock_lab.job import NOT_AUTHORIZED, record_run
 from stock_agent.stock_lab.replay import SimulatedClock
 from stock_agent.stock_lab.store import DB_NAME, GENESIS, StockLabStore, StoreRefused
+from stock_agent.stock_lab.symbols import Classification, ListingRow
 
 BARS = synthetic.demo_bars("DEMO_CALM")
 HOUR = pd.Timedelta(hours=1)
@@ -233,7 +235,7 @@ def test_an_entry_rehashed_to_name_another_previous_entry_breaks_the_chain(tmp_p
     assert problem == "entry 2 does not name the previous entry"
 
 
-def _day(store, clock, tmp_path, number: int, kept) -> dict:
+def _day(store, clock, tmp_path, number: int, kept, tickers=("DEMO_CALM",)) -> dict:
     when = T1 + pd.Timedelta(days=number)
     clock.advance(when)
     path = record_run(
@@ -244,7 +246,7 @@ def _day(store, clock, tmp_path, number: int, kept) -> dict:
         status="ok",
         reason=None,
         expected=SESSIONS.iloc[AS_OF + 5],
-        tickers=["DEMO_CALM"],
+        tickers=list(tickers),
         data_class=DataClass.SYNTHETIC,
         health_inputs=tmp_path / "inputs",
         sessions=lambda a, b: pd.bdate_range(a, b, tz="UTC"),
@@ -389,6 +391,46 @@ def test_a_run_that_is_not_authorized_yet_but_stopped_is_still_overdue(tmp_path)
     checks = stock_lab_checks(tmp_path / ARTIFACT, allow_synthetic=True, now=late)
     job = next(c for c in checks if c.check_id == "forecast.stock_lab_job")
     assert (job.state, job.reason) == (HealthState.FAILED, "job_overdue")
+
+
+def test_each_watched_tickers_listing_status_reaches_model_health(tmp_path):
+    store, clock = _store(tmp_path, T1)
+    listing = (ListingRow("DEMO_CALM", "NYSE", "Stock", "USD", date(2000, 1, 3), None),)
+    snapshot = store.record_listing(
+        listing, source="synthetic", retrieved_at=T1, data_class=DataClass.SYNTHETIC
+    )
+    store.record_checks(
+        [
+            Classification("DEMO_CALM", SymbolStatus.SUPPORTED, SymbolReason.LISTED_US_STOCK, ""),
+            Classification("OLDCO", SymbolStatus.DELISTED, SymbolReason.COVERAGE_ENDED, ""),
+        ],
+        snapshot_id=snapshot,
+    )
+    document = _day(store, clock, tmp_path, 1, None, tickers=["DEMO_CALM", "OLDCO", "NEWCO"])
+    assert document["symbols"]["tickers"] == [
+        {"ticker": "DEMO_CALM", "status": "supported", "reason": "listed_us_stock"},
+        {"ticker": "OLDCO", "status": "delisted", "reason": "provider_coverage_ended"},
+        {"ticker": "NEWCO", "status": "unverified", "reason": "not_checked"},
+    ]
+    checks = {
+        c.check_id: c
+        for c in stock_lab_checks(tmp_path / "inputs" / ARTIFACT, allow_synthetic=True)
+    }
+    tickers = checks["data.stock_lab_tickers"]
+    assert (tickers.state, tickers.reason, tickers.value) == (
+        HealthState.DEGRADED,
+        "tickers_not_supported",
+        1,
+    )
+    assert "OLDCO (delisted or renamed)" in tickers.summary and "NEWCO" in tickers.summary
+    freshness = checks["data.stock_lab_freshness"]  # nothing stored yet: named as such
+    assert "3 have no stored session at all: DEMO_CALM, OLDCO, NEWCO" in freshness.summary
+
+
+def test_health_knows_every_listing_status_the_store_records():
+    assert stock_lab_health.SYMBOL_STATUSES == {status.value for status in SymbolStatus}
+    assert set(stock_lab_health.SYMBOL_WORDS) == stock_lab_health.NOT_SUPPORTED
+    assert stock_lab_health.NOT_SUPPORTED < stock_lab_health.SYMBOL_STATUSES - {"supported"}
 
 
 def test_the_real_job_reads_as_not_activated_rather_than_degraded(tmp_path):

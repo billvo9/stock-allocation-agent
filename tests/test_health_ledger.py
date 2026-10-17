@@ -28,6 +28,9 @@ CALENDAR = RulesCalendar(nyse_rules.sessions, nyse_rules.CALENDAR_ID)
 # (09:30 New York on the next weekday) and 10-16's has not (Monday 10-19).
 NOW = datetime(2026, 10, 16, 22, tzinfo=UTC)
 INSUFFICIENT = HealthState.INSUFFICIENT_EVIDENCE
+CHAIN_CHECKS = ("forecast.ledger", "forecast.ledger_backup", "forecast.ledger_sessions")
+# The planted records below carry no forecast rows, so the scoring check cannot read them.
+NO_ROWS = (HealthState.UNAVAILABLE, "unrecognized_rows")
 
 
 def _append(path: Path, kind: str, as_of: str | None = None, data_class: str = "real"):
@@ -62,7 +65,7 @@ def _checks(path, *, backup=None, calendar=CALENDAR, now=NOW):
 
 def test_no_ledger_path_is_insufficient_evidence_everywhere():
     checks = _checks(None)
-    assert list(checks) == ["forecast.ledger", "forecast.ledger_backup", "forecast.ledger_sessions"]
+    assert list(checks) == [*CHAIN_CHECKS, "forecast.ledger_scores"]
     for check in checks.values():
         assert (check.state, check.value) == (INSUFFICIENT, None)
     assert checks["forecast.ledger"].reason == "input_not_configured"
@@ -123,7 +126,9 @@ def test_a_complete_real_ledger_with_its_kept_head_is_healthy(tmp_path):
     path = _ledger(tmp_path)
     head = job_ledger.head(job_ledger.read_ledger(path))
     checks = _checks(path, backup=_kept(tmp_path, head))
-    assert {c.state for c in checks.values()} == {HealthState.HEALTHY}
+    assert {checks[check_id].state for check_id in CHAIN_CHECKS} == {HealthState.HEALTHY}
+    scores = checks["forecast.ledger_scores"]
+    assert (scores.state, scores.reason) == NO_ROWS
     integrity = checks["forecast.ledger"]
     assert integrity.value == 2 and integrity.unit == "ledger entries"
     assert f"head hash {head}" in integrity.detail
@@ -159,11 +164,18 @@ def test_a_synthetic_ledger_is_never_healthy_in_the_private_scope(tmp_path):
     path = _ledger(tmp_path, data_class="synthetic")
     head = job_ledger.head(job_ledger.read_ledger(path))
     checks = _checks(path, backup=_kept(tmp_path, head))
-    assert {(c.state, c.reason) for c in checks.values()} == {(INSUFFICIENT, "synthetic_input")}
-    allowed = ledger_checks(
-        path, backup=_kept(tmp_path, head), calendar=CALENDAR, now=NOW, allow_synthetic=True
+    assert {(checks[c].state, checks[c].reason) for c in CHAIN_CHECKS} == {
+        (INSUFFICIENT, "synthetic_input")
+    }
+    assert (checks["forecast.ledger_scores"].state, checks["forecast.ledger_scores"].reason) == (
+        NO_ROWS
     )
-    assert {c.state for c in allowed} == {HealthState.HEALTHY}
+    allowed = _by_id(
+        ledger_checks(
+            path, backup=_kept(tmp_path, head), calendar=CALENDAR, now=NOW, allow_synthetic=True
+        )
+    )
+    assert {allowed[check_id].state for check_id in CHAIN_CHECKS} == {HealthState.HEALTHY}
 
 
 @pytest.mark.parametrize(
@@ -299,3 +311,127 @@ def test_the_health_reader_agrees_with_the_jobs_head(tmp_path):
     integrity = _checks(path)["forecast.ledger"]
     assert job_ledger.head(entries) in integrity.detail
     assert integrity.measured_at == NOW
+
+
+# --- matured forecasts and their scores (forecast.ledger_scores) ---
+
+RECORDED = pd.Timestamp("2026-10-15T23:00:00Z")
+
+
+def _row(asset="VTI", horizon=1, target="total_log_return", status="ok", entry_lag=1) -> dict:
+    return {
+        "asset": asset,
+        "horizon": horizon,
+        "target": target,
+        "entry_lag": entry_lag,
+        "status": status,
+    }
+
+
+def _forecast(path: Path, as_of: str, rows: list[dict], data_class: str = "real"):
+    payload = {"as_of_session": as_of, "data": {"data_class": data_class}, "rows": rows}
+    return job_ledger.append_entry(path, "forecast", payload, recorded_at=RECORDED)
+
+
+def _score(path: Path, entry, row: dict) -> None:
+    score = {
+        "forecast_entry_sha256": entry.entry_sha256,
+        "asset": row["asset"],
+        "horizon": row["horizon"],
+        "target": row["target"],
+    }
+    job_ledger.append_entry(path, "score", {"scores": [score]}, recorded_at=RECORDED)
+
+
+def _scores(path, **kwargs):
+    return _checks(path, **kwargs)["forecast.ledger_scores"]
+
+
+# 2026-10-12 + entry lag 1 + horizon 1 exits on 10-14, due at 09:30 New York on 10-15
+# (before NOW); 2026-10-14 exits on 10-16, due on Monday 10-19 (after NOW).
+DUE, NOT_DUE = "2026-10-12", "2026-10-14"
+
+
+def test_a_matured_row_without_a_score_is_degraded_and_listed(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    _forecast(path, DUE, [_row(), _row(target="log_realized_volatility", status="refused")])
+    _forecast(path, NOT_DUE, [_row()])
+    check = _scores(path)
+    assert (check.state, check.reason, check.value) == (HealthState.DEGRADED, "scores_overdue", 1)
+    assert (
+        "oldest exit session 2026-10-14" in check.summary and "Nothing is filled" in check.summary
+    )
+    assert "2026-10-12 VTI h1 total_log_return (exit 2026-10-14)" in check.detail
+    assert "scored: 0; not due yet: 1; due without a score: 1" in check.detail  # refused row: none
+
+
+def test_every_matured_row_scored_is_healthy(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    entry = _forecast(path, DUE, [_row()])
+    _forecast(path, NOT_DUE, [_row()])
+    _score(path, entry, _row())
+    check = _scores(path)
+    assert (check.state, check.reason, check.value) == (HealthState.HEALTHY, None, 0)
+    assert check.measured_at == NOW and "1 scored, 1 not due yet" in check.summary
+
+
+def test_no_matured_row_is_insufficient_evidence_never_healthy(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    _forecast(path, NOT_DUE, [_row(), _row(asset="AGG")])
+    check = _scores(path)
+    assert (check.state, check.reason, check.value) == (INSUFFICIENT, "none_matured", 0)
+
+
+@pytest.mark.parametrize(
+    "setup, reason",
+    [
+        (lambda path: _forecast(path, DUE, [_row(status="refused")]), "no_forecast_recorded"),
+        (lambda path: _append(path, "refusal", DUE), "no_forecast_recorded"),
+    ],
+)
+def test_a_ledger_without_a_made_row_is_insufficient_evidence(tmp_path, setup, reason):
+    path = tmp_path / "ledger.jsonl"
+    setup(path)
+    check = _scores(path)
+    assert (check.state, check.reason, check.value) == (INSUFFICIENT, reason, None)
+
+
+def test_without_a_calendar_matured_rows_are_not_counted(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    _forecast(path, DUE, [_row()])
+    check = _scores(path, calendar=None)
+    assert (check.state, check.reason, check.value) == (
+        INSUFFICIENT,
+        "calendar_not_configured",
+        None,
+    )
+
+
+def test_a_row_off_the_calendar_or_unreadable_is_unavailable(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    _forecast(path, "2026-10-10", [_row()])  # a Saturday: not a session
+    _forecast(path, DUE, [{"asset": "VTI"}])  # a row without its identity fields
+    check = _scores(path)
+    assert (check.state, check.reason) == (HealthState.UNAVAILABLE, "unrecognized_rows")
+    assert "rows not placed on the calendar: 1; unreadable rows: 1" in check.detail
+
+
+def test_a_synthetic_scored_ledger_is_never_healthy_in_the_private_scope(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    entry = _forecast(path, DUE, [_row()], data_class="synthetic")
+    _score(path, entry, _row())
+    check = _scores(path)
+    assert (check.state, check.reason) == (INSUFFICIENT, "synthetic_input")
+    allowed = _by_id(
+        ledger_checks(path, backup=None, calendar=CALENDAR, now=NOW, allow_synthetic=True)
+    )
+    assert allowed["forecast.ledger_scores"].state is HealthState.HEALTHY
+
+
+def test_a_broken_chain_leaves_scoring_unavailable(tmp_path):
+    path = tmp_path / "ledger.jsonl"
+    _forecast(path, DUE, [_row()])
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text(lines[0].replace('"VTI"', '"AGG"') + "\n", encoding="utf-8")
+    check = _scores(path)
+    assert (check.state, check.value) == (HealthState.UNAVAILABLE, None)

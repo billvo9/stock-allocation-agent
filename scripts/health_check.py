@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pandas as pd
@@ -45,7 +46,7 @@ from stock_agent.forecasting.prospective import ledger
 from stock_agent.forecasting.prospective.config import load_config
 from stock_agent.health import collect
 from stock_agent.health.ledger import RulesCalendar
-from stock_agent.health.model import HealthState
+from stock_agent.health.model import CONDITION_PRECEDENCE, Condition, HealthState
 from stock_agent.health.prospective import ProspectiveSources
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -199,11 +200,16 @@ def main(argv: list[str] | None = None, environment: collect.Environment | None 
         print(f"health_check: refused: {error}", file=sys.stderr)
         return 2
 
-    counts = ", ".join(f"{state} {n}" for state, n in summary.state_counts().items() if n)
+    # Counts by operator condition, so stale, not activated and no evidence stay apart.
+    conditions = Counter(check.condition for check in summary.checks)
+    counts = ", ".join(
+        f"{item.value} {conditions[item]}" for item in CONDITION_PRECEDENCE if conditions[item]
+    )
     print(f"health_check: overall {summary.overall_state.value} ({counts})")
-    for check in summary.checks:
-        if check.state is not HealthState.HEALTHY:
-            print(f"  {check.state.value:<22} {check.check_id}: {check.summary}")
+    rank = {item: index for index, item in enumerate(CONDITION_PRECEDENCE)}
+    for check in sorted(summary.checks, key=lambda check: rank[check.condition]):
+        if check.condition is not Condition.HEALTHY:
+            print(f"  {check.condition.value:<14} {check.check_id}: {check.summary}")
     print(f"health_check: {len(summary.alerts)} informational alerts; summary at {path}")
     return 1 if summary.overall_state is HealthState.FAILED else 0
 
