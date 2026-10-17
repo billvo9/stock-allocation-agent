@@ -32,6 +32,7 @@ from stock_agent.stock_lab.contracts import (
 )
 from stock_agent.stock_lab.features import build_features, latest_row
 from stock_agent.stock_lab.forecast_view import (
+    band_table,
     calibration_status,
     comparison_table,
     cumulative_cards,
@@ -50,6 +51,8 @@ from stock_agent.stock_lab.forecast_view import (
     scored_summary,
     scores_table,
     selection_sentence,
+    size_design_words,
+    size_table,
     staleness,
     streak_profile,
     streak_table,
@@ -285,14 +288,17 @@ def _detail(selected: Selected | None) -> None:
     cards = headline(detail)
     ui.stat_row([ui.Stat(c.label, c.value, caption=c.caption, help=c.help) for c in cards])
     say(words.SHOWN_THROUGH.format(day=detail.shown_through) + " " + rule.words(), "caption")
+    scheme = ui.colour_scheme()
     ui.chart(
-        stock_figures.price_figure(detail.frame, synthetic=synthetic_data),
+        stock_figures.price_figure(detail.frame, synthetic=synthetic_data, scheme=scheme),
         key=f"{PREFIX}price-chart",
     )
     with st.expander(words.AS_TABLE.format(chart=words.PRICE_TITLE)):
         st.table(price_table(detail))
     ui.chart(
-        stock_figures.recent_figure(recent_sessions(detail), band, synthetic=synthetic_data),
+        stock_figures.recent_figure(
+            recent_sessions(detail), band, synthetic=synthetic_data, scheme=scheme
+        ),
         key=f"{PREFIX}recent-chart",
     )
     with st.expander(words.AS_TABLE.format(chart=words.RECENT_TABLE_TITLE)):
@@ -371,7 +377,9 @@ def _forecast(store: StockLabStore, selected: Selected | None) -> None:
     for column, category in zip(columns, ("increase", "stable", "decrease"), strict=True):
         with column:
             ui.chart(
-                stock_figures.five_session_figure(frame, category, synthetic=selected.synthetic),
+                stock_figures.five_session_figure(
+                    frame, category, synthetic=selected.synthetic, scheme=ui.colour_scheme()
+                ),
                 key=f"{PREFIX}five-{category}",
             )
     with st.expander(words.AS_TABLE.format(chart=words.FIVE_TABLE)):
@@ -398,9 +406,10 @@ def _forecast(store: StockLabStore, selected: Selected | None) -> None:
         "caption",
     )
     history = store.forecasts(selected.stock_id)
-    earlier = len(history) - 1
-    if earlier:
-        say(words.SUPERSEDED.format(count=earlier), "caption")
+    replaced = store.superseded_ids()
+    recalculated = sum(f["forecast_id"] in replaced for f in history)
+    if recalculated:
+        say(words.SUPERSEDED.format(count=recalculated), "caption")
     bullets(record["limitations"])
     _record_history(store, selected, history)
 
@@ -417,7 +426,8 @@ def _record_history(store: StockLabStore, selected: Selected, history) -> None:
             ),
             "caption",
         )
-    scored = store.scores(selected.stock_id)
+    replaced = store.superseded_ids()  # a recalculation's predecessor counts once, as itself
+    scored = [s for s in store.scores(selected.stock_id) if s["forecast_id"] not in replaced]
     summary = scored_summary(scored)
     say(
         words.HISTORY_NOTE.format(
@@ -464,7 +474,9 @@ def _reversals(selected: Selected | None) -> None:
         say(sentence)
     marked = length if current == direction else None
     ui.chart(
-        stock_figures.streak_figure(profile, direction, marked, synthetic=selected.synthetic),
+        stock_figures.streak_figure(
+            profile, direction, marked, synthetic=selected.synthetic, scheme=ui.colour_scheme()
+        ),
         key=f"{PREFIX}streak-chart",
     )
     with st.expander(words.AS_TABLE.format(chart=words.STREAK_TABLE)):
@@ -593,24 +605,47 @@ def _diagnostics(store: StockLabStore, selected: Selected | None) -> None:
     frame = reliability_frame(evaluation, [chosen, "B1"])
     for code, category in ((2, "Increase"), (1, "Stable"), (0, "Decrease")):
         status = calibration_status(frame, chosen, code)
-        say(f"**{category}: {status}**")
+        say(
+            words.CALIBRATION_STATUS.format(
+                category=category,
+                status=status,
+                qualifier=words.CALIBRATION_SYNTHETIC if synthetic_data else words.CALIBRATION_REAL,
+            )
+        )
         left, right = st.columns([3, 2])
         with left:
             ui.chart(
                 stock_figures.reliability_figure(
-                    frame, chosen, "B1", code, synthetic=synthetic_data
+                    frame, chosen, "B1", code, synthetic=synthetic_data, scheme=ui.colour_scheme()
                 ),
                 key=f"{PREFIX}reliability-{code}",
             )
         with right:
             ui.chart(
-                stock_figures.forecast_count_figure(frame, chosen, code, synthetic=synthetic_data),
+                stock_figures.forecast_count_figure(
+                    frame, chosen, code, synthetic=synthetic_data, scheme=ui.colour_scheme()
+                ),
                 key=f"{PREFIX}counts-{code}",
             )
     with st.expander(words.FOLDS_TITLE):
         say(words.FOLDS_NOTE, "caption")
         st.table(fold_table(evaluation))
         say(words.CANDIDATES.format(family=", ".join(evaluation["candidate_family"])), "caption")
+    design = size_design_words(evaluation)
+    if design is not None:
+        with st.expander(words.SIZE_TITLE):
+            say(words.SIZE_NOTE.format(**design), "caption")
+            for placebo, note in (
+                ("other_vs_other", words.SIZE_SYMMETRIC),
+                ("other_vs_own", words.SIZE_OWN),
+            ):
+                say(note)
+                st.table(size_table(evaluation, placebo))
+    bands = band_table(evaluation)
+    if len(bands):
+        with st.expander(words.BAND_TITLE):
+            say(words.BAND_NOTE, "caption")
+            st.table(bands)
 
 
 def render(

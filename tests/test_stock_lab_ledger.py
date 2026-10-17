@@ -24,8 +24,9 @@ from stock_agent.health.stock_lab import ARTIFACT, MIN_SCORED, stock_lab_checks
 from stock_agent.stock_lab import forecast as artifact
 from stock_agent.stock_lab import monitoring, scoring, synthetic
 from stock_agent.stock_lab.contracts import DataClass
+from stock_agent.stock_lab.replay import SimulatedClock
 from stock_agent.stock_lab.scores import rps
-from stock_agent.stock_lab.store import DB_NAME, StockLabStore, StoreRefused
+from stock_agent.stock_lab.store import DB_NAME, StockLabStore, StoreRefused, stamp
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -100,26 +101,25 @@ def test_a_session_not_yet_closed_is_pending_and_nothing_is_written_for_it(repla
     assert {s.status for s in pending} == {scoring.PENDING}
 
 
-# A small store: DEMO_CALM's first `known` sessions stored at T0, a forecast made after them,
-# then later sessions downloaded at T1 (optionally re-downloading sessions already known).
-T0 = pd.Timestamp("2026-10-01T22:00:00Z")
-T1 = pd.Timestamp("2026-10-09T22:00:00Z")
+# A small store on a simulated clock: DEMO_CALM's first `known` sessions retrieved just after
+# session 99's close (T0), a forecast made five minutes later as of session 99 (its targets are
+# sessions 100..104), then later sessions downloaded after session 104's close (T1), optionally
+# re-downloading sessions already known.
+AS_OF = 99
+SESSIONS = synthetic.demo_bars("DEMO_CALM")["session"]
+T0 = SESSIONS.iloc[AS_OF] + pd.Timedelta(hours=21)
+MADE = T0 + pd.Timedelta(minutes=5)
+T1 = SESSIONS.iloc[AS_OF + 5] + pd.Timedelta(hours=21)
+PRICES = {"source": "f", "data_class": DataClass.SYNTHETIC, "vintage_note": "v"}
 
 
-def _setup(tmp_path, *, known: int, later: slice, cumulative=(0.2, 0.6, 0.2)):
-    store = StockLabStore(tmp_path / DB_NAME)
-    bars = synthetic.demo_bars("DEMO_CALM")
-    kwargs = {"source": "f", "data_class": DataClass.SYNTHETIC, "vintage_note": "v"}
-    store.record_prices("DEMO_CALM", bars.iloc[:known], retrieved_at=T0, **kwargs)
-    as_of = 99  # forecasts are made as of session 99; targets are sessions 100..104
-    record = artifact.build(
+def _forecast(created_at, *, as_of=AS_OF, cumulative=(0.2, 0.6, 0.2), supersedes=None):
+    return artifact.build(
         symbol="DEMO_CALM",
         data_class="synthetic",
-        as_of_session=bars["session"].iloc[as_of].strftime("%Y-%m-%d"),
-        created_at="2026-10-01T22:05:00.000000Z",
-        target_sessions=[
-            d.strftime("%Y-%m-%d") for d in bars["session"].iloc[as_of + 1 : as_of + 6]
-        ],
+        as_of_session=SESSIONS.iloc[as_of].strftime("%Y-%m-%d"),
+        created_at=stamp(created_at),
+        target_sessions=[d.strftime("%Y-%m-%d") for d in SESSIONS.iloc[as_of + 1 : as_of + 6]],
         daily=[[0.2, 0.6, 0.2]] * 5,
         cumulative=list(cumulative),
         band=0.005,
@@ -133,9 +133,20 @@ def _setup(tmp_path, *, known: int, later: slice, cumulative=(0.2, 0.6, 0.2)):
         calibration_status="test",
         signals={},
         limitations=[],
+        supersedes=supersedes,
     )
+
+
+def _setup(tmp_path, *, known: int, later: slice, cumulative=(0.2, 0.6, 0.2)):
+    clock = SimulatedClock(T0)
+    store = StockLabStore(tmp_path / DB_NAME, clock=clock)
+    bars = synthetic.demo_bars("DEMO_CALM")
+    store.record_prices("DEMO_CALM", bars.iloc[:known], retrieved_at=T0, **PRICES)
+    clock.advance(MADE)
+    record = _forecast(MADE, cumulative=cumulative)
     store.record_forecast(record)
-    store.record_prices("DEMO_CALM", bars.iloc[later], retrieved_at=T1, **kwargs)
+    clock.advance(T1)
+    store.record_prices("DEMO_CALM", bars.iloc[later], retrieved_at=T1, **PRICES)
     return store, bars, record
 
 
@@ -247,7 +258,12 @@ def test_the_replay_fits_only_on_sessions_before_it_starts(replayed):
     for stock_id in synthetic.DEMO_IDS:
         history = store.forecasts(stock_id)
         assert len(history) == 7  # the start and six replay days
-        assert [f["supersedes"] for f in history[1:]] == [f["forecast_id"] for f in history[:-1]]
+        # One forecast per as-of session: a new day's forecast replaces nothing.
+        assert [f["supersedes"] for f in history] == [None] * 7
+        assert len({f["as_of_session"] for f in history}) == 7
+        # The store recorded each one on the simulated clock, when it was made: none is backdated.
+        recorded = store.forecast_recorded_at(stock_id)
+        assert all(recorded[f["forecast_id"]] == f["created_at"] for f in history)
         assert history[-1]["as_of_session"] == "2024-12-31"
         assert all(f["data_class"] == "synthetic" for f in history)
 

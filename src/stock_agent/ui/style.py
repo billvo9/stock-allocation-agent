@@ -180,14 +180,17 @@ def lab_layout(
     y_title: str = "",
     height: int = 380,
     subtitle: str = "",
+    scheme: str = "light",
 ) -> dict:
     """
     `base_layout` in the Portfolio Lab's editorial tokens: Source Sans 3 for
-    every chart label, the off-white chart surface and the warm grid.
+    every chart label, the chart surface and the warm grid of `scheme`
+    ("light" or "dark", `theme.SCHEMES`). Charts render with theme=None, so
+    the page passes the viewer's scheme (`components.colour_scheme`).
     """
 
     layout = base_layout(title, x_title=x_title, y_title=y_title, height=height, subtitle=subtitle)
-    colours, type_ = theme.LAB_COLOURS, theme.LAB_TYPE
+    colours, type_ = theme.LAB_PALETTES[scheme], theme.LAB_TYPE
     layout["font"] = {"family": type_["sans"], "size": type_["chart_px"], "color": colours["text"]}
     layout["title"] = {
         **layout["title"],

@@ -9,13 +9,18 @@ Fields besides the envelope (`inputs`):
 
     job          {status: ok | partial | failed | skipped, started_at,
                   finished_at, expected_session, reason, failed: [ticker],
-                  skipped: [ticker]}
+                  skipped: [ticker], activation (optional): not_authorized
+                  when the run was skipped because the owner's decisions are
+                  not recorded yet}
     freshness    [{ticker, last_session, sessions_behind}]
     scores       {n, rps, baseline_rps, brier, log_loss, observed: {..},
                   predicted: {..}} (n 0 when nothing is scored yet)
     inputs_drift [{feature, psi}]
     traps        {resolved, failed, pending}
-    ledger       {entries, verified: bool, reason}
+    ledger       {entries, verified: bool, reason, head, kept_head (optional):
+                  {state, kept}}, where state is the job's kept head check
+                  (stock_lab.job): match, started, not_configured, unusable,
+                  not_in_ledger or ledger_deleted
     lineage      {estimator, model_version, feature_version, evaluation_run_id}
     schedule     {last_success_at, next_expected_at}
 
@@ -23,17 +28,26 @@ Checks (each says it is an experimental, unvalidated forecaster):
 
     data.stock_lab_freshness  every watched ticker has the expected session
                               (degraded when any is behind; insufficient
-                              evidence without a watchlist)
+                              evidence without a watchlist, or while the
+                              price update is not authorized yet)
     forecast.stock_lab_job    the last daily run (failed is failed, partial
-                              or skipped degraded)
+                              or skipped degraded; a run skipped because it
+                              is not authorized yet is insufficient evidence,
+                              "not activated"; an overdue run is failed)
     forecast.stock_lab_scores rolling RPS against the baseline over scored
                               daily targets (insufficient evidence below
                               MIN_SCORED; degraded when worse than the
                               baseline); never "skill", only tracking
     forecast.stock_lab_drift  the largest input-distribution shift (PSI;
                               degraded above 0.25)
-    forecast.stock_lab_ledger the forecast ledger's hash chain (failed when
-                              it does not verify)
+    forecast.stock_lab_ledger the forecast ledger's hash chain and the kept
+                              head: failed when the chain does not verify,
+                              when the kept head is no longer in it, or when
+                              the store is gone though the kept head shows
+                              it held entries; unavailable when the kept file
+                              is unusable; insufficient evidence when no head
+                              is kept yet (a removed last entry would not
+                              show); healthy only when both hold
 
 In the private scope a synthetic input is at most insufficient_evidence.
 """
@@ -58,6 +72,10 @@ from stock_agent.health.model import Area, Better, Check, HealthState, parse_tim
 
 ARTIFACT = "stock_lab_monitor"
 JOB_STATUSES = frozenset({"ok", "partial", "failed", "skipped"})
+NOT_AUTHORIZED = "not_authorized"
+KEPT_STATES = frozenset(
+    {"match", "started", "not_configured", "unusable", "not_in_ledger", "ledger_deleted"}
+)
 MIN_SCORED = 250
 MIN_SESSIONS = 50  # distinct settled sessions: overlapping targets are not independent
 OVERDUE = 6  # hours past the next expected run before a silent job counts as overdue
@@ -78,6 +96,8 @@ def _parse(artifact: Artifact) -> dict:
     choice(job, "status", JOB_STATUSES)
     for key in ("failed", "skipped"):
         require(job, key, "list")
+    if job.get("activation") is not None:
+        choice(job, "activation", frozenset({NOT_AUTHORIZED}))
     freshness = require(document, "freshness", "list")
     for row in freshness:
         if not isinstance(row, dict):
@@ -93,6 +113,8 @@ def _parse(artifact: Artifact) -> dict:
     ledger = require(document, "ledger", "object")
     if not isinstance(ledger.get("verified"), bool):
         raise FormatError("ledger.verified must be true or false")
+    if ledger.get("kept_head") is not None:
+        choice(require(ledger, "kept_head", "object"), "state", KEPT_STATES)
     require(document, "lineage", "object")
     require(document, "schedule", "object")
     return document
@@ -116,6 +138,49 @@ def _check(check_id, state, reason, *, measured, value, unit, threshold, summary
         detail=detail,
         evidence=evidence,
     )
+
+
+KEPT_FINDINGS = {
+    "match": (HealthState.HEALTHY, None, "The kept copy of the ledger head is in the chain."),
+    "started": (
+        HealthState.INSUFFICIENT_EVIDENCE,
+        "head_started",
+        (
+            "The kept copy of the ledger head was started this run, so a last entry removed "
+            "before now would not show."
+        ),
+    ),
+    "not_configured": (
+        HealthState.INSUFFICIENT_EVIDENCE,
+        "head_not_kept",
+        "No copy of the ledger head is kept, so a removed last entry would not show.",
+    ),
+    "unusable": (
+        HealthState.UNAVAILABLE,
+        "head_unusable",
+        "The kept ledger head file is not a 64-hex hash; it was left as it is.",
+    ),
+    "not_in_ledger": (
+        HealthState.FAILED,
+        "head_not_in_ledger",
+        (
+            "The ledger no longer holds the kept head hash: entries were removed or the store "
+            "was replaced, which the chain alone cannot show."
+        ),
+    ),
+    "ledger_deleted": (
+        HealthState.FAILED,
+        "ledger_deleted",
+        "The Stock Lab store is gone, but the kept ledger head shows it held entries.",
+    ),
+}
+
+
+def _kept_finding(kept: dict | None) -> Finding:
+    """The kept head check's finding; a monitor file without one keeps no head."""
+
+    state = "not_configured" if kept is None else kept["state"]
+    return Finding(*KEPT_FINDINGS[state])
 
 
 def stock_lab_checks(
@@ -171,8 +236,16 @@ def stock_lab_checks(
     behind = [
         r for r in rows if (r.get("sessions_behind") or 0) > 0 or r.get("sessions_behind") is None
     ]
+    not_activated = document["job"].get("activation") == NOT_AUTHORIZED
     if not rows:
         finding = Finding(HealthState.INSUFFICIENT_EVIDENCE, "no_watchlist", "No stock is watched.")
+    elif behind and not_activated:
+        finding = Finding(
+            HealthState.INSUFFICIENT_EVIDENCE,
+            NOT_AUTHORIZED,
+            f"{len(behind)} of {len(rows)} watched stocks lack the expected session, as expected: "
+            "the daily price update is not activated until the owner's decisions are recorded.",
+        )
     elif behind:
         names = ", ".join(r["ticker"] for r in behind[:10])
         finding = Finding(
@@ -225,6 +298,15 @@ def stock_lab_checks(
         ),
     }
     state, reason, text = states[status]
+    if status == "skipped" and job.get("activation") == NOT_AUTHORIZED:
+        state, reason, text = (
+            HealthState.INSUFFICIENT_EVIDENCE,
+            NOT_AUTHORIZED,
+            (
+                "Not activated: the daily update ran its checks and skipped what is not "
+                f"authorized yet ({job.get('reason') or 'no reason recorded'})."
+            ),
+        )
     findings = [Finding(state, reason, text), *common]
     next_expected = document["schedule"].get("next_expected_at")
     if now is not None and next_expected:
@@ -341,18 +423,18 @@ def stock_lab_checks(
     # Ledger
     ledger = document["ledger"]
     if ledger["verified"]:
-        finding = Finding(
+        chain = Finding(
             HealthState.HEALTHY,
             None,
             f"The forecast ledger's {ledger.get('entries', 0)} entries verify.",
         )
     else:
-        finding = Finding(
+        chain = Finding(
             HealthState.FAILED,
             "ledger_broken",
             f"The forecast ledger does not verify: {ledger.get('reason')}.",
         )
-    finding = worst_finding([finding, *common])
+    finding = worst_finding([chain, _kept_finding(ledger.get("kept_head")), *common])
     checks.append(
         _check(
             "forecast.stock_lab_ledger",

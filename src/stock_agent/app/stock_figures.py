@@ -3,11 +3,12 @@ Pure Plotly figure builders for the Stock Probability page. They draw the
 view's frames as given and compute nothing.
 
 Visual language: the three directions keep one identity everywhere (theme
-`DIRECTION_COLOURS`, a colour-blind-safe blue / vermillion / grey, never red
+`DIRECTION_PALETTES`, a colour-blind-safe blue / vermillion / grey, never red
 and green), always paired with a marker shape so colour never carries the
 category alone; gaps stay gaps; a synthetic stock says so in every chart's
 subtitle (a chart can be exported on its own); every chart uses the Lab's
-editorial layout and has a table beside it on the page.
+editorial layout, in the viewer's colour scheme ("light" or "dark") which
+the page passes in, and has a table beside it on the page.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ def _subtitle(text: str, synthetic: bool) -> str:
     return f"{words.SYNTHETIC_CHART} · {text}" if synthetic else text
 
 
-def price_figure(frame: pd.DataFrame, *, synthetic: bool) -> go.Figure:
+def price_figure(frame: pd.DataFrame, *, synthetic: bool, scheme: str = "light") -> go.Figure:
     """The split-consistent price on the last shown session's share basis (log axis)."""
 
     figure = go.Figure(
@@ -33,7 +34,7 @@ def price_figure(frame: pd.DataFrame, *, synthetic: bool) -> go.Figure:
             y=frame["display_level"],
             mode="lines",
             name=words.PRICE_SERIES,
-            line={"color": theme.LAB_COLOURS["text"], "width": 1.5},
+            line={"color": theme.LAB_PALETTES[scheme]["text"], "width": 1.5},
             connectgaps=False,
             hovertemplate="%{x|%Y-%m-%d}: %{y:,.2f}<extra></extra>",
         )
@@ -44,6 +45,7 @@ def price_figure(frame: pd.DataFrame, *, synthetic: bool) -> go.Figure:
         y_title=words.PRICE_AXIS,
         subtitle=_subtitle(words.PRICE_SUBTITLE, synthetic),
         height=360,
+        scheme=scheme,
     )
     layout["yaxis"].update({"type": "log"})
     layout["showlegend"] = False
@@ -51,9 +53,12 @@ def price_figure(frame: pd.DataFrame, *, synthetic: bool) -> go.Figure:
     return figure
 
 
-def recent_figure(recent: pd.DataFrame, band: StableBand, *, synthetic: bool) -> go.Figure:
+def recent_figure(
+    recent: pd.DataFrame, band: StableBand, *, synthetic: bool, scheme: str = "light"
+) -> go.Figure:
     """The last sessions' price returns, one marker per session, by direction."""
 
+    tokens = theme.LAB_PALETTES[scheme]
     figure = go.Figure()
     for category in CATEGORIES:
         rows = recent[recent["category"].eq(category.value)]
@@ -66,7 +71,7 @@ def recent_figure(recent: pd.DataFrame, band: StableBand, *, synthetic: bool) ->
                 marker={
                     "symbol": theme.DIRECTION_MARKERS[category.value],
                     "size": 9,
-                    "color": theme.DIRECTION_COLOURS[category.value],
+                    "color": theme.DIRECTION_PALETTES[scheme][category.value],
                 },
                 hovertemplate="%{x|%Y-%m-%d}: %{y:+.2%}<extra>%{fullData.name}</extra>",
             )
@@ -74,10 +79,10 @@ def recent_figure(recent: pd.DataFrame, band: StableBand, *, synthetic: bool) ->
     for edge, label in ((band.tau, f"+{band.words()[1:]}"), (-band.tau, f"−{band.words()[1:]}")):
         figure.add_hline(
             y=edge,
-            line={"color": style.REFERENCE_LINE, "dash": "dot", "width": 1},
+            line={"color": tokens["reference_line"], "dash": "dot", "width": 1},
             annotation_text=label,
             annotation_position="right",
-            annotation_font={"color": theme.LAB_COLOURS["text_muted"]},
+            annotation_font={"color": tokens["text_muted"]},
         )
     layout = style.lab_layout(
         words.RECENT_TITLE.format(count=len(recent)),
@@ -85,9 +90,10 @@ def recent_figure(recent: pd.DataFrame, band: StableBand, *, synthetic: bool) ->
         y_title="Price return",
         subtitle=_subtitle(words.RECENT_SUBTITLE, synthetic),
         height=340,
+        scheme=scheme,
     )
     layout["yaxis"].update(
-        {"tickformat": ".2%", "zeroline": True, "zerolinecolor": style.REFERENCE_LINE}
+        {"tickformat": ".2%", "zeroline": True, "zerolinecolor": tokens["reference_line"]}
     )
     figure.update_layout(**layout)
     return figure
@@ -96,15 +102,18 @@ def recent_figure(recent: pd.DataFrame, band: StableBand, *, synthetic: bool) ->
 # --- the modelled views (PR 2) ---
 
 
-def five_session_figure(frame: pd.DataFrame, category: str, *, synthetic: bool) -> go.Figure:
+def five_session_figure(
+    frame: pd.DataFrame, category: str, *, synthetic: bool, scheme: str = "light"
+) -> go.Figure:
     """
     One direction's probability for each of the next five sessions: a dot with
     its marker, a bar for the development-test range, and the stock's usual
     rate as a hollow marker on a dotted line. The axis is fixed at 0-100%.
     """
 
+    tokens = theme.LAB_PALETTES[scheme]
     rows = frame[frame["category"] == category].sort_values("horizon")
-    colour = theme.DIRECTION_COLOURS[category]
+    colour = theme.DIRECTION_PALETTES[scheme][category]
     has_range = rows["range_low"].notna()
     figure = go.Figure()
     figure.add_trace(
@@ -113,8 +122,8 @@ def five_session_figure(frame: pd.DataFrame, category: str, *, synthetic: bool) 
             y=rows["usual"],
             mode="lines+markers",
             name=words.USUAL_SERIES,
-            line={"color": style.REFERENCE_LINE, "dash": "dot", "width": 1},
-            marker={"symbol": "circle-open", "size": 9, "color": style.REFERENCE_LINE},
+            line={"color": tokens["reference_line"], "dash": "dot", "width": 1},
+            marker={"symbol": "circle-open", "size": 9, "color": tokens["reference_line"]},
             hovertemplate="Usual: %{y:.0%}<extra></extra>",
         )
     )
@@ -144,6 +153,7 @@ def five_session_figure(frame: pd.DataFrame, category: str, *, synthetic: bool) 
         y_title="Probability",
         subtitle=_subtitle(words.FIVE_SUBTITLE, synthetic),
         height=300,
+        scheme=scheme,
     )
     layout["yaxis"].update({"range": [0, 1], "tickformat": ".0%"})
     layout["xaxis"].update({"tickmode": "array", "tickvals": [1, 2, 3, 4, 5], "range": [0.5, 5.5]})
@@ -153,10 +163,16 @@ def five_session_figure(frame: pd.DataFrame, category: str, *, synthetic: bool) 
 
 
 def streak_figure(
-    profile: pd.DataFrame, direction: str, current: int | None, *, synthetic: bool
+    profile: pd.DataFrame,
+    direction: str,
+    current: int | None,
+    *,
+    synthetic: bool,
+    scheme: str = "light",
 ) -> go.Figure:
     """How often the next session reversed after exactly k sessions in `direction`."""
 
+    tokens = theme.LAB_PALETTES[scheme]
     reverse = "fell" if direction == "increase" else "rose"
     opposite = "decrease" if direction == "increase" else "increase"
     estimate = profile[reverse]
@@ -169,13 +185,15 @@ def streak_figure(
             text=[f"{n:,} cases" for n in profile["events"]],
             textposition="outside",
             marker={
-                "color": theme.DIRECTION_COLOURS[opposite],
+                "color": theme.DIRECTION_PALETTES[scheme][opposite],
+                # Surface lines over the bar colour, as on Explore's calendar years.
                 "pattern": {
                     "shape": ["/" if flag else "" for flag in thin],
-                    "fgcolor": theme.LAB_COLOURS["surface"],
+                    "fillmode": "overlay",
+                    "fgcolor": tokens["surface"],
                 },
                 "line": {
-                    "color": theme.LAB_COLOURS["text"],
+                    "color": tokens["text"],
                     "width": [2.5 if k == current else 0 for k in profile["length"]],
                 },
             },
@@ -184,7 +202,7 @@ def streak_figure(
                 "symmetric": False,
                 "array": (high - estimate).fillna(0),
                 "arrayminus": (estimate - low).fillna(0),
-                "color": theme.LAB_COLOURS["text_muted"],
+                "color": tokens["text_muted"],
             },
             hovertemplate="After %{x} in a row: %{y:.0%}<extra></extra>",
         )
@@ -196,6 +214,7 @@ def streak_figure(
         y_title=f"Next session {reverse}",
         subtitle=_subtitle(words.STREAK_CHART_SUBTITLE, synthetic),
         height=360,
+        scheme=scheme,
     )
     layout["yaxis"].update({"range": [0, 1], "tickformat": ".0%"})
     layout["xaxis"].update({"tickmode": "array", "tickvals": list(profile["length"])})
@@ -205,10 +224,17 @@ def streak_figure(
 
 
 def reliability_figure(
-    frame: pd.DataFrame, model: str, reference: str, category: int, *, synthetic: bool
+    frame: pd.DataFrame,
+    model: str,
+    reference: str,
+    category: int,
+    *,
+    synthetic: bool,
+    scheme: str = "light",
 ) -> go.Figure:
     """Predicted probability against how often it happened, on square 0-1 axes."""
 
+    tokens = theme.LAB_PALETTES[scheme]
     figure = go.Figure()
     figure.add_trace(
         go.Scatter(
@@ -216,12 +242,12 @@ def reliability_figure(
             y=[0, 1],
             mode="lines",
             name=words.DIAGONAL,
-            line={"color": style.REFERENCE_LINE, "dash": "dot", "width": 1},
+            line={"color": tokens["reference_line"], "dash": "dot", "width": 1},
             hoverinfo="skip",
         )
     )
     names = {code: c.value for c, code in zip(CATEGORIES, (2, 1, 0), strict=True)}
-    colour = theme.DIRECTION_COLOURS[names[category]]
+    colour = theme.DIRECTION_PALETTES[scheme][names[category]]
     for name, symbol, fill in ((reference, "circle-open", False), (model, "circle", True)):
         rows = frame[(frame["model"] == name) & (frame["category"] == category)]
         figure.add_trace(
@@ -233,14 +259,14 @@ def reliability_figure(
                 marker={
                     "symbol": symbol,
                     "size": 10,
-                    "color": colour if fill else theme.LAB_COLOURS["text_muted"],
+                    "color": colour if fill else tokens["text_muted"],
                 },
                 error_y={
                     "type": "data",
                     "symmetric": False,
                     "array": rows["ci_high"] - rows["observed"],
                     "arrayminus": rows["observed"] - rows["ci_low"],
-                    "color": colour if fill else theme.LAB_COLOURS["text_muted"],
+                    "color": colour if fill else tokens["text_muted"],
                     "visible": fill,
                 },
                 customdata=rows["n"],
@@ -256,6 +282,7 @@ def reliability_figure(
         y_title="How often it happened",
         subtitle=_subtitle(words.RELIABILITY_SUBTITLE, synthetic),
         height=380,
+        scheme=scheme,
     )
     for axis in ("xaxis", "yaxis"):
         layout[axis].update({"range": [0, 1], "tickformat": ".0%", "constrain": "domain"})
@@ -265,7 +292,7 @@ def reliability_figure(
 
 
 def forecast_count_figure(
-    frame: pd.DataFrame, model: str, category: int, *, synthetic: bool
+    frame: pd.DataFrame, model: str, category: int, *, synthetic: bool, scheme: str = "light"
 ) -> go.Figure:
     """How many development-test forecasts fell in each probability range."""
 
@@ -277,7 +304,7 @@ def forecast_count_figure(
                 for low, high in zip(rows["bin_low"], rows["bin_high"], strict=True)
             ],
             y=rows["n"],
-            marker={"color": theme.LAB_COLOURS["text_muted"]},
+            marker={"color": theme.LAB_PALETTES[scheme]["text_muted"]},
             hovertemplate="%{x}: %{y:,} forecasts<extra></extra>",
         )
     )
@@ -287,6 +314,7 @@ def forecast_count_figure(
         y_title="Forecasts",
         subtitle=_subtitle(words.COUNTS_SUBTITLE, synthetic),
         height=280,
+        scheme=scheme,
     )
     layout["showlegend"] = False
     figure.update_layout(**layout)

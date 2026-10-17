@@ -24,6 +24,12 @@ uses the editorial variant (`LAB_COLOURS`, `LAB_TYPE`, `lab_css()`,
 terracotta accent, Source Serif 4 headings and Source Sans 3 for text,
 tables and controls. Its fonts are bundled OFL files served by the Lab's own
 Streamlit static directory (`FONT_FACES`), so nothing is fetched from a CDN.
+
+The Lab also has a dark colour scheme (`LAB_DARK_COLOURS`,
+`LAB_DARK_STATUS`; `LAB_PALETTES` and `LAB_STATUS` by scheme) with the same
+roles and the same contrast rules. Streamlit's Settings menu offers System,
+Light and Dark; System follows the operating system. The research dashboard
+stays light.
 """
 
 from __future__ import annotations
@@ -86,6 +92,10 @@ CANDIDATE_FALLBACK = ("#8C2D04", "#2B5C8A")
 # 3:1 on the Lab's chart surface, and always paired with a marker or pattern
 # so colour never carries the category alone.
 DIRECTION_COLOURS = {"increase": "#0072B2", "stable": "#6E675C", "decrease": "#C04F00"}
+# On the dark chart surface the blue and the grey fall below 3:1: Okabe-Ito sky
+# blue, a light warm grey and the Okabe-Ito vermillion keep each hue's meaning.
+DIRECTION_DARK_COLOURS = {"increase": "#56B4E9", "stable": "#A39A8C", "decrease": "#D55E00"}
+DIRECTION_PALETTES = {"light": DIRECTION_COLOURS, "dark": DIRECTION_DARK_COLOURS}
 DIRECTION_MARKERS = {"increase": "triangle-up", "stable": "circle", "decrease": "triangle-down"}
 DIRECTION_PATTERNS = {"increase": "", "stable": ".", "decrease": "/"}
 
@@ -114,6 +124,38 @@ LAB_COLOURS = {
     "fold_boundary": "#B3A898",
     "reference_line": "#8A8174",
 }
+# The Lab's dark scheme: the same roles over warm near-black surfaces, cards
+# and charts a step lighter than the canvas, ivory text and a lighter
+# terracotta. Each pair keeps the light scheme's contrast rules (tested), and
+# the chart lines keep their light contrast (reference 3.9:1, fold 2.5:1).
+LAB_DARK_COLOURS = {
+    "canvas": "#1A1815",
+    "surface": "#23201C",
+    "surface_muted": "#2B2823",
+    "border": "#3B362F",
+    "border_strong": "#5A5248",
+    "text": "#F3EEE6",
+    "text_muted": "#CFC6B8",
+    "text_subtle": "#B3A898",
+    "accent": "#DE8C66",
+    "accent_soft": "#3E2A20",
+    "grid": "#34302A",
+    "fold_boundary": "#645C51",
+    "reference_line": "#857C70",
+}
+# Status treatments on the dark scheme: light tones on deep tints of the same
+# hues, still one hue per status and always written out in words.
+LAB_DARK_STATUS = {
+    "VALID": {"fg": "#8FD3A0", "bg": "#1D3024", "border": "#3A6447"},
+    "WARNING": {"fg": "#F2BC72", "bg": "#35281A", "border": "#715430"},
+    "INVALID/BLOCKED": {"fg": "#F4A7AE", "bg": "#3C2023", "border": "#77404A"},
+    "NOTICE": {"fg": "#97CAD7", "bg": "#1C2D32", "border": "#3E606A"},
+    "FUTURE": {"fg": "#CFC6B8", "bg": "#2B2823", "border": "#5A5248"},
+    "UNAVAILABLE": {"fg": "#CDB8EE", "bg": "#2B2339", "border": "#574873"},
+}
+SCHEMES = ("light", "dark")
+LAB_PALETTES = {"light": LAB_COLOURS, "dark": LAB_DARK_COLOURS}
+LAB_STATUS = {"light": STATUS, "dark": LAB_DARK_STATUS}
 # CSS family names for the bundled Source Serif 4 and Source Sans 3. Streamlit
 # writes a font face's family unquoted, and an unquoted family cannot contain a
 # token that starts with a digit ("Source Serif 4" would be dropped by the
@@ -147,54 +189,63 @@ FONT_FACES = (
 )
 
 
-def _streamlit_theme(colours, type_, radius) -> dict[str, dict[str, object]]:
-    status = STATUS
+def _theme_colours(colours, status) -> tuple[dict[str, object], dict[str, object]]:
+    """A palette's Streamlit colour options: the main table and its sidebar table."""
+
+    main = {
+        "primaryColor": colours["accent"],
+        "backgroundColor": colours["canvas"],
+        "secondaryBackgroundColor": colours["surface_muted"],
+        "textColor": colours["text"],
+        "linkColor": colours["accent"],
+        "borderColor": colours["border"],
+        "dataframeBorderColor": colours["border"],
+        "dataframeHeaderBackgroundColor": colours["surface_muted"],
+    }
+    for hue, level in (
+        ("green", "VALID"),
+        ("yellow", "WARNING"),
+        ("orange", "WARNING"),
+        ("red", "INVALID/BLOCKED"),
+        ("blue", "NOTICE"),
+    ):
+        main[f"{hue}Color"] = status[level]["fg"]
+        main[f"{hue}BackgroundColor"] = status[level]["bg"]
+        main[f"{hue}TextColor"] = status[level]["fg"]
+    main["grayColor"] = colours["text_subtle"]
+    main["grayBackgroundColor"] = colours["surface_muted"]
+    main["grayTextColor"] = colours["text_muted"]
+    sidebar = {
+        "backgroundColor": colours["surface_muted"],
+        "secondaryBackgroundColor": colours["surface"],
+        "borderColor": colours["border"],
+    }
+    return main, sidebar
+
+
+def _theme_type(type_, radius) -> dict[str, object]:
+    """Streamlit's type and shape options, the same in every colour scheme."""
+
     return {
-        "theme": {
-            "base": "light",
-            "primaryColor": colours["accent"],
-            "backgroundColor": colours["canvas"],
-            "secondaryBackgroundColor": colours["surface_muted"],
-            "textColor": colours["text"],
-            "linkColor": colours["accent"],
-            "borderColor": colours["border"],
-            "dataframeBorderColor": colours["border"],
-            "dataframeHeaderBackgroundColor": colours["surface_muted"],
-            "showWidgetBorder": True,
-            "baseRadius": radius["control"],
-            "buttonRadius": radius["control"],
-            "font": type_["sans"],
-            "headingFont": type_.get("serif", type_["sans"]),
-            "codeFont": type_["mono"],
-            "baseFontSize": type_["base_px"],
-            "headingFontSizes": type_["heading_sizes"],
-            "headingFontWeights": type_["heading_weights"],
-            "metricValueFontSize": type_["metric_size"],
-            "metricValueFontWeight": type_["metric_weight"],
-            "greenColor": status["VALID"]["fg"],
-            "greenBackgroundColor": status["VALID"]["bg"],
-            "greenTextColor": status["VALID"]["fg"],
-            "yellowColor": status["WARNING"]["fg"],
-            "yellowBackgroundColor": status["WARNING"]["bg"],
-            "yellowTextColor": status["WARNING"]["fg"],
-            "orangeColor": status["WARNING"]["fg"],
-            "orangeBackgroundColor": status["WARNING"]["bg"],
-            "orangeTextColor": status["WARNING"]["fg"],
-            "redColor": status["INVALID/BLOCKED"]["fg"],
-            "redBackgroundColor": status["INVALID/BLOCKED"]["bg"],
-            "redTextColor": status["INVALID/BLOCKED"]["fg"],
-            "blueColor": status["NOTICE"]["fg"],
-            "blueBackgroundColor": status["NOTICE"]["bg"],
-            "blueTextColor": status["NOTICE"]["fg"],
-            "grayColor": colours["text_subtle"],
-            "grayBackgroundColor": colours["surface_muted"],
-            "grayTextColor": colours["text_muted"],
-        },
-        "theme.sidebar": {
-            "backgroundColor": colours["surface_muted"],
-            "secondaryBackgroundColor": colours["surface"],
-            "borderColor": colours["border"],
-        },
+        "showWidgetBorder": True,
+        "baseRadius": radius["control"],
+        "buttonRadius": radius["control"],
+        "font": type_["sans"],
+        "headingFont": type_.get("serif", type_["sans"]),
+        "codeFont": type_["mono"],
+        "baseFontSize": type_["base_px"],
+        "headingFontSizes": type_["heading_sizes"],
+        "headingFontWeights": type_["heading_weights"],
+        "metricValueFontSize": type_["metric_size"],
+        "metricValueFontWeight": type_["metric_weight"],
+    }
+
+
+def _streamlit_theme(colours, type_, radius) -> dict[str, dict[str, object]]:
+    main, sidebar = _theme_colours(colours, STATUS)
+    return {
+        "theme": {"base": "light", **main, **_theme_type(type_, radius)},
+        "theme.sidebar": sidebar,
     }
 
 
@@ -213,11 +264,23 @@ def font_url(face: dict[str, str]) -> str:
 def lab_streamlit_theme() -> dict[str, object]:
     """
     The Portfolio Lab's script-level config tables (src/stock_agent/app/
-    .streamlit/config.toml, checked against this by a test): [theme],
-    [theme.sidebar] and one [[theme.fontFaces]] table per bundled font file.
+    .streamlit/config.toml, checked against this by a test): [theme] with
+    type and shape only, every colour in both [theme.light] and [theme.dark]
+    (and their sidebar tables), and one [[theme.fontFaces]] table per bundled
+    font file.
+
+    With both variants, Streamlit offers System, Light and Dark in Settings,
+    merging [theme] with the chosen variant and forcing its base, so [theme]
+    sets no base. Every colour is in both variants: one missing from a
+    variant would fall back to [theme], which the repository's config (the
+    research theme) fills underneath the Lab's.
     """
 
-    tables: dict[str, object] = dict(_streamlit_theme(LAB_COLOURS, LAB_TYPE, LAB_RADIUS))
+    tables: dict[str, object] = {"theme": _theme_type(LAB_TYPE, LAB_RADIUS)}
+    for scheme in SCHEMES:
+        main, sidebar = _theme_colours(LAB_PALETTES[scheme], LAB_STATUS[scheme])
+        tables[f"theme.{scheme}"] = main
+        tables[f"theme.{scheme}.sidebar"] = sidebar
     tables["theme.fontFaces"] = [
         {
             "family": face["family"],
@@ -230,7 +293,7 @@ def lab_streamlit_theme() -> dict[str, object]:
     return tables
 
 
-def _variables(colours=COLOURS, radius=RADIUS, mono=TYPE["mono"]) -> str:
+def _variables(colours=COLOURS, radius=RADIUS, mono=TYPE["mono"], status=STATUS) -> str:
     pairs = {
         **{f"--sa-{name.replace('_', '-')}": value for name, value in colours.items()},
         "--sa-radius-card": radius["card"],
@@ -240,7 +303,7 @@ def _variables(colours=COLOURS, radius=RADIUS, mono=TYPE["mono"]) -> str:
         "--sa-ease": MOTION["easing"],
         "--sa-mono": mono,
     }
-    for level, tones in STATUS.items():
+    for level, tones in status.items():
         slug = level.split("/")[-1].lower()
         for part, value in tones.items():
             pairs[f"--sa-{slug}-{part}"] = value
@@ -259,7 +322,7 @@ def css() -> str:
     return _shared_css(COLOURS, RADIUS, CONTENT_MAX_WIDTH, TYPE["mono"])
 
 
-def _shared_css(colours, radius, max_width: str, mono: str) -> str:
+def _shared_css(colours, radius, max_width: str, mono: str, status=STATUS) -> str:
     """The rules both variants share, over one token set."""
 
     pills = "\n".join(
@@ -271,7 +334,7 @@ def _shared_css(colours, radius, max_width: str, mono: str) -> str:
     space = {name: f"{value}px" for name, value in SPACE.items()}
     return f"""
 :root {{
-{_variables(colours, radius, mono)}
+{_variables(colours, radius, mono, status)}
 }}
 [data-testid="stMainBlockContainer"] {{ max-width: {max_width}; }}
 h1, h2, h3 {{ letter-spacing: -0.012em; }}
@@ -366,15 +429,32 @@ code {{ font-family: var(--sa-mono); }}
 PHONE_MAX_WIDTH = "640px"
 
 
+def _light_dark(light: str, dark: str) -> str:
+    return f"light-dark({light}, {dark})"
+
+
 def lab_css() -> str:
     """
     The Portfolio Lab's CSS layer: the shared rules over the editorial tokens,
     then the editorial type, hero, lists, links and navigation. Every custom
     motion is opacity only; under prefers-reduced-motion all motion stops,
     Streamlit's own widget transitions included.
+
+    Every colour variable holds both schemes as `light-dark(light, dark)`.
+    Streamlit sets `color-scheme` on its app and sidebar containers from the
+    active theme, and light-dark() resolves against it where a variable is
+    used, so the layer follows a Settings choice (System, Light or Dark) at
+    once, with no rerun and never against Streamlit's own widgets.
     """
 
-    shared = _shared_css(LAB_COLOURS, LAB_RADIUS, LAB_CONTENT_MAX_WIDTH, LAB_TYPE["mono"])
+    colours = {name: _light_dark(LAB_COLOURS[name], LAB_DARK_COLOURS[name]) for name in LAB_COLOURS}
+    status = {
+        level: {
+            part: _light_dark(tone, LAB_DARK_STATUS[level][part]) for part, tone in tones.items()
+        }
+        for level, tones in STATUS.items()
+    }
+    shared = _shared_css(colours, LAB_RADIUS, LAB_CONTENT_MAX_WIDTH, LAB_TYPE["mono"], status)
     space = {name: f"{value}px" for name, value in SPACE.items()}
     return f"""
 {shared}
@@ -454,6 +534,14 @@ h4, h5, h6 {{ font-family: var(--sa-sans); }}
   border: 1px solid var(--sa-border-strong);
 }}
 [data-testid="stMultiSelectTagsContainer"] [data-tag] svg {{ fill: var(--sa-accent); }}
+/* Streamlit draws an unselected radio's ring in borderColor, 1.5:1 at most on
+   these surfaces, below WCAG 1.4.11's 3:1 for a control. Redraw only the enabled,
+   unselected rings, in the subtle text token (5.3:1 or more on every surface
+   in both schemes); every other widget border keeps borderColor. */
+[data-testid="stRadioOption"]:not([data-selected]):not([data-disabled])
+  > div > div:first-child {{
+  background-color: var(--sa-text-subtle);
+}}
 [data-testid="stTable"] th {{ color: var(--sa-text-muted); font-weight: 600; }}
 [data-testid="stTable"] td, [data-testid="stTable"] th {{ vertical-align: top; }}
 /* Streamlit's navigation links drop the outline on focus: restore a visible ring. */

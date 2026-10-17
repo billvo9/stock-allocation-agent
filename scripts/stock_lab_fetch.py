@@ -19,13 +19,18 @@ Scope (one run):
                  open, high, low, close, volume, divCash and splitFactor. No
                  date after 2024 is requested.
 
-Read-only by default: without --store it prints aggregates only (row counts,
-first and last session, missing NYSE sessions, splits and ex-dividend
-counts), never a price or the key. With --store it writes the whole listing
-snapshot (every row, for the classification's audit trail), the checks and
-one write-once price batch per ticker into the private Stock Lab store (stock_lab.store; outside the repository). Sessions
-of the NYSE calendar that Tiingo did not serve are stored as rows without
-prices, so a gap stays a gap.
+Read-only by default: without --store it prints the coverage and
+corporate-action audit of every ticker (stock_lab.audit: coverage, missing
+NYSE sessions, null fields, low/high sanity, every split with its raw and
+split-consistent close ratios and a verdict, ex-dividend dates and the
+largest yield, large moves without a split, unavailable returns), never a
+price series or the key, and writes nothing. With --store it writes the
+whole listing snapshot (every row, for the classification's audit trail),
+the checks and one write-once price batch per ticker into the private Stock
+Lab store (stock_lab.store; outside the repository), only for tickers whose
+audit is ready (the others are reported, not stored). Sessions of the NYSE
+calendar that Tiingo did not serve are stored as rows without prices, so a
+gap stays a gap.
 
 Usage:
     .venv/bin/python scripts/stock_lab_fetch.py                         # the plan only
@@ -47,6 +52,7 @@ import pandas as pd
 
 from stock_agent.calendars import nyse
 from stock_agent.data.vendors.tiingo import TiingoRequestFailed
+from stock_agent.stock_lab.audit import audit_bars, audit_lines
 from stock_agent.stock_lab.contracts import DEVELOPMENT_END, DataClass, SymbolStatus
 from stock_agent.stock_lab.store import StockLabStore
 from stock_agent.stock_lab.symbols import classify, parse_ticker, refused
@@ -57,6 +63,7 @@ from stock_agent.stock_lab.tiingo import (
     NotAuthorized,
     StockAdapter,
     StockDataRefused,
+    prices_url,
 )
 
 HISTORY_START = date(2003, 1, 2)  # the frozen NYSE calendar's first session
@@ -87,13 +94,21 @@ def on_nyse_calendar(bars: pd.DataFrame) -> tuple[pd.DataFrame, int]:
 
 def plan(tickers: Sequence[str], out: TextIO, store: StockLabStore) -> None:
     print("Stock Lab fetch plan (no request made; pass --authorized to run):", file=out)
-    print(f"  1 request: the supported-tickers listing ({LISTING_URL}; no key sent)", file=out)
+    saved = ", ".join(tickers) or "(none saved)"
+    print(f"watchlist ({len(tickers)} of at most {MAX_TICKERS}): {saved}", file=out)
+    print("requests, in order (each at least 2 seconds apart; the key is sent only to", file=out)
+    print("api.tiingo.com, in the Authorization header, never in a URL):", file=out)
+    print(f"  1. GET {LISTING_URL} (no key)", file=out)
+    for number, ticker in enumerate(tickers, start=2):
+        print(f"  {number}. GET {prices_url(ticker, HISTORY_START, DEVELOPMENT_END)}", file=out)
+    print("  (a ticker the listing does not classify as a supported US stock is skipped)", file=out)
     print(
-        f"  up to {len(tickers)} request(s): daily prices {HISTORY_START} to {DEVELOPMENT_END} "
-        f"for each supported ticker: {', '.join(tickers) or '(none saved)'}",
-        file=out,
+        "local side effects of --authorized without --store: none (no record is written;", file=out
     )
-    print(f"  storage: nothing without --store; with --store, {store.path}", file=out)
+    print(f"  the watchlist is read from {store.path}, which may create SQLite's", file=out)
+    print("  -shm/-wal companion files beside it)", file=out)
+    print("with --store (a separate approval): the listing, the checks and one batch per", file=out)
+    print(f"  ticker whose audit is ready are written to {store.path}", file=out)
 
 
 def main(
@@ -147,6 +162,7 @@ def main(
             for ticker in tickers
         ]
         snapshot_id = None
+        audited: list[dict] = []
         if args.store:
             snapshot_id = store.record_listing(
                 listing.rows,
@@ -162,17 +178,17 @@ def main(
             if check.status is not SymbolStatus.SUPPORTED:
                 continue
             response = adapter.prices(check.ticker, HISTORY_START, DEVELOPMENT_END)
-            bars, missing = on_nyse_calendar(response.bars)
+            bars, _ = on_nyse_calendar(response.bars)
             if bars.empty:
                 print(f"{check.ticker}: no rows served", file=out)
                 continue
-            print(
-                f"{check.ticker}: {len(response.bars)} rows, {bars['session'].iloc[0].date()} to "
-                f"{bars['session'].iloc[-1].date()}, {missing} missing NYSE sessions, "
-                f"{int((bars['split_factor'] != 1).sum())} splits, "
-                f"{int((bars['div_cash'] > 0).sum())} ex-dividend sessions",
-                file=out,
-            )
+            report = audit_bars(check.ticker, bars)
+            for line in audit_lines(report):
+                print(line, file=out)
+            audited.append(report)
+            if args.store and not report["ready"]:
+                print("  not stored: the audit needs review first", file=out)
+                continue
             if args.store:
                 batch = store.record_prices(
                     check.ticker,
@@ -186,6 +202,15 @@ def main(
     except (TiingoRequestFailed, StockDataRefused, NotAuthorized) as error:
         print(f"stopped: {error}", file=out)
         return 1
+    ready = [r["ticker"] for r in audited if r["ready"]]
+    review = [r["ticker"] for r in audited if not r["ready"]]
+    print(
+        f"audit summary: {len(ready)} ready ({', '.join(ready) or 'none'}); "
+        f"{len(review)} to review ({', '.join(review) or 'none'})",
+        file=out,
+    )
+    if not args.store:
+        print("nothing was written; storing is a separate, explicit step (--store)", file=out)
     return 0
 
 

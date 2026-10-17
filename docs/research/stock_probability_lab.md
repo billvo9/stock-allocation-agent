@@ -212,6 +212,11 @@ hard-coded.
 - The B2 design changed after review. A Dirichlet transition chain fitted on
   full-history counts converges to its long-run distribution within 2–3
   steps, so it would collapse to B0 for h ≥ 2.
+- Per-stock tilts δ_i in B2 are not built. The only admissible evidence of
+  a calibration benefit is the real development evaluation (A3, pending).
+  A synthetic panel has whatever streak structure its generator put in, and
+  a variant added after seeing results counts against the multiplicity
+  budget.
 - Gradient-boosted trees and HMMs are added only if walk-forward testing
   shows an incremental benefit.
 
@@ -253,8 +258,42 @@ hard-coded.
   - Newey-West with lag 10 (at least h − 1), and a circular block bootstrap
     (block 20) as a second view.
   - Holm correction across the pre-registered comparisons against B1.
-  - Not built yet (follow-ups): the fold-block t, and simulated size checks
-    of each method on this panel.
+  - Beside Newey-West, reported only: the fold-block t (a t-test on the
+    test years' means, t(folds − 1)) and the circular block bootstrap's
+    one-sided p. Newey-West still decides; `size_simulation.one_sided_tests`
+    computes all three for every comparison.
+  - **Simulated size** (`size_simulation`, recorded with every evaluation).
+    No-skill panels have the evaluation's own number of stocks and test
+    years (after a three-year warm-up). Returns are independent over time
+    and equicorrelated across stocks (ρ = 0.4, Student-t₅, 1.5% daily).
+    The challenger is a placebo: B1 read from the next stock's history,
+    at each pre-registered half-life. It is compared with two references.
+    - Another stock's B1 (the previous one). The differential is
+      symmetric, so its size measures the tests alone.
+    - The stock's own B1. That one keeps learning from the very sessions it
+      is scored on, and the placebo does not. The real comparisons have
+      this imbalance too.
+    - Each date's differential has mean exactly zero under both (checked:
+      within one Monte Carlo SE of zero everywhere).
+
+    At the watchlist's shape (20 stocks, 15 test years, 1,000 panels,
+    Monte Carlo SE about 0.7 pp), the one-sided false-positive rate at a
+    nominal 5% was:
+
+    | Placebo | Newey-West (lag 10) | Fold-block t | Block bootstrap |
+    |---|---|---|---|
+    | Symmetric | 6.0–6.4% | 5.2–5.6% | 5.2–5.8% |
+    | Own history | 6.5–8.1% | 6.2–8.0% | 5.9–7.2% |
+
+    - Newey-West at lag 10 is mildly liberal: its variance is about 16%
+      too small.
+    - The fold-block t holds its size.
+    - The learning imbalance adds 1–3 pp to every test, in the
+      challenger's favour, most at H = 252.
+    - On the three demo stocks over three years, every test reaches 8–10%
+      under the own-history placebo, and Newey-West 6–7.5% under the
+      symmetric one.
+    - Which test decides is owner decision A7.
 - **Selection.**
   - Keep B1 unless a challenger beats it (Holm).
   - Then take the simplest such challenger (order B0, B1, B3, B2, M1).
@@ -271,8 +310,15 @@ hard-coded.
   development-test forecasts in the same range came true. Its Jeffreys
   interval counts distinct dates, not rows, because rows on one date move
   together.
-- **Sensitivity.** B1's score at every half-life is reported and never used
-  for selection. Sensitivity to τ is a follow-up.
+- **Sensitivity.** Reported, never used for selection:
+  - B1's score at every half-life.
+  - B1 and B3 re-run at τ = 0.25% and 1% on the same folds and rows. Each
+    band uses its own categories and targets, B1's half-life is chosen
+    inside each fold by the same rule, and B3 uses the same
+    standardized-return distributions (z = r/σ does not depend on τ).
+  - RPS levels are not comparable across bands, because a wider band makes
+    Stable more common. Compare B3 − B1 within a band.
+  - The τ variants count as variants tried.
 
 ### Expected power
 
@@ -308,7 +354,28 @@ Daily direction is nearly unpredictable.
   - a decline of at least 10% from the 60-session high;
   - a rebound of at least 5% off the 20-session low;
   - a close above the prior 20-session closing high;
-  - failure: a close below that high × (1 − f) within W = 10 sessions.
+  - failure: a close below that high × (1 − f) within W = 10 sessions,
+    with f = 2% (`TrapRule.failure_margin`; awaiting the owner's
+    confirmation before real-data flags, below).
+
+  The failure rule exactly, on the split-consistent price L:
+
+  ```text
+  H_d       = max(L_(d-20), ..., L_(d-1))          the prior 20-session closing high
+  breakout  : L_d > H_d
+  failed    : min(L_(d+1), ..., L_(d+10)) < H_d * (1 - f)
+  unresolved: fewer than 10 sessions after d have closed (or a gap, or the cutoff)
+  ```
+
+  Example (f = 2%). The prior 20-session high close is H_d = 100.00, and
+  the breakout session closes at 102.50. The failure level is
+  100.00 × 0.98 = 98.00. If the next closes are 101.20, 99.60, 97.85, ...,
+  the third (97.85 < 98.00) confirms a failed breakout, a bull trap. Had
+  the lowest of the ten closes been 98.40, the breakout would have held.
+  A smaller f calls more breakouts failures; for a stock with daily
+  volatility σ, a 2% margin is about 2%/σ typical daily moves (two for a
+  1%-volatility stock, under one for a 3% one). That is why the base rate
+  is volatility-matched.
 - A present-day setup is "unresolved" until its window closes, never
   "confirmed".
 - Breakouts are declustered first, and every setup is one of those
@@ -336,7 +403,8 @@ Daily direction is nearly unpredictable.
 | `scores` | Brier, log loss, RPS, the moving and direction decompositions, the Jeffreys interval, reliability bins, the calibration line, Holm |
 | `reversal` | streak and move events, outcomes over 1/3/5 sessions, regimes, Kaplan-Meier durations |
 | `traps` | the registered rule, statuses, base rate, lift, precision, recall and false-alarm rate, bear traps |
-| `evaluation` | the protocol in the module docstring (yearly folds through 2024, development mode) and a strict-JSON record |
+| `evaluation` | the protocol in the module docstring (yearly folds through 2024, development mode) and a strict-JSON record (schema 1.1 adds the fold-block t and bootstrap p per comparison, `sensitivity_band` and `size_simulation`) |
+| `size_simulation` | the three one-sided tests used for every comparison, and their simulated size on no-skill panels shaped like the evaluation's (two placebos, every pre-registered half-life; seeded and cached per design) |
 | `predict` and `forecast` | the frozen final fit and the checked `StockProbabilityForecast` artifact |
 | `forecast_view` | the page's modelled views, computed from stored records only |
 
@@ -364,6 +432,11 @@ is expected there. On independent, identically distributed synthetic
 returns, the test asserts that no streak skill is selected (B2 is not
 significant after Holm).
 
+The Model diagnostics tab shows each comparison's three p-values, and two
+expanders: the simulated sizes for both placebos, and the band sensitivity.
+On the demo stocks, B3 − B1 was −0.0005, −0.0009 and −0.0012 at τ = 0.25%,
+0.5% and 1%, with Stable shares of 21%, 39% and 64%.
+
 ## 6. Forecast artifact and ledger (PR 3)
 
 `StockProbabilityForecast` v1 is a versioned, write-once record. Each one
@@ -381,7 +454,20 @@ carries:
 How the ledger works:
 
 - A recalculation is a new record that names the one it supersedes; nothing
-  is overwritten.
+  is overwritten. There is at most one live forecast per stock and as-of
+  session. The superseded forecast must exist for the same stock and
+  session, and only the live one counts in the rolling scores. A new day's
+  forecast is a new record, not a recalculation.
+- A forecast is recorded when it is made, and the store refuses any other
+  timing:
+  - `created_at` must be within five minutes of the store's clock;
+  - it cannot be earlier than any stored retrieval of its stock;
+  - it must come before its first target session opens (09:30 New York).
+- Scoring judges what a forecast could have seen by the later of its
+  `created_at` and the time the store recorded it. A target whose sessions
+  had opened by then is never scored.
+- A copy of the ledger head is kept outside the database. It shows a removed
+  last entry, which the hash chain alone cannot.
 - Scores are appended as sessions close; the original probabilities are
   never rewritten.
 - A future PPO policy may read these records only through an approved
@@ -426,8 +512,10 @@ How the ledger works:
   invented.
 - **Until decisions A1, A2 and A4:**
   - the real job scores whatever is stored;
-  - it records itself as `skipped`, with the reason, and writes its Model
-    Health input;
+  - it records itself as `skipped` and not yet authorized, with the reason,
+    and writes its Model Health input. Health reads that as not activated
+    (insufficient evidence), never as a degraded job. A job that stops
+    running still fails as overdue;
   - it refuses the real-update flags.
 - **The price update and real forecasts** are built after those approvals.
 
@@ -437,6 +525,8 @@ How the ledger works:
 - Models are fitted with every outcome censored at the replay's start.
 - Each day: the close arrives, closed targets are scored, and the day's
   forecasts are made.
+- The store runs on the replay's simulated clock, so every record carries
+  the simulated time at which it was written, and nothing is backdated.
 - This demonstrates the forecast-record-score loop without any real stock
   and without any model seeing what it is scored on.
 
@@ -467,41 +557,70 @@ How the ledger works:
 - The history shows each stored forecast's next-session probabilities as
   recorded, beside what happened and its score.
 
-## 7. Owner decisions needed
+## 7. Owner decisions (recorded 2026-10-16)
 
-| Id | Decision | Needed before |
-|---|---|---|
-| A1 | Live Tiingo data (authorization request below) | the first real data |
-| A2 | Models frozen on data through 2024. At forecast time, the trailing 252 sessions (reaching into the sealed period) are used **only as inference inputs**, never to train, calibrate, select or score | real forecasts |
-| A3 | Walk-forward evaluation of the watchlist stocks on pre-2025 history, labelled hindsight-selected and non-confirmatory. This is an exception to the 2026-10-13 "no new real-stock scoring experiments" for this feature only | real-stock scores |
-| A4 | Recording real forecasts in the private ledger and scoring them only on outcomes after each forecast's creation, separate from OD16 | PR 3 on real data |
-| A5 | Definitions: τ·√5 for the five-session total; a Stable session ends a streak by default; the bull-trap parameters | final confirmation |
-| A6 | Whether real prices after 2024 may be shown on the page (descriptive statistics in the sealed period). Default: no; the page stops at 2024-12-31 | showing recent real history |
+The owner answered A1-A6 on 2026-10-16. They are given here in paraphrase,
+with the conditions that bind the implementation. A7 was raised afterwards
+by the simulated size checks (section 5) and is still open.
 
-### A1, the authorization request
+| Id | Decision | Conditions | Status |
+|---|---|---|---|
+| A1 | Tiingo Starter and the private watchlist store: approved | **Staged:** inspection and persistence are separate. The first live operation is the read-only command below, run only after the owner confirms the token is configured and authorizes that exact command. The 30-ticker cap holds. No vendor-adjusted fields, no unauthorized history, no redistribution. After a successful coverage and corporate-action audit, storage (`--store`) is a separate approval. | awaiting the token and authorization of the read-only command |
+| A2 | Trailing 252-session inference window: approved in principle | Fit, tune, select and calibrate only on eligible pre-2025 data. Recent observations from the protected period serve only as inputs to a previously frozen model, kept in a separately controlled prospective/inference store. Protected outcomes are never used for retrospective selection, training or backtest claims. The sealed ETF period and its protections are unchanged. Strict as-of and retrieval-time records. A scoped authorization, not an unlocking of the 2025+ holdout. | to build: the inference store and reader |
+| A3 | Exploratory walk-forward evaluation of the saved watchlist on pre-2025 history: approved | Marked hindsight-selected and non-confirmatory. Every challenger is compared with B0/B1, with proper scores, calibration, stock-level coverage, uncertainty and multiple-comparison treatment. No claim of profitable trading or reliable direction. | runnable after storage (`scripts/stock_lab_evaluate.py --real --authorized-evaluation`) |
+| A4 | The write-once forecast and scoring protocol: approved | Activation needs successful data validation, a frozen registered model, verified decision timestamps and a successful end-to-end dry run. No backdating, rewriting of probabilities, or scoring of outcomes that existed before a forecast. Daily updates record skipped tickers, stale observations, model failures and missing outcomes in Model Health. Separate from ETF OD16 and PPO promotion. | protocol built; activation pending |
+| A5 | Version-1 definitions: approved | Daily band ±0.5%. Five-session band ±0.5% × √5 ≈ ±1.12%, shown as different. A Stable session ends a streak by default, and the pause rule is identified whenever used. The bull-trap setup (10% drawdown, 5% rebound, prior 20-session high, 10-session window) may be used for research. **The failure margin f awaits confirmation** (formula and example in section 5) before real-data risk flags. Price returns stay distinct from total returns, and ex-dividend moves are identified. | f to confirm |
+| A6 | Recent observed prices on the private dashboard: supported | Only after the retrieval and storage permissions. An isolated descriptive reader that cannot expose protected outcomes to development, training, tuning or backtesting. Recent observed history is kept distinct from research evidence, and current forecasts from completed outcomes. The holdout policies are not modified. | to build after A1 storage and the A2 store |
+| A7 | Which test decides "beats B1": open | Newey-West (lag 10, as pre-registered; 6–8% simulated size at a nominal 5%), the fold-block t (closest to nominal in simulation, as on the ETF track), or Newey-West against a simulated critical value | needed before the A3 evaluation selects |
 
-Approve one owner-run command on this computer:
+### A1 step 1: the read-only audit (awaiting the owner's authorization)
+
+```bash
+.venv/bin/python scripts/stock_lab_fetch.py --authorized
+```
+
+- **Before it:** save up to 30 tickers in the Lab's watchlist, set
+  `TIINGO_API_KEY` in the shell, and run the command without
+  `--authorized`. That prints the exact plan (the ticker list and every
+  request URL) and makes no request.
+- **Requests, in order, at least 2 seconds apart, at most 1 + N for N
+  tickers:**
+  1. `GET https://apimedia.tiingo.com/docs/tiingo/daily/supported_tickers.zip`,
+     with no key.
+  2. For each watched ticker the listing classifies as a supported US stock:
+     `GET https://api.tiingo.com/tiingo/daily/<TICKER>/prices?startDate=2003-01-02&endDate=2024-12-31&format=json&resampleFreq=daily&columns=date,open,high,low,close,volume,divCash,splitFactor`,
+     with the key only in the Authorization header.
+- **Output:** the listing's size and each ticker's classification, then each
+  ticker's coverage and corporate-action audit (`stock_lab.audit`):
+  - sessions served and missing;
+  - null fields and low/high sanity;
+  - every split with its raw and split-consistent close ratios and a
+    verdict;
+  - ex-dividend dates and the largest yield;
+  - large moves without a split;
+  - unavailable returns, and a ready / review line.
+
+  A final summary lists which tickers are ready. No price series and no key
+  is printed.
+- **Local side effects:** no record is written. Reading the watchlist may
+  create SQLite's `-shm`/`-wal` companion files beside the store.
+
+### A1 step 2: storage (a separate approval, after a good audit)
 
 ```bash
 .venv/bin/python scripts/stock_lab_fetch.py --authorized --store
 ```
 
-Exact scope:
-
-- Tiingo Starter, with the key in `TIINGO_API_KEY`.
-- 1 request for the supported-tickers listing (no key sent). It is used
-  only to classify tickers.
-- 1 prices request per supported ticker of the saved watchlist (at most 30;
-  a longer list is refused before any request; the script has no option to
-  add other tickers or raise the cap) for 2003-01-02 to 2024-12-31: raw open,
-  high, low, close, volume, divCash and splitFactor. No adjusted fields and
-  no date after 2024.
-- Writes into the private store only: the whole listing (every row, kept as
-  the classification's audit trail), the checks, and one write-once batch
-  per ticker.
-
-Run it without `--store` first for a read-only check, or with no flags for
-the plan.
+- It repeats the same requests and the audit.
+- It writes the listing, the checks and one write-once batch per ticker
+  **whose audit is ready**. A ticker that needs review is reported and not
+  stored.
+- There is deliberately no override yet. A large move without a split can
+  be a real move or an unrecorded split (an unrecorded 2-for-1 split reads
+  as a fall of about 50%), and only the owner can tell which. If the audit
+  holds any ticker for review, the storage request will list each one with
+  its finding and propose how to handle it: drop it from the watchlist, or
+  store it with the finding recorded.
 
 ## 8. Learning notes
 
@@ -514,6 +633,9 @@ the plan.
     observations carry.
   - Fréchet bounds give what marginals allow for joints.
   - Kaplan-Meier estimates durations when some runs are unfinished.
+  - A test's size is its false-positive rate when the null is true. It is
+    measured by simulation on panels where the null holds by construction,
+    not assumed from the test's asymptotics.
 - **Assumptions.** Direction is close to independent day to day;
   volatility clusters; censoring at the end of the data is unrelated to
   duration.
@@ -537,7 +659,9 @@ the plan.
   Diebold-Mariano and block bootstrap tests, reliability diagrams with the
   Murphy decomposition, and prospective scoring.
 - **What to learn next.** The Murphy decomposition of the Brier score;
-  discrete-time survival hazards; Hansen's SPA test for many comparisons.
+  discrete-time survival hazards; Hansen's SPA test for many comparisons;
+  fixed-b asymptotics for Newey-West, which explain why a short lag
+  over-rejects.
 - **Exercise.** Show that under the "breaks" rule the per-session view
   reports, at each run's last session, that run's length. That is the
   property tested in `test_every_run_row_matches_the_per_session_view_at_its_end`.

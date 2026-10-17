@@ -15,12 +15,37 @@ What a run records, per watched stock:
     inputs_drift    PSI of a few inputs, recent sessions against development
     traps           bull-trap setups since the first forecast: resolved
                     (failed or held) and still pending
-    ledger          whether the hash chain verifies
+    ledger          whether the hash chain verifies, its head, and the kept
+                    head check (`check_kept_head`)
     lineage         the latest forecast's estimator and versions
+
+The kept head. A hash chain shows an edited or removed middle entry, but
+not a removed last entry. So the job keeps the head hash in a private file
+outside the store's database file (`kept_head`, mode 0600; the daily script
+defaults to one beside it, and a copy kept elsewhere is stronger). Each run
+looks for the kept hash in the chain, records the result, and replaces the
+file only when the chain verifies and the kept hash was found:
+
+    match           the kept hash is in the chain (nothing was removed)
+    started         no kept file yet: one is started now
+    not_configured  no kept file was given
+    unusable        the file is not a 64-hex hash (left as it is)
+    not_in_ledger   the chain no longer holds the kept hash: entries were
+                    removed or the store was replaced (left as it is)
+    ledger_deleted  the store is gone, but the kept hash shows it held
+                    entries (left as it is)
+
+A mismatch keeps the old file, so the failure stays until the owner looks.
+
+Activation. A run skipped because the owner's decisions are not recorded
+yet says so (`activation` "not_authorized"), so Model Health reads it as not
+activated, not as a degraded job.
 """
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -29,10 +54,57 @@ import pandas as pd
 from stock_agent.stock_lab import monitoring, scoring
 from stock_agent.stock_lab.contracts import DEVELOPMENT_END, DataClass
 from stock_agent.stock_lab.features import build_features
-from stock_agent.stock_lab.store import StockLabStore, stamp
+from stock_agent.stock_lab.store import GENESIS, StockLabStore, stamp
 from stock_agent.stock_lab.traps import CONFIRMED, UNRESOLVED, trap_events
 
 Sessions = Callable[[pd.Timestamp, pd.Timestamp], pd.DatetimeIndex]
+NOT_AUTHORIZED = "not_authorized"
+_HASH = re.compile(r"[0-9a-f]{64}")
+
+
+def _read_kept(path: Path) -> str | None:
+    """The kept hash (the file's first line), or None when it is not a 64-hex hash."""
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    first = lines[0].strip() if lines else ""
+    return first if _HASH.fullmatch(first) else None
+
+
+def _write_kept(path: Path, head: str) -> None:
+    """Replace the kept file atomically (mode 0600)."""
+
+    partial = path.with_name(path.name + ".partial")
+    descriptor = os.open(partial, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(head + "\n")
+    os.replace(partial, path)
+
+
+def check_kept_head(
+    store: StockLabStore, kept_head: Path | None, *, existed: bool, verified: bool
+) -> dict:
+    """The kept head check (module docstring); replaces the file only on a verified match."""
+
+    if kept_head is None:
+        return {"state": "not_configured", "kept": None}
+    head = store.ledger_head() or GENESIS
+    if not kept_head.exists():
+        if verified:
+            _write_kept(kept_head, head)
+        return {"state": "started", "kept": None}
+    kept = _read_kept(kept_head)
+    if kept is None:
+        return {"state": "unusable", "kept": None}
+    if not existed and kept != GENESIS:
+        return {"state": "ledger_deleted", "kept": kept}
+    if kept != GENESIS and kept not in store.ledger_hashes():
+        return {"state": "not_in_ledger", "kept": kept}
+    if verified:
+        _write_kept(kept_head, head)
+    return {"state": "match", "kept": kept}
 
 
 def freshness(
@@ -92,9 +164,16 @@ def record_run(
     next_expected_at: str | None = None,
     failed: Sequence[str] = (),
     skipped: Sequence[str] = (),
+    activation: str | None = None,
+    kept_head: Path | None = None,
 ) -> Path:
-    """Record the run, its ledger entry and its health input; returns the input's path."""
+    """
+    Record the run, its ledger entry and its health input; returns the input's
+    path. `activation` is NOT_AUTHORIZED for a run skipped because the owner's
+    decisions are not recorded yet; `kept_head` is the private kept-head file.
+    """
 
+    existed = store.exists
     fresh = freshness(store, tickers, expected, sessions)
     job = {
         "run_id": run_id,
@@ -108,12 +187,14 @@ def record_run(
         "skipped": list(skipped),
         "calendar": calendar_id,
         "freshness": fresh,
+        "activation": activation,
     }
     store.record_job_run(job)
     entries, problem = store.verify_ledger()
+    kept = check_kept_head(store, kept_head, existed=existed, verified=problem is None)
 
     all_scores = [score for ticker in tickers for score in store.scores(ticker)]
-    summary = scoring.rolling_summary(all_scores)
+    summary = scoring.rolling_summary(all_scores, superseded=store.superseded_ids())
     forecasts = [store.forecasts(ticker) for ticker in tickers]
     latest = max(
         (history[-1] for history in forecasts if history),
@@ -154,6 +235,7 @@ def record_run(
                 "reason",
                 "failed",
                 "skipped",
+                "activation",
             )
         },
         freshness=fresh,
@@ -165,6 +247,7 @@ def record_run(
             "verified": problem is None,
             "reason": problem,
             "head": store.ledger_head(),
+            "kept_head": kept,
         },
         lineage={}
         if latest is None
