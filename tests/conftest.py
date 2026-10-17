@@ -64,6 +64,20 @@ def _hermetic_forecast_ledger(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _hermetic_comparison_reports(tmp_path_factory):
+    """
+    No test reads the owner's comparison artifacts: the Lab's Experiments page
+    reads the directory named by this variable, where no artifact exists
+    unless a test writes one.
+    """
+
+    with pytest.MonkeyPatch.context() as patch:
+        missing = tmp_path_factory.mktemp("no-comparison") / "comparison"
+        patch.setenv("STOCK_AGENT_COMPARISON_DIR", str(missing))
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _hermetic_stock_lab_store(tmp_path_factory):
     """
     No test reads or writes the owner's private Stock Lab store: the Lab's

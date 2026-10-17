@@ -1,5 +1,5 @@
-"""Experiments: the recorded prospective forecasts, else an honest empty state."""
+"""Experiments: the recorded prospective forecasts and the registered synthetic comparison."""
 
-from stock_agent.app import experiments, forecast_records
+from stock_agent.app import comparison, experiments, forecast_records
 
-experiments.render(forecast_records.read_records)
+experiments.render(forecast_records.read_records, comparison.read_comparisons)

@@ -533,6 +533,16 @@ mean episode log growth (the sum of the D8 rewards) with trade and fallback
 counts; risk and performance metrics join only from the approved modules,
 and episode diagnostics never do.
 
+**The registered comparison (2026-10-17).** The baselines-against-PPO
+comparison runs under its own protocol (`docs/research/ppo_comparison.md`,
+`stock_agent.comparison`, `scripts/run_ppo_comparison.py`): one registered
+configuration, the plain and strict D5 sets for every strategy, learned
+members trained and dev-selected under each set, the test fold evaluated once
+with every look counted, approved measures only, and every seed reported. It
+uses `run_comparison` for every strategy but never `comparison_table()`, so
+the harness's withheld rule still holds for everything else, including
+`evaluate_rl.py`.
+
 ### 9.6 Stress tests
 
 The dev and test folds contain every stress scenario: crash, high
