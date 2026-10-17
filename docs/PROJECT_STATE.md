@@ -661,7 +661,9 @@ the owner's answers and messages in session:
 - Pending:
   - Stock Lab: the authorization of the A1 read-only audit command (after
     the token is configured), then the separate storage approval, the
-    confirmation of the bull-trap f, and A4 activation (open item 10);
+    confirmation of the bull-trap f, A7 (which test decides "beats B1",
+    raised by the simulated size checks merged in #83), and A4 activation
+    (open item 10);
   - the rest of OD3;
   - OD8 groups C-D (cash returns and benchmarks; statistics and
     reporting). Group B, the D1-D8 packet, was approved on 2026-10-15
@@ -1211,6 +1213,8 @@ streamlit 1.64.0, plotly 7.1.0, scikit-learn 1.9.1, scipy 1.18.1, torch
        `TIINGO_API_KEY` and saves at most 30 tickers;
      - then a separate storage approval (`--store`);
      - the confirmation of the bull-trap f;
+     - A7, which test decides "beats B1" (doc section 7), before the A3
+       evaluation selects;
      - A4 activation, after validation, a frozen registered model, verified
        decision timestamps and a dry run.
    - To build under A2 and A6: the separately controlled inference store

@@ -363,6 +363,24 @@ def test_the_honest_labels_sit_directly_under_the_growth_heading():
     assert below.value == " ".join(labels.HONEST_LABELS)
 
 
+def test_a_viewer_in_dark_mode_gets_dark_charts_with_the_same_content(monkeypatch):
+    from stock_agent.ui import components, theme
+
+    light = _app()
+    monkeypatch.setattr(components, "colour_scheme", lambda: "dark")
+    dark = _app()
+    assert _text(dark) == _text(light)  # the scheme changes colours, never the words
+    for key in ("growth", "calendar"):
+        spec = json.loads(_charts(dark)[key].proto.spec)
+        layout = spec["layout"]
+        assert (
+            layout["paper_bgcolor"] == layout["plot_bgcolor"] == theme.LAB_DARK_COLOURS["surface"]
+        )
+        assert layout["font"]["color"] == theme.LAB_DARK_COLOURS["text"]
+        light_spec = json.loads(_charts(light)[key].proto.spec)
+        assert [t["y"] for t in spec["data"]] == [t["y"] for t in light_spec["data"]]
+
+
 def test_the_growth_chart_is_labelled_and_draws_each_fund_distinctly():
     app = _app()
     spec = json.loads(_charts(app)["growth"].proto.spec)
@@ -705,6 +723,7 @@ FORBIDDEN = (
     "stock_agent.stock_lab.logistic",
     "stock_agent.stock_lab.evaluation",
     "stock_agent.stock_lab.predict",
+    "stock_agent.stock_lab.size_simulation",
     "scipy",
     "stock_agent.health.collect",
     "stock_agent.health.github",

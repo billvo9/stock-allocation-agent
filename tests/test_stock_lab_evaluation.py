@@ -237,7 +237,7 @@ def test_changing_later_prices_never_changes_an_earlier_fold():
     config = EvaluationConfig(last_test_year=2022)
     first = evaluate(base, config, data_class="synthetic", run_id="a", created_at=CREATED)
     second = evaluate(later, config, data_class="synthetic", run_id="a", created_at=CREATED)
-    for key in ("folds", "metrics", "comparisons", "reliability", "selection"):
+    for key in ("folds", "metrics", "comparisons", "reliability", "selection", "sensitivity_band"):
         assert first[key] == second[key], key
 
 
@@ -260,6 +260,7 @@ def test_the_selection_rule_needs_holm_and_climbs_only_when_beaten():
     from stock_agent.stock_lab.evaluation import _select
 
     dates = pd.bdate_range("2020-01-01", periods=600)
+    starts = pd.DatetimeIndex(pd.to_datetime(["2020-01-01", "2021-01-01", "2022-01-01"]))
     rng = np.random.RandomState(3)
 
     def series(mean):
@@ -268,12 +269,12 @@ def test_the_selection_rule_needs_holm_and_climbs_only_when_beaten():
     # B3 beats B1; M1 beats B1 by the same amount, so it does not beat B3: keep B3.
     pooled = {"B3": [series(-0.001)], "M1": [series(-0.001)]}
     beating = [{"model": "M1"}, {"model": "B3"}]
-    chosen, steps = _select(beating, pooled)
+    chosen, steps = _select(beating, pooled, starts)
     assert chosen == "B3" and steps[0]["challenger"] == "M1" and not steps[0]["moved"]
     # M1 clearly better than B3 as well: climb to M1.
     pooled = {"B3": [series(-0.001)], "M1": [series(-0.004)]}
-    assert _select(beating, pooled)[0] == "M1"
-    assert _select([], pooled) == ("B1", [])
+    assert _select(beating, pooled, starts)[0] == "M1"
+    assert _select([], pooled, starts) == ("B1", [])
 
 
 def test_selection_ignores_a_challenger_that_passes_only_before_holm(demo_record):
@@ -349,3 +350,161 @@ def test_the_decrease_side_bound_is_checked_too(demo_forecast):
     }
     with pytest.raises(artifact.ForecastRefused, match="contradicts"):
         artifact.build(**{**kwargs, "daily": [[1.0, 0.0, 0.0]] * 5, "cumulative": [0.0, 0.5, 0.5]})
+
+
+# --- reported beside the results, never used to select ---
+
+
+def test_the_fold_block_t_uses_the_test_years_as_blocks():
+    from stock_agent.model_diagnostics.inference import fold_block_t, newey_west_mean
+    from stock_agent.stock_lab.evaluation import _comparison
+    from stock_agent.stock_lab.size_simulation import one_sided_p
+
+    dates = pd.bdate_range("2021-01-01", "2023-12-31", tz="UTC")
+    noise = np.random.RandomState(6).normal(0, 0.002, len(dates))
+    values = pd.Series(np.where(dates.year == 2021, -0.002, 0.0) + noise, index=dates)
+    starts = pd.DatetimeIndex(pd.to_datetime(["2021-01-01", "2022-01-01", "2023-01-01"], utc=True))
+    row = _comparison("B3", "daily_pooled", values, starts)
+    expected = fold_block_t(values.to_numpy(), dates.year.to_numpy())
+    assert row["fold_t_mean"] == pytest.approx(values.groupby(dates.year).mean().mean())
+    assert row["fold_t_se"] == pytest.approx(expected.se) and row["fold_t_df"] == 2
+    assert row["fold_t_p_one_sided"] == pytest.approx(one_sided_p(expected))
+    assert row["fold_t_status"] == "ok" and 0 < row["boot_p_one_sided"] < 1
+    # Newey-West, the decision test, is computed exactly as before.
+    nw = newey_west_mean(values.to_numpy(), lag=10)
+    assert row["p_one_sided"] == pytest.approx(nw.p_value / 2) and row["nw_se"] == nw.se
+
+
+def test_every_comparison_reports_the_fold_block_t_and_bootstrap(demo_record):
+    folds = len(demo_record["folds"])
+    for row in demo_record["comparisons"]:
+        assert row["fold_t_df"] == folds - 1 and row["fold_t_status"] == "ok", row
+        assert 0 <= row["fold_t_p_one_sided"] <= 1 and 0 <= row["boot_p_one_sided"] <= 1, row
+    for step in demo_record["selection"]["steps"]:
+        assert {"fold_t_p_one_sided", "boot_p_one_sided"} <= set(step)
+    assert "never used to select" in demo_record["selection"]["reported_only"]
+
+
+def test_the_size_simulation_is_recorded_on_a_small_seed():
+    from stock_agent.stock_lab import size_simulation
+
+    histories = {f"IID_{i}": iid_bars(seed) for i, seed in enumerate((101, 202, 303))}
+    config = EvaluationConfig(include_m1=False, size_reps=16, size_seed=11)
+    record = evaluate(histories, config, data_class="synthetic", run_id="s", created_at=CREATED)
+    size = record["size_simulation"]
+    design = size["design"]
+    assert (design["names"], design["years"]) == (3, len(record["folds"]))
+    assert (design["reps"], design["seed"], design["correlation"]) == (16, 11, 0.4)
+    assert (design["nw_lag"], design["block"], design["bootstrap_reps"]) == (10, 20, 499)
+    assert design["half_lives"] == [21.0, 63.0, 126.0, 252.0] and design["tau"] == 0.005
+    assert {(r["placebo"], r["half_life"], r["method"]) for r in size["rates"]} == {
+        (p, h, m)
+        for p in size_simulation.PLACEBOS
+        for h in (21.0, 63.0, 126.0, 252.0)
+        for m in size_simulation.METHODS
+    }
+    keys = ("names", "years", "reps", "seed", "nw_lag", "block", "bootstrap_reps")
+    again = size_simulation.simulate_size(
+        size_simulation.SizeDesign(
+            **{k: design[k] for k in keys},
+            half_lives=tuple(design["half_lives"]),
+            bootstrap_seed=design["bootstrap_seed"],
+        )
+    )
+    assert again == size  # the recorded rates are this design's
+    assert record["config"]["size_reps"] == 16 and record["config"]["size_seed"] == 11
+    json.loads(dumps(record))
+
+
+def test_band_sensitivity_reruns_b1_and_b3_on_the_same_folds(demo_record):
+    rows = demo_record["sensitivity_band"]
+    assert [r["band"] for r in rows] == [0.0025, 0.005, 0.01]
+    assert [r["primary"] for r in rows] == [False, True, False]
+    shares = [r["stable_share"] for r in rows]
+    assert shares[0] < shares[1] < shares[2]
+    for row in rows:
+        assert len(row["half_lives"]) == len(demo_record["folds"])
+        assert set(row["half_lives"]) <= {21.0, 63.0, 126.0, 252.0}
+        assert row["b3_minus_b1"] == pytest.approx(row["b3_rps"] - row["b1_rps"])
+        assert row["rows"] == rows[1]["rows"]  # the same scored sessions at every band
+    # At the band in use, the numbers are the main table's.
+    metrics = pd.DataFrame(demo_record["metrics"])
+    main = metrics[metrics["target"].str.match(r"target_\d")].groupby("model")["rps"].mean()
+    assert rows[1]["b1_rps"] == pytest.approx(main["B1"]) and rows[1]["b3_rps"] == pytest.approx(
+        main["B3"]
+    )
+    assert [f["half_life"] for f in demo_record["folds"]] == rows[1]["half_lives"]
+    assert demo_record["config"]["sensitivity_bands"] == [0.0025, 0.01]
+
+
+def test_the_reported_extras_never_change_the_selection():
+    histories = synthetic.demo_histories()
+    plain = EvaluationConfig(include_m1=False, sensitivity_bands=())
+    other = EvaluationConfig(include_m1=False, sensitivity_bands=(0.001, 0.02), size_reps=8)
+    first = evaluate(histories, plain, data_class="synthetic", run_id="a", created_at=CREATED)
+    second = evaluate(histories, other, data_class="synthetic", run_id="a", created_at=CREATED)
+    for key in ("folds", "metrics", "comparisons", "selection"):
+        assert first[key] == second[key], key
+    assert [r["band"] for r in first["sensitivity_band"]] == [0.005]
+    assert [r["band"] for r in second["sensitivity_band"]] == [0.001, 0.005, 0.02]
+
+
+# --- the diagnostics views ---
+
+
+def test_the_diagnostics_tables_show_every_reported_test_and_band(demo_record):
+    from stock_agent.stock_lab.forecast_view import band_table, comparison_table, size_table
+
+    comparisons = comparison_table(demo_record)
+    assert list(comparisons.columns) == [
+        "RPS minus B1",
+        "Standard error (Newey-West)",
+        "One-sided p (Newey-West)",
+        "Holm-adjusted p",
+        "One-sided p (fold-block t)",
+        "One-sided p (block bootstrap)",
+        "Dates",
+    ]
+    for placebo in ("other_vs_other", "other_vs_own"):
+        sizes = size_table(demo_record, placebo)
+        assert sizes.index.name == "Placebo half-life (sessions)"
+        assert list(sizes.index) == ["21", "63", "126", "252"]
+        assert list(sizes.columns) == ["Newey-West (decides)", "Fold-block t", "Block bootstrap"]
+        assert all("%" in cell and "±" in cell for cell in sizes.to_numpy().ravel())
+    rates = {
+        (r["placebo"], f"{r['half_life']:.0f}", r["method"]): r
+        for r in demo_record["size_simulation"]["rates"]
+    }
+    cell = size_table(demo_record, "other_vs_own").loc["63", "Fold-block t"]
+    row = rates[("other_vs_own", "63", "fold_block_t")]
+    assert cell.startswith(f"{row['rate']:.1%}") and cell.endswith("too often") == bool(
+        row["exceeds_nominal"]
+    )
+    bands = band_table(demo_record)
+    assert bands.index.name == "Stable band"
+    assert list(bands.index) == ["±0.25%", "±0.5% (in use)", "±1%"]
+    assert list(bands.columns) == [
+        "Stable share",
+        "Recent-weighted (B1)",
+        "Volatility-scaled (B3)",
+        "B3 minus B1",
+    ]
+
+
+def test_an_older_record_without_the_extras_still_renders(demo_record):
+    from stock_agent.stock_lab.forecast_view import (
+        DASH,
+        band_table,
+        comparison_table,
+        size_table,
+    )
+
+    old = copy.deepcopy(demo_record)
+    del old["size_simulation"], old["sensitivity_band"]
+    for row in old["comparisons"]:
+        for key in [k for k in row if k.startswith(("fold_t_", "boot_"))]:
+            del row[key]
+    assert size_table(old, "other_vs_other").empty and band_table(old).empty
+    table = comparison_table(old)
+    assert (table["One-sided p (fold-block t)"] == DASH).all()
+    assert (table["One-sided p (block bootstrap)"] == DASH).all()

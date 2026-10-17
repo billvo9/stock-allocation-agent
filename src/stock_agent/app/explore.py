@@ -107,11 +107,12 @@ def render(
         _say(text, "notice")
     else:
         result = view.build_view(usable, period, metrics)
-        styles = fund_styles(histories)
+        scheme = ui.colour_scheme()
+        styles = fund_styles(histories, scheme)
         _gap_notices(result)
-        _growth(result, styles)
+        _growth(result, styles, scheme)
         _declines(result)
-        _calendar(result, styles)
+        _calendar(result, styles, scheme)
     _about(selected)
 
 
@@ -246,7 +247,7 @@ def _unavailable(key: str, title: str, items: Sequence[tuple[str, view.Unavailab
 # --- sections ---
 
 
-def _growth(result: view.ExploreView, styles: dict[str, FundStyle]) -> None:
+def _growth(result: view.ExploreView, styles: dict[str, FundStyle], scheme: str) -> None:
     _section(labels.GROWTH_TITLE, " ".join(labels.HONEST_LABELS))
     drawn = [(f.history, f.growth) for f in result.funds if isinstance(f.growth, pd.Series)]
     missing = [
@@ -265,7 +266,7 @@ def _growth(result: view.ExploreView, styles: dict[str, FundStyle]) -> None:
         f"A hypothetical {money(GROWTH_START_VALUE)} placed in each fund on "
         f"{day(result.start)}. Last values: {'; '.join(lasts)}."
     )
-    figure = growth_figure(drawn, styles, start_value=GROWTH_START_VALUE)
+    figure = growth_figure(drawn, styles, start_value=GROWTH_START_VALUE, scheme=scheme)
     ui.chart(figure, key="explore_growth")
     _say(labels.LOG_SCALE, "caption")
     with st.expander("Growth as a table: values at each year end"):
@@ -315,7 +316,7 @@ def _declines(result: view.ExploreView) -> None:
                 _decline_card(fund)
 
 
-def _calendar(result: view.ExploreView, styles: dict[str, FundStyle]) -> None:
+def _calendar(result: view.ExploreView, styles: dict[str, FundStyle], scheme: str) -> None:
     _section(labels.CALENDAR_TITLE, labels.CALENDAR_SCOPE)
     tables = [(f.history, f.calendar) for f in result.funds if isinstance(f.calendar, pd.DataFrame)]
     missing = [
@@ -329,7 +330,7 @@ def _calendar(result: view.ExploreView, styles: dict[str, FundStyle]) -> None:
         return
     _say("\n".join(f"- {view.losing_summary(h.name, table)}" for h, table in tables))
     shown = [(h, table[table["status"].eq("ok")]) for h, table in tables]
-    ui.chart(calendar_year_figure(shown, styles), key="explore_calendar")
+    ui.chart(calendar_year_figure(shown, styles, scheme=scheme), key="explore_calendar")
     with st.expander("Calendar-year returns as a table"):
         table = view.calendar_table([(history.name, frame) for history, frame in tables])
         st.dataframe(table, hide_index=True)

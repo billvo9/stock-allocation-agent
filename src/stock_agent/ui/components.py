@@ -17,6 +17,7 @@ page builds from these instead of styling itself, so the design system
     state_card      a dashed container for loading, pending or unavailable states
     section         a subsection title with an optional caption
     notice          blocking / warning / notice / success callouts
+    colour_scheme   the viewer's active colour scheme, for the Lab's figures
     chart           a Plotly figure with the shared config
     download        a CSV download of stored rows
     future_state    a clearly disabled placeholder for work not yet defined
@@ -234,6 +235,19 @@ def notice(level: str, text: str, *, where=None) -> None:
 
     word, icon, _ = NOTICES[level]
     getattr(where or st, _WRITERS[level])(f"**{word}.** {text}", icon=icon)
+
+
+def colour_scheme() -> str:
+    """
+    The viewer's active colour scheme, "light" or "dark", for figures drawn
+    in the Lab's tokens (`style.lab_layout`); "light" when Streamlit does not
+    report one (outside a browser session). It is the scheme of the last
+    rerun, so after a change in Settings, charts follow on the next
+    interaction (Streamlit issue #11920); the CSS layer follows at once.
+    """
+
+    reported = st.context.theme.type
+    return reported if reported in theme.SCHEMES else "light"
 
 
 def chart(figure, key: str) -> None:

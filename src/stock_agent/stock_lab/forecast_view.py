@@ -478,7 +478,19 @@ def scores_table(evaluation: Mapping) -> pd.DataFrame:
     )
 
 
+def _number(value: float | None, spec: str) -> str:
+    """A stored number, or a dash when it is missing (None in stored JSON, NaN in memory)."""
+
+    return DASH if value is None or np.isnan(value) else format(value, spec)
+
+
 def comparison_table(evaluation: Mapping) -> pd.DataFrame:
+    """
+    The pooled comparisons against B1: Newey-West decides (with Holm); the
+    fold-block t and block bootstrap p-values are shown beside it (records
+    older than schema 1.1 have none: a dash).
+    """
+
     rows = [r for r in evaluation["comparisons"] if r["target"] == "daily_pooled"]
     out = []
     for row in rows:
@@ -486,15 +498,83 @@ def comparison_table(evaluation: Mapping) -> pd.DataFrame:
             {
                 "Estimator": model_words(row["model"]),
                 "RPS minus B1": f"{row['mean_diff']:+.5f}".replace("-", MINUS),
-                "Standard error (Newey-West)": DASH
-                if row["nw_se"] is None
-                else f"{row['nw_se']:.5f}",
-                "One-sided p": DASH if row["p_one_sided"] is None else f"{row['p_one_sided']:.3f}",
-                "Holm-adjusted p": DASH if row.get("p_holm") is None else f"{row['p_holm']:.3f}",
+                "Standard error (Newey-West)": _number(row["nw_se"], ".5f"),
+                "One-sided p (Newey-West)": _number(row["p_one_sided"], ".3f"),
+                "Holm-adjusted p": _number(row.get("p_holm"), ".3f"),
+                "One-sided p (fold-block t)": _number(row.get("fold_t_p_one_sided"), ".3f"),
+                "One-sided p (block bootstrap)": _number(row.get("boot_p_one_sided"), ".3f"),
                 "Dates": f"{row['dates']:,}",
             }
         )
     return pd.DataFrame(out).set_index("Estimator") if out else pd.DataFrame()
+
+
+SIZE_METHOD_WORDS = {
+    "newey_west": "Newey-West (decides)",
+    "fold_block_t": "Fold-block t",
+    "circular_block_bootstrap": "Block bootstrap",
+}
+
+
+def size_table(evaluation: Mapping, placebo: str) -> pd.DataFrame:
+    """
+    Each test's simulated false-positive rate at the nominal level for one
+    no-skill placebo, by its half-life: '6.1% ± 0.8', with ', too often' when
+    it is clearly above the nominal level (more than two Monte Carlo SEs at
+    it). Empty for records without a simulation.
+    """
+
+    size = evaluation.get("size_simulation")
+    rows = [r for r in (size or {}).get("rates", []) if r["placebo"] == placebo]
+    if not rows:
+        return pd.DataFrame()
+    table: dict[str, dict[str, str]] = {}
+    for row in rows:
+        cell = f"{row['rate']:.1%} ± {row['mc_se'] * 100:.1f}"
+        if row["exceeds_nominal"]:
+            cell += ", too often"
+        table.setdefault(f"{row['half_life']:.0f}", {})[SIZE_METHOD_WORDS[row["method"]]] = cell
+    frame = pd.DataFrame.from_dict(table, orient="index")[list(SIZE_METHOD_WORDS.values())]
+    frame.index.name = "Placebo half-life (sessions)"
+    return frame
+
+
+def size_design_words(evaluation: Mapping) -> dict | None:
+    """The simulation's design for the page's note, or None without a simulation."""
+
+    size = evaluation.get("size_simulation")
+    if not size or not size.get("rates"):
+        return None
+    design = size["design"]
+    return {
+        "names": design["names"],
+        "years": design["years"],
+        "correlation": f"{design['correlation']:g}",
+        "reps": f"{design['reps']:,}",
+        "nominal": f"{design['nominal']:.0%}",
+    }
+
+
+def band_table(evaluation: Mapping) -> pd.DataFrame:
+    """
+    B1 and B3 re-run at other stable bands (mean RPS over the five daily
+    targets). Empty for records without the sensitivity.
+    """
+
+    rows = evaluation.get("sensitivity_band") or []
+    out = []
+    for row in rows:
+        label = StableBand(row["band"]).words() + (" (in use)" if row["primary"] else "")
+        out.append(
+            {
+                "Stable band": label,
+                "Stable share": f"{row['stable_share']:.0%}",
+                "Recent-weighted (B1)": f"{row['b1_rps']:.4f}",
+                "Volatility-scaled (B3)": f"{row['b3_rps']:.4f}",
+                "B3 minus B1": f"{row['b3_minus_b1']:+.4f}".replace("-", MINUS),
+            }
+        )
+    return pd.DataFrame(out).set_index("Stable band") if out else pd.DataFrame()
 
 
 def reliability_frame(
