@@ -10,7 +10,9 @@ Visual language:
   line, never from red or green;
 - long growth histories use a logarithmic axis, labelled as such;
 - gaps stay gaps (never connected across missing sessions);
-- every chart uses the Lab's editorial layout (`style.lab_layout`).
+- every chart uses the Lab's editorial layout (`style.lab_layout`) and
+  tokens in the viewer's colour scheme ("light" or "dark"), which the page
+  passes in; a scheme changes colours only, never what is drawn.
 """
 
 from __future__ import annotations
@@ -29,6 +31,10 @@ from stock_agent.ui import style, theme
 # Okabe-Ito blue, vermillion, bluish green, reddish purple and black: the
 # members of the shared palette with at least 3:1 contrast on the chart surface.
 FUND_COLOURS = tuple(style.OKABE_ITO[index] for index in (0, 5, 2, 3, 6))
+# On the dark chart surface blue (3.1:1) and black fail: sky blue and the
+# Okabe-Ito yellow take their places, and the other three keep theirs.
+FUND_DARK_COLOURS = (style.OKABE_ITO[4], *FUND_COLOURS[1:4], "#F0E442")
+FUND_PALETTES = {"light": FUND_COLOURS, "dark": FUND_DARK_COLOURS}
 # Five colours pass 3:1 contrast; markers and dashes keep every identity distinct beyond five.
 FUND_MARKERS = ("circle", "square", "diamond", "triangle-up", "x", "star")
 FUND_DASHES = ("solid", "dash", "dot", "dashdot", "longdash", "longdashdot")
@@ -42,12 +48,13 @@ class FundStyle:
     dash: str
 
 
-def fund_styles(histories: Sequence[FundHistory]) -> dict[str, FundStyle]:
+def fund_styles(histories: Sequence[FundHistory], scheme: str = "light") -> dict[str, FundStyle]:
     """A stable identity per fund, by its position among all loaded funds."""
 
+    colours = FUND_PALETTES[scheme]
     return {
         history.fund_id: FundStyle(
-            FUND_COLOURS[index % len(FUND_COLOURS)],
+            colours[index % len(colours)],
             FUND_MARKERS[index % len(FUND_MARKERS)],
             FUND_DASHES[index % len(FUND_DASHES)],
         )
@@ -60,7 +67,9 @@ def growth_figure(
     styles: dict[str, FundStyle],
     *,
     start_value: float,
+    scheme: str = "light",
 ) -> go.Figure:
+    tokens = theme.LAB_PALETTES[scheme]
     figure = go.Figure()
     for history, growth in series:
         identity = styles[history.fund_id]
@@ -83,10 +92,10 @@ def growth_figure(
         )
     figure.add_hline(
         y=start_value,
-        line={"color": style.REFERENCE_LINE, "dash": "dot", "width": 1},
+        line={"color": tokens["reference_line"], "dash": "dot", "width": 1},
         annotation_text=f"Start: {money(start_value)}",
         annotation_position="bottom right",
-        annotation_font={"color": theme.COLOURS["text_muted"]},
+        annotation_font={"color": tokens["text_muted"]},
     )
     layout = style.lab_layout(
         labels.GROWTH_TITLE,
@@ -94,6 +103,7 @@ def growth_figure(
         y_title="Value in US dollars (log scale)",
         subtitle="Distributions reinvested on the ex-date · before taxes and transaction costs",
         height=440,
+        scheme=scheme,
     )
     layout["yaxis"].update({"type": "log", "tickprefix": "$", "tickformat": ",.0f"})
     figure.update_layout(**layout)
@@ -101,8 +111,12 @@ def growth_figure(
 
 
 def calendar_year_figure(
-    tables: Sequence[tuple[FundHistory, pd.DataFrame]], styles: dict[str, FundStyle]
+    tables: Sequence[tuple[FundHistory, pd.DataFrame]],
+    styles: dict[str, FundStyle],
+    *,
+    scheme: str = "light",
 ) -> go.Figure:
+    tokens = theme.LAB_PALETTES[scheme]
     figure = go.Figure()
     for history, table in tables:
         identity = styles[history.fund_id]
@@ -126,7 +140,7 @@ def calendar_year_figure(
                     "line": {"color": identity.colour, "width": 1},
                     "pattern": {
                         "shape": ["/" if flag else "" for flag in partial],
-                        "fgcolor": theme.COLOURS["surface"],
+                        "fgcolor": tokens["surface"],
                     },
                 },
                 customdata=notes,
@@ -141,9 +155,10 @@ def calendar_year_figure(
         y_title="Total return in the year",
         subtitle="Bars below zero lost money · hatched bars are partial years, not annualized",
         height=400,
+        scheme=scheme,
     )
     layout["yaxis"].update(
-        {"tickformat": ".0%", "zeroline": True, "zerolinecolor": style.REFERENCE_LINE}
+        {"tickformat": ".0%", "zeroline": True, "zerolinecolor": tokens["reference_line"]}
     )
     layout["xaxis"].update({"type": "category"})
     figure.update_layout(**layout, barmode="group")

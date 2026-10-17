@@ -3,21 +3,17 @@
 # Lab gets its editorial theme while the research dashboard keeps its own.
 # Kept identical to stock_agent/ui/theme.py lab_streamlit_theme() by a test,
 # so change the tokens there.
+#
+# [theme] holds type and shape only. Every colour is in both [theme.light]
+# and [theme.dark] (and their sidebar tables), so Settings offers System,
+# Light and Dark; System follows the operating system. [theme] sets no base:
+# Streamlit forces each variant's base itself.
 
 # Serves src/stock_agent/app/static/ (the bundled OFL fonts) at app/static/.
 [server]
 enableStaticServing = true
 
 [theme]
-base = "light"
-primaryColor = "#9A4325"
-backgroundColor = "#FAF7F1"
-secondaryBackgroundColor = "#F2EDE4"
-textColor = "#1D1B18"
-linkColor = "#9A4325"
-borderColor = "#E5DDD0"
-dataframeBorderColor = "#E5DDD0"
-dataframeHeaderBackgroundColor = "#F2EDE4"
 showWidgetBorder = true
 baseRadius = "10px"
 buttonRadius = "10px"
@@ -29,6 +25,16 @@ headingFontSizes = ["2.55rem", "1.7rem", "1.3rem", "1.05rem", "1rem", "0.95rem"]
 headingFontWeights = [600, 600, 600, 600, 600, 600]
 metricValueFontSize = "1.65rem"
 metricValueFontWeight = 600
+
+[theme.light]
+primaryColor = "#9A4325"
+backgroundColor = "#FAF7F1"
+secondaryBackgroundColor = "#F2EDE4"
+textColor = "#1D1B18"
+linkColor = "#9A4325"
+borderColor = "#E5DDD0"
+dataframeBorderColor = "#E5DDD0"
+dataframeHeaderBackgroundColor = "#F2EDE4"
 greenColor = "#1E6633"
 greenBackgroundColor = "#E6F0E8"
 greenTextColor = "#1E6633"
@@ -48,10 +54,43 @@ grayColor = "#685F55"
 grayBackgroundColor = "#F2EDE4"
 grayTextColor = "#544E46"
 
-[theme.sidebar]
+[theme.light.sidebar]
 backgroundColor = "#F2EDE4"
 secondaryBackgroundColor = "#FFFDF8"
 borderColor = "#E5DDD0"
+
+[theme.dark]
+primaryColor = "#DE8C66"
+backgroundColor = "#1A1815"
+secondaryBackgroundColor = "#2B2823"
+textColor = "#F3EEE6"
+linkColor = "#DE8C66"
+borderColor = "#3B362F"
+dataframeBorderColor = "#3B362F"
+dataframeHeaderBackgroundColor = "#2B2823"
+greenColor = "#8FD3A0"
+greenBackgroundColor = "#1D3024"
+greenTextColor = "#8FD3A0"
+yellowColor = "#F2BC72"
+yellowBackgroundColor = "#35281A"
+yellowTextColor = "#F2BC72"
+orangeColor = "#F2BC72"
+orangeBackgroundColor = "#35281A"
+orangeTextColor = "#F2BC72"
+redColor = "#F4A7AE"
+redBackgroundColor = "#3C2023"
+redTextColor = "#F4A7AE"
+blueColor = "#97CAD7"
+blueBackgroundColor = "#1C2D32"
+blueTextColor = "#97CAD7"
+grayColor = "#B3A898"
+grayBackgroundColor = "#2B2823"
+grayTextColor = "#CFC6B8"
+
+[theme.dark.sidebar]
+backgroundColor = "#2B2823"
+secondaryBackgroundColor = "#23201C"
+borderColor = "#3B362F"
 
 [[theme.fontFaces]]
 family = "SourceSerif4"

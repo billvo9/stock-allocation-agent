@@ -7,6 +7,7 @@ passes the advice scan.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -114,6 +115,28 @@ def test_the_detail_view_of_a_demo_stock_is_labelled_synthetic_and_follows_the_b
     app.selectbox[0].set_value("DEMO_SWING").run()
     assert not app.exception
     assert "split(s) applied" in text_of(app)
+
+
+def test_a_viewer_in_dark_mode_gets_dark_charts_with_the_same_content(home, monkeypatch):
+    from stock_agent.ui import components, theme
+
+    light = page()
+    monkeypatch.setattr(components, "colour_scheme", lambda: "dark")
+    dark = page()
+    assert text_of(dark) == text_of(light)  # the scheme changes colours, never the words
+    dark_colours = theme.LAB_DARK_COLOURS
+    keys = [chart.key.removeprefix("stock-lab-") for chart in dark.get("plotly_chart")]
+    assert {"price-chart", "recent-chart", "streak-chart"} <= set(keys)
+    for chart, before in zip(dark.get("plotly_chart"), light.get("plotly_chart"), strict=True):
+        spec, light_spec = json.loads(chart.proto.spec), json.loads(before.proto.spec)
+        layout = spec["layout"]
+        assert layout["paper_bgcolor"] == layout["plot_bgcolor"] == dark_colours["surface"]
+        assert layout["font"]["color"] == dark_colours["text"]
+        assert [t.get("y") for t in spec["data"]] == [t.get("y") for t in light_spec["data"]]
+        markers = {t.get("marker", {}).get("color") for t in spec["data"]} - {None}
+        assert markers <= set(theme.DIRECTION_DARK_COLOURS.values()), (chart.key, markers)
+        for shape in layout.get("shapes", []):  # the stable band's edges
+            assert shape["line"]["color"] == dark_colours["reference_line"]
 
 
 def test_real_prices_after_2024_are_never_shown(home):
