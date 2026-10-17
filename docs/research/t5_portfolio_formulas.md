@@ -501,6 +501,10 @@ Not authorized by these approvals: T5a–T5c simulator formulas (groups B–D) a
 
 The owner approved the T5a open decisions D1-D8, recorded verbatim against each D identifier in `docs/research/t5a_open_decisions.md`. These are approved: F1.1-F1.3 (D1), F2.1-F2.4 and F2.6 (D2; the rates are provisional assumptions shown at 0×, 1× and 2×), F2.5 (D3), F7.1-F7.2 (D7) and F8.1 with the reward log(1 + R_net) (D8 (a)). So are the new rules D4 (a), D5 and D6, which have no F-identifier here. D4 (a) holds only for synthetic engineering. Group C (cash returns, benchmarks) and group D (statistics, reporting) remain pending. One D5 clause, constraint sets for learned policies, awaits the owner's confirmation; until then, constraint sets apply identically to every compared policy. D9 is not approved.
 
+### Group C and D decision packets (2026-10-17, pending)
+
+Groups C and D are prepared for approval as decision packets in the T5a D1–D8 format: `group_c_decisions.md` (C1–C9: cash and T-bill returns, the risk-free rate, availability and vintages, benchmarks, `return_basis`, reference portfolios, the window start, and the booked-state exception) and `group_d_decisions.md` (M1–M9: CAGR, volatility and Sharpe, intervals and their coverage simulation, drawdown reuse and stress windows, turnover per calendar year, participation, multiple testing, and the reporting contract with power figures). The index and a suggested reply are in `group_c_d_decision_index.md`. Every formula in this specification stays pending until its approval is recorded here.
+
 ### Decision groups (how to approve)
 
 | Group | Decisions | Unblocks | Needs first |
