@@ -29,9 +29,19 @@ EXTRA = {
     "tiingo": {"stock_agent.data.vendors.tiingo"},
     "evaluation": {"stock_agent.model_validation.folds", "stock_agent.model_diagnostics.inference"},
     "size_simulation": {"stock_agent.model_diagnostics.inference"},
+    "decision_tests": {"stock_agent.model_diagnostics.inference"},
     "logistic": {"sklearn"},
 }
-RESEARCH_SIDE = ("tiingo", "evaluation", "logistic", "predict", "replay", "size_simulation")
+RESEARCH_SIDE = (
+    "tiingo",
+    "evaluation",
+    "logistic",
+    "predict",
+    "replay",
+    "size_simulation",
+    "decision_tests",
+    "planned_simulation",
+)
 # The only project code that may import the Stock Lab.
 CONSUMERS = ("stock_agent/app/", "stock_agent/stock_lab/")
 
