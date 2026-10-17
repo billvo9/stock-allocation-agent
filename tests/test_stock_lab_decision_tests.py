@@ -183,6 +183,20 @@ def test_fixed_b_critical_values_meet_the_normal_limit_and_kiefer_vogelsang():
         assert (simulated > [1.6449, 1.96]).all()  # wider than the normal's
 
 
+def test_the_planned_fold_block_critical_values_are_reproduced():
+    """The recommended procedure's critical values at T = 4,788 (19 yearly
+    folds, t(18)) at the four Holm levels, as recorded in the packet."""
+
+    stats = dt.procedure_statistics(
+        np.random.RandomState(8).standard_normal((2, 4788)),
+        np.arange(4788) // 252,
+        LEVELS,
+        fixed_b={"nw_fixed_b_sqrt": np.zeros(4), "nw_fixed_b_tenth": np.zeros(4)},
+    )
+    np.testing.assert_allclose(stats["fold_block_t"].critical[0], dt.PLANNED_FOLD_T, atol=5e-5)
+    np.testing.assert_allclose(dt.PLANNED_FOLD_T, [student_t_ppf(q, 18) for q in LEVELS], atol=5e-5)
+
+
 def test_the_planned_fixed_b_critical_values_are_reproduced():
     """The fixed-b critical values at T = 4,788 (the planned 19 folds) at the
     four Holm levels, as recorded in the packet."""

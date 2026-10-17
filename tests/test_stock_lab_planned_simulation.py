@@ -11,6 +11,7 @@ import importlib.util
 import io
 import json
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -24,7 +25,9 @@ from stock_agent.stock_lab import evaluation, scores
 from stock_agent.stock_lab import planned_simulation as ps
 from stock_agent.stock_lab.contracts import DEFAULT_BAND
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "stock_lab_a7_simulation.py"
+PROJECT = Path(__file__).resolve().parents[1]
+SCRIPT = PROJECT / "scripts" / "stock_lab_a7_simulation.py"
+RECORD = PROJECT / "docs" / "research" / "stock_lab_a7_simulation.json"
 SMALL = {
     "years": 3,
     "warmup_years": 1,
@@ -265,6 +268,33 @@ def test_with_none_admissible_the_smallest_distortion_is_taken():
     assert choice["reason"] == "none admissible; smallest distortion"
 
 
+def test_the_recorded_run_reproduces_its_choice_and_critical_values():
+    """The committed record (docs/research/stock_lab_a7_simulation.json): the
+    pre-registered design at every planned universe size, the recorded fixed-b
+    critical values, and the criterion re-applied to its cells."""
+
+    record = json.loads(RECORD.read_text(encoding="utf-8"))
+    assert record["role"] == "pre-registered" and record["changed"] == {}
+    assert [size["design"]["names"] for size in record["sizes"]] == list(ps.UNIVERSE_SIZES)
+    for size in record["sizes"]:
+        planned = ps.planned_design(size["design"]["names"])
+        assert size["design"]["seed"] == planned.seed and size["design"]["reps"] == ps.REPS
+        assert size["design"]["half_lives"] == list(ps.HALF_LIVES)
+        for name, recorded in dt.PLANNED_FIXED_B.items():
+            np.testing.assert_allclose(size["fixed_b"][name], recorded, atol=5e-5)
+        assert len(size["cells"]) == len(ps.HALF_LIVES) * len(dt.PROCEDURES)
+    cells = [cell for size in record["sizes"] for cell in size["cells"]]
+    assert ps.choose_procedure(cells) == record["choice"]
+    assert record["choice"]["chosen"] == "fold_block_t"
+    # The checks run after the choice are labelled as reported only.
+    sensitivity = json.loads((RECORD.parent / "stock_lab_a7_sensitivity.json").read_text("utf-8"))
+    assert sensitivity["role"] == "sensitivity (reported only)"
+    assert sensitivity["changed"] == {"arch": 0.0, "garch": 0.0}
+    check = json.loads((RECORD.parent / "stock_lab_a7_evaluation_check.json").read_text("utf-8"))
+    assert "reported only" in check["role"]
+    assert [size["design"]["names"] for size in check["sizes"]] == list(ps.UNIVERSE_SIZES)
+
+
 # --- the owner-run script ---
 
 
@@ -286,3 +316,38 @@ def test_the_script_writes_the_record_and_prints_the_tables(tmp_path):
     text = out.getvalue()
     assert "Size, own-history null" in text and f"Chosen: `{record['choice']['chosen']}`" in text
     assert math.isfinite(record["sizes"][0]["cells"][0]["variance_ratio"])
+    assert record["role"] == "pre-registered"
+    sensitivity = tmp_path / "sensitivity.json"
+    argv = ["--out", str(sensitivity), "--sizes", "4", "--reps", "6", "--set", "arch=0.0"]
+    assert script.main([*argv, "garch=0.0"], out=io.StringIO(), overrides=overrides) == 0
+    changed = json.loads(sensitivity.read_text(encoding="utf-8"))
+    assert changed["role"] == "sensitivity (reported only)"
+    assert changed["changed"] == {"arch": 0.0, "garch": 0.0}
+    assert changed["sizes"][0]["design"]["garch"] == 0.0
+    with pytest.raises(SystemExit):
+        script.main(["--out", str(sensitivity), "--set", "names=3"], out=io.StringIO())
+
+
+def test_the_script_runs_the_evaluations_size_check_at_a_planned_shape(tmp_path, monkeypatch):
+    """--evaluation-check: size_simulation with the evaluation's own design at
+    each universe size and 19 test years (here shrunk, through size_design)."""
+
+    spec = importlib.util.spec_from_file_location("stock_lab_a7_simulation", SCRIPT)
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    seen = []
+    original = evaluation.size_design
+
+    def shrunk(config, *, names, years):
+        seen.append((names, years))
+        design = original(config, names=names, years=years)
+        return replace(design, years=2, reps=4, half_lives=(21.0,), bootstrap_reps=9)
+
+    monkeypatch.setattr(evaluation, "size_design", shrunk)
+    out, target = io.StringIO(), tmp_path / "check.json"
+    argv = ["--evaluation-check", "--sizes", "4", "--out", str(target)]
+    assert script.main(argv, out=out) == 0
+    assert seen == [(4, 19)]
+    record = json.loads(target.read_text(encoding="utf-8"))
+    assert record["sizes"][0]["status"] == "ok" and "reported only" in record["role"]
+    assert "other_vs_own" in out.getvalue() and "`fold_block_t`" in out.getvalue()

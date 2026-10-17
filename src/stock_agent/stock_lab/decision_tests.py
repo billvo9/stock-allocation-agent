@@ -69,9 +69,10 @@ KV_BARTLETT = {
     0.95: (1.6449, 2.1859, 0.3142, -0.3427),
     0.975: (1.9600, 2.9694, 0.4160, -0.5324),
 }
-# The fixed-b critical values at the planned T = 4,788 (19 folds of 252 dates),
-# at holm_levels(0.05, 4) = 1.25%, 1.67%, 2.5% and 5% (fixed_b_table, default
-# simulation; reproduced in tests).
+# The packet's critical values at the planned T = 4,788 (19 folds of 252
+# dates), at holm_levels(0.05, 4) = 1.25%, 1.67%, 2.5% and 5% (reproduced in
+# tests): the fold-block t's t(18), and fixed_b_table's default simulation.
+PLANNED_FOLD_T = (-2.4450, -2.3043, -2.1009, -1.7341)
 PLANNED_FIXED_B = {
     "nw_fixed_b_sqrt": (-2.3196, -2.2006, -2.0216, -1.6859),  # M = 90, b = 0.0188
     "nw_fixed_b_tenth": (-2.6372, -2.4837, -2.2456, -1.8390),  # M = 479, b = 0.1000
