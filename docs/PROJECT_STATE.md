@@ -571,8 +571,9 @@ the owner's answers and messages in session:
     `8b5e564`).
     - D4 (a) holds for synthetic engineering only.
     - One D5 clause ("Stricter constraints are explicitly registered for
-      learned policies") awaits confirmation. Until then, constraint sets
-      apply identically to every compared policy.
+      learned policies") awaited confirmation; it was confirmed on
+      2026-10-17 (below): constraint sets apply identically to every
+      compared policy.
     - "Keep D9 separate for later owner review."
   - The prospective window: "My intended 63-return input window is 64
     consecutive closes ending at the forecast close. For the initial
@@ -625,13 +626,69 @@ the owner's answers and messages in session:
     the exact scope and command (given in
     `docs/research/stock_probability_lab.md`, section 7; not yet answered);
   - do not alter the PPO reward or the portfolio simulator.
+- 2026-10-17, Wave 2 follow-through brief (owner, verbatim where quoted):
+  - Simulator interpretations: "I approve the following interpretations
+    of the existing D1–D8 contract". They are recorded verbatim in
+    `docs/research/t5a_open_decisions.md`:
+    - D5: a registered constraint set applies identically to every
+      compared policy;
+    - D6: a hold preserves a deferred target, and a new valid target
+      supersedes it;
+    - D5: a registered turnover cap also applies to the initial build,
+      reporting executed weights, uninvested cash and any incomplete
+      construction.
+
+    "These are confirmations of the existing approved simulator rules,
+    not authorization for different financial formulas."
+  - Zero volatility: "I support investigating a prespecified positive
+    floor for the log-volatility target, but I am not approving an
+    arbitrary replacement value yet."
+    - "Keep measured zero volatility distinguishable from the modeling
+      floor."
+    - "Do not use protected holdout outcomes to select the floor."
+    - The formula decision is pending.
+  - Prospective governance principles the owner supports (not yet final
+    activation approval):
+    - "Register and freeze the model before its first real forecast."
+    - "Begin recording no earlier than the first eligible close after
+      registration and verified data availability."
+    - "Never backdate or overwrite forecasts."
+    - "Treat an initial 20-session trial as a prospectively registered
+      exclusion, not a period that can later be selectively included."
+    - "Use a preregistered test family and Holm correction where
+      appropriate."
+    - "Account for overlapping 5-, 20- and 30-session outcomes."
+
+    Also:
+    - "Do not claim prospective validation merely because forecasts have
+      been logged."
+    - "Keep the forecast-ledger head hash privately backed up outside the
+      ledger. Do not commit it publicly yet."
+  - Comparison: "Proceed with the approved synthetic comparison
+    engineering." It covers:
+    - the same transition, observation timing, costs, rebalance schedule,
+      initial build and constraints for every strategy;
+    - buy-and-hold, equal weight, fixed balanced, inverse volatility,
+      mean-variance, CEM, PPO and an all-SHV baseline.
+
+    "No selection on the final test set and no claims of real investment
+    profitability."
+  - Real data: "Keep the Tiingo read-only audit ready for my local
+    authorization. Do not silently collect or store real data."
+  - Stock Lab: "Treat the new daily stock-probability feature as separate
+    from the ETF forecasting and PPO evidence programs." and "Keep its
+    synthetic probabilities clearly distinguished from actual calibrated
+    forecasts."
+  - Not authorized: "Do not merge PRs, approve new financial target
+    formulas, unlock holdout data, authorize paid data, or activate
+    prospective investment claims on my behalf."
 - Pending:
   - the Stock Lab decisions A1-A6 (open item 10);
   - the rest of OD3;
   - OD8 groups C-D (cash returns and benchmarks; statistics and
     reporting). Group B, the D1-D8 packet, was approved on 2026-10-15
-    (above); its D5 clause on constraint sets for learned policies awaits
-    confirmation;
+    (above); its D5 clause and two interpretations were confirmed on
+    2026-10-17 (above);
   - D9 (the Builder's buy-and-hold mix), separate from group B;
   - OD9's `signal_cutoff_at` for decisions and the production
     availability rule beyond descriptive display;
