@@ -2,8 +2,9 @@
 The copy of the Lab's Stock Probability destination, in one data module so
 tests assert and scan it (the same rules as `wording`: no advice, no trading
 verbs, nothing ranked or preferred; every pending capability is named as
-pending). Today the page describes stored history only: no probability or
-forecast is shown until the estimators are evaluated.
+pending). Probabilities appear only where a stored, checked forecast exists,
+always with their evidence status; today that means the synthetic demo
+stocks only.
 """
 
 from __future__ import annotations
@@ -11,21 +12,29 @@ from __future__ import annotations
 EYEBROW = "Experimental"
 TITLE = "Stock Probability Lab"
 LEDE = (
-    "Save the US stocks you follow, then study how each one has moved day to day: how often it "
-    "rose, stayed within a small band or fell, how long its streaks lasted, and how often a "
-    "streak reversed. Probabilities for the next five sessions come later, once the models are "
-    "tested against simple baselines."
+    "Save the US stocks you follow and study how each one has moved day to day: how often it "
+    "rose, stayed within a small band or fell, how long its streaks lasted and how often they "
+    "reversed. Where a tested model exists, see its probabilities for each of the next five "
+    "sessions beside the stock's usual mix."
 )
 EXPERIMENTAL_BADGE = "Experimental: no validated forecast"
 DESCRIPTIVE_BADGE = "Describes the past only"
 SYNTHETIC_BADGE = "Synthetic demo stocks: not real"
 NOT_YET = (
-    "No probability is shown yet. The probability models, their walk-forward tests against "
-    "simple baselines and the forecast record are still being built, so this page shows only "
-    "what each stock's stored history says about the past."
+    "Probabilities are shown only for the synthetic demo stocks, from estimators tested "
+    "walk-forward on synthetic data. Real stocks get probabilities only after live data and "
+    "the way forecasts are recorded are approved; until then they show their history only."
 )
 
-TABS = ("Watchlist", "Stock detail", "Model diagnostics")
+TABS = (
+    "Watchlist",
+    "Next five sessions",
+    "History",
+    "Reversals",
+    "Bull traps",
+    "Model diagnostics",
+)
+CONTROLS_TITLE = "Choose a stock"
 
 # --- the watchlist ---
 
@@ -97,7 +106,7 @@ DEMO_SCOPE = (
 
 # --- one stock ---
 
-DETAIL_TITLE = "Stock detail"
+DETAIL_TITLE = "History"
 DETAIL_EMPTY = (
     "No stored prices to show yet. Choose a synthetic demo stock, or wait for the first "
     "authorized data update."
@@ -179,3 +188,166 @@ DIAGNOSTICS_EXPECTATIONS = (
     "volatility), not rises from falls. With a watchlist of a few dozen stocks that move "
     "together, a small edge in direction would take decades of data to detect."
 )
+
+# --- the next five sessions ---
+
+FORECAST_TITLE = "Next five sessions"
+FORECAST_BADGE = "Experimental, unvalidated"
+DEVELOPMENT_BADGE = "Tested on data through 2024-12-31"
+FORECAST_NONE_DEMO_TITLE = "No demo forecast stored yet"
+FORECAST_NONE_DEMO = (
+    "The synthetic demo forecasts are computed on this computer, with no network, by one "
+    "command. It also records the walk-forward evaluation shown under Model diagnostics."
+)
+DEMO_COMMAND = ".venv/bin/python scripts/stock_lab_evaluate.py --demo"
+FORECAST_NONE_REAL_TITLE = "No forecast for real stocks yet"
+FORECAST_NONE_REAL = (
+    "Probabilities for a real stock need three approvals first: live data, using recent "
+    "prices as inputs only, and recording forecasts so they can be scored as sessions close. "
+    "Until then the History, Reversals and Bull traps tabs describe its past."
+)
+FORECAST_BAND = (
+    "These probabilities use the {band} band the models were tested with. The band chosen "
+    "above changes the history views only."
+)
+FORECAST_REFUSED = "No probability was given for this stock: {detail}"
+NEXT_TITLE = "The next session"
+DAILY_NOTE = (
+    "Each session's probabilities are for that day's own move, not for the move from today's "
+    "close to that day. The total over all five sessions is shown separately below."
+)
+FIVE_TITLE = "Each of the next five sessions"
+FIVE_SUBTITLE = "Dot: probability · bar: how often similar forecasts came true in tests"
+USUAL_SERIES = "Usual rate"
+FORECAST_SERIES = "Forecast"
+FIVE_TABLE = "The five sessions"
+CUMULATIVE_TITLE = "The five-session total"
+CUMULATIVE_NOTE = (
+    "The change from the last close to the close five sessions ahead, against a wider band "
+    "of {band} (the daily band times the square root of five)."
+)
+RECORDED = (
+    "As of the close of {as_of}; made {created}. Estimator: {estimator}. Model {version}, "
+    "features {features}, evaluation {evaluation}."
+)
+SUPERSEDED = "{count} earlier forecast(s) for this stock are kept, each replaced by a newer one."
+TRACK_NOTE = (
+    "“Tests: 29–37% came true” means: in the walk-forward tests, forecasts in the same range "
+    "for this estimator came true that often. It describes past calibration, not certainty."
+)
+SAME_AS_USUAL = "Same as usual"
+
+# --- reversals ---
+
+REVERSALS_TITLE = "Reversals"
+REVERSALS_LEDE = (
+    "What followed a streak, or a large one-session move, in this stock's own past. These are "
+    "counts of past cases, with their uncertainty; they are not a forecast."
+)
+DIRECTION_LABEL = "After a streak of"
+DIRECTION_OPTIONS = {"decrease": "Falling sessions", "increase": "Rising sessions"}
+LENGTH_LABEL = "Streak length"
+LENGTH_HELP = "Each streak is counted once, when it first reaches this length."
+STREAK_CHART_TITLE = "How often the next session {reverse} after a {noun} streak"
+STREAK_CHART_SUBTITLE = "Hatched bars: few cases · outlined bar: the current streak"
+STREAK_TABLE = "By streak length"
+REGIME_TITLE = "Calm and volatile spells"
+REGIME_NOTE = (
+    "Volatility at the time of each streak, against the stock's own earlier volatility (its "
+    "lowest, middle and highest thirds so far)."
+)
+DURATION_TITLE = "How long reversals lasted"
+DURATION_NOTE = (
+    "The run in the other direction that began right after a streak of at least this length. "
+    "Runs still open, or cut by a missing session, count as lasting at least as long as seen "
+    "(Kaplan-Meier). Median: {median}. {runs} reversal(s), {censored} still open."
+)
+MOVE_TITLE = "After a large one-session move"
+MOVE_LABEL = "Move larger than"
+MOVE_SIGN_LABEL = "Direction of the move"
+MOVE_SIGN = {"1": "A gain", "-1": "A fall"}
+MOVE_NOTE = (
+    "{definition}: {events} case(s), each counted once per five sessions, {pending} still "
+    "pending. Continuation, stabilization and reversal compare the total change over the next "
+    "sessions with a band that widens with the number of sessions."
+)
+INSUFFICIENT = "Insufficient observations"
+
+# --- bull traps ---
+
+TRAPS_TITLE = "Bull traps: failed breakouts"
+TRAPS_LEDE = (
+    "A bull trap is a rally that breaks above a recent high and then falls back below it. Here "
+    "it is a fixed, written rule, checked against this stock's own past, beside how often any "
+    "breakout failed. A pattern name is not evidence: the comparison is."
+)
+TRAP_STEPS = (
+    (
+        "NOTICE",
+        "Step 1",
+        "A decline",
+        "The recent low was at least {decline} below the high of the previous {high} sessions.",
+    ),
+    ("NOTICE", "Step 2", "A rebound", "The close is at least {rebound} above that low."),
+    (
+        "NOTICE",
+        "Step 3",
+        "A breakout",
+        "The close is above the highest close of the previous {window} sessions.",
+    ),
+    (
+        "WARNING",
+        "Failure",
+        "Back below",
+        "Within {failure} sessions, a close falls more than {margin} below that earlier high.",
+    ),
+)
+TRAP_LATEST = "Latest setup: {session}. {status}"
+TRAP_NONE = "No setup in this stock's history matches the rule."
+TRAP_NOW = "A setup is open now; it stays unresolved until its {failure}-session window closes."
+TRAP_RATES = "Setup failure rate {rate} over {n} resolved setup(s), against {base} for every breakout ({lift})."
+TRAP_DETAILS = "Precision, recall and false alarms"
+TRAP_DETAILS_TEXT = (
+    "Treating “setup” as a warning that a breakout will fail: precision (warnings that came "
+    "true) {precision}; recall (failures that were warned of) {recall}; false-alarm rate "
+    "(breakouts that held but were warned of) {false_alarm}."
+)
+BEAR_TITLE = "Bear traps (the mirror rule)"
+BEAR_TEXT = (
+    "A fall below a recent low after a rally, then a recovery above it. Failure rate {rate} "
+    "over {n} resolved setup(s), against {base} for every breakdown."
+)
+
+# --- diagnostics (PR 2) ---
+
+DIAGNOSTICS_NONE = (
+    "No evaluation is stored yet. Run the demo command to evaluate the estimators on the "
+    "synthetic demo stocks."
+)
+DIAGNOSTICS_SYNTHETIC = (
+    "This evaluation used synthetic data: it checks that the machinery works, and says nothing "
+    "about any real stock."
+)
+SCORES_TITLE = "Scores against the baselines"
+SCORES_NOTE = (
+    "Lower is better. RPS, the ranked probability score, is the primary score: it charges more "
+    "for predicting a fall when a rise happens than for predicting Stable. Averages over the "
+    "five daily targets, on identical test sessions."
+)
+COMPARISON_TITLE = "Is the difference real?"
+COMPARISON_NOTE = (
+    "Each estimator's daily RPS minus the recent-weighted baseline's, averaged per date across "
+    "stocks (stocks that move together are not independent evidence), with Newey-West "
+    "standard errors and Holm's correction for the comparisons made."
+)
+RELIABILITY_TITLE = "{category}: said versus happened"
+RELIABILITY_SUBTITLE = "Filled: estimator in use · hollow: recent-weighted baseline (B1)"
+DIAGONAL = "Perfect calibration"
+COUNTS_TITLE = "Forecasts in each range"
+COUNTS_SUBTITLE = "Development tests, the next session"
+FOLDS_TITLE = "Walk-forward folds"
+FOLDS_NOTE = (
+    "Each year is tested with models fitted only on earlier, matured outcomes; every choice "
+    "(the half-life, the logistic penalty) was made inside the training years."
+)
+CANDIDATES = "Candidates tried: {family}. Every one is reported here; none was dropped."
