@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -20,7 +22,7 @@ from stock_agent.data.funds.adapter import SYNTHETIC_FUND_IDS, SyntheticFundAdap
 from stock_agent.data.funds.ingest import ingest_batch
 from stock_agent.health import collect, fixtures, forecast
 from stock_agent.health.context import code_state, run_context
-from stock_agent.health.model import AlertKind, HealthState, Scope, read_summary
+from stock_agent.health.model import AlertKind, Condition, HealthState, Scope, read_summary
 
 REPO = Path(__file__).resolve().parents[1]
 NOW = datetime(2026, 10, 14, 18, tzinfo=UTC)
@@ -73,11 +75,13 @@ PRIVATE_CHECKS = [
     "forecast.ledger",
     "forecast.ledger_backup",
     "forecast.ledger_sessions",
+    "forecast.ledger_scores",
     "portfolio.turnover",
     "portfolio.costs",
     "portfolio.concentration",
     "portfolio.drawdown",
     "data.stock_lab_freshness",
+    "data.stock_lab_tickers",
     "forecast.stock_lab_job",
     "forecast.stock_lab_scores",
     "forecast.stock_lab_drift",
@@ -609,3 +613,115 @@ def test_the_script_refuses_both_github_and_a_run_list(root, tmp_path):
             ["local", "--github", "--ci-runs", str(tmp_path / "runs.json")], environment(root)
         )
     assert stopped.value.code == 2
+
+
+# --- missing inputs and the public boundary ------------------------------------------
+
+
+def test_a_local_run_whose_private_inputs_are_all_missing_is_never_healthy(root, tmp_path):
+    gone = tmp_path / "gone"  # every input is named, and none of them exists
+    inputs = collect.PrivateInputs(
+        ci_runs=gone / "ci_runs.json",
+        fund_store=gone / "fund_store",
+        health_inputs=gone / "health_inputs",
+        registry=gone / "registry",
+        ml_artifacts=gone / "artifacts",
+        ml_root=gone / "ml",
+        rl_runs=gone / "rl",
+        ledger=gone / "ledger.jsonl",
+        ledger_head_backup=gone / "ledger_head.txt",
+    )
+    summary, _ = collect.run_local(
+        environment(root), tmp_path / "private", verify=None, inputs=inputs
+    )
+    assert ids(summary) == PUBLIC_CHECKS + PRIVATE_CHECKS
+    for check_id in PRIVATE_CHECKS:
+        check = summary.check(check_id)
+        # Missing is "no evidence" or "unavailable": never healthy, stale or failed.
+        assert check.condition in {Condition.NO_EVIDENCE, Condition.UNAVAILABLE}, check_id
+        assert check.value is None or check.state is not HealthState.HEALTHY, check_id
+    assert summary.overall_state is not HealthState.HEALTHY
+
+
+# Where private data lives: the local monitor's defaults and the jobs' private stores.
+PRIVATE_DEFAULTS = (
+    "data/raw",
+    "reports/health_inputs",
+    "reports/ml",
+    "reports/health",
+    "models/rl",
+)
+AUDITED = {"open", "os.listdir", "os.scandir", "sqlite3.connect", "glob.glob", "os.chdir"}
+_opened: list[tuple[str, str]] | None = None
+
+
+def _audit(event: str, args: tuple) -> None:
+    if _opened is not None and event in AUDITED and args:
+        target = args[0]
+        if isinstance(target, str | bytes | os.PathLike):
+            _opened.append((event, os.fsdecode(target)))
+
+
+sys.addaudithook(_audit)  # records only while `_opened` is a list (the hook cannot be removed)
+
+
+def test_the_ci_run_never_reads_a_private_path(root, tmp_path, monkeypatch):
+    global _opened
+    home = tmp_path / "home"
+    private = home / "stock-agent-private"
+    planted = [
+        private / "health" / "latest.json",
+        private / "stock_lab" / "stock_lab.sqlite3",
+        private / "stock_lab" / "stock_lab_ledger_head",
+        private / "ledger_head.txt",
+        private / "fund_store" / "batches.json",
+        private / "prospective_store" / "batches.json",
+        private / "anchors.csv",
+        *(root / directory / "planted.json" for directory in PRIVATE_DEFAULTS),
+    ]
+    for path in planted:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"private": true}\n', encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("STOCK_AGENT_STOCK_LAB_HOME", str(private / "stock_lab"))
+    monkeypatch.setenv("STOCK_AGENT_ANCHORS", str(private / "anchors.csv"))
+    monkeypatch.setenv("STOCK_AGENT_PROSPECTIVE_LEDGER", str(root / "data/raw/planted.json"))
+    env = collect.Environment(
+        root=root,
+        env=dict(os.environ),
+        now=lambda: NOW,
+        runner=FakeMachine(),
+        installed={"pytest": "9.1.1"}.get,
+        python="/repo/.venv/bin/python",
+        home=home,
+    )
+    output = tmp_path / "out"
+    _opened = []
+    try:
+        summary, _ = collect.run_ci(env, output, verify=collect.run_verify(env, public=True))
+    finally:
+        touched, _opened = _opened, None
+    assert summary.scope is Scope.SYNTHETIC and ids(summary) == PUBLIC_CHECKS
+    forbidden = [
+        private,
+        Path.home() / "stock-agent-private",  # the real defaults, whatever HOME says
+        *(root / directory for directory in PRIVATE_DEFAULTS),
+    ]
+    assert touched  # the hook saw the run's own reads and writes
+    read = [
+        (event, path)
+        for event, path in touched
+        if any(Path(path).resolve().is_relative_to(place.resolve()) for place in forbidden)
+    ]
+    assert read == []
+    assert all(path.read_text(encoding="utf-8") == '{"private": true}\n' for path in planted)
+
+
+def test_the_ci_run_takes_no_private_input():
+    import inspect
+
+    assert list(inspect.signature(collect.run_ci).parameters) == [
+        "environment",
+        "output_dir",
+        "verify",
+    ]

@@ -28,19 +28,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from stock_agent.health.model import (
-    PRECEDENCE,
+    CONDITION_PRECEDENCE,
+    Condition,
     HealthState,
     HealthSummary,
     SummaryRefused,
     read_summary,
 )
 from stock_agent.health.view import (
-    STATE_LEVELS,
-    STATE_WORDS,
+    CONDITION_LEVELS,
+    CONDITION_WORDS,
     CheckView,
     HealthView,
     build_view,
     check_view,
+    worst_condition,
 )
 
 LOCAL_VARIABLE = "STOCK_AGENT_HEALTH_LOCAL_SUMMARY"
@@ -58,6 +60,11 @@ SECTIONS = (
     ),
     ("models", "Models, versions and evidence stage", ("registry.",)),
     ("ledger", "Prospective forecast ledger", ("forecast.ledger",)),
+    (
+        "stock_lab",
+        "Stock Lab daily job (experimental)",
+        ("data.stock_lab_", "forecast.stock_lab_"),
+    ),
     ("data", "Data quality and vendor basis", ("data.",)),
     (
         "policy",
@@ -119,8 +126,8 @@ class HealthPage:
 def _summary_text(checks: list[CheckView]) -> str:
     """The worst check's own sentence and how many of the area's checks are healthy."""
 
-    worst = min(checks, key=lambda check: PRECEDENCE.index(check.state))
-    healthy = sum(check.state is HealthState.HEALTHY for check in checks)
+    worst = min(checks, key=lambda check: CONDITION_PRECEDENCE.index(check.condition))
+    healthy = sum(check.condition is Condition.HEALTHY for check in checks)
     noun = "check" if len(checks) == 1 else "checks"
     if healthy == len(checks):
         return f"All {len(checks)} {noun} healthy."
@@ -139,15 +146,15 @@ def sections(summary: HealthSummary) -> tuple[Section, ...]:
         checks = grouped.get(key)
         if not checks:
             continue
-        ordered = sorted(checks, key=lambda check: PRECEDENCE.index(check.state))
-        state = ordered[0].state
+        ordered = sorted(checks, key=lambda check: CONDITION_PRECEDENCE.index(check.condition))
+        worst = worst_condition(ordered)
         result.append(
             Section(
                 key=key,
                 title=titles[key],
-                state=state,
-                state_word=STATE_WORDS[state],
-                level=STATE_LEVELS[state],
+                state=ordered[0].state,
+                state_word=CONDITION_WORDS[worst],
+                level=CONDITION_LEVELS[worst],
                 summary=_summary_text(ordered),
                 checks=tuple(ordered),
             )

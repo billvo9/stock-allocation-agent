@@ -23,6 +23,11 @@ Fields besides the envelope (`inputs`):
                   not_in_ledger or ledger_deleted
     lineage      {estimator, model_version, feature_version, evaluation_run_id}
     schedule     {last_success_at, next_expected_at}
+    symbols      optional (added 2026-10-17, format still 1.0): {tickers:
+                  [{ticker, status, reason}]}, each watched ticker's latest
+                  check against the provider's listing (status: supported,
+                  unsupported, inactive, delisted, ambiguous, or unverified
+                  when never checked; stock_lab.contracts.SymbolStatus)
 
 Checks (each says it is an experimental, unvalidated forecaster):
 
@@ -30,6 +35,13 @@ Checks (each says it is an experimental, unvalidated forecaster):
                               (degraded when any is behind; insufficient
                               evidence without a watchlist, or while the
                               price update is not authorized yet)
+    data.stock_lab_tickers    every watched ticker is supported by the
+                              provider's listing: degraded when any is
+                              unsupported, inactive, delisted or ambiguous
+                              (no forecast is made for it); insufficient
+                              evidence when a ticker was never checked, without
+                              a watchlist, or for a monitor file that does not
+                              record the listing status
     forecast.stock_lab_job    the last daily run (failed is failed, partial
                               or skipped degraded; a run skipped because it
                               is not authorized yet is insufficient evidence,
@@ -81,8 +93,20 @@ MIN_SESSIONS = 50  # distinct settled sessions: overlapping targets are not inde
 OVERDUE = 6  # hours past the next expected run before a silent job counts as overdue
 PSI_WARNING = 0.25
 EXPERIMENTAL = "Experimental, unvalidated forecaster; tracking only, never evidence of skill."
+# The listing statuses the job records (stock_lab.contracts.SymbolStatus, tested equal).
+SYMBOL_STATUSES = frozenset(
+    {"unverified", "supported", "unsupported", "inactive", "delisted", "ambiguous"}
+)
+NOT_SUPPORTED = frozenset({"unsupported", "inactive", "delisted", "ambiguous"})
+SYMBOL_WORDS = {
+    "unsupported": "unsupported",
+    "inactive": "no recent prices",
+    "delisted": "delisted or renamed",
+    "ambiguous": "ambiguous listing",
+}
 TITLES = {
     "data.stock_lab_freshness": "Stock Lab data freshness",
+    "data.stock_lab_tickers": "Stock Lab watchlist tickers",
     "forecast.stock_lab_job": "Stock Lab daily update",
     "forecast.stock_lab_scores": "Stock Lab rolling forecast scores",
     "forecast.stock_lab_drift": "Stock Lab input drift",
@@ -117,6 +141,13 @@ def _parse(artifact: Artifact) -> dict:
         choice(require(ledger, "kept_head", "object"), "state", KEPT_STATES)
     require(document, "lineage", "object")
     require(document, "schedule", "object")
+    if document.get("symbols") is not None:
+        symbols = require(document, "symbols", "object")
+        for row in require(symbols, "tickers", "list"):
+            if not isinstance(row, dict):
+                raise FormatError("symbols.tickers rows must be objects")
+            require(row, "ticker", "text")
+            choice(row, "status", SYMBOL_STATUSES)
     return document
 
 
@@ -138,6 +169,46 @@ def _check(check_id, state, reason, *, measured, value, unit, threshold, summary
         detail=detail,
         evidence=evidence,
     )
+
+
+def _tickers_finding(symbols: dict | None) -> tuple[Finding, int | None]:
+    """The watchlist's listing status: the finding and the number not supported."""
+
+    if symbols is None:
+        return Finding(
+            HealthState.INSUFFICIENT_EVIDENCE,
+            "not_recorded",
+            "The monitor file does not record the tickers' listing status (it predates this "
+            "check), so an unsupported ticker would not show.",
+        ), None
+    rows = symbols["tickers"]
+    if not rows:
+        return Finding(HealthState.INSUFFICIENT_EVIDENCE, "no_watchlist", "No stock is watched."), 0
+    unusable = [row for row in rows if row["status"] in NOT_SUPPORTED]
+    unchecked = [row["ticker"] for row in rows if row["status"] == "unverified"]
+    waiting = (
+        f" {len(unchecked)} more not checked yet: {', '.join(unchecked[:10])}." if unchecked else ""
+    )
+    if unusable:
+        names = ", ".join(f"{row['ticker']} ({SYMBOL_WORDS[row['status']]})" for row in unusable)
+        return Finding(
+            HealthState.DEGRADED,
+            "tickers_not_supported",
+            f"{len(unusable)} of {len(rows)} watched tickers cannot be studied as listed: {names}. "
+            f"No forecast is made for them.{waiting}",
+        ), len(unusable)
+    if unchecked:
+        return Finding(
+            HealthState.INSUFFICIENT_EVIDENCE,
+            "tickers_not_checked",
+            f"{len(unchecked)} of {len(rows)} watched tickers have not been checked against the "
+            f"provider's listing yet: {', '.join(unchecked[:10])}.",
+        ), 0
+    return Finding(
+        HealthState.HEALTHY,
+        None,
+        f"All {len(rows)} watched tickers are supported by the provider's latest listing check.",
+    ), 0
 
 
 KEPT_FINDINGS = {
@@ -248,11 +319,17 @@ def stock_lab_checks(
         )
     elif behind:
         names = ", ".join(r["ticker"] for r in behind[:10])
+        never = [r["ticker"] for r in behind if r.get("last_session") is None]
+        never_text = (
+            f" {len(never)} have no stored session at all: {', '.join(never[:10])}."
+            if never
+            else ""
+        )
         finding = Finding(
             HealthState.DEGRADED,
             "stale_prices",
             f"{len(behind)} of {len(rows)} watched stocks lack the expected "
-            f"session: {names}. Their last valid forecast is shown as stale.",
+            f"session: {names}. Their last valid forecast is shown as stale.{never_text}",
         )
     else:
         finding = Finding(HealthState.HEALTHY, None, f"All {len(rows)} watched stocks are current.")
@@ -266,6 +343,25 @@ def stock_lab_checks(
             value=len(behind),
             unit="stocks behind",
             threshold="every watched stock has the expected session",
+            summary=finding.summary,
+            detail=described,
+            evidence=evidence,
+            better=Better.LOWER,
+        )
+    )
+
+    # Listing status of the watched tickers
+    finding, value = _tickers_finding(document.get("symbols"))
+    finding = worst_finding([finding, *common])
+    checks.append(
+        _check(
+            "data.stock_lab_tickers",
+            finding.state,
+            finding.reason,
+            measured=measured,
+            value=value,
+            unit="tickers not supported",
+            threshold="every watched ticker is supported by the provider's latest listing check",
             summary=finding.summary,
             detail=described,
             evidence=evidence,

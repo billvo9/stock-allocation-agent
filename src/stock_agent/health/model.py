@@ -81,6 +81,53 @@ def worst(states: Iterable[HealthState]) -> HealthState:
     return min(present, key=_RANK.__getitem__)
 
 
+class Condition(StrEnum):
+    """
+    What a check's state and reason mean to an operator, worst first. It is
+    derived from the stored state and reason, never stored, so every reader of a
+    summary derives the same condition and the summary format is unchanged:
+
+        failed         the state failed
+        unavailable    the state unavailable
+        degraded       degraded for any reason but staleness
+        stale          degraded because the data or evidence is older than its
+                       limit (STALE_REASONS)
+        no_evidence    insufficient_evidence: no input yet, or too few observations
+        not_activated  insufficient_evidence because the producer is not
+                       authorized to run yet (NOT_ACTIVATED_REASONS)
+        healthy        the state healthy
+    """
+
+    FAILED = "failed"
+    UNAVAILABLE = "unavailable"
+    DEGRADED = "degraded"
+    STALE = "stale"
+    NO_EVIDENCE = "no_evidence"
+    NOT_ACTIVATED = "not_activated"
+    HEALTHY = "healthy"
+
+
+# Worst first; it keeps the state precedence (every condition of a worse state is worse).
+CONDITION_PRECEDENCE = tuple(Condition)
+# Degraded reasons that mean "measured, but older than its limit" (tested against
+# every `stale_*` reason the checks emit).
+STALE_REASONS = frozenset({"stale_data", "stale_evidence", "stale_prices", "daily_run_overdue"})
+NOT_ACTIVATED_REASONS = frozenset({"not_authorized"})
+
+
+def condition(state: HealthState, reason: str | None) -> Condition:
+    """The operator condition of a state and its reason (see `Condition`)."""
+
+    state = HealthState(state)
+    if state is HealthState.DEGRADED and reason in STALE_REASONS:
+        return Condition.STALE
+    if state is HealthState.INSUFFICIENT_EVIDENCE:
+        if reason in NOT_ACTIVATED_REASONS:
+            return Condition.NOT_ACTIVATED
+        return Condition.NO_EVIDENCE
+    return Condition(state.value)
+
+
 class Area(StrEnum):
     """The prefix of every check id in that area."""
 
@@ -339,6 +386,12 @@ class Check:
             raise _refuse(
                 SummaryRefusal.INVALID_FIELD, f"{self.check_id} is {state} without a reason"
             )
+
+    @property
+    def condition(self) -> Condition:
+        """The operator condition of this check's state and reason (derived, not stored)."""
+
+        return condition(self.state, self.reason)
 
     def to_json_dict(self) -> dict[str, Any]:
         return {
@@ -670,17 +723,20 @@ def read_summary(path: str | Path) -> HealthSummary:
 
 
 __all__ = [
+    "CONDITION_PRECEDENCE",
     "PRECEDENCE",
     "Alert",
     "AlertKind",
     "Area",
     "Better",
     "Check",
+    "Condition",
     "HealthState",
     "HealthSummary",
     "NotApplicable",
     "Scope",
     "SummaryRefused",
+    "condition",
     "read_summary",
     "worst",
 ]

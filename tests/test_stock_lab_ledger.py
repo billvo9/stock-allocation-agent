@@ -346,6 +346,42 @@ def test_each_replay_day_writes_one_valid_health_input(replayed):
             "unavailable",
             "unrecognized_format",
         ),
+        (
+            lambda d: d.pop("symbols"),
+            "data.stock_lab_tickers",
+            "insufficient_evidence",
+            "not_recorded",
+        ),
+        (
+            lambda d: d["symbols"].update(tickers=[]),
+            "data.stock_lab_tickers",
+            "insufficient_evidence",
+            "no_watchlist",
+        ),
+        (
+            lambda d: d["symbols"]["tickers"][0].update(status="unverified", reason="not_checked"),
+            "data.stock_lab_tickers",
+            "insufficient_evidence",
+            "tickers_not_checked",
+        ),
+        (
+            lambda d: d["symbols"]["tickers"][1].update(status="ambiguous"),
+            "data.stock_lab_tickers",
+            "degraded",
+            "tickers_not_supported",
+        ),
+        (
+            lambda d: d["symbols"]["tickers"][1].update(status="inactive"),
+            "data.stock_lab_tickers",
+            "degraded",
+            "tickers_not_supported",
+        ),
+        (
+            lambda d: d["symbols"]["tickers"][0].update(status="probably_fine"),
+            "data.stock_lab_tickers",
+            "unavailable",
+            "unrecognized_format",
+        ),
     ],
 )
 def test_the_health_checks_judge_what_the_job_recorded(tmp_path, change, check_id, state, reason):

@@ -51,6 +51,101 @@ insufficient evidence (`synthetic_input`). A value that moves in its worse
 direction while its state stays the same raises a deterioration alert (a
 falling ledger entry count is how a truncated ledger shows).
 
+**Conditions.** The Lab page, `health_check.py` and `--status` below name
+each check by its condition, derived from its state and reason
+(`stock_agent.health.model.Condition`; the summary format is unchanged), so
+these never share a word:
+
+| Word | Condition | Means |
+|---|---|---|
+| Failed | `failed` | A hard limit or contract is broken |
+| Unavailable | `unavailable` | A configured input could not be read, or a tool did not run |
+| Degraded | `degraded` | Outside a warning threshold |
+| Stale | `stale` | Degraded because data or evidence is older than its limit (`stale_data`, `stale_evidence`, `stale_prices`, `daily_run_overdue`) |
+| Insufficient evidence | `no_evidence` | No input yet, or too few observations |
+| Not activated | `not_activated` | Insufficient evidence because the job is not authorized yet (`not_authorized`) |
+| Healthy | `healthy` | Measured, within its threshold |
+
+An input that was never there is never healthy, stale or failed: it is
+insufficient evidence, or unavailable when it was configured and cannot be
+read. (A ledger that disappears after its kept head recorded entries is a
+deletion, and fails.)
+
+## Activate the scheduler
+
+The private monitor runs once a day under launchd, on the owner's Mac only.
+`scripts/setup_health_schedule.py` prepares it; installing it is the
+owner's step. Run every command from the main checkout, never from a
+worktree: the job monitors whatever is checked out where it runs, and the
+script refuses to write from a linked worktree.
+
+1. **Dry run.** Nothing is written:
+
+   ```bash
+   .venv/bin/python scripts/setup_health_schedule.py
+   ```
+
+   It prints the repository, the venv, `gh`, the schedule (07:30 local time
+   by default, `--at HH:MM`), each health option it passes or leaves out
+   with the reason, the inputs read from fixed places, the Stock Lab's
+   store, kept head and daily agent, and then the exact `run.sh` and plist.
+2. **Review.** Read both files. Name an input kept elsewhere
+   (`--fund-store`, `--prospective-store`, `--ledger-head-backup`,
+   `--anchors`, `--ledger`) or leave a step out (`--no-verify`,
+   `--no-github`), and repeat the dry run until it shows what you want.
+   For GitHub runs, check `gh auth status` yourself: the script does not,
+   because that contacts GitHub.
+3. **Write.** The same command with `--write`:
+
+   ```bash
+   .venv/bin/python scripts/setup_health_schedule.py --write
+   ```
+
+   It creates `~/stock-agent-private/health/run.sh` (mode 700) and
+   `~/Library/LaunchAgents/local.stock-agent.health.plist` (mode 644), each
+   only when absent. An identical file is left alone; a different file or a
+   symlink is never replaced (it shows the difference and writes neither).
+   It never runs launchctl.
+4. **Install (owner).** Check the plist, load the job, run it once (several
+   minutes with `--run-verify`) and look at it:
+
+   ```bash
+   plutil -lint ~/Library/LaunchAgents/local.stock-agent.health.plist
+   ```
+
+   ```bash
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.stock-agent.health.plist
+   ```
+
+   ```bash
+   launchctl kickstart -k gui/$(id -u)/local.stock-agent.health
+   ```
+
+   ```bash
+   launchctl print gui/$(id -u)/local.stock-agent.health
+   ```
+
+5. **Status.** Read-only: loaded or not, runs, last exit code, when
+   `latest.json` was written, whether it is fresh (at most 26 hours old),
+   stale or missing, and its overall state by condition. Exit 0 means
+   loaded and fresh; with a loaded job and a stale summary, read
+   `~/stock-agent-private/health/launchd.err.log`.
+
+   ```bash
+   .venv/bin/python scripts/setup_health_schedule.py --status
+   ```
+
+6. **View.** `.venv/bin/python scripts/run_portfolio_lab.py`, Model Health:
+   the page reads `latest.json` and names each check's condition.
+
+To change the job, unload it (`launchctl bootout
+gui/$(id -u)/local.stock-agent.health`), move `run.sh` or the plist aside,
+and repeat steps 1 to 4. To remove it, unload it and delete both files. The
+Stock Lab's daily job is a separate agent (`scripts/stock_lab_schedule.py`,
+`local.stock-lab.daily`): until it runs, its checks are insufficient
+evidence; once it has written a monitor file, a stopped job turns
+`forecast.stock_lab_job` failed (`job_overdue`).
+
 ## Reproduce a failure
 
 ```bash
@@ -379,6 +474,15 @@ The scheduled private run (launchd steps, outputs, keeping it private) is in
 - **Safe retry.** None for a past session: a forecast is never backdated.
 - **Fallback.** The gap stays visible in the record; it is never filled.
 
+<a id="forecast-ledger-scores"></a>
+### Matured forecasts with a score (`forecast.ledger_scores`)
+
+- **What it means.** Each forecast row (asset, horizon, target) matures at its exit session, the `entry_lag + horizon`-th rules-calendar session after its as-of session, and is due for scoring once that session's 09:30 New York deadline on the next weekday has passed (operator default). Degraded (`scores_overdue`) when a due row has no score entry; insufficient evidence before any forecast (`no_forecast_recorded`) or before any row is due (`none_matured`); unavailable (`unrecognized_rows`) when a row cannot be read or placed on the calendar; healthy when every due row is scored. Only identities are read, never a forecast value.
+- **Likely causes.** The score step (`scripts/forecast_prospective.py score`) did not run; the exit session's close is not in the prospective store yet (the step leaves such rows pending).
+- **Diagnose.** The detail lists the due rows without a score, oldest first; the score step prints the rows it leaves pending and why.
+- **Safe retry.** Run the score step after the exit session's close is stored: a row is scored once, and the ledger refuses a duplicate.
+- **Fallback.** Coverage and error reports count only scored rows; nothing is filled or estimated.
+
 ## Policy limits and fallbacks (local monitor)
 
 Backtest summaries are read from `reports/health_inputs/backtest_summary/`,
@@ -397,6 +501,15 @@ are never recomputed here.
 - **Diagnose.** The detail lists each stock's last stored session and how many sessions it is behind; the job run in the private store says what was skipped and why.
 - **Safe retry.** Run `scripts/stock_lab_daily.py` again after the availability time; it is idempotent (scores and runs are write-once).
 - **Fallback.** Leave the stale forecasts labelled stale; never edit a stored forecast.
+
+<a id="data-stock-lab-tickers"></a>
+### Stock Lab watchlist tickers (`data.stock_lab_tickers`)
+
+- **What it means.** Each watched ticker's latest check against the provider's listing, as the daily job records it. Degraded (`tickers_not_supported`) when any is unsupported, inactive (no recent prices), delisted or renamed, or ambiguous: no forecast is made for it. Insufficient evidence when a ticker was never checked (`tickers_not_checked`), without a watchlist (`no_watchlist`), or for a monitor file written before the job recorded listing status (`not_recorded`). Healthy when every watched ticker is supported. A ticker with no stored session at all is named by `data.stock_lab_freshness`.
+- **Likely causes.** A typo or a non-US listing added to the watchlist; a delisting, merger or ticker change; the listing check (`scripts/stock_lab_fetch.py`) has not run since the ticker was added.
+- **Diagnose.** The summary names each ticker with its status; the Stock Lab page shows the latest check and its reason.
+- **Safe retry.** Run the listing check again: it appends a new check, and earlier ones stay.
+- **Fallback.** Remove the ticker from the watchlist yourself (its history is kept); the Lab never substitutes another listing.
 
 <a id="forecast-stock-lab-job"></a>
 ### Stock Lab daily update (`forecast.stock_lab_job`)

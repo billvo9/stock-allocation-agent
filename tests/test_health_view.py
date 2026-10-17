@@ -201,3 +201,74 @@ def test_not_applicable_entries_are_listed_apart_from_the_state():
     )
     assert result.state_word == "Healthy"
     assert result.not_applicable == ("Forecast interval coverage (Forecasts): x.",)
+
+
+# --- no evidence, not activated, stale and failed never share a word ----------------
+
+
+def _waiting(check_id, reason, title):
+    return check(
+        check_id,
+        HealthState.INSUFFICIENT_EVIDENCE,
+        None,
+        measured_at=None,
+        reason=reason,
+        title=title,
+    )
+
+
+def test_no_evidence_not_activated_stale_and_failed_have_distinct_words():
+    result = build(
+        check("ci.tests", title="Test suite"),
+        check("data.freshness", HealthState.DEGRADED, reason="stale_data", title="Freshness"),
+        check("data.coverage", HealthState.DEGRADED, reason="low_coverage", title="Coverage"),
+        check("forecast.stock_lab_job", HealthState.FAILED, reason="job_failed", title="Job"),
+        _waiting("forecast.ledger", "input_missing", "Ledger"),
+        _waiting("forecast.stock_lab_scores", "not_authorized", "Daily update"),
+        scope=Scope.PRIVATE,
+    )
+    words = {c.title: c.state_word for area in result.areas for c in area.checks}
+    assert words == {
+        "Test suite": "Healthy",
+        "Freshness": "Stale",
+        "Coverage": "Degraded",
+        "Job": "Failed",
+        "Ledger": "Insufficient evidence",
+        "Daily update": "Not activated",
+    }
+    assert len(set(words.values())) == 6
+    assert result.summary == (
+        "6 checks: 1 failed, 1 degraded, 1 stale, 1 insufficient evidence, 1 not activated, "
+        "1 healthy."
+    )
+    assert result.state_word == "Failed"
+    stale = next(c for a in result.areas for c in a.checks if c.title == "Freshness")
+    assert (stale.state, stale.level) == (HealthState.DEGRADED, "WARNING")  # the stored state
+
+
+def test_stale_data_alone_says_stale_not_degraded():
+    result = build(
+        check("ci.tests"),
+        check("data.freshness", HealthState.DEGRADED, reason="stale_data", title="Freshness"),
+    )
+    assert (result.state, result.state_word) == (HealthState.DEGRADED, "Stale")
+    assert result.headline == "Working, but some data or evidence is stale"
+    assert result.next_action.startswith("Start with “Freshness”")
+    assert [area.state_word for area in result.areas] == ["Healthy", "Stale"]  # area order
+
+
+def test_a_job_not_activated_yet_is_named_apart_from_missing_evidence():
+    result = build(
+        check("ci.tests"),
+        _waiting("forecast.stock_lab_job", "not_authorized", "Daily update"),
+        _waiting("forecast.ledger", "input_missing", "Ledger"),
+    )
+    assert result.state_word == "Insufficient evidence"  # the worst condition: no evidence
+    assert result.next_action == (
+        "No action needed for what was measured. Waiting for evidence: Ledger. "
+        "Not activated yet: Daily update."
+    )
+    only = build(check("ci.tests"), _waiting("forecast.stock_lab_job", "not_authorized", "Job"))
+    assert (only.state, only.state_word) == (HealthState.INSUFFICIENT_EVIDENCE, "Not activated")
+    assert only.headline == "Nothing measured is wrong; some jobs are not activated yet"
+    assert "Healthy" not in {area.state_word for area in only.areas if area.area is Area.FORECAST}

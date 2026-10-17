@@ -18,6 +18,9 @@ What a run records, per watched stock:
     ledger          whether the hash chain verifies, its head, and the kept
                     head check (`check_kept_head`)
     lineage         the latest forecast's estimator and versions
+    symbols         each watched ticker's latest check against the provider's
+                    listing (`symbol_status`; unverified when never checked), so
+                    Model Health shows an unsupported or delisted ticker
 
 The kept head. A hash chain shows an edited or removed middle entry, but
 not a removed last entry. So the job keeps the head hash in a private file
@@ -52,7 +55,12 @@ from pathlib import Path
 import pandas as pd
 
 from stock_agent.stock_lab import monitoring, scoring
-from stock_agent.stock_lab.contracts import DEVELOPMENT_END, DataClass
+from stock_agent.stock_lab.contracts import (
+    DEVELOPMENT_END,
+    DataClass,
+    SymbolReason,
+    SymbolStatus,
+)
 from stock_agent.stock_lab.features import build_features
 from stock_agent.stock_lab.store import GENESIS, StockLabStore, stamp
 from stock_agent.stock_lab.traps import CONFIRMED, UNRESOLVED, trap_events
@@ -105,6 +113,19 @@ def check_kept_head(
     if verified:
         _write_kept(kept_head, head)
     return {"state": "match", "kept": kept}
+
+
+def symbol_status(store: StockLabStore, tickers: Sequence[str]) -> dict:
+    """Each watched ticker's latest listing check; unverified when it was never checked."""
+
+    checks = store.latest_checks()
+    rows = []
+    for ticker in tickers:
+        check = checks.get(ticker)
+        status = SymbolStatus.UNVERIFIED if check is None else check.status
+        reason = SymbolReason.NOT_CHECKED if check is None else check.reason
+        rows.append({"ticker": ticker, "status": status.value, "reason": reason.value})
+    return {"tickers": rows}
 
 
 def freshness(
@@ -261,5 +282,6 @@ def record_run(
             "last_success_at": runs[-1]["finished_at"] if runs else None,
             "next_expected_at": next_expected_at,
         },
+        symbols=symbol_status(store, tickers),
     )
     return monitoring.write_monitor(health_inputs, document)

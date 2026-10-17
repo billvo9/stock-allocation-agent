@@ -95,7 +95,11 @@ def monitor_document(
     ledger: Mapping,
     lineage: Mapping,
     schedule: Mapping,
+    symbols: Mapping | None = None,
 ) -> dict:
+    """The health input; `symbols` (each watched ticker's listing status) is optional."""
+
+    extra = {} if symbols is None else {"symbols": dict(symbols)}
     return _clean(
         {
             "artifact": ARTIFACT,
@@ -112,6 +116,7 @@ def monitor_document(
             "ledger": dict(ledger),
             "lineage": dict(lineage),
             "schedule": dict(schedule),
+            **extra,
         }
     )
 

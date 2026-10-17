@@ -276,3 +276,44 @@ def test_not_applicable_entries_never_count_and_never_repeat_a_check():
             not_applicable=(item,),
         )
     assert refused.value.reason is SummaryRefusal.DUPLICATE_CHECK
+
+
+# --- operator conditions --------------------------------------------------------------
+
+
+def test_conditions_follow_the_state_and_split_stale_and_not_activated():
+    from stock_agent.health.model import CONDITION_PRECEDENCE, Condition, condition
+
+    assert condition(HealthState.DEGRADED, "stale_data") is Condition.STALE
+    assert condition(HealthState.DEGRADED, "low_coverage") is Condition.DEGRADED
+    assert condition(HealthState.INSUFFICIENT_EVIDENCE, "not_authorized") is Condition.NOT_ACTIVATED
+    assert condition(HealthState.INSUFFICIENT_EVIDENCE, "input_missing") is Condition.NO_EVIDENCE
+    # A stale or not-authorized reason never softens a failure or an unavailable measurement.
+    assert condition(HealthState.FAILED, "stale_data") is Condition.FAILED
+    assert condition(HealthState.UNAVAILABLE, "not_authorized") is Condition.UNAVAILABLE
+    assert condition(HealthState.HEALTHY, None) is Condition.HEALTHY
+    # Every condition of a worse state ranks worse, so worst-of keeps the state precedence.
+    state_of = {
+        Condition.STALE: HealthState.DEGRADED,
+        Condition.NO_EVIDENCE: HealthState.INSUFFICIENT_EVIDENCE,
+        Condition.NOT_ACTIVATED: HealthState.INSUFFICIENT_EVIDENCE,
+    }
+    ranks = [
+        PRECEDENCE.index(state_of.get(item) or HealthState(item.value))
+        for item in CONDITION_PRECEDENCE
+    ]
+    assert ranks == sorted(ranks) and list(CONDITION_PRECEDENCE) == list(Condition)
+
+
+def test_every_stale_reason_the_checks_emit_is_a_stale_condition():
+    import re
+    from pathlib import Path
+
+    from stock_agent.health.model import NOT_ACTIVATED_REASONS, STALE_REASONS
+
+    package = Path(__file__).resolve().parents[1] / "src" / "stock_agent" / "health"
+    emitted = set()
+    for path in package.glob("*.py"):
+        emitted |= set(re.findall(r'"(stale_[a-z_]+)"', path.read_text(encoding="utf-8")))
+    assert emitted and emitted <= STALE_REASONS
+    assert "daily_run_overdue" in STALE_REASONS and NOT_ACTIVATED_REASONS == {"not_authorized"}
