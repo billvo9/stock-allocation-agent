@@ -1,8 +1,15 @@
 # Stock Probability & Reversal Lab
 
-Status: experimental. PR 1 (watchlist, stock data adapter, features, the
-Lab page on fixtures) is built. No probability model exists yet, and no
-live request has been made. Owner brief: 2026-10-16.
+Status: experimental.
+
+- PR 1 (#78) built the watchlist, the stock data adapter, the features and
+  the Lab page on fixtures.
+- PR 2 builds the estimators, the five-session forecasts, the reversal
+  analyzer, bull and bear traps, the walk-forward evaluation and the
+  modelled views.
+
+Probabilities exist only for the synthetic demo stocks. No live request has
+been made. Owner brief: 2026-10-16.
 
 The lab is a lightweight, self-contained feature for a saved list of
 US-listed stocks. It is usable before the ML, RL and PPO system is
@@ -198,7 +205,7 @@ hard-coded.
 |---|---|---|
 | B0 | Unconditional frequencies, Dirichlet(α = 50) prior toward the pooled frequencies | expanding window |
 | B1 | Exponentially weighted frequencies, half-life H (63), prior κ = 40 toward B0 | n_eff = (Σw)² / Σw² ≈ 2.885·H |
-| B2 | Run-length tilt of B1: P_d(c' \| c, ℓ) ∝ B1_d(c') · exp(θ_{c,ℓ,c'}), θ = θ_pool + δ_i by penalized multinomial logit | θ = 0 is exactly B1; joint paths via the chain |
+| B2 | Run-length tilt of B1: P_d(c' \| c, ℓ) ∝ B1_d(c') · exp(θ_{c,ℓ,c'}), with θ pooled across stocks per state and fitted by penalized multinomial logit (per-stock δ_i: a follow-up) | θ = 0 is exactly B1; joint paths via the chain |
 | B3 | Volatility-scaled empirical CDF: P(Stable) = F_h(τ/σ) − F_h(−τ/σ), with F_h the ECDF of z⁽ʰ⁾ = r_t / σ_(t\|t−h) shrunk toward the pooled ECDF (κ_F = 250) | horizon enters through F_h, since the EWMA forecast is flat |
 | M1 | L2 multinomial logistic, one per horizon, pooled panel, volatility-normalized features plus logit(B3), penalized stock intercepts | kept only if it beats the baselines |
 
@@ -238,19 +245,34 @@ hard-coded.
   separately.
 - **Calibration.** Reliability diagrams per class, and the calibration slope
   and intercept.
-- **Breakdowns.** Results by horizon, volatility regime (point-in-time
-  terciles) and stock.
+- **Breakdowns.** Results by horizon, by stock, and by volatility regime:
+  the stock's EWMA volatility at d against the terciles of its own
+  volatility through d (an expanding, point-in-time rank).
 - **Inference.**
   - Per-date cross-sectional mean loss differentials.
-  - Newey-West with lag 10 (at least h − 1), a circular block bootstrap
-    (block 20) and the fold-block t, each method's size checked by
-    simulation.
+  - Newey-West with lag 10 (at least h − 1), and a circular block bootstrap
+    (block 20) as a second view.
   - Holm correction across the pre-registered comparisons against B1.
-- **No selection on test results.** H comes from a pre-registered grid
-  {21, 63, 126, 252}, selected in inner purged folds with a one-SE rule.
-  Every candidate tried is recorded.
-- **Sensitivity.** τ and H sensitivity is reported and never used for
-  selection.
+  - Not built yet (follow-ups): the fold-block t, and simulated size checks
+    of each method on this panel.
+- **Selection.**
+  - Keep B1 unless a challenger beats it (Holm).
+  - Then take the simplest such challenger (order B0, B1, B3, B2, M1).
+  - Move to a more complex one only if it also beats the current choice on
+    the same per-date differences.
+  - The steps are recorded.
+- **No selection on test results.** The half-life comes from the
+  pre-registered grid {21, 63, 126, 252} and M1's penalty from {0.01, 0.1,
+  1}. Both are chosen inside the training years by the one-standard-error
+  rule with paired errors: the standard error of the per-date difference
+  from the best candidate, which removes shocks common to a date. Every
+  inner score is recorded.
+- **Uncertainty beside a forecast.** The track record shows how often
+  development-test forecasts in the same range came true. Its Jeffreys
+  interval counts distinct dates, not rows, because rows on one date move
+  together.
+- **Sensitivity.** B1's score at every half-life is reported and never used
+  for selection. Sensitivity to τ is a follow-up.
 
 ### Expected power
 
@@ -289,15 +311,58 @@ Daily direction is nearly unpredictable.
   - failure: a close below that high × (1 − f) within W = 10 sessions.
 - A present-day setup is "unresolved" until its window closes, never
   "confirmed".
-- The failure rate is compared with a volatility-matched base rate over all
-  declustered breakouts, with lift, precision, recall and false-alarm rate
-  FP / (FP + TN). Bear traps mirror the rule.
+- Breakouts are declustered first, and every setup is one of those
+  breakouts, so precision equals the setups' failure rate. The decline
+  must run from the longer high down to the recent low (the high comes
+  first).
+- The failure rate is compared with the base rate of all breakouts,
+  reweighted to the setups' own mix of volatility terciles (the matched
+  base rate; the lift is against it). Precision, recall and the false-alarm
+  rate FP / (FP + TN) are reported. Bear traps mirror the rule.
 
 **Outcomes stop at the cutoff**
 
 - Event outcomes and durations are censored at 2024-12-31 in development,
   and at the decision date live.
 - They are never resolved from sealed data.
+
+### Implementation (PR 2)
+
+| Module | Contents |
+|---|---|
+| `targets` | daily targets d+1..d+5 and the five-session total (band τ√5, proposed A5); a gap or the outcome cutoff makes a target unavailable |
+| `estimators` | B0, B1 (online state, Kish n_eff), B2 (the run-length tilt: per-state penalized Newton fit with log B1 as offset; chain marginals and path probabilities) and B3 (EWMA volatility with a horizon-specific ECDF shrunk to the pooled one) |
+| `logistic` | M1 with scikit-learn: train-only median imputation and standardization; C from {0.01, 0.1, 1} by a purged inner split with the one-SE rule toward more shrinkage; stock indicators penalized like every coefficient |
+| `scores` | Brier, log loss, RPS, the moving and direction decompositions, the Jeffreys interval, reliability bins, the calibration line, Holm |
+| `reversal` | streak and move events, outcomes over 1/3/5 sessions, regimes, Kaplan-Meier durations |
+| `traps` | the registered rule, statuses, base rate, lift, precision, recall and false-alarm rate, bear traps |
+| `evaluation` | the protocol in the module docstring (yearly folds through 2024, development mode) and a strict-JSON record |
+| `predict` and `forecast` | the frozen final fit and the checked `StockProbabilityForecast` artifact |
+| `forecast_view` | the page's modelled views, computed from stored records only |
+
+`scripts/stock_lab_evaluate.py --demo` stores the synthetic evaluation and
+one demo forecast per demo stock. `--real` refuses without the A3 flag, and
+stores no real forecast.
+
+The Lab never imports `logistic`, `evaluation`, `predict` or `tiingo`
+(tested). It reads their results as stored records.
+
+**Synthetic check (machinery only, not evidence).** On the three demo
+stocks, three yearly folds (2022–2024), mean RPS over the five daily
+targets:
+
+| Estimator | Mean RPS |
+|---|---|
+| B0 | 0.2072 |
+| B1 | 0.2074 |
+| B2 | 0.2068 |
+| B3 | 0.2063 |
+| M1 | 0.2051 |
+
+The demo generator has volatility regimes and mild momentum, so beating B1
+is expected there. On independent, identically distributed synthetic
+returns, the test asserts that no streak skill is selected (B2 is not
+significant after Holm).
 
 ## 6. Forecast artifact and ledger (PR 3)
 
@@ -323,6 +388,84 @@ How the ledger works:
   point-in-time reader. Hindsight-reconstructed forecasts are never treated
   as historically available.
 - The PPO reward and the portfolio simulator are unchanged.
+
+### Implementation (PR 3)
+
+**The private store's record tables** (write-once by triggers):
+
+- `forecasts` holds the forecasts.
+- `scores` holds one row per forecast and target once its session closes:
+  the category, the realized return, and the Brier score, log loss and RPS
+  of the stored probabilities.
+- `job_runs` holds each daily run: its status, the expected session and
+  the per-stock freshness.
+- `ledger_entries` is a hash chain over every forecast, score and job run.
+  - Each entry is the sha256 of its canonical fields, names the previous
+    entry's hash, and covers the record's own sha256.
+  - `verify_ledger` re-checks the sequence, the chain, each entry against
+    its record, and that no record lacks an entry.
+
+**Scoring** (`scoring`):
+
+- A target is scored only when every session it needs was **absent** from
+  the store when the forecast was created, so it was first downloaded
+  afterwards. This holds even if a later re-download supplies the session
+  again. Scoring uses the forecast's own band and the exchange calendar, so
+  a gap is never read as one session.
+- A target whose session has not closed is pending, and nothing is written
+  for it.
+- A gap or an outcome seen before the forecast is recorded as unscorable,
+  with the reason.
+
+**The daily job** (`job`, `scripts/stock_lab_daily.py`):
+
+- **Expected session:** the last NYSE session (rules calendar, passed in by
+  the script) whose close is at least 20:00 New York time old.
+- **Freshness:** a stock whose newest close is not the expected session
+  keeps its last valid forecast, labelled stale on the page. Nothing is
+  invented.
+- **Until decisions A1, A2 and A4:**
+  - the real job scores whatever is stored;
+  - it records itself as `skipped`, with the reason, and writes its Model
+    Health input;
+  - it refuses the real-update flags.
+- **The price update and real forecasts** are built after those approvals.
+
+**The synthetic replay** (`replay`, `--demo-replay N`):
+
+- The demo stocks' last N sessions are revealed one simulated day at a time.
+- Models are fitted with every outcome censored at the replay's start.
+- Each day: the close arrives, closed targets are scored, and the day's
+  forecasts are made.
+- This demonstrates the forecast-record-score loop without any real stock
+  and without any model seeing what it is scored on.
+
+**Model Health** (`monitoring`, `stock_agent.health.stock_lab`):
+
+- The job writes `reports/health_inputs/stock_lab_monitor/<run_id>.json`
+  (envelope v1.0, write-once) with the fields Health reads.
+- Five checks join the private monitor:
+  - `data.stock_lab_freshness`;
+  - `forecast.stock_lab_job`;
+  - `forecast.stock_lab_scores` (insufficient evidence below 250 scored
+    targets; degraded when worse than the baseline; tracking only);
+  - `forecast.stock_lab_drift` (PSI, degraded above 0.25);
+  - `forecast.stock_lab_ledger`.
+- Their runbook entries are in `docs/operations/runbook.md`. Public CI
+  reads only the synthetic fixtures.
+
+**Scheduling** (`scripts/stock_lab_schedule.py`):
+
+- It prints a launchd agent for 20:30 New York time on weekdays; the owner
+  installs it.
+- The job itself skips holidays through the calendar.
+
+**The page:**
+
+- The job's last status, a stale warning when the latest run expected a
+  later session than the forecast, and the forecast history.
+- The history shows each stored forecast's next-session probabilities as
+  recorded, beside what happened and its score.
 
 ## 7. Owner decisions needed
 

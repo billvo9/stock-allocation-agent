@@ -178,7 +178,7 @@ def test_the_smoke_checks_pass_on_the_current_monitors():
     )
     assert (checks["smoke.input_readers"].state, checks["smoke.input_readers"].value) == (
         HealthState.HEALTHY,
-        9,
+        11,
     )
 
 

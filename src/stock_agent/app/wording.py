@@ -5,10 +5,11 @@ Evidence. One data module, so tests assert the exact wording and scan it.
 
 Wording rules (as for `labels`): describe the past only; no forecast, no
 advice, no trading verbs; nothing is ranked or preferred; every pending
-capability is named as pending, with the date it was recorded. The one
-exception is the Experiments page's prospective forecasts, shown only as
-recorded research records, each labelled unvalidated with no demonstrated
-skill, beside the historical average; still no advice and no trading verbs.
+capability is named as pending, with the date it was recorded. Two
+exceptions show forecasts, each labelled unvalidated with no demonstrated
+skill and beside a simple baseline: the Experiments page's prospective ETF
+forecasts, and the Stock Probability page's experimental probabilities
+(`stock_wording`); still no advice and no trading verbs.
 """
 
 from __future__ import annotations
@@ -28,8 +29,9 @@ NAV = {
 
 CANNOT_TELL_TITLE = "What this lab cannot tell you"
 CANNOT_TELL = (
-    "The lab describes the past. Its only forecasts are the unvalidated research records on the "
-    "Experiments page, which have no demonstrated skill. It does not tell anyone what to hold. "
+    "The lab describes the past. Its only forecasts are unvalidated research records: the ETF "
+    "forecasts on the Experiments page and the experimental probabilities on the Stock "
+    "Probability page, none with demonstrated skill. It does not tell anyone what to hold. "
     "Past returns, real or synthetic, do not predict future returns."
 )
 DETAILS = "Exact measurements"
@@ -88,11 +90,11 @@ PENDING = (
         "OD9",
     ),
     (
-        "None",
+        "None validated",
         "Forecasts",
         (
-            "No forecast exists and no model is validated, so no expected return, probability "
-            "or confidence level is shown anywhere."
+            "No model is validated. The only probabilities shown are the Stock Probability "
+            "page's experimental ones for synthetic demo stocks, each labelled unvalidated."
         ),
         None,
     ),
@@ -341,8 +343,9 @@ NOT_READY = (
         "Descriptive",
         "Facts about the past only",
         (
-            "Every number outside the Experiments page describes the past. The forecasts there are "
-            "unvalidated research records with no demonstrated skill."
+            "Every number describes the past except the forecasts on the Experiments page and "
+            "the Stock Probability page's probabilities, which are unvalidated research records "
+            "with no demonstrated skill."
         ),
     ),
     (

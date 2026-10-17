@@ -57,7 +57,13 @@ INFERENCE_CONSUMERS: set[str] = set()
 # and the private Model Health run, which passes the loader, the window constants and the
 # rules calendar to research-side checks that never import them: the same rule, so a
 # script reaches the store only through the loader.
-SCRIPT_CONSUMERS = {"scripts/forecast_prospective.py", "scripts/health_check.py"}
+SCRIPT_CONSUMERS = {
+    "scripts/forecast_prospective.py",
+    "scripts/health_check.py",
+    # The Stock Lab's daily job: the rules calendar only (its expected session and
+    # the sessions a stock is behind), passed to the Stock Lab, which never imports it.
+    "scripts/stock_lab_daily.py",
+}
 CONSUMER_NAMES = {
     "stock_agent.data.prospective.inference": {
         "InferenceWindow",

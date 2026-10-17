@@ -59,6 +59,7 @@ from stock_agent.health import (
     prospective,
     registry,
     smoke,
+    stock_lab,
     training,
     verification,
 )
@@ -432,6 +433,11 @@ def run_local(
         )
     )
     checks.extend(backtest.backtest_checks(inputs.artifact_directory(backtest.ARTIFACT)))
+    checks.extend(
+        stock_lab.stock_lab_checks(
+            inputs.artifact_directory(stock_lab.ARTIFACT), now=environment.now()
+        )
+    )
     checks.extend(
         policy.policy_checks(inputs.artifact_directory(backtest.ARTIFACT), inputs.rl_runs)
     )

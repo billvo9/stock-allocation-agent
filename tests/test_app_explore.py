@@ -687,10 +687,27 @@ DESTINATIONS = [f"destinations/{path.name}" for path in (PACKAGE / "destinations
 HEALTH_MODULES = ("stock_agent.health.model", "stock_agent.health.view")
 # The Stock Probability page reads the Stock Lab's private store and computes its
 # descriptive views (standard library, numpy and pandas only); never its Tiingo
-# adapter, which only the owner-run fetch script uses.
+# adapter, which only the owner-run fetch script uses, nor the fitted models and
+# their evaluation (logistic, evaluation, predict), whose results it reads as
+# stored records.
 STOCK_LAB_MODULES = tuple(
     f"stock_agent.stock_lab.{name}"
-    for name in ("contracts", "symbols", "prices", "runs", "features", "store", "synthetic", "view")
+    for name in (
+        "contracts",
+        "symbols",
+        "prices",
+        "runs",
+        "features",
+        "store",
+        "synthetic",
+        "view",
+        "forecast",
+        "forecast_view",
+        "reversal",
+        "traps",
+        "scores",
+        "estimators",
+    )
 )
 APP_PROJECT_PREFIXES = (
     "stock_agent.app",
@@ -703,6 +720,10 @@ APP_PROJECT_PREFIXES = (
 APP_PROJECT_PACKAGES = {"stock_agent", "stock_agent.health", "stock_agent.stock_lab"}
 FORBIDDEN = (
     "stock_agent.stock_lab.tiingo",
+    "stock_agent.stock_lab.logistic",
+    "stock_agent.stock_lab.evaluation",
+    "stock_agent.stock_lab.predict",
+    "scipy",
     "stock_agent.health.collect",
     "stock_agent.health.github",
     "stock_agent.health.ledger",

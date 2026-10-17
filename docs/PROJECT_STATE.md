@@ -3,23 +3,44 @@
 Changing project state only. Permanent policy lives in `AGENTS.md`.
 Git is authoritative: verify everything here before relying on it.
 
-Last reviewed: 2026-10-15
+Last reviewed: 2026-10-16
 
 
 ## Last checkpoint
 
-2026-10-15, milestone "Wave 1 and the prospective ETF pipeline". Wave 1
-covers the ML runner and registry, the RL environment and PPO engineering,
-the Model Health Center, the Portfolio Lab redesign and the T5a
-scaffolding. The prospective pipeline covers the real ETF data path and
-the frozen 5/20/30-session forecasters. Verified on `main` at `f98668a`.
-This checkpoint's docs commit is on `docs/checkpoint-2026-10-15` (merge
-pending).
+2026-10-16, milestone "Stock Probability & Reversal Lab" (the owner's
+2026-10-16 brief): an experimental, self-contained daily stock-probability
+feature with a persistent watchlist, a gated Tiingo stock adapter,
+transparent estimators evaluated walk-forward on development data, the
+reversal and trap analyzers, a write-once forecast ledger with scoring, and
+Model Health checks. Synthetic data only; no live request has been made.
+Verified on `feat/stock-lab-land-pr2-pr3` at `b55efe6` (`main` at
+`bc0db8b` merged in; merge pending).
+
+The previous checkpoint (2026-10-15, "Wave 1 and the prospective ETF
+pipeline", verified on `f98668a`) reached `main` with PR #77 (`616a256`).
 Live Git state (current branch, working tree, upstream) comes from Git and
 the SessionStart hook, not from this file.
 
-Recently merged to `main` (`origin/main` = `f98668a` as of last fetch,
-verified 2026-10-15 with `git fetch` and the GitHub API):
+Recently merged to `main` (`origin/main` = `bc0db8b` as of the fetch on
+2026-10-17 01:30 UTC, verified with `git fetch` and the GitHub API):
+- CI on `22176f9` (#76) and `4b9f8d0` (#77) succeeded; CI on `bc0db8b`
+  (#78) was still running at the fetch.
+- PR #78 (`bc0db8b`, 2026-10-17 UTC): Stock Lab PR 1 (watchlist, Tiingo
+  stock adapter, features, the Lab's Stock Probability page on fixtures).
+- PRs #79 and #80 (Stock Lab PR 2 and PR 3) were merged on 2026-10-17 into
+  their stacked base branches (`fa5f8d2` into `feat/stock-lab-pr1-watchlist`,
+  `8a26710` into `feat/stock-lab-pr2-probabilities`), **not into `main`**.
+  Their commits (`ec30523`, `cbbd04c`) reach `main` with the landing branch
+  `feat/stock-lab-land-pr2-pr3`, together with the review-fix commit
+  `2ac408e` (merge pending).
+- PR #77 (`4b9f8d0`, 2026-10-16): Model Health in the Portfolio Lab, with
+  private local checks; it also carried the 2026-10-15 checkpoint.
+- PR #76 (`22176f9`, 2026-10-16): the approved T5a engine (D1-D8) as the
+  single source of portfolio economics; strategy comparison tables withheld
+  until a registered comparison PR.
+
+Earlier (`origin/main` = `f98668a`, verified 2026-10-15):
 - CI on `f98668a` succeeded.
 - A manual Model health run on `f98668a` succeeded (2026-10-15).
 - The first scheduled Model health run, on `82911ac` (2026-10-15 11:30
@@ -155,17 +176,21 @@ are owner-owned and untouched.
 
 ## Current objective
 
-Two tracks:
+Three tracks:
 - **Phase 1, the Portfolio Lab:** first the rules-only Lab, then the
   first real-data forecasts.
 - **The owner's 2026-10-14 brief:** the ML, RL and PPO engineering
   delegated to the agent (decisions below).
+- **The owner's 2026-10-16 brief, the Stock Probability & Reversal Lab:**
+  built on synthetic data (`docs/research/stock_probability_lab.md`); real
+  data waits on the owner decisions A1-A6 listed there (section 7).
 
 The immediate objective is the first prospective 5/20/30-session ETF
 forecast for VTI, AGG and SHV. Every piece of code for it is merged. It
 waits on owner steps: three open decisions, the read-only audit, the
 hand-filled anchors and storage approval, then the collection approval.
-The corrected simulator (T5a) waits on D1-D8.
+The corrected simulator (T5a): D1-D8 were approved on 2026-10-15 and the
+engine is implemented in PR #76; D9 stays pending.
 
 - **Merged since the 2026-10-14 checkpoint:** PRs #57-#75 (the list
   above).
@@ -175,9 +200,9 @@ The corrected simulator (T5a) waits on D1-D8.
     challenger;
   - RL: environment and PPO, engineering only, labelled
     `engineering_only_unapproved_transition`, with no comparison tables;
-  - Model Health: the page is not yet integrated into the Lab;
+  - Model Health: integrated into the Lab in PR #77;
   - Lab redesign;
-  - T5a scaffolding: formulas pending.
+  - T5a: the engine is implemented in PR #76 (D1-D8 approved 2026-10-15).
 
 - **F1 foundations** (merged in PR #55) and the **Explore page** (merged in
   PR #56).
@@ -585,7 +610,23 @@ the owner's answers and messages in session:
       treatment, storing any batch, and OD16 activation (recording a real
       forecast, paper trading).
     - No real forecast may be recorded until all of these are approved.
+- 2026-10-16, the Stock Probability & Reversal Lab brief (owner; relayed
+  to this session by the lead session), in paraphrase:
+  - build it as a lightweight, modular feature independent of the
+    ML/RL/PPO system, starting with synthetic fixtures and eligible
+    development history;
+  - the stock universe is small and hindsight-selected, so its results never
+    validate the forecaster;
+  - the historical holdout stays protected; any post-2024 use for training,
+    calibration or historical scoring needs a separately documented owner
+    decision; recent authorized observations may serve as inference inputs;
+  - the free Tiingo Starter plan is acceptable initially; before the first
+    live call or real-data storage, one concise authorization request with
+    the exact scope and command (given in
+    `docs/research/stock_probability_lab.md`, section 7; not yet answered);
+  - do not alter the PPO reward or the portfolio simulator.
 - Pending:
+  - the Stock Lab decisions A1-A6 (open item 10);
   - the rest of OD3;
   - OD8 groups C-D (cash returns and benchmarks; statistics and
     reporting). Group B, the D1-D8 packet, was approved on 2026-10-15
@@ -833,25 +874,37 @@ Coverage limitations found are tracked as open item 2.
 
 ## Last verified quality baseline
 
-**Run.** Measured 2026-10-15 with `PYTHONPATH=$PWD/src python3
-scripts/verify.py` (unpiped) on `main` at `f98668a`, with a clean tree in a
-session worktree. `PYTHONPATH` makes the shared venv import the worktree's
-sources. Exit 0. The run is from this session's `/project-verify` (READY).
+**Run.** Measured 2026-10-16 with `PYTHONPATH=$PWD/src python3
+scripts/verify.py` (output to a log file, not piped) on
+`feat/stock-lab-land-pr2-pr3` at `b55efe6` (`main` at `bc0db8b` merged in),
+with a clean tree in a session worktree. `PYTHONPATH` makes the shared venv
+import the worktree's sources. Exit 0. The run is from this session's
+`/project-verify` (READY).
 
-**Tools** (`.venv`): Python 3.12.2, pytest 9.1.1, ruff 0.16.2, pandas
-3.0.5, numpy 2.5.1, pyarrow 25.0.1, streamlit 1.64.0, plotly 7.1.0,
-scikit-learn 1.9.1, scipy 1.18.1, torch 2.14.0, stable-baselines3 2.9.0
-and gymnasium 1.3.0.
+**Tools** (`.venv`, as recorded 2026-10-15; not re-checked): Python 3.12.2,
+pytest 9.1.1, ruff 0.16.2, pandas 3.0.5, numpy 2.5.1, pyarrow 25.0.1,
+streamlit 1.64.0, plotly 7.1.0, scikit-learn 1.9.1, scipy 1.18.1, torch
+2.14.0, stable-baselines3 2.9.0 and gymnasium 1.3.0.
 
-- `pytest -q`: 3578 passed, 54 xfailed
-- `python -m pytest -q`: 3578 passed, 54 xfailed
-- `ruff format --check src tests scripts .claude/hooks`: 409 files
+- `pytest -q`: 4290 passed
+- `python -m pytest -q`: 4290 passed
+- `ruff format --check src tests scripts .claude/hooks`: 473 files
   already formatted
 - `ruff check src tests scripts .claude/hooks`: all checks passed
-- Suite runtime about 3.6 min per pass.
-- The 54 xfails are the strict `xfail` tests for T5a `portfolio_step`.
-  They raise `NotImplementedError` until the owner approves D1-D8, and
-  are expected, not hidden failures.
+- Suite runtime about 5 min per pass.
+- No xfail remains: the 54 strict T5a `portfolio_step` xfails ended with
+  the engine in PR #76.
+- Stock Lab reviews (2026-10-16, not re-run), notes in the session notes
+  folder; every blocker and should-fix item was fixed before its commit:
+  - **PR 1:** a test review (49 mutants, 38 killed at first; the gaps,
+    including a split-mismatch level leak, were fixed and tested),
+    security and UX reviews;
+  - **PR 2:** a statistics review whose perturbation probe found no
+    leakage (an unpaired one-SE rule, calibration labels and the
+    Kaplan-Meier at-risk rule were fixed), and a test review (37 mutants);
+  - **PR 3:** a test review (17 mutants, 12 killed) whose blocker
+    (scoring on an outcome seen before the forecast after a re-download)
+    is fixed in `2ac408e`.
 - Independent reviews and mutation checks, 2026-10-14 and 2026-10-15
   (not re-run):
   - **T5a (#61):** the oracle numbers were re-derived with exact
@@ -1115,9 +1168,25 @@ and gymnasium 1.3.0.
    - The ETF plug-in interval under-covers by design: development
      fold-block coverage was 0.753 at a nominal 80%. The prospective
      forecasters use pre-registered split-conformal bands instead (PR #74).
-   - The Model Health page is not yet wired into the Lab's Model Health
-     destination (a small follow-up).
-10. Smaller items: lineage lacks current-side tie lists; as-of change log
+10. Stock Lab (`docs/research/stock_probability_lab.md`):
+   - **Owner decisions A1-A6** (section 7) gate every real-data step: A1
+     live Tiingo data (`scripts/stock_lab_fetch.py --authorized --store`),
+     A2 recent prices as inference inputs only, A3 real development
+     evaluation, A4 recording real forecasts, A5 the definitions (the
+     five-session band tau x sqrt 5, the streak rule, the trap
+     parameters), A6 showing real prices after 2024.
+   - Not built until A1, A2 and A4: the daily job's real price update and
+     real forecasts (the job records itself skipped; the store refuses
+     real forecasts).
+   - Statistical follow-ups: the fold-block t and simulated size checks,
+     tau sensitivity, per-stock B2 tilts (a follow-up session was started
+     on 2026-10-16).
+   - Dark mode for the whole Lab (a follow-up session was started on
+     2026-10-16).
+   - The ledger cannot reveal a truncation by itself; the monitor files
+     now carry the head hash and count, but no check compares them across
+     days yet.
+11. Smaller items: lineage lacks current-side tie lists; as-of change log
    trusts `period_end`; mixed availability rules at one trigger instant;
    FY consistency checks (Q1+Q2+Q3+Q4 = FY); duplicate flow logic in
    `build_edgar_quarter`; unused `edgar_history._infer_fiscal_quarter`;
@@ -1139,24 +1208,21 @@ and gymnasium 1.3.0.
    5. Owner: approve the prospective collection.
    6. Lead: record forecast #1, labelled "unvalidated, no demonstrated
       skill", and score each horizon as its outcome matures.
-2. **T5a** (owner-gated):
-   1. The owner decides D1-D8 (including the corrected D6 and its
-      sub-question) and D9.
-   2. Then T5a PR 2: `portfolio_step`, the backtest migration and the
-      reward fix.
-   3. Then PPO on the approved transition, and the first comparison table
-      across the baselines, the optimizer, simple RL and PPO.
-
-   Until then, PPO runs stay engineering-only. That is a lead decision
-   pending owner confirmation, recorded above.
-3. **Small engineering follow-ups:**
-   - the Model Health page in the Lab;
+2. **T5a:** D1-D8 approved 2026-10-15; the engine is merged (PR #76).
+   Remaining (owner-gated): D9 and the D5 clause on learned-policy
+   constraint sets, then PPO on the approved transition and the first
+   registered comparison table across the baselines, the optimizer,
+   simple RL and PPO.
+3. **Stock Lab** (owner-gated; open item 10): merge the landing branch
+   `feat/stock-lab-land-pr2-pr3`, then the owner's decisions A1-A6, then
+   the daily job's real update path.
+4. **Small engineering follow-ups:**
    - the guardrail worktree fix (owner-gated);
    - review-branch cleanup (owner approval).
-4. FE-0 and FE-1 (approved 2026-10-13 as preparatory work only), and
+5. FE-0 and FE-1 (approved 2026-10-13 as preparatory work only), and
    RES-1a (the zero-purchase proof of concept) when the owner approves it;
    RES-1 stays cost-conscious and never blocks the ETF Portfolio Lab.
-5. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
+6. ML roadmap (owner request 2026-10-08: diagnostics and visualization are
    part of the roadmap, not an afterthought). Tickets T2-T6 are in
    `docs/research/diagnostics_and_visualization_plan.md`:
    - T2: diagnostics layer, run outputs and ledger, null models (merged,
@@ -1172,9 +1238,9 @@ and gymnasium 1.3.0.
    Owner decisions taken 2026-10-10: the excess label, pinned
    scikit-learn, and the per-symbol mean is a reported control, not a
    gate. 2026-10-11: the estimator core was delegated.
-6. Owner decision from open item 7: enable branch protection on `main`
+7. Owner decision from open item 7: enable branch protection on `main`
    (verified absent on 2026-10-13).
-7. U and C tracks, in parallel with T2-T4 (see "Sequencing against T4" in
+8. U and C tracks, in parallel with T2-T4 (see "Sequencing against T4" in
    `docs/research/universe_and_market_context.md`). Owner decisions:
    - product scope (broad large caps vs semiconductors only);
    - the survivorship-free data source (RES-1a first; no institutional
@@ -1188,7 +1254,7 @@ and gymnasium 1.3.0.
    about 100 point-in-time large caps from 2010, with the MDE re-estimated
    on that panel), with the V1 context layer, the T2 inference checks, and
    the T5 costs.
-8. Documented follow-ups (not implemented), in
+9. Documented follow-ups (not implemented), in
    `docs/research/universe_and_market_context.md`:
    - evaluate a two-layer architecture: a cross-sectional alpha model plus
      a market/regime model for risk and cash exposure;
