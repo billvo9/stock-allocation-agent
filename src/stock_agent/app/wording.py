@@ -20,6 +20,7 @@ NAV = {
     "overview": ("Overview", "overview"),
     "explore": ("Explore", "explore"),
     "builder": ("Portfolio Builder", "builder"),
+    "stock_lab": ("Stock Probability", "stock-probability"),
     "experiments": ("Experiments", "experiments"),
     "health": ("Model Health", "model-health"),
     "evidence": ("Evidence", "evidence"),

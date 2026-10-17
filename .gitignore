@@ -3,8 +3,8 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 
-# Virtual environment
-.venv/
+# Virtual environment (a directory, or a symlink in a session worktree)
+.venv
 
 # Environment / secrets
 .env
@@ -43,6 +43,10 @@ models/
 # Logs
 *.log
 reports/
+
+# Local SQLite stores (the Stock Lab's store is private vendor data and a watchlist)
+*.sqlite3
+*.sqlite3-*
 
 # Streamlit local secrets (never committed)
 .streamlit/secrets.toml
