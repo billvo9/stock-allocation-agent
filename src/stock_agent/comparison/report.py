@@ -1,5 +1,5 @@
 """
-The comparison artifact (`ppo_comparison` 1.0.0) and the `backtest_summary`
+The comparison artifact (`ppo_comparison` 1.1.0) and the `backtest_summary`
 health inputs it feeds.
 
 The artifact is written once to `<root>/<artifact_id>/comparison.json`
@@ -10,8 +10,8 @@ can refuse an edited file. It holds:
 - labels: "Synthetic scenarios only — not evidence of real investment
   performance", "engineering evaluation", the D4 (a) cash label, and the
   provisional D2 rates;
-- the registered configuration and its hash, the fold, the look number from
-  the evaluation log, the frozen selection's hash, the code version, the
+- the registered configuration and its hash, the fold, the look number and
+  the log entry from the configuration's private evaluation log, the frozen selection's hash, the code version, the
   approved transition and reward, and each strategy's registry stage (at most
   `development_evaluated`; synthetic runs are `engineering_only`);
 - `rows`: every (constraint set, strategy, member seed, scenario, scenario
@@ -61,7 +61,7 @@ from stock_agent.rl.splits import FoldSpec
 from stock_agent.rl.transition import APPROVED_TRANSITION
 
 ARTIFACT_SCHEMA = "ppo_comparison"
-ARTIFACT_SCHEMA_VERSION = "1.0.0"
+ARTIFACT_SCHEMA_VERSION = "1.1.0"
 ARTIFACT_FILE = "comparison.json"
 SCOPE_LABEL = "Synthetic scenarios only — not evidence of real investment performance"
 EVALUATION_LABEL = "engineering evaluation"
@@ -152,8 +152,13 @@ def _summary(rows: list[dict]) -> dict[str, object]:
             "recovered": sum(r["drawdown"]["recovered"] for r in rows),
             "duration_sessions": spread(lambda r: r["drawdown"]["duration_sessions"]),
         },
-        "rebalance_turnover_per_year": spread(lambda r: r["rebalance_turnover_per_year"]),
         "turnover_one_way": spread(lambda r: r["turnover_one_way"]),
+        "construction_turnover_one_way": spread(lambda r: r["construction_turnover_one_way"]),
+        "rebalance_turnover_one_way": spread(lambda r: r["rebalance_turnover_one_way"]),
+        "turnover_per_rebalance": describe(
+            [r["turnover_per_rebalance"] for r in rows if r["turnover_per_rebalance"] is not None]
+        ),
+        "span_sessions": spread(lambda r: r["span_sessions"]),
         "traded_notional": spread(lambda r: r["traded_notional"]),
         "costs_paid": spread(lambda r: r["costs_paid"]),
         "cost_sensitivity": {
@@ -314,6 +319,10 @@ def assemble(
             "number": look["look_number"],
             "repeat": look["repeat"],
             "log_entry_sha256": look["entry_sha256"],
+            "log_sequence": look["sequence"],
+            "log_file": f"{look['config_sha256']}.jsonl",
+            "test_looks_recorded": look["test_looks"],
+            "dev_looks_recorded": look["dev_looks"],
         },
         "transition": APPROVED_TRANSITION.to_dict(),
         "reward": REWARD_INFO.to_dict(),

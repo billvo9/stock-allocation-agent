@@ -119,3 +119,21 @@ def test_every_strategy_is_registered_with_a_rule_or_a_trainer():
         assert spec.label and spec.rule
     shv = protocol.RULE_FACTORIES["all_shv"]()
     assert list(shv.weights) == [0.0, 0.0, 1.0, 0.0]  # the short-Treasury fund, held as a fund
+
+
+def test_the_registered_entries_are_every_rule_and_every_learned_seed():
+    config = load_comparison_config(REGISTERED)
+    names = config.entry_names()
+    assert names[:6] == (
+        "buy_and_hold",
+        "equal_weight",
+        "fixed_balanced",
+        "inverse_volatility",
+        "mean_variance",
+        "all_shv",
+    )
+    for key in ("linear_softmax_cem", "ppo", "ppo_guarded"):
+        assert [n for n in names if n.startswith(f"{key}/")] == [
+            protocol.entry_name(key, seed) for seed in range(5)
+        ]
+    assert len(names) == len(set(names)) == 6 + 3 * 5

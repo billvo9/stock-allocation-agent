@@ -1,13 +1,16 @@
 """
 The fairness contract of the registered comparison: every strategy uses the
 same API, transition (`portfolio_step`), decision timing (decide at d,
-execute at the next close), D2 costs, schedule and offset (D7), build from
-cash (D3) and registered constraint set (D5).
+execute at the next close), D2 costs, schedule and offset (D7), evaluation
+window, build from cash (D3) and registered constraint set (D5).
 
-The honest registered rules pass under both registered sets and at every
-cost multiplier. Each mutation probe runs one strategy with exactly one
-advantage or deviation, through the same environment API wherever one can
-be planted there, and the contract must refuse it.
+The contract derives ONE registered setup per constraint set and multiplier
+from the registered configuration itself (`RegisteredSetup`); nothing the
+runner passes can change what is expected. The honest registered rules pass
+under both registered sets and at every cost multiplier. Each mutation probe
+runs one strategy with exactly one advantage or deviation, through the same
+environment API wherever one can be planted there, and the contract must
+refuse it, beside an honest strategy and alone.
 """
 
 from __future__ import annotations
@@ -18,11 +21,19 @@ import json
 
 import numpy as np
 import pytest
+from comparison_helpers import tiny_config
 
 from stock_agent.comparison import fairness
-from stock_agent.comparison.fairness import FairnessError, SelectionError, check_contract
+from stock_agent.comparison.fairness import (
+    ContractCheck,
+    FairnessError,
+    RegisteredSetup,
+    SelectionError,
+    check_contract,
+    scaled_costs,
+)
 from stock_agent.comparison.protocol import RULE_FACTORIES
-from stock_agent.comparison.runner import CEMKind, scaled_costs
+from stock_agent.comparison.runner import CEMKind
 from stock_agent.portfolio import engine
 from stock_agent.portfolio.transition import Constraints, portfolio_step
 from stock_agent.rl import env as rl_env
@@ -31,12 +42,12 @@ from stock_agent.rl import scenarios as sc
 from stock_agent.rl.config import run_config_from_dict
 from stock_agent.rl.policies import fixed_balanced
 from stock_agent.rl.replay import rollout
-from stock_agent.rl.splits import FoldSpec
 from stock_agent.rl.transition import APPROVED_TRANSITION
 
-FOLD = FoldSpec("test", ("calm", "missing_closes"), (20,), 540, 660)
-PLAIN = rl_env.EnvConfig(rebalance_every=5)
-STRICT = rl_env.EnvConfig(rebalance_every=5, max_weight=0.5, max_turnover=0.25)
+CONFIG = tiny_config()
+FOLD = CONFIG.rl.plan.test
+PLAIN = CONFIG.run_config(CONFIG.constraint_set("plain")).env
+STRICT = CONFIG.run_config(CONFIG.constraint_set("strict")).env
 SPEC = ob.FeatureSpec()
 BUILDER = ob.ObservationBuilder(
     SPEC,
@@ -54,13 +65,14 @@ def run(
     config=STRICT,
     data=DATA,
     transition=portfolio_step,
+    fold=FOLD,
 ):
     return {
         episode: rollout(
             env_cls(
                 data[episode],
-                start=FOLD.start,
-                stop=FOLD.stop,
+                start=fold.start,
+                stop=fold.stop,
                 transition=transition,
                 transition_info=APPROVED_TRANSITION,
                 builder=BUILDER,
@@ -72,33 +84,63 @@ def run(
     }
 
 
-def contract(records, *, data=DATA, config=STRICT, multiplier=1.0):
-    return check_contract(
-        records,
-        data=data,
-        fold=FOLD,
-        env_config=config,
-        builder=BUILDER,
-        cost_multiplier=multiplier,
-    )
+def setup(constraint_set="strict", multiplier=1.0):
+    return RegisteredSetup(CONFIG, constraint_set, "test", multiplier)
 
 
-@pytest.mark.parametrize("config", [PLAIN, STRICT], ids=["plain", "strict"])
-def test_every_registered_rule_passes_the_contract(config):
+def contract(records, *, constraint_set="strict", multiplier=1.0):
+    return check_contract(records, setup=setup(constraint_set, multiplier), builder=BUILDER)
+
+
+def test_the_registered_setup_comes_from_the_registered_configuration():
+    registered = setup().identity()
+    assert registered["constraint_set"] == {
+        "name": "strict",
+        "max_weight": 0.5,
+        "max_turnover": 0.25,
+    }
+    assert registered["schedule"] == {"every": 5, "offset": 0}
+    assert registered["window"] == [FOLD.start, FOLD.stop] and registered["execution_lag"] == 1
+    assert registered["transition"]["status"] == "approved"
+    assert registered["config_sha256"] == CONFIG.sha256()
+    assert setup("plain").env_config == PLAIN and setup().env_config == STRICT
+    with pytest.raises(KeyError):
+        setup("loose")
+    with pytest.raises(ValueError, match="registered cost multiplier"):
+        setup(multiplier=0.5)
+
+
+@pytest.mark.parametrize("name", ["plain", "strict"])
+def test_every_registered_rule_passes_the_contract(name):
+    config = PLAIN if name == "plain" else STRICT
     records = {key: run(factory, config=config) for key, factory in RULE_FACTORIES.items()}
-    checked = contract(records, config=config)
-    assert checked["strategies"] == len(RULE_FACTORIES) and checked["episodes"] == 2
-    assert checked["steps"] > 100 * len(RULE_FACTORIES)
+    checked = contract(records, constraint_set=name)
+    assert checked["strategies"] == len(RULE_FACTORIES) and checked["episodes"] == 4
+    assert checked["steps"] > 40 * len(RULE_FACTORIES)
+    assert checked["setup"]["constraint_set"]["name"] == name
 
 
 @pytest.mark.parametrize("multiplier", [0.0, 1.0, 2.0])
 def test_cost_sensitivity_replays_pass_with_their_own_multiplier_only(multiplier):
     data = {episode: scaled_costs(d, multiplier) for episode, d in DATA.items()}
     records = {"fixed_balanced": run(data=data)}
-    contract(records, data=data, multiplier=multiplier)
+    contract(records, multiplier=multiplier)
     other = 1.0 if multiplier != 1.0 else 2.0
-    with pytest.raises(FairnessError, match="registered D2 rates"):
-        contract(records, data=data, multiplier=other)
+    with pytest.raises(FairnessError, match="differs"):
+        contract(records, multiplier=other)
+
+
+def test_every_registered_entry_is_checked_once_and_together():
+    check = ContractCheck(setup(), BUILDER)
+    check.add("equal_weight", run(RULE_FACTORIES["equal_weight"]))
+    with pytest.raises(FairnessError, match="evaluated twice"):
+        check.add("equal_weight", run(RULE_FACTORIES["equal_weight"]))
+    with pytest.raises(FairnessError, match="Not every registered entry"):
+        check.close(["equal_weight", "all_shv"])
+    check.add("all_shv", run(RULE_FACTORIES["all_shv"]))
+    assert check.close(["equal_weight", "all_shv"])["strategies"] == 2
+    with pytest.raises(FairnessError, match="closed"):
+        check.add("fixed_balanced", run())
 
 
 def test_the_registered_rules_differ_only_in_their_targets():
@@ -218,6 +260,14 @@ MUTANTS = {
     ),
     "starts_invested": (lambda: run(env_cls=InvestedEnv), "100% cash"),
     "another_constraint_set": (lambda: run(config=PLAIN), "differ"),
+    "uncapped_under_the_strict_set": (
+        lambda: run(config=dataclasses.replace(STRICT, max_weight=1.0)),
+        "differ",
+    ),
+    "later_window": (
+        lambda: run(fold=dataclasses.replace(FOLD, start=FOLD.start + 5)),
+        "differ",
+    ),
     "constraints_not_applied": (lambda: run(env_cls=LooseConstraintEnv), "constraint set"),
     "feasibility_skipped": (lambda: edit_records(drop_feasibility), "feasibility map"),
     "fabricated_wealth": (lambda: edit_records(inflate_wealth), "wealth path"),
@@ -237,8 +287,8 @@ def test_a_strategy_with_any_deviation_fails_the_contract(mutant):
 
 @pytest.mark.parametrize("mutant", sorted(MUTANTS))
 def test_a_deviating_strategy_checked_alone_fails_the_contract(mutant):
-    # The runner checks each strategy on its own, so no honest strategy is there to compare
-    # with: the record must be refused against the registered environment alone.
+    # Each record is refused against the registered setup alone, whatever the runner was
+    # given: no honest strategy needs to be there to compare with.
     make, _ = MUTANTS[mutant]
     with pytest.raises(FairnessError):
         contract({mutant: make()})
@@ -283,7 +333,9 @@ def _run_config(env_config):
 def test_a_cem_member_loads_only_with_its_frozen_hash_normalizer_and_constraint_set(tmp_path):
     kind = CEMKind()
     member = _cem_member(tmp_path, normalizer=BUILDER.normalizer, env_config=STRICT)
-    policy = kind.load(member, run_dir=tmp_path, builder=BUILDER, run_config=_run_config(STRICT))()
+    loaded = kind.load(member, run_dir=tmp_path, builder=BUILDER, run_config=_run_config(STRICT))
+    policy = loaded.factory()
+    assert len(loaded.parameters_sha256) == 64
     assert policy.name == "linear_softmax_cem"
     with pytest.raises(FairnessError, match="another constraint set"):
         kind.load(member, run_dir=tmp_path, builder=BUILDER, run_config=_run_config(PLAIN))

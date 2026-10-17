@@ -10,17 +10,26 @@ The registered comparison, in two stages.
    chosen.
 2. `evaluate`: read the frozen selection, load every member (checking its
    recorded checkpoint hash and that it observes through the same frozen
-   normalizer), record the look in the evaluation log BEFORE any evaluation
-   data exists, then run every strategy on every episode of the fold through
-   one API (`harness.run_comparison`, so `replay.rollout` on `AllocationEnv`
-   with the approved `portfolio_step`), at 1x the D2 rates, and replay each
-   strategy's decisions at 0x, 1x and 2x. `fairness.check_contract` checks
-   every record (the 1x replay must reproduce the run exactly), measures come
-   from `measures`, and `fairness.check_no_test_selection` checks the
-   assembled artifact before it and the health inputs are written.
+   normalizer), record the look in the configuration's private evaluation
+   log (`ledger`) BEFORE any evaluation data exists, then run every strategy
+   on every episode of the fold through one API (`harness.run_comparison`,
+   so `replay.rollout` on `AllocationEnv` with the approved `portfolio_step`)
+   at 1x the D2 rates, and replay each strategy's decisions at 0x, 1x and 2x.
+   A `fairness.ContractCheck` per (constraint set, run or replay, multiplier)
+   checks every record against the registered setup it derives from the
+   configuration itself, then all strategies together; the 1x replay must
+   reproduce the run exactly, and every registered entry is evaluated
+   exactly once per episode. Measures come from `measures`, and
+   `fairness.check_no_test_selection` checks the assembled artifact before
+   it and the health inputs are written.
 
 Learned members come from `LearnedKind`s (`PPOKind`, `CEMKind`); tests
-inject light ones through the same seam. Training can run members in
+inject light ones through the same seam. Each member also records a
+deterministic `parameters_sha256` over its parameters: a PPO checkpoint
+file's own hash differs between identical trainings, because
+stable-baselines3 stores the training start time (`start_time`, in
+nanoseconds) in the archive's `data` entry, while the weights and optimizer
+state are byte-identical. Training can run members in
 parallel processes: each member is seeded and independent, so the result
 does not depend on the number of workers.
 """
@@ -42,10 +51,12 @@ import numpy as np
 
 from stock_agent.comparison import measures
 from stock_agent.comparison.fairness import (
+    ContractCheck,
     FairnessError,
+    RegisteredSetup,
     SelectionError,
-    check_contract,
     check_no_test_selection,
+    scaled_costs,
 )
 from stock_agent.comparison.ledger import EvaluationLog
 from stock_agent.comparison.protocol import (
@@ -54,6 +65,7 @@ from stock_agent.comparison.protocol import (
     STRATEGIES,
     ComparisonConfig,
     ProtocolError,
+    entry_name,
 )
 from stock_agent.comparison.report import (
     assemble,
@@ -91,7 +103,6 @@ from stock_agent.rl.transition import APPROVED_TRANSITION
 SELECTION_SCHEMA = "ppo_comparison_selection"
 SELECTION_SCHEMA_VERSION = "1.0.0"
 SELECTION_FILE = "selection.json"
-LOG_FILE = "evaluation_log.jsonl"
 
 
 def file_sha256(path: Path) -> str:
@@ -118,11 +129,17 @@ class TrainingLoader:
         return self.loader(scenario_id, seed)
 
 
-def scaled_costs(data: ScenarioData, multiplier: float) -> ScenarioData:
-    """The same scenario with its base cost rates times a D2 sensitivity multiplier."""
+def _canonical_sha256(value: object) -> str:
+    text = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-    rates = tuple(rate * multiplier for rate in data.base_cost_rates)
-    return dataclasses.replace(data, base_cost_rates=rates)
+
+@dataclass(frozen=True)
+class LoadedMember:
+    """A frozen learned member, ready to evaluate."""
+
+    factory: Callable[[], object]
+    parameters_sha256: str
 
 
 class LearnedKind(Protocol):
@@ -149,12 +166,34 @@ class LearnedKind(Protocol):
         run_dir: Path,
         builder: ObservationBuilder,
         run_config: RunConfig,
-    ) -> Callable[[], object]: ...
+    ) -> LoadedMember: ...
 
 
 def _same_observation(normalizer: FeatureNormalizer, builder: ObservationBuilder) -> None:
     if normalizer != builder.normalizer:
         raise FairnessError("A learned member observes through another normalizer.")
+
+
+def _same_parameters(member: Mapping[str, object], parameters_sha256: str) -> None:
+    recorded = member.get("parameters_sha256")
+    if recorded is not None and recorded != parameters_sha256:
+        raise SelectionError("A learned member's parameters are not the ones frozen at selection.")
+
+
+def _ppo_parameters_sha256(policy) -> str:
+    digest = hashlib.sha256()
+    for name, tensor in sorted(policy.model.policy.state_dict().items()):
+        digest.update(name.encode("utf-8"))
+        digest.update(tensor.detach().cpu().numpy().tobytes())
+    return digest.hexdigest()
+
+
+def _load_ppo(directory: Path, config_sha256: str):
+    from stock_agent.rl.ppo import load_ppo_checkpoint
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # the code SHA is recorded instead
+        return load_ppo_checkpoint(directory, expected_config_sha256=config_sha256)
 
 
 class PPOKind:
@@ -188,22 +227,20 @@ class PPOKind:
             "health_status": run.health["status"],
             "health_findings": list(run.health["reasons"]) + list(run.health["warnings"]),
             "timesteps": run.metadata["timesteps"],
+            "parameters_sha256": _ppo_parameters_sha256(
+                _load_ppo(Path(run_dir) / subpath, run_config.sha256()).policy
+            ),
         }
 
-    def load(self, member, *, run_dir, builder, run_config) -> Callable[[], object]:
-        from stock_agent.rl.ppo import load_ppo_checkpoint
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)  # the code SHA is recorded instead
-            checkpoint = load_ppo_checkpoint(
-                Path(run_dir) / member["checkpoint"]["path"],
-                expected_config_sha256=run_config.sha256(),
-            )
+    def load(self, member, *, run_dir, builder, run_config) -> LoadedMember:
+        checkpoint = _load_ppo(Path(run_dir) / member["checkpoint"]["path"], run_config.sha256())
         if checkpoint.metadata["model"]["sha256"] != member["checkpoint"]["sha256"]:
             raise SelectionError("A PPO checkpoint is not the one frozen at selection.")
         _same_observation(checkpoint.builder.normalizer, builder)
         policy = checkpoint.policy
-        return lambda: policy
+        parameters = _ppo_parameters_sha256(policy)
+        _same_parameters(member, parameters)
+        return LoadedMember(lambda: policy, parameters)
 
 
 class CEMKind:
@@ -235,9 +272,10 @@ class CEMKind:
             },
             "variants_evaluated": result.variants_evaluated,
             "healthy": True,
+            "parameters_sha256": _canonical_sha256(result.params.to_dict()),
         }
 
-    def load(self, member, *, run_dir, builder, run_config) -> Callable[[], object]:
+    def load(self, member, *, run_dir, builder, run_config) -> LoadedMember:
         path = Path(run_dir) / member["checkpoint"]["path"]
         if file_sha256(path) != member["checkpoint"]["sha256"]:
             raise SelectionError("A CEM checkpoint is not the one frozen at selection.")
@@ -246,7 +284,9 @@ class CEMKind:
         if record["env_config"] != run_config.env.to_dict():
             raise FairnessError("A CEM member was trained under another constraint set.")
         params = LinearSoftmaxParams.from_dict(record["params"])
-        return lambda: LinearSoftmaxPolicy(params, builder)
+        parameters = _canonical_sha256(record["params"])
+        _same_parameters(member, parameters)
+        return LoadedMember(lambda: LinearSoftmaxPolicy(params, builder), parameters)
 
 
 KINDS: dict[str, LearnedKind] = {"ppo": PPOKind(), "cem": CEMKind()}
@@ -376,7 +416,7 @@ def _entries(
     run_dir: Path,
     kinds: Mapping[str, LearnedKind],
 ) -> dict[str, list[tuple[PolicyEntry, dict | None]]]:
-    """Every strategy's entries per constraint set, frozen before any evaluation data exists."""
+    """Every registered entry per constraint set, frozen before any evaluation data exists."""
 
     by_set: dict[str, list[tuple[PolicyEntry, dict | None]]] = {}
     for constraint_set in config.constraint_sets:
@@ -384,12 +424,12 @@ def _entries(
         loaded = {}
         for member in selection.record["members"]:
             if member["constraint_set"] == constraint_set.name:
-                loaded[(member["kind"], int(member["seed"]))] = (
-                    kinds[member["kind"]].load(
-                        member, run_dir=run_dir, builder=selection.builder, run_config=run_config
-                    ),
-                    member,
+                kind = kinds[member["kind"]]
+                result = kind.load(
+                    member, run_dir=run_dir, builder=selection.builder, run_config=run_config
                 )
+                record = {**member, "parameters_sha256": result.parameters_sha256}
+                loaded[(member["kind"], int(member["seed"]))] = (result.factory, record)
         entries: list[tuple[PolicyEntry, dict | None]] = []
         for key in config.strategies:
             spec = STRATEGIES[key]
@@ -402,9 +442,8 @@ def _entries(
                     factory = lambda raw=factory, healthy=member["healthy"], gate=run_config.gate: (
                         GuardedPolicy(raw(), gate=gate, model_healthy=healthy)
                     )
-                entries.append(
-                    (PolicyEntry(f"{key}/seed_{seed}", factory, kind="learned", group=key), member)
-                )
+                name = entry_name(key, seed)
+                entries.append((PolicyEntry(name, factory, kind="learned", group=key), member))
         by_set[constraint_set.name] = entries
     return by_set
 
@@ -416,6 +455,7 @@ def _row(entry: PolicyEntry, member: dict | None, constraint_set: str, episode, 
         "strategy": key,
         "member_seed": None if member is None else int(member["seed"]),
         "checkpoint_sha256": None if member is None else member["checkpoint"]["sha256"],
+        "parameters_sha256": None if member is None else member["parameters_sha256"],
         "scenario": episode[0],
         "scenario_seed": int(episode[1]),
         **measured,
@@ -434,10 +474,12 @@ def evaluate(
     kinds: Mapping[str, LearnedKind] = KINDS,
     loader: ScenarioLoader = generate_scenario,
     repeat_look: bool = False,
+    looks_root: Path | None = None,
 ) -> Path:
     """
     Evaluate the frozen selection on one fold (module docstring) and write
     the artifact and the health inputs. Returns the artifact's path.
+    `looks_root` replaces the private looks directory (tests only).
     """
 
     if fold_role not in ("test", "dev"):
@@ -448,8 +490,8 @@ def evaluate(
     builder = selection.builder
     fold = config.rl.plan.test if fold_role == "test" else config.rl.plan.dev
     generated_at = clock()
-    log = EvaluationLog(Path(reports_root) / LOG_FILE)
-    number = log.looks(config.sha256(), fold_role) + 1
+    log = EvaluationLog.for_config(config.sha256(), looks_root)
+    number = log.looks(fold_role) + 1
     stamp = f"{generated_at.astimezone(UTC):%Y%m%dT%H%M%S%fZ}"
     artifact_id = f"{config.name}-{fold_role}-look{number:03d}-{stamp}"
     look = log.record_look(
@@ -471,10 +513,27 @@ def evaluate(
         for multiplier in config.cost_multipliers
     }
     headline_data = data[HEADLINE_COST_MULTIPLIER]
+    expected = config.entry_names()
+    served = 0  # every run's request for an episode's data; one per entry and episode
+
+    def serve(scenario: str, seed: int) -> ScenarioData:
+        nonlocal served
+        served += 1
+        return headline_data[(scenario, seed)]
+
     rows: list[dict] = []
-    checked = {"strategies": 0, "episodes": len(fold.episodes()), "steps": 0, "replays": 0}
+    closed: list[dict] = []
     for constraint_set in config.constraint_sets:
         env_config = config.run_config(constraint_set).env
+        checks = {
+            (kind, multiplier): ContractCheck(
+                RegisteredSetup(config, constraint_set.name, fold_role, multiplier), builder
+            )
+            for kind, multiplier in [
+                ("run", HEADLINE_COST_MULTIPLIER),
+                *(("replay", m) for m in config.cost_multipliers),
+            ]
+        }
         for entry, member in entries[constraint_set.name]:
             headline = run_comparison(
                 [entry],
@@ -483,18 +542,9 @@ def evaluate(
                 transition=portfolio_step,
                 transition_info=APPROVED_TRANSITION,
                 env_config=env_config,
-                loader=lambda scenario, seed: headline_data[(scenario, seed)],
+                loader=serve,
             ).records[entry.name]
-            contract = check_contract(
-                {entry.name: headline},
-                data=headline_data,
-                fold=fold,
-                env_config=env_config,
-                builder=builder,
-                cost_multiplier=HEADLINE_COST_MULTIPLIER,
-            )
-            checked["strategies"] += 1
-            checked["steps"] += contract["steps"]
+            checks[("run", HEADLINE_COST_MULTIPLIER)].add(entry.name, headline)
             sensitivity: dict[tuple, dict] = {episode: {} for episode in headline}
             for multiplier in config.cost_multipliers:
                 replayed = {}
@@ -519,24 +569,27 @@ def evaluate(
                     sensitivity[episode][multiplier_key(multiplier)] = measures.terminal_measures(
                         replayed[episode]
                     )
-                check_contract(
-                    {entry.name: replayed},
-                    data=data[multiplier],
-                    fold=fold,
-                    env_config=env_config,
-                    builder=builder,
-                    cost_multiplier=multiplier,
-                )
-                checked["replays"] += len(replayed)
+                checks[("replay", multiplier)].add(entry.name, replayed)
             for episode in fold.episodes():
                 measured = measures.episode_measures(headline[episode], CASH_INDEX)
                 measured["cost_sensitivity"] = sensitivity[episode]
                 rows.append(_row(entry, member, constraint_set.name, episode, measured))
+        for (kind, multiplier), check in checks.items():
+            closed.append({"kind": kind, **check.close(expected)})
 
+    runs = sum(c["strategies"] * c["episodes"] for c in closed if c["kind"] == "run")
+    replays = sum(c["strategies"] * c["episodes"] for c in closed if c["kind"] == "replay")
+    sets = len(config.constraint_sets)
+    once = sets * len(expected) * len(fold.episodes())
+    if served != once or runs != once or replays != runs * len(config.cost_multipliers):
+        raise FairnessError(
+            "Not every registered entry was evaluated exactly once per episode (a strategy run "
+            "more than once on the evaluation fold is an uncounted look)."
+        )
     document = assemble(
         config=config,
         fold=fold,
-        look=look,
+        look={**look, "test_looks": log.looks("test"), "dev_looks": log.looks("dev")},
         selection_sha256=selection.sha256,
         selection=selection.record,
         code=code,
@@ -545,15 +598,27 @@ def evaluate(
         rows=rows,
         contract={
             "contract": "passed",
-            "checked": checked,
+            "checked": {
+                "strategies": sets * len(expected),
+                "episodes": len(fold.episodes()),
+                "runs": runs,
+                "replays": replays,
+                "steps": sum(c["steps"] for c in closed),
+            },
+            "setups": [{"kind": c["kind"], **c["setup"]} for c in closed],
             "rules": [
                 "one API: replay.rollout on AllocationEnv for every strategy",
+                (
+                    "one registered setup per constraint set and multiplier, derived from the "
+                    "registered configuration inside the check, shared by every strategy"
+                ),
                 "the approved portfolio_step reproduces every booked step bit for bit",
                 "decide at a complete session, execute at the next (D1)",
-                "the registered schedule and offset for every strategy (D7)",
+                "the registered schedule, offset and window for every strategy (D7)",
                 "D2 provisional rates times the scenario regime and the registered multiplier",
-                "100% cash until the common build close (D3)",
-                "the registered D5 set through feasible_target for every target",
+                "100% cash until the registered build close (D3)",
+                "the registered D5 set (cap and turnover limit) through feasible_target",
+                "every registered entry evaluated exactly once per episode",
                 "the 1x replay of each strategy's decisions reproduces its run exactly",
             ],
         },

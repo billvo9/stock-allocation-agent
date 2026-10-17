@@ -9,6 +9,7 @@ built while anything is chosen, and no selection on test results.
 from __future__ import annotations
 
 import copy
+import dataclasses
 import json
 from types import SimpleNamespace
 
@@ -37,6 +38,7 @@ from stock_agent.health.model import HealthState
 from stock_agent.health.policy import policy_checks
 from stock_agent.portfolio.engine import CASH_RETURN_LABEL
 from stock_agent.registry.stages import STAGES
+from stock_agent.rl import harness
 from stock_agent.rl.scenarios import generate_scenario
 from stock_agent.rl.splits import LeakageError
 
@@ -59,20 +61,32 @@ def _train(root, *, config=None, workers=1, kinds=FAKE_KINDS, loader=generate_sc
 
 
 def _evaluate(
-    root, *, config=None, fold="test", loader=generate_scenario, repeat=False, clock=None
+    root,
+    *,
+    config=None,
+    fold="test",
+    loader=generate_scenario,
+    repeat=False,
+    clock=None,
+    reports=None,
 ):
     return runner.evaluate(
         config or _registered(root),
         run_dir=root / "run",
         fold_role=fold,
-        reports_root=root / "reports",
+        reports_root=reports or root / "reports",
         health_inputs_root=root / "health",
         code=CODE,
         clock=clock or FixedClock(),
         kinds=FAKE_KINDS,
         loader=loader,
         repeat_look=repeat,
+        looks_root=root / "looks",
     )
+
+
+def _log(root):
+    return EvaluationLog.for_config(_registered(root).sha256(), root / "looks")
 
 
 def _registered(root):
@@ -127,7 +141,7 @@ def test_a_run_writes_the_selection_the_artifact_the_log_and_health_inputs(compl
         for seed in range(5)
     ]
     assert completed.path.parent.parent == completed.root / "reports"
-    (look,) = EvaluationLog(completed.root / "reports" / runner.LOG_FILE).entries()
+    (look,) = _log(completed.root).entries()
     assert (look["fold"], look["look_number"], look["repeat"]) == ("test", 1, False)
     assert look["artifact_id"] == completed.document["artifact_id"]
     health = sorted((completed.root / "health" / "backtest_summary").glob("*.json"))
@@ -172,7 +186,8 @@ def test_every_strategy_scenario_and_seed_is_reported(completed):
     for row in rows:
         assert set(row["cost_sensitivity"]) == {"0x", "1x", "2x"}
         assert {"terminal_wealth", "total_return", "drawdown", "turnover_one_way"} <= set(row)
-        assert {"rebalance_turnover_per_year", "traded_notional", "interventions"} <= set(row)
+        assert {"construction_turnover_one_way", "rebalance_turnover_one_way"} <= set(row)
+        assert {"turnover_per_rebalance", "traded_notional", "interventions"} <= set(row)
         assert {"fallback_events", "build", "invalid_targets"} <= set(row)
         assert (row["member_seed"] is None) == (row["strategy"] in RULES)
     summary = completed.document["summary"]
@@ -223,8 +238,16 @@ def test_the_contract_checked_every_strategy_episode_and_replay(completed):
     checked = completed.document["fairness"]["checked"]
     entries = len(RULES) + 3 * 5 * 2 // 2  # rules, then CEM, PPO and guarded PPO seeds
     assert checked["strategies"] == 2 * (len(RULES) + len(LEARNED) * 5) == 2 * entries
-    assert checked["replays"] == checked["strategies"] * EPISODES * 3
+    assert checked["runs"] == checked["strategies"] * EPISODES
+    assert checked["replays"] == checked["runs"] * 3
     assert completed.document["fairness"]["contract"] == "passed"
+    setups = completed.document["fairness"]["setups"]
+    assert len(setups) == 2 * 4  # per set: the run and the 0x, 1x and 2x replays
+    strict = [x for x in setups if x["constraint_set"]["name"] == "strict"]
+    assert {
+        (x["constraint_set"]["max_weight"], x["constraint_set"]["max_turnover"]) for x in strict
+    } == {(0.5, 0.25)}
+    assert {x["window"][0] for x in setups} == {tiny_config().rl.plan.test.start}
 
 
 def test_the_health_inputs_are_read_by_model_health(completed):
@@ -279,35 +302,142 @@ def test_a_result_its_own_decisions_do_not_reproduce_is_refused(trained, monkeyp
     assert not list((trained / "reports").glob("*/comparison.json"))
 
 
+# --- one registered setup for every strategy, each evaluated once (the review's mutants) ---
+
+
+def _is_ppo(entry) -> bool:
+    return entry.group in ("ppo", "ppo_guarded")
+
+
+def _ppo_runs(change):
+    """A runner whose PPO entries run under a changed setup; the others as registered."""
+
+    real = runner.run_comparison
+
+    def run(entries, fold, **kwargs):
+        (entry,) = entries
+        if _is_ppo(entry):
+            fold, kwargs = change(fold, dict(kwargs))
+        return real(entries, fold, **kwargs)
+
+    return run
+
+
+def _offset_1(fold, kwargs):
+    kwargs["env_config"] = dataclasses.replace(kwargs["env_config"], rebalance_offset=1)
+    return fold, kwargs
+
+
+def _window_5_later(fold, kwargs):
+    return dataclasses.replace(fold, start=fold.start + 5), kwargs
+
+
+def _uncapped(fold, kwargs):
+    kwargs["env_config"] = dataclasses.replace(kwargs["env_config"], max_weight=1.0)
+    return fold, kwargs
+
+
+@pytest.mark.parametrize(
+    "change",
+    [_offset_1, _window_5_later, _uncapped],
+    ids=["ppo_at_offset_1", "ppo_window_5_sessions_later", "ppo_uncapped_under_strict"],
+)
+def test_a_strategy_run_under_another_setup_is_refused(trained_ppo, monkeypatch, change):
+    monkeypatch.setattr(runner, "run_comparison", _ppo_runs(change))
+    with pytest.raises(FairnessError):
+        _evaluate(trained_ppo)
+    assert not list((trained_ppo / "reports").glob("*/comparison.json"))
+
+
+def test_a_best_of_two_offsets_choice_on_the_test_fold_is_refused(trained_ppo, monkeypatch):
+    real = runner.run_comparison
+
+    def best_of_two(entries, fold, **kwargs):
+        first = real(entries, fold, **kwargs)
+        (entry,) = entries
+        if not _is_ppo(entry):
+            return first
+        _, other_kwargs = _offset_1(fold, dict(kwargs))
+        second = real(entries, fold, **other_kwargs)
+
+        def score(run):
+            return sum(record.total_reward for record in run.records[entry.name].values())
+
+        return max((first, second), key=score)
+
+    monkeypatch.setattr(runner, "run_comparison", best_of_two)
+    with pytest.raises(FairnessError):
+        _evaluate(trained_ppo)
+    assert not list((trained_ppo / "reports").glob("*/comparison.json"))
+
+
+def test_a_strategy_run_twice_is_refused_even_when_the_registered_run_is_kept(
+    trained_ppo, monkeypatch
+):
+    # A second look at the test fold that changes nothing reported is still a look.
+    real = runner.run_comparison
+
+    def twice(entries, fold, **kwargs):
+        first = real(entries, fold, **kwargs)
+        (entry,) = entries
+        if _is_ppo(entry):
+            real(entries, fold, **kwargs)
+        return first
+
+    monkeypatch.setattr(runner, "run_comparison", twice)
+    with pytest.raises(FairnessError, match="exactly once"):
+        _evaluate(trained_ppo)
+    assert not list((trained_ppo / "reports").glob("*/comparison.json"))
+
+
+def test_every_registered_entry_is_evaluated_exactly_once_per_episode(trained_ppo, monkeypatch):
+    calls = []
+
+    def counting(real):
+        def rollout(env, policy):
+            calls.append(env.data.identity()["seed"])
+            return real(env, policy)
+
+        return rollout
+
+    monkeypatch.setattr(harness, "rollout", counting(harness.rollout))
+    monkeypatch.setattr(runner, "rollout", counting(runner.rollout))
+    _evaluate(trained_ppo)
+    config = _registered(trained_ppo)
+    episodes = len(config.rl.plan.test.episodes())
+    per_set = len(config.entry_names()) * episodes
+    assert len(calls) == len(config.constraint_sets) * per_set * (1 + 3)
+    assert set(calls) <= set(config.rl.plan.test.seeds)
+
+
 # --- the write-once evaluation log ---
 
 
 def test_the_test_fold_is_evaluated_once_unless_a_repeat_is_recorded(trained):
     _evaluate(trained)
-    log = EvaluationLog(trained / "reports" / runner.LOG_FILE)
+    log = _log(trained)
     with pytest.raises(RepeatLookError, match="once per registered configuration"):
         _evaluate(trained)
     assert len(log.entries()) == 1
     second = json.loads(_evaluate(trained, repeat=True).read_text())
-    assert second["look"] == {
-        "number": 2,
-        "repeat": True,
-        "log_entry_sha256": log.entries()[1]["entry_sha256"],
-    }
+    assert second["look"]["number"] == 2 and second["look"]["repeat"] is True
+    assert second["look"]["log_entry_sha256"] == log.entries()[1]["entry_sha256"]
+    assert second["look"]["test_looks_recorded"] == 2 == log.looks("test")
+    assert second["look"]["log_file"] == f"{RULES_ONLY.sha256()}.jsonl"
     assert [e["look_number"] for e in log.entries()] == [1, 2]
 
 
 def test_dev_looks_are_unlimited_and_counted(trained):
     for _ in range(3):
         _evaluate(trained, fold="dev")
-    log = EvaluationLog(trained / "reports" / runner.LOG_FILE)
+    log = _log(trained)
     assert [(e["fold"], e["look_number"]) for e in log.entries()] == [
         ("dev", 1),
         ("dev", 2),
         ("dev", 3),
     ]
     _evaluate(trained)  # dev looks do not use up the test look
-    assert log.looks(RULES_ONLY.sha256(), "test") == 1
+    assert log.looks("test") == 1
 
 
 def test_a_failed_evaluation_still_counts_its_look(trained):
@@ -322,12 +452,27 @@ def test_a_failed_evaluation_still_counts_its_look(trained):
 
 def test_an_edited_log_is_refused(trained):
     _evaluate(trained, fold="dev")
-    path = trained / "reports" / runner.LOG_FILE
+    path = _log(trained).path
     path.write_text(path.read_text().replace('"dev"', '"test"', 1), encoding="utf-8")
     with pytest.raises(LogUnreadable, match="edited"):
         _evaluate(trained)
     path.write_text("", encoding="utf-8")
-    assert EvaluationLog(path).entries() == []
+    assert _log(trained).entries() == []
+
+
+def test_a_fresh_reports_directory_does_not_restart_the_count(trained, tmp_path):
+    # The look log is the configuration's, in one private place, whatever --reports-root is.
+    _evaluate(trained)
+    with pytest.raises(RepeatLookError):
+        _evaluate(trained, reports=tmp_path / "elsewhere")
+    assert _log(trained).looks("test") == 1
+
+
+def test_a_log_holds_one_configurations_looks(trained):
+    _evaluate(trained, fold="dev")
+    other = EvaluationLog(_log(trained).path, tiny_config().sha256())
+    with pytest.raises(LogUnreadable, match="another configuration"):
+        other.entries()
 
 
 # --- the test fold is never built while anything is chosen ---
@@ -358,11 +503,11 @@ def test_a_trainer_that_reads_the_test_fold_is_refused(tmp_path):
 
 
 def test_the_look_is_counted_before_any_evaluation_data_exists(trained):
-    log = EvaluationLog(trained / "reports" / runner.LOG_FILE)
+    log = _log(trained)
     seen = []
 
     def spy(scenario, seed):
-        seen.append(log.looks(RULES_ONLY.sha256(), "test"))
+        seen.append(log.looks("test"))
         return generate_scenario(scenario, seed)
 
     _evaluate(trained, loader=spy)

@@ -20,8 +20,10 @@ Usage (from the repository root):
 member's dev-selected checkpoint and the frozen selection.json. The test
 fold is never built while training.
 
-`evaluate` records the look in <reports-root>/evaluation_log.jsonl (write-
-once, hash-chained) before evaluating, then writes the versioned artifact
+`evaluate` records the look in the configuration's private evaluation log,
+~/stock-agent-private/comparison/looks/<config_sha256>.jsonl (write-once,
+hash-chained; the same file whatever --reports-root is), before evaluating,
+then writes the versioned artifact
 <reports-root>/<artifact_id>/comparison.json and one backtest_summary per
 (constraint set, strategy) under <health-inputs-root>/backtest_summary/
 (all ignored by Git). The test fold is evaluated once per registered
@@ -39,6 +41,7 @@ from pathlib import Path
 
 from train_ppo import git_code_version
 
+from stock_agent.comparison.ledger import EvaluationLog
 from stock_agent.comparison.protocol import load_comparison_config
 from stock_agent.comparison.runner import evaluate, train
 
@@ -88,7 +91,9 @@ def main(
         clock=clock,
         repeat_look=args.record_repeat_look,
     )
+    log = EvaluationLog.for_config(config.sha256())
     print(f"wrote {path}")
+    print(f"look recorded in {log.path} ({log.looks('test')} test look(s) of this configuration)")
     print("Synthetic scenarios only — not evidence of real investment performance.")
     return 0
 

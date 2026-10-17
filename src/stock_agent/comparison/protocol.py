@@ -251,6 +251,18 @@ class ComparisonConfig:
     def seeds_for(self, kind: str) -> tuple[int, ...]:
         return self.ppo_seeds if kind == "ppo" else tuple(self.cem_seeds)
 
+    def entry_names(self) -> tuple[str, ...]:
+        """Every evaluated entry, in registered order: each rule, each learned seed."""
+
+        names: list[str] = []
+        for key in self.strategies:
+            spec = STRATEGIES[key]
+            if spec.is_learned:
+                names.extend(entry_name(key, seed) for seed in self.seeds_for(spec.learned))
+            else:
+                names.append(key)
+        return tuple(names)
+
     def constraint_set(self, name: str) -> ConstraintSet:
         for constraint_set in self.constraint_sets:
             if constraint_set.name == name:
@@ -281,6 +293,12 @@ class ComparisonConfig:
     def sha256(self) -> str:
         text = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def entry_name(strategy: str, seed: int | None = None) -> str:
+    """An evaluated entry's name: the strategy, and its training seed when learned."""
+
+    return strategy if seed is None else f"{strategy}/seed_{seed}"
 
 
 def _require_seeds(seeds, what: str) -> None:

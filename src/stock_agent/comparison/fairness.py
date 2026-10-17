@@ -3,27 +3,33 @@ The fairness contract of the registered comparison, checked on every record
 before any measure is reported, and the check that no result of the
 evaluation fold selected anything.
 
-Every strategy is evaluated through one API (`replay.rollout` on
-`AllocationEnv`), and `check_contract` verifies, for every strategy and
-episode, that the record matches the registered configuration exactly:
+The registered setup is derived here, from the registered configuration
+alone (`RegisteredSetup`), never from what the runner was given: per
+constraint set and cost multiplier, ONE common setup of transition, lag, D2
+cost rates, schedule and offset, build date, evaluation window and the full
+D5 set (cap and turnover limit), with the scenario data regenerated from the
+registered generator. `ContractCheck` then checks every strategy's record of
+every episode against it, and `close()` compares all strategies together:
 
-- API: the record is an `EpisodeRecord` and its identity (scenario
-  fingerprint, window, schedule and constraint set, transition and reward)
-  is the registered environment's;
+- API: the record is an `EpisodeRecord` whose identity (scenario
+  fingerprint with its cost rates, window, schedule and constraint set,
+  transition and reward) is the registered setup's;
 - transition: the approved `portfolio_step` (D1-D8): every booked step is
-  replayed through it from the step's own inputs and must agree bit for bit
-  (weights, cost, returns, turnover, traded notional), wealth compounds by
+  replayed through it, from the registered data, and must agree bit for bit
+  (weights, cost, returns, turnover, traded notional); wealth compounds by
   each net return and each reward is log(1 + R_net) (D8 (a));
 - timing (D1): a decision at complete session c_j executes at c_{j+1}; no
   other session carries a target;
-- schedule (D7): the decisions are the registered schedule's, every
-  strategy books the same sessions;
+- schedule and window (D7): the decisions and booked sessions are the
+  registered schedule's over the registered window;
 - costs (D2): the provisional rates, times the scenario's cost regime, times
-  the registered sensitivity multiplier, at every booked session;
-- build (D3): 100% cash until the common build close, where every
+  the registered multiplier, at every booked session;
+- build (D3): 100% cash until the registered build close, where every
   strategy's first decision executes;
 - constraint set (D5): every target passed through `feasible_target` with
-  the registered set, and the transition received its result.
+  the registered set, and the transition received its result;
+- together: every registered entry (each rule, each learned seed) was
+  checked exactly once, and all share one fingerprint, the registered one.
 
 `check_no_test_selection` verifies that the reported learned members are
 exactly the members frozen (dev-selected) before the evaluation fold was
@@ -33,27 +39,36 @@ is recomputed from all of them.
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
+import json
 import math
 import statistics
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 
 import numpy as np
 
+from stock_agent.comparison.protocol import ComparisonConfig
 from stock_agent.portfolio.schedule import execution_lag
 from stock_agent.portfolio.transition import feasible_target, portfolio_step
 from stock_agent.rl.env import ENV_EXECUTION_LAG, AllocationEnv, EnvConfig
-from stock_agent.rl.harness import FairnessError, check_fairness
-from stock_agent.rl.observation import ObservationBuilder
+from stock_agent.rl.harness import FairnessError
+from stock_agent.rl.observation import ObservationBuilder, ScenarioLoader
 from stock_agent.rl.replay import EpisodeRecord
-from stock_agent.rl.scenarios import BASE_COST_RATES, ScenarioData
+from stock_agent.rl.reward import REWARD_INFO
+from stock_agent.rl.scenarios import BASE_COST_RATES, ScenarioData, generate_scenario
 from stock_agent.rl.splits import FoldSpec
 from stock_agent.rl.transition import APPROVED_TRANSITION
 
 __all__ = [
+    "ContractCheck",
     "FairnessError",
+    "RegisteredSetup",
     "SelectionError",
     "check_contract",
     "check_no_test_selection",
+    "scaled_costs",
 ]
 
 Episode = tuple[str, int]
@@ -68,17 +83,115 @@ def _fail(name: str, episode: Episode, what: str) -> None:
     raise FairnessError(f"{name} on {episode}: {what}")
 
 
-def _reference(
-    data: ScenarioData, fold: FoldSpec, env_config: EnvConfig, builder: ObservationBuilder
-) -> AllocationEnv:
-    return AllocationEnv(
-        data,
-        start=fold.start,
-        stop=fold.stop,
-        transition=portfolio_step,
-        transition_info=APPROVED_TRANSITION,
-        builder=builder,
-        config=env_config,
+def scaled_costs(data: ScenarioData, multiplier: float) -> ScenarioData:
+    """The same scenario with its base cost rates times a D2 sensitivity multiplier."""
+
+    rates = tuple(rate * multiplier for rate in data.base_cost_rates)
+    return dataclasses.replace(data, base_cost_rates=rates)
+
+
+@dataclass(frozen=True)
+class RegisteredSetup:
+    """
+    The one common setup of a registered constraint set at one cost
+    multiplier on one fold, derived from the registered configuration only.
+    """
+
+    config: ComparisonConfig
+    constraint_set: str
+    fold_role: str
+    cost_multiplier: float
+    loader: ScenarioLoader = generate_scenario
+    _data: dict = field(default_factory=dict, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        self.config.constraint_set(self.constraint_set)  # KeyError for an unregistered set
+        if self.fold_role not in ("test", "dev"):
+            raise ValueError("The comparison is evaluated on the test or the dev fold.")
+        if self.cost_multiplier not in self.config.cost_multipliers:
+            raise ValueError(f"{self.cost_multiplier} is not a registered cost multiplier.")
+
+    @property
+    def fold(self) -> FoldSpec:
+        plan = self.config.rl.plan
+        return plan.test if self.fold_role == "test" else plan.dev
+
+    @property
+    def env_config(self) -> EnvConfig:
+        return self.config.run_config(self.config.constraint_set(self.constraint_set)).env
+
+    def data(self, episode: Episode) -> ScenarioData:
+        if episode not in self._data:
+            self._data[episode] = scaled_costs(self.loader(*episode), self.cost_multiplier)
+        return self._data[episode]
+
+    def reference(self, episode: Episode, builder: ObservationBuilder) -> AllocationEnv:
+        fold = self.fold
+        return AllocationEnv(
+            self.data(episode),
+            start=fold.start,
+            stop=fold.stop,
+            transition=portfolio_step,
+            transition_info=APPROVED_TRANSITION,
+            builder=builder,
+            config=self.env_config,
+        )
+
+    def identity(self) -> dict[str, object]:
+        """The common identity every strategy shares (episode-independent)."""
+
+        env = self.env_config
+        fold = self.fold
+        return {
+            "config_sha256": self.config.sha256(),
+            "constraint_set": {
+                "name": self.constraint_set,
+                "max_weight": env.max_weight,
+                "max_turnover": env.max_turnover,
+            },
+            "transition": APPROVED_TRANSITION.to_dict(),
+            "reward": REWARD_INFO.to_dict(),
+            "execution_lag": ENV_EXECUTION_LAG,
+            "base_cost_rates": [rate * self.cost_multiplier for rate in BASE_COST_RATES],
+            "cost_multiplier": self.cost_multiplier,
+            "schedule": {"every": env.rebalance_every, "offset": env.rebalance_offset},
+            "build": "100% cash until one session after the first decision (D3)",
+            "window": [fold.start, fold.stop],
+            "fold": self.fold_role,
+        }
+
+
+def _digest(values: Sequence[object]) -> str:
+    return hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _fingerprint(record: EpisodeRecord) -> str:
+    """What every strategy of one episode shares: setup, sessions, schedule, build, rates."""
+
+    first = record.decisions[0].decision_index + ENV_EXECUTION_LAG
+    return _digest(
+        [
+            record.identity,
+            [row.session for row in record.ledger],
+            [d.decision_session for d in record.decisions],
+            record.ledger[first].session,
+            [row.cost_rates.tolist() for row in record.ledger],
+        ]
+    )
+
+
+def _reference_fingerprint(reference: AllocationEnv) -> str:
+    first = reference.first_decision_index
+    decisions = range(first, reference.final_index, reference.config.rebalance_every)
+    booked = [int(s) for s in reference.complete[: reference.final_index + 1]]
+    return _digest(
+        [
+            reference.identity(),
+            booked,
+            [int(reference.complete[j]) for j in decisions],
+            int(reference.complete[first + ENV_EXECUTION_LAG]),
+            [reference.data.cost_rates_at(s).tolist() for s in booked],
+        ]
     )
 
 
@@ -168,40 +281,95 @@ def _check_record(
     return checked
 
 
+class ContractCheck:
+    """
+    The contract for one registered setup: `add` checks each strategy's
+    records against the registered reference; `close` checks every strategy
+    together, once all are added.
+    """
+
+    def __init__(self, setup: RegisteredSetup, builder: ObservationBuilder) -> None:
+        if execution_lag() != ENV_EXECUTION_LAG:
+            raise FairnessError("The environment's lag is not the registered execution lag (D1).")
+        self.setup = setup
+        self.builder = builder
+        self.episodes = sorted(setup.fold.episodes())
+        self._references = {episode: setup.reference(episode, builder) for episode in self.episodes}
+        self._expected = {
+            episode: _reference_fingerprint(reference)
+            for episode, reference in self._references.items()
+        }
+        self._fingerprints: dict[str, dict[Episode, str]] = {}
+        self.steps = 0
+        self.closed = False
+
+    def add(self, name: str, records: Mapping[Episode, EpisodeRecord]) -> None:
+        if self.closed:
+            raise FairnessError("The contract was already closed.")
+        if name in self._fingerprints:
+            raise FairnessError(
+                f"{name} was evaluated twice on the {self.setup.fold_role} fold (an uncounted look)."
+            )
+        if set(records) != set(self.episodes):
+            raise FairnessError(f"{name} ran other episodes than the registered fold's.")
+        for episode, record in records.items():
+            if type(record) is not EpisodeRecord:
+                _fail(name, episode, f"evaluated through another API ({type(record).__name__})")
+        fingerprints = {}
+        for episode in self.episodes:
+            record = records[episode]
+            self.steps += _check_record(
+                name, episode, record, self._references[episode], self.setup.cost_multiplier
+            )
+            fingerprints[episode] = _fingerprint(record)
+        self._fingerprints[name] = fingerprints
+
+    def close(self, expected_names: Sequence[str]) -> dict[str, object]:
+        """
+        Every registered entry was checked once, and all of them share the
+        registered fingerprint of every episode.
+        """
+
+        if set(self._fingerprints) != set(expected_names) or len(expected_names) != len(
+            set(expected_names)
+        ):
+            missing = sorted(set(expected_names) - set(self._fingerprints))
+            extra = sorted(set(self._fingerprints) - set(expected_names))
+            raise FairnessError(
+                f"Not every registered entry was checked: missing {missing}, extra {extra}."
+            )
+        for episode in self.episodes:
+            shared = {self._fingerprints[name][episode] for name in expected_names}
+            if shared != {self._expected[episode]}:
+                raise FairnessError(
+                    f"The strategies do not share the registered setup on {episode}."
+                )
+        self.closed = True
+        return {
+            "setup": self.setup.identity(),
+            "strategies": len(expected_names),
+            "episodes": len(self.episodes),
+            "steps": self.steps,
+        }
+
+
 def check_contract(
     records: Mapping[str, Mapping[Episode, EpisodeRecord]],
     *,
-    data: Mapping[Episode, ScenarioData],
-    fold: FoldSpec,
-    env_config: EnvConfig,
+    setup: RegisteredSetup,
     builder: ObservationBuilder,
-    cost_multiplier: float,
-) -> dict[str, int]:
+    expected_names: Sequence[str] | None = None,
+) -> dict[str, object]:
     """
-    Raise `FairnessError` unless every strategy's record of every episode
-    of `fold` was produced under the registered contract (module docstring).
-    Returns how many strategies, episodes and booked steps were checked.
+    Check every strategy's records against the registered setup, then all
+    of them together (`expected_names`: the registered entries; by default
+    the strategies given). Raises `FairnessError` on any deviation.
     """
 
-    if execution_lag() != ENV_EXECUTION_LAG:
-        raise FairnessError("The environment's lag is not the registered execution lag (D1).")
-    episodes = set(fold.episodes())
-    steps = 0
+    check = ContractCheck(setup, builder)
     for name, by_episode in records.items():
-        if set(by_episode) != episodes:
-            raise FairnessError(f"{name} ran other episodes than the fold's.")
-        for episode, record in by_episode.items():
-            if type(record) is not EpisodeRecord:
-                _fail(name, episode, f"evaluated through another API ({type(record).__name__})")
-    check_fairness({name: dict(by_episode) for name, by_episode in records.items()})
-    references = {
-        episode: _reference(data[episode], fold, env_config, builder)
-        for episode in sorted(episodes)
-    }
-    for name, by_episode in sorted(records.items()):
-        for episode, record in sorted(by_episode.items()):
-            steps += _check_record(name, episode, record, references[episode], cost_multiplier)
-    return {"strategies": len(records), "episodes": len(episodes), "steps": steps}
+        check.add(name, by_episode)
+    return check.close(list(records) if expected_names is None else list(expected_names))
 
 
 def _spread(values: list[float]) -> dict[str, float | int]:

@@ -18,11 +18,17 @@ CAGR, Sharpe and intervals, is not approved):
   integers; the function takes dates, so each session is passed as a
   placeholder date and mapped back. Only sessions are reported, never days.
 - Turnover (F2.4): one-way turnover tau = 1/2 sum |delta_i| (cash included,
-  a full switch is 1) summed over every execution, the build's share
-  separately, and the turnover after the build per synthetic year: the
-  scenario generator's year of `SESSIONS_PER_YEAR` (252) sessions, since a
-  synthetic session has no calendar date. Traded notional
-  sum_{i != cash} |delta_i|, summed the same way.
+  a full switch is 1), split in two:
+  - construction turnover: every execution from the build up to and
+    including the first execution the turnover limit did not bind (the
+    portfolio first reached its target; `portfolio.construction`), or every
+    execution when it never did. Without a turnover limit it is the build
+    alone;
+  - rebalance turnover: every execution after construction, with the number
+    of those executions and the turnover per rebalance.
+  Not annualized: F2.4 annualizes per calendar year, and synthetic sessions
+  carry no calendar dates, so the session count is reported instead. Traded
+  notional sum_{i != cash} |delta_i| is split the same way.
 - Costs (D2): the summed cost paid, as a fraction of initial wealth, and the
   summed per-execution cost C in basis points (the health measure).
 - Constraint interventions (D5): targets changed by the cap or the turnover
@@ -44,7 +50,6 @@ from stock_agent.portfolio.construction import build_report
 from stock_agent.portfolio.descriptive import drawdown_summary
 from stock_agent.portfolio.transition import CAP, TURNOVER_LIMIT
 from stock_agent.rl.replay import EpisodeRecord
-from stock_agent.rl.scenarios import SESSIONS_PER_YEAR
 
 MAXIMUM_DRAWDOWN = "maximum_drawdown"
 OBSERVED_DECLINE = "largest_observed_decline_incomplete_history"
@@ -58,9 +63,14 @@ UNITS = {
         "every session is valued, else the largest observed decline (incomplete history)"
     ),
     "turnover_one_way": "F2.4 one-way turnover summed over every execution, build included",
-    "rebalance_turnover_per_year": (
-        "F2.4 one-way turnover after the build per synthetic year of 252 sessions (the "
-        "scenario generator's year)"
+    "construction_turnover_one_way": (
+        "F2.4 one-way turnover from the build until the portfolio first reaches its target "
+        "(the build alone without a turnover limit; every execution if never reached)"
+    ),
+    "rebalance_turnover_one_way": "F2.4 one-way turnover of every execution after construction",
+    "turnover_per_rebalance": (
+        "rebalance turnover divided by the executions after construction (not annualized: "
+        "synthetic sessions have no calendar dates)"
     ),
     "traded_notional": "sum of |weight change| over the funds, every execution, build included",
     "costs_paid": "summed trading cost as a fraction of initial wealth (D2 provisional rates)",
@@ -132,10 +142,14 @@ def episode_measures(record: EpisodeRecord, cash_index: int) -> dict[str, object
     initial = wealth[start]
     rows = record.ledger[first:]
     targeted = [row for row in rows if row.feasibility is not None]
+    build = build_report([(row.session, row.feasibility) for row in targeted], cash_index)
+    complete = None if build is None else build.fully_built_session
+    construction = [row for row in targeted if complete is None or row.session <= complete]
+    after = [row for row in targeted if complete is not None and row.session > complete]
     turnover = sum(row.turnover_one_way for row in rows)
     notional = sum(row.traded_notional for row in rows)
-    build_turnover = targeted[0].turnover_one_way if targeted else 0.0
-    build_notional = targeted[0].traded_notional if targeted else 0.0
+    construction_turnover = sum(row.turnover_one_way for row in construction)
+    rebalance_turnover = sum(row.turnover_one_way for row in after)
     span = end - start
     largest_weight = 0.0
     for row in rows:
@@ -143,7 +157,6 @@ def episode_measures(record: EpisodeRecord, cash_index: int) -> dict[str, object
             largest_weight = max(largest_weight, float(np.delete(weights, cash_index).max()))
     distances = [row.feasibility.distance_one_way for row in targeted]
     reasons = Counter(reason for d in record.decisions for reason in d.fallback_reasons)
-    build = build_report([(row.session, row.feasibility) for row in targeted], cash_index)
     drawdown = drawdown_measures(record)
     return {
         **terminal_measures(record),
@@ -152,12 +165,13 @@ def episode_measures(record: EpisodeRecord, cash_index: int) -> dict[str, object
         "span_sessions": span,
         "drawdown": drawdown,
         "turnover_one_way": float(turnover),
-        "build_turnover_one_way": float(build_turnover),
-        "rebalance_turnover_per_year": float(
-            (turnover - build_turnover) * SESSIONS_PER_YEAR / span
-        ),
+        "construction_turnover_one_way": float(construction_turnover),
+        "construction_executions": len(construction),
+        "rebalance_turnover_one_way": float(rebalance_turnover),
+        "rebalance_executions": len(after),
+        "turnover_per_rebalance": float(rebalance_turnover / len(after)) if after else None,
         "traded_notional": float(notional),
-        "build_traded_notional": float(build_notional),
+        "construction_traded_notional": float(sum(row.traded_notional for row in construction)),
         "largest_execution_turnover": float(max((r.turnover_one_way for r in rows), default=0.0)),
         "costs_paid": float(sum(row.cost * row.wealth_before for row in rows) / initial),
         "costs_bps_summed": float(sum(row.cost for row in rows) * 1e4),

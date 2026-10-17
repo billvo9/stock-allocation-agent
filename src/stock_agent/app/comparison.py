@@ -14,7 +14,13 @@ not a result of the registered comparison protocol:
   real investment performance" and "engineering evaluation";
 - the approved transition, the fairness contract passed, and the test fold
   with its look recorded in the evaluation log;
-- every strategy's registry stage at most `development_evaluated`.
+- every strategy's registry stage at most `development_evaluated`;
+- its look is in the configuration's private evaluation log
+  (`<looks dir>/<config_sha256>.jsonl`; STOCK_AGENT_COMPARISON_LOOKS or
+  ~/stock-agent-private/comparison/looks), whose hash chain is re-verified
+  here with the producer's rule: the entry names this artifact, the test
+  fold, its look number and its entry hash. A missing or broken log
+  withholds the artifact.
 
 It computes no measure and no statistic: every number shown comes from the
 artifact, and formatting is the only work done here. Strategies keep their
@@ -39,10 +45,29 @@ from stock_agent.app import wording
 
 COMPARISON_ENV = "STOCK_AGENT_COMPARISON_DIR"
 DEFAULT_DIR = Path(__file__).resolve().parents[3] / "reports" / "comparison"
+LOOKS_ENV = "STOCK_AGENT_COMPARISON_LOOKS"
+DEFAULT_LOOKS_DIR = Path.home() / "stock-agent-private" / "comparison" / "looks"
+GENESIS = "0" * 64
+LOG_FIELDS = {
+    "log_schema_version",
+    "sequence",
+    "recorded_at",
+    "config_name",
+    "config_sha256",
+    "fold",
+    "look_number",
+    "repeat",
+    "artifact_id",
+    "selection_sha256",
+    "code_sha",
+    "git_dirty",
+    "prev_entry_sha256",
+    "entry_sha256",
+}
 ARTIFACT_FILE = "comparison.json"
 # The producer's contract (`stock_agent.comparison.report`); a test checks they agree.
 SCHEMA = "ppo_comparison"
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 PROTOCOL = "registered_synthetic_comparison"
 SCOPE_LABEL = "Synthetic scenarios only — not evidence of real investment performance"
 EVALUATION_LABEL = "engineering evaluation"
@@ -59,11 +84,17 @@ class ComparisonWithheld(ValueError):
 class Comparisons:
     shown: Mapping[str, object] | None
     withheld: tuple[tuple[str, str], ...] = field(default=())  # (file, reason)
+    looks: Mapping[str, object] | None = None  # the shown artifact's log facts
 
 
 def comparison_dir() -> Path:
     configured = os.environ.get(COMPARISON_ENV)
     return Path(configured) if configured else DEFAULT_DIR
+
+
+def looks_dir() -> Path:
+    configured = os.environ.get(LOOKS_ENV)
+    return Path(configured) if configured else DEFAULT_LOOKS_DIR
 
 
 def _canonical(value: object) -> str:
@@ -114,24 +145,82 @@ def verified(text: str) -> dict:
     return document
 
 
-def read_comparisons(directory: Path | None = None) -> Comparisons | None:
+def log_entries(text: str, config_sha256: str) -> list[dict]:
+    """A configuration's looks after verifying the chain (`ComparisonWithheld` if not)."""
+
+    if text and not text.endswith("\n"):
+        raise ComparisonWithheld("its evaluation log's last line is incomplete")
+    entries, previous = [], GENESIS
+    for number, line in enumerate(text.splitlines()):
+        try:
+            entry = json.loads(line, parse_constant=_refuse_constant)
+        except json.JSONDecodeError as error:
+            raise ComparisonWithheld("its evaluation log is not JSON") from error
+        if not isinstance(entry, dict) or set(entry) != LOG_FIELDS:
+            raise ComparisonWithheld("its evaluation log has unexpected fields")
+        body = {key: value for key, value in entry.items() if key != "entry_sha256"}
+        digest = hashlib.sha256(_canonical(body).encode("utf-8")).hexdigest()
+        if (
+            entry["sequence"] != number
+            or entry["prev_entry_sha256"] != previous
+            or entry["entry_sha256"] != digest
+            or entry["config_sha256"] != config_sha256
+        ):
+            raise ComparisonWithheld("its evaluation log failed its integrity check")
+        entries.append(entry)
+        previous = entry["entry_sha256"]
+    return entries
+
+
+def look_on_record(document: Mapping[str, object], looks: Path) -> dict[str, object]:
+    """The artifact's look as the private log records it, or `ComparisonWithheld`."""
+
+    path = Path(looks) / f"{document['config_sha256']}.jsonl"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ComparisonWithheld("its look is not in the evaluation log") from error
+    entries = log_entries(text, str(document["config_sha256"]))
+    look = document["look"]
+    matches = [e for e in entries if e["artifact_id"] == document["artifact_id"]]
+    if len(matches) != 1 or (
+        matches[0]["fold"],
+        matches[0]["look_number"],
+        matches[0]["entry_sha256"],
+    ) != ("test", look["number"], look["log_entry_sha256"]):
+        raise ComparisonWithheld("its look does not match the evaluation log")
+    return {
+        "test_looks": sum(e["fold"] == "test" for e in entries),
+        "dev_looks": sum(e["fold"] == "dev" for e in entries),
+        "head": entries[-1]["entry_sha256"],
+    }
+
+
+def read_comparisons(
+    directory: Path | None = None, looks: Path | None = None
+) -> Comparisons | None:
     """
-    The newest verified comparison (by `generated_at`) and every withheld
-    file with its reason; None when no comparison file exists.
+    The newest verified comparison (by `generated_at`) with its log facts,
+    and every withheld file with its reason; None when no comparison file
+    exists.
     """
 
     root = comparison_dir() if directory is None else Path(directory)
+    looks = looks_dir() if looks is None else Path(looks)
     files = sorted(root.glob(f"*/{ARTIFACT_FILE}")) if root.is_dir() else []
     if not files:
         return None
     shown, withheld = [], []
     for path in files:
         try:
-            shown.append(verified(path.read_text(encoding="utf-8")))
+            document = verified(path.read_text(encoding="utf-8"))
+            shown.append((document, look_on_record(document, looks)))
         except (ComparisonWithheld, OSError, UnicodeDecodeError) as error:
             withheld.append((path.parent.name, str(error)))
-    newest = max(shown, key=lambda d: (d["generated_at"], d["artifact_id"])) if shown else None
-    return Comparisons(shown=newest, withheld=tuple(withheld))
+    if not shown:
+        return Comparisons(shown=None, withheld=tuple(withheld))
+    document, facts = max(shown, key=lambda item: (item[0]["generated_at"], item[0]["artifact_id"]))
+    return Comparisons(shown=document, withheld=tuple(withheld), looks=facts)
 
 
 # --- formatting (no computation beyond picking fields) ---
@@ -175,7 +264,7 @@ def constraint_set_label(constraint_set: Mapping[str, object]) -> str:
     )
 
 
-def facts(document: Mapping[str, object]) -> list[str]:
+def facts(document: Mapping[str, object], looks: Mapping[str, object]) -> list[str]:
     look = document["look"]
     code = document["code"]
     return [
@@ -185,8 +274,10 @@ def facts(document: Mapping[str, object]) -> list[str]:
         wording.COMPARISON_FACT_LOOK.format(
             number=look["number"],
             repeat=wording.COMPARISON_REPEAT if look["repeat"] else "",
+            recorded=looks["test_looks"],
             generated=document["generated_at"],
         ),
+        wording.COMPARISON_FACT_LOG.format(head=str(looks["head"])[:12], dev=looks["dev_looks"]),
         wording.COMPARISON_FACT_CODE.format(
             sha=(code.get("git_sha") or "unknown")[:12],
             dirty=wording.COMPARISON_DIRTY if code.get("git_dirty") else "",
@@ -251,9 +342,16 @@ def results_table(
                 columns["drawdown"]: _median(drawdown["value"], _fraction)
                 + (wording.COMPARISON_INCOMPLETE.format(n=incomplete) if incomplete else ""),
                 columns["duration"]: _median(drawdown["duration_sessions"], lambda v: f"{v:.0f}"),
-                columns["turnover"]: _median(
-                    summary["rebalance_turnover_per_year"], lambda v: f"{v:.2f}"
+                columns["construction"]: _median(
+                    summary["construction_turnover_one_way"], lambda v: f"{v:.2f}"
                 ),
+                columns["rebalance"]: _median(
+                    summary["rebalance_turnover_one_way"], lambda v: f"{v:.2f}"
+                ),
+                columns["per_rebalance"]: _median(
+                    summary["turnover_per_rebalance"], lambda v: f"{v:.3f}"
+                ),
+                columns["sessions"]: _median(summary["span_sessions"], lambda v: f"{v:.0f}"),
                 columns["notional"]: _median(summary["traded_notional"], lambda v: f"{v:.2f}"),
                 columns["zero"]: _median(summary["cost_sensitivity"]["0x"], _wealth),
                 columns["one"]: _median(summary["cost_sensitivity"]["1x"], _wealth),

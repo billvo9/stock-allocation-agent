@@ -1,6 +1,13 @@
 """
 The evaluation log: a write-once, hash-chained record of every look at a
-fold, per registered configuration.
+fold, one file per registered configuration.
+
+Location: ONE private place per machine, independent of where artifacts are
+written, so a fresh reports directory cannot restart the count:
+`<looks dir>/<config_sha256>.jsonl`, where the looks directory is
+`~/stock-agent-private/comparison/looks` (the environment variable
+STOCK_AGENT_COMPARISON_LOOKS replaces it; the test suite points it at a
+temporary directory). A file holds only its configuration's looks.
 
 Each line is one look: the configuration's name and SHA-256, the fold, the
 look's number for that (configuration, fold), the artifact and frozen
@@ -23,11 +30,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
+LOOKS_ENV = "STOCK_AGENT_COMPARISON_LOOKS"
+DEFAULT_LOOKS_DIR = Path.home() / "stock-agent-private" / "comparison" / "looks"
 GENESIS = "0" * 64
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 LOG_SCHEMA_VERSION = 1
 FIELDS = {
     "log_schema_version",
@@ -64,9 +76,30 @@ def _digest(entry: Mapping[str, object]) -> str:
     return hashlib.sha256(_canonical(body).encode("utf-8")).hexdigest()
 
 
+def looks_dir() -> Path:
+    configured = os.environ.get(LOOKS_ENV)
+    return Path(configured) if configured else DEFAULT_LOOKS_DIR
+
+
 class EvaluationLog:
-    def __init__(self, path: Path) -> None:
+    """The looks of one registered configuration (`for_config`)."""
+
+    def __init__(self, path: Path, config_sha256: str) -> None:
+        if not _SHA256.fullmatch(config_sha256):
+            raise ValueError("config_sha256 must be a SHA-256 hex digest")
         self.path = Path(path)
+        self.config_sha256 = config_sha256
+
+    @classmethod
+    def for_config(cls, config_sha256: str, directory: Path | None = None) -> EvaluationLog:
+        root = looks_dir() if directory is None else Path(directory)
+        return cls(root / f"{config_sha256}.jsonl", config_sha256)
+
+    def head(self) -> str:
+        """The hash of the last look (the genesis value for an empty log)."""
+
+        entries = self.entries()
+        return entries[-1]["entry_sha256"] if entries else GENESIS
 
     def entries(self) -> list[dict]:
         """Every look, after verifying the chain (`LogUnreadable` otherwise)."""
@@ -88,16 +121,14 @@ class EvaluationLog:
                 raise LogUnreadable(f"line {number + 1} breaks the chain")
             if entry["entry_sha256"] != _digest(entry):
                 raise LogUnreadable(f"line {number + 1} was edited")
+            if entry["config_sha256"] != self.config_sha256:
+                raise LogUnreadable(f"line {number + 1} belongs to another configuration")
             entries.append(entry)
             previous = entry["entry_sha256"]
         return entries
 
-    def looks(self, config_sha256: str, fold: str) -> int:
-        return sum(
-            1
-            for entry in self.entries()
-            if entry["config_sha256"] == config_sha256 and entry["fold"] == fold
-        )
+    def looks(self, fold: str) -> int:
+        return sum(1 for entry in self.entries() if entry["fold"] == fold)
 
     def record_look(
         self,
@@ -116,10 +147,10 @@ class EvaluationLog:
         configuration is refused unless `repeat_allowed`.
         """
 
+        if config_sha256 != self.config_sha256:
+            raise ValueError("This log holds another configuration's looks.")
         entries = self.entries()
-        earlier = sum(
-            1 for e in entries if e["config_sha256"] == config_sha256 and e["fold"] == fold
-        )
+        earlier = sum(1 for e in entries if e["fold"] == fold)
         if fold == "test" and earlier and not repeat_allowed:
             raise RepeatLookError(
                 f"The test fold of {config_name} ({config_sha256[:12]}) was already evaluated "

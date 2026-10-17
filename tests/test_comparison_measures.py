@@ -116,8 +116,10 @@ def test_an_unvalued_session_makes_the_history_incomplete_and_is_labelled():
 def test_turnover_traded_notional_and_costs_of_a_single_build():
     result = measures.episode_measures(episode(all_equity()), sc.CASH_INDEX)
     assert result["turnover_one_way"] == pytest.approx(1.0)  # D3: a build from cash is 1
-    assert result["build_turnover_one_way"] == pytest.approx(1.0)
-    assert result["rebalance_turnover_per_year"] == 0.0
+    assert result["construction_turnover_one_way"] == pytest.approx(1.0)
+    assert result["construction_executions"] == 1
+    assert result["rebalance_turnover_one_way"] == 0.0 and result["rebalance_executions"] == 0
+    assert result["turnover_per_rebalance"] is None
     assert result["traded_notional"] == pytest.approx(1.0)  # the cash leg is not notional
     assert result["costs_paid"] == pytest.approx(0.0005)  # 5 bp of the initial wealth
     assert result["costs_bps_summed"] == pytest.approx(5.0)
@@ -125,7 +127,7 @@ def test_turnover_traded_notional_and_costs_of_a_single_build():
     assert result["largest_execution_turnover"] == pytest.approx(1.0)
 
 
-def test_rebalance_turnover_is_annualized_per_252_session_synthetic_year():
+def test_rebalance_turnover_follows_construction_and_is_not_annualized():
     record = episode(ConstantMix("half_half", [0.5, 0.5, 0.0, 0.0]))
     result = measures.episode_measures(record, sc.CASH_INDEX)
     # Five +1% sessions of equity drift between executions: 0.5 * 1.01**5 / (0.5 * 1.01**5
@@ -134,8 +136,15 @@ def test_rebalance_turnover_is_annualized_per_252_session_synthetic_year():
     first_rebalance = [row for row in record.ledger if row.target is not None][1]
     assert first_rebalance.turnover_one_way == pytest.approx(drifted - 0.5, rel=1e-12)
     after_build = sum(row.turnover_one_way for row in record.ledger) - 1.0
-    assert result["rebalance_turnover_per_year"] == pytest.approx(after_build * 252 / 75)
+    # Without a turnover limit, construction is the build alone (one-way 1.0).
+    assert result["construction_turnover_one_way"] == pytest.approx(1.0)
+    assert result["rebalance_turnover_one_way"] == pytest.approx(after_build)
+    rebalances = sum(row.target is not None for row in record.ledger) - 1
+    assert result["rebalance_executions"] == rebalances
+    assert result["turnover_per_rebalance"] == pytest.approx(after_build / rebalances)
     assert result["traded_notional"] == pytest.approx(1.0 + 2 * after_build)
+    assert result["span_sessions"] == 75  # reported instead of annualizing
+    assert not any("year" in key for key in result)
 
 
 def test_interventions_and_the_build_under_a_stricter_set():
@@ -172,6 +181,25 @@ def test_a_rebalanced_build_under_the_limit_completes_and_says_when():
     # 0.25, so the portfolio first reaches 50/50 there, 15 sessions after the build.
     assert build["fully_built_session"] == 96
     assert build["sessions_until_fully_built"] == 15
+    # Construction turnover covers the four executions up to 96 (0.25 at each of the
+    # first three); everything after is rebalancing. Together they are the total.
+    assert result["construction_executions"] == 4
+    assert result["construction_turnover_one_way"] == pytest.approx(0.75 + 0.234, abs=1e-3)
+    assert result["construction_turnover_one_way"] + result[
+        "rebalance_turnover_one_way"
+    ] == pytest.approx(result["turnover_one_way"], rel=1e-12)
+    assert result["rebalance_executions"] == sum(
+        row.target is not None and row.session > 96
+        for row in episode(ConstantMix("half_half", [0.5, 0.5, 0.0, 0.0]), max_turnover=0.25).ledger
+    )
+
+
+def test_a_never_completed_build_counts_all_its_turnover_as_construction():
+    result = measures.episode_measures(
+        episode(all_equity(), max_weight=0.5, max_turnover=0.25), sc.CASH_INDEX
+    )
+    assert result["construction_turnover_one_way"] == result["turnover_one_way"]
+    assert result["rebalance_turnover_one_way"] == 0.0 and result["rebalance_executions"] == 0
 
 
 def test_every_reported_measure_has_a_unit():
@@ -180,9 +208,12 @@ def test_every_reported_measure_has_a_unit():
         "total_return",
         "drawdown",
         "turnover_one_way",
-        "rebalance_turnover_per_year",
+        "construction_turnover_one_way",
+        "rebalance_turnover_one_way",
+        "turnover_per_rebalance",
         "traded_notional",
         "costs_paid",
         "cost_sensitivity",
     }
-    assert "252" in measures.UNITS["rebalance_turnover_per_year"]
+    assert "not annualized" in measures.UNITS["turnover_per_rebalance"]
+    assert not any("252" in text for text in measures.UNITS.values())

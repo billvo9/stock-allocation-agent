@@ -127,7 +127,7 @@ def _comparison(load: Callable[[], Comparisons | None] | None) -> bool:
         )
         say(wording.COMPARISON_INTRO)
         say(wording.COMPARISON_NO_CLAIM)
-        for fact in comparison.facts(document):
+        for fact in comparison.facts(document, found.looks):
             say(fact, "caption")
         say(wording.COMPARISON_NOT_REPORTED, "caption")
     sets = document["constraint_sets"]

@@ -287,7 +287,14 @@ COMPARISON_SET = "{name}: cap {cap:.0%} per fund, {turnover}"
 COMPARISON_NO_TURNOVER_LIMIT = "no turnover limit"
 COMPARISON_TURNOVER_LIMIT = "one-way turnover limit {limit:g} per rebalance, the build included"
 COMPARISON_FACT_PROTOCOL = "Registered configuration {name} ({sha})."
-COMPARISON_FACT_LOOK = "Test scenarios, look {number}{repeat} at that fold, evaluated {generated}."
+COMPARISON_FACT_LOOK = (
+    "Test scenarios, look {number}{repeat} of {recorded} recorded for this configuration, "
+    "evaluated {generated}."
+)
+COMPARISON_FACT_LOG = (
+    "The private evaluation log verifies this look; its last entry is {head}, and it records "
+    "{dev} look(s) at the development scenarios."
+)
 COMPARISON_REPEAT = " (a recorded repeat)"
 COMPARISON_FACT_CODE = "Code {sha}{dirty}."
 COMPARISON_DIRTY = " with uncommitted changes"
@@ -307,8 +314,11 @@ COMPARISON_DRAWDOWN_NOTE = (
     "paths are counted."
 )
 COMPARISON_TURNOVER_NOTE = (
-    "Turnover per year is one-way turnover after the build, per 252-session synthetic year. "
-    "Traded notional is the summed weight traded in the funds, the build included."
+    "Turnover is one-way (a full switch is 1). Construction covers the build until the "
+    "portfolio first reaches its target (all of it when it never does); rebalancing is "
+    "everything after, also shown per rebalance. Nothing is annualized: synthetic sessions "
+    "have no calendar dates, so the window's length in sessions is shown. Traded notional is "
+    "the summed weight traded in the funds, the build included."
 )
 COMPARISON_COSTS_NOTE = (
     "The 0×, 1× and 2× columns replay the same decisions at zero, the registered and twice the "
@@ -343,7 +353,10 @@ COMPARISON_RESULT_COLUMNS = {
     "return": "Total return",
     "drawdown": "Maximum drawdown",
     "duration": "Drawdown duration (sessions)",
-    "turnover": "Turnover per year",
+    "construction": "Construction turnover",
+    "rebalance": "Rebalance turnover",
+    "per_rebalance": "Turnover per rebalance",
+    "sessions": "Sessions",
     "notional": "Traded notional",
     "zero": "Wealth at 0× costs",
     "one": "Wealth at 1× costs",

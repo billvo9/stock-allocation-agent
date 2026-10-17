@@ -3,19 +3,22 @@ The Experiments page's "Synthetic strategy comparison (engineering
 evaluation)" panel, rendered through the running app and scanned for advice
 wording: the honest empty state, a registered comparison with its labels,
 registry stages and tables, and every file outside the registered protocol
-withheld.
+withheld, including an artifact whose look the private evaluation log does
+not verify.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
+from types import SimpleNamespace
 
 import pytest
 from comparison_helpers import CODE, FAKE_KINDS, FixedClock, small_config
 from test_app_destinations import running, text_of
 
 from stock_agent.app import comparison, wording
-from stock_agent.comparison import report, runner
+from stock_agent.comparison import ledger, report, runner
 
 STRATEGIES = ("buy_and_hold", "equal_weight", "all_shv", "ppo", "ppo_guarded")
 
@@ -36,17 +39,28 @@ def produced(tmp_path_factory):
         code=CODE,
         clock=FixedClock(),
         kinds=FAKE_KINDS,
+        looks_root=root / "looks",
     )
-    return path
+    (log,) = (root / "looks").glob("*.jsonl")
+    return SimpleNamespace(path=path, log=log)
 
 
 @pytest.fixture
 def directory(tmp_path, monkeypatch, produced):
     target = tmp_path / "comparison"
-    (target / produced.parent.name).mkdir(parents=True)
-    (target / produced.parent.name / "comparison.json").write_bytes(produced.read_bytes())
+    (target / produced.path.parent.name).mkdir(parents=True)
+    (target / produced.path.parent.name / "comparison.json").write_bytes(produced.path.read_bytes())
+    looks = tmp_path / "looks"
+    looks.mkdir()
+    shutil.copy(produced.log, looks / produced.log.name)
     monkeypatch.setenv(comparison.COMPARISON_ENV, str(target))
+    monkeypatch.setenv(comparison.LOOKS_ENV, str(looks))
     return target
+
+
+def _log(directory):
+    (path,) = (directory.parent / "looks").glob("*.jsonl")
+    return path
 
 
 def _rewrite(directory, edit, *, rehash=True):
@@ -66,6 +80,9 @@ def test_the_readers_contract_is_the_producers():
     assert comparison.EVALUATION_LABEL == report.EVALUATION_LABEL
     assert comparison.EVIDENCE_STATUS == report.EVIDENCE_STATUS
     assert comparison.SHOWN_STAGES[-1] == report.MAX_STAGE
+    assert comparison.LOOKS_ENV == ledger.LOOKS_ENV
+    assert comparison.DEFAULT_LOOKS_DIR == ledger.DEFAULT_LOOKS_DIR
+    assert comparison.LOG_FIELDS == ledger.FIELDS and comparison.GENESIS == ledger.GENESIS
 
 
 def test_without_a_comparison_the_panel_is_an_honest_empty_state():
@@ -83,9 +100,10 @@ def test_a_registered_comparison_is_shown_with_its_labels_and_stages(directory, 
     assert wording.COMPARISON_EMPTY_TITLE not in text
     assert wording.EXPERIMENTS_EMPTY_TITLE not in text
     assert wording.COMPARISON_NOT_REPORTED in text and wording.COMPARISON_NO_CLAIM in text
-    document = json.loads(produced.read_text())
+    document = json.loads(produced.path.read_text())
     assert "Uninvested cash earns 0% (synthetic engineering only; group C pending)." in text
-    assert "look 1 at that fold" in text
+    assert "look 1 of 1 recorded for this configuration" in text
+    assert "The private evaluation log verifies this look" in text
     results, seeds, builds, strategies = (frame.value for frame in app.dataframe)
     stages = set(strategies[wording.COMPARISON_STRATEGY_COLUMNS["stage"]])
     assert stages == {wording.PROSPECTIVE_STAGES["engineering_only"]}
@@ -100,7 +118,7 @@ def test_a_registered_comparison_is_shown_with_its_labels_and_stages(directory, 
 
 
 def test_the_tables_show_the_artifacts_numbers_unchanged(directory, produced):
-    document = json.loads(produced.read_text())
+    document = json.loads(produced.path.read_text())
     summary = next(
         s
         for s in document["summary"]
@@ -159,3 +177,46 @@ def test_the_default_location_is_ignored_by_git():
     assert relative.parts == ("reports", "comparison")
     ignored = (comparison.DEFAULT_DIR.parents[1] / ".gitignore").read_text(encoding="utf-8")
     assert "reports/" in ignored.splitlines()
+
+
+def test_a_look_the_private_log_does_not_verify_is_withheld(directory):
+    log = _log(directory)
+    text = log.read_text()
+    for edited, reason in (
+        (None, "not in the evaluation log"),
+        (text.replace('"test"', '"dev"', 1), "integrity check"),
+        ("", "does not match the evaluation log"),
+    ):
+        if edited is None:
+            log.unlink()
+        else:
+            log.write_text(edited, encoding="utf-8")
+        app = running("experiments")
+        shown = text_of(app)
+        assert "Withheld:" in shown and reason in shown, reason
+        assert not app.dataframe
+        log.write_text(text, encoding="utf-8")
+
+
+def test_the_labs_log_check_agrees_with_the_producers(produced, tmp_path):
+    text = produced.log.read_text()
+    sha = produced.log.stem
+    mine = comparison.log_entries(text, sha)
+    theirs = ledger.EvaluationLog(produced.log, sha).entries()
+    assert [e["entry_sha256"] for e in mine] == [e["entry_sha256"] for e in theirs]
+    copy = tmp_path / produced.log.name
+    for edited in (text.replace('"test"', '"dev"', 1), text.rstrip("\n"), text * 2):
+        copy.write_text(edited, encoding="utf-8")
+        with pytest.raises(ledger.LogUnreadable):
+            ledger.EvaluationLog(copy, sha).entries()
+        with pytest.raises(comparison.ComparisonWithheld):
+            comparison.log_entries(edited, sha)
+
+
+def test_the_turnover_columns_are_split_and_not_annualized(directory):
+    app = running("experiments")
+    text_of(app)
+    columns = list(app.dataframe[0].value.columns)
+    for key in ("construction", "rebalance", "per_rebalance", "sessions"):
+        assert wording.COMPARISON_RESULT_COLUMNS[key] in columns
+    assert not [c for c in columns if "year" in c.lower()]

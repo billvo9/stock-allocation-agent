@@ -21,6 +21,7 @@ from pathlib import Path
 import yaml
 
 from stock_agent.comparison.protocol import comparison_config_from_dict
+from stock_agent.comparison.runner import LoadedMember
 from stock_agent.rl.policies import ConstantMix
 
 REPO = Path(__file__).resolve().parents[1]
@@ -131,7 +132,10 @@ class FakeKind:
 
             raise SelectionError("not the frozen checkpoint")
         weights = json.loads(path.read_text(encoding="utf-8"))["weights"]
-        return lambda: ConstantMix(f"fake_{self.name}_{member['seed']}", weights)
+        return LoadedMember(
+            lambda: ConstantMix(f"fake_{self.name}_{member['seed']}", weights),
+            hashlib.sha256(json.dumps(weights).encode("utf-8")).hexdigest(),
+        )
 
 
 FAKE_KINDS = {"ppo": FakeKind("ppo"), "cem": FakeKind("cem")}
