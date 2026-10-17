@@ -231,6 +231,9 @@ def test_demo_forecasts_show_five_sessions_beside_the_usual_mix_and_their_tests(
     assert "One-sided p (fold-block t)" in text and words.SIZE_TITLE in text
     assert "Placebo half-life (sessions)" in text and "Newey-West (decides)" in text
     assert words.BAND_TITLE in text and "±0.5% (in use)" in text and "±0.25%" in text
+    # Every calibration status carries its qualifier inline: synthetic, never "calibrated".
+    assert text.count(words.CALIBRATION_SYNTHETIC) == 3 and words.CALIBRATION_REAL not in text
+    assert "hindsight-selected and non-confirmatory" in text
     scan_for_advice(text)
 
 
@@ -268,6 +271,28 @@ def test_a_real_stock_has_no_probabilities_until_the_approvals(home):
     assert words.FORECAST_NONE_REAL_TITLE in text
     assert words.DIAGNOSTICS_NONE in text  # no real evaluation: the synthetic one is not shown
     assert words.FORECAST_BADGE not in text
+
+
+def test_a_real_evaluation_marks_every_calibration_status_experimental(home):
+    store = StockLabStore(home / DB_NAME)
+    store.add(parse_tickers("AAPL"))
+    bars = synthetic.demo_bars("DEMO_CALM").copy()
+    bars["session"] = pd.bdate_range(end="2024-12-31", periods=len(bars), tz="UTC").as_unit("us")
+    store.record_prices(
+        "AAPL",
+        bars,
+        source="fixture",
+        retrieved_at=pd.Timestamp("2026-10-16T22:00:00Z"),
+        data_class=DataClass.REAL,
+        vintage_note="fixture",
+    )
+    _demo_store(home)
+    evaluation = store.latest_evaluation(DataClass.SYNTHETIC)
+    store.record_evaluation({**evaluation, "run_id": "R-fixture", "data_class": "real"})
+    text = text_of(page())
+    assert text.count(words.CALIBRATION_REAL) == 3 and words.CALIBRATION_SYNTHETIC not in text
+    assert "hindsight-selected and non-confirmatory" in text
+    scan_for_advice(text)
 
 
 def _replay(home: Path, sessions: int = 4) -> StockLabStore:

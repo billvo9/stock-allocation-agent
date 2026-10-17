@@ -433,7 +433,20 @@ carries:
 How the ledger works:
 
 - A recalculation is a new record that names the one it supersedes; nothing
-  is overwritten.
+  is overwritten. There is at most one live forecast per stock and as-of
+  session. The superseded forecast must exist for the same stock and
+  session, and only the live one counts in the rolling scores. A new day's
+  forecast is a new record, not a recalculation.
+- A forecast is recorded when it is made, and the store refuses any other
+  timing:
+  - `created_at` must be within five minutes of the store's clock;
+  - it cannot be earlier than any stored retrieval of its stock;
+  - it must come before its first target session opens (09:30 New York).
+- Scoring judges what a forecast could have seen by the later of its
+  `created_at` and the time the store recorded it. A target whose sessions
+  had opened by then is never scored.
+- A copy of the ledger head is kept outside the database. It shows a removed
+  last entry, which the hash chain alone cannot.
 - Scores are appended as sessions close; the original probabilities are
   never rewritten.
 - A future PPO policy may read these records only through an approved
@@ -478,8 +491,10 @@ How the ledger works:
   invented.
 - **Until decisions A1, A2 and A4:**
   - the real job scores whatever is stored;
-  - it records itself as `skipped`, with the reason, and writes its Model
-    Health input;
+  - it records itself as `skipped` and not yet authorized, with the reason,
+    and writes its Model Health input. Health reads that as not activated
+    (insufficient evidence), never as a degraded job. A job that stops
+    running still fails as overdue;
   - it refuses the real-update flags.
 - **The price update and real forecasts** are built after those approvals.
 
@@ -489,6 +504,8 @@ How the ledger works:
 - Models are fitted with every outcome censored at the replay's start.
 - Each day: the close arrives, closed targets are scored, and the day's
   forecasts are made.
+- The store runs on the replay's simulated clock, so every record carries
+  the simulated time at which it was written, and nothing is backdated.
 - This demonstrates the forecast-record-score loop without any real stock
   and without any model seeing what it is scored on.
 

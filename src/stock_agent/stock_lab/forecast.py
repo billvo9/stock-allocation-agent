@@ -35,6 +35,12 @@ incoherent artifact); the estimator is one of ESTIMATORS. A future
 reader (for example a PPO observation) must use these records only through
 an approved point-in-time reader, and must never treat a forecast rebuilt
 after the fact as having been available at its as-of session.
+
+Timing (`opened_by`): a forecast must be made before its first target
+session opens, at 09:30 America/New_York (the prospective ETF ledger's
+recording deadline). Otherwise it could already contain that session's
+opening move, or the outcome itself. The store refuses such a record, and
+scoring leaves each target whose sessions had opened unscored.
 """
 
 from __future__ import annotations
@@ -43,6 +49,8 @@ import hashlib
 import json
 import math
 from collections.abc import Mapping, Sequence
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 SCHEMA = "stock_probability_forecast"
 SCHEMA_VERSION = "1.0"
@@ -74,6 +82,8 @@ FIELDS = (
 )
 PROBABILITY_KEYS = ("p_decrease", "p_stable", "p_increase")
 ESTIMATORS = ("B0", "B1", "B2", "B3", "M1")
+NEW_YORK = ZoneInfo("America/New_York")
+SESSION_OPEN = (9, 30)  # America/New_York
 
 
 class ForecastRefused(ValueError):
@@ -87,6 +97,29 @@ def canonical(value: object) -> str:
 def forecast_id(record: Mapping[str, object]) -> str:
     content = {key: value for key, value in record.items() if key != "forecast_id"}
     return hashlib.sha256(canonical(content).encode("utf-8")).hexdigest()
+
+
+def session_open(session: str) -> datetime:
+    """The session's opening time (09:30 America/New_York), timezone-aware."""
+
+    return datetime.combine(date.fromisoformat(session), time(*SESSION_OPEN), tzinfo=NEW_YORK)
+
+
+def created(record: Mapping[str, object]) -> datetime:
+    """The record's created_at as a timezone-aware time (ISO 8601 with Z or an offset)."""
+
+    text = str(record["created_at"])
+    when = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+    if when.tzinfo is None:
+        raise ForecastRefused("created_at must carry a timezone")
+    return when
+
+
+def opened_by(record: Mapping[str, object], sessions: Sequence[str]) -> bool:
+    """True when any of `sessions` had opened at or before the record was created."""
+
+    when = created(record)
+    return any(session_open(session) <= when for session in sessions)
 
 
 def _check_probabilities(row: Mapping[str, object], label: str) -> None:

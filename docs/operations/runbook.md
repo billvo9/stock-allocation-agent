@@ -392,7 +392,7 @@ are never recomputed here.
 <a id="data-stock-lab-freshness"></a>
 ### Stock Lab data freshness (`data.stock_lab_freshness`)
 
-- **What it means.** Whether every watched stock in the Stock Lab has the session the daily job expected (the last NYSE session whose close is at least 20:00 New York time old). Degraded (`stale_prices`) when any stock is behind: its last valid forecast is kept and shown as stale, never replaced by an invented one. Insufficient evidence without a watchlist or before the job has run.
+- **What it means.** Whether every watched stock in the Stock Lab has the session the daily job expected (the last NYSE session whose close is at least 20:00 New York time old). Degraded (`stale_prices`) when any stock is behind: its last valid forecast is kept and shown as stale, never replaced by an invented one. Insufficient evidence without a watchlist, before the job has run, or while the price update is not authorized yet (`not_authorized`).
 - **Likely causes.** The price update is not authorized yet (decisions A1 and A2); a provider outage; a ticker that stopped trading; the job ran before the close was published.
 - **Diagnose.** The detail lists each stock's last stored session and how many sessions it is behind; the job run in the private store says what was skipped and why.
 - **Safe retry.** Run `scripts/stock_lab_daily.py` again after the availability time; it is idempotent (scores and runs are write-once).
@@ -401,8 +401,8 @@ are never recomputed here.
 <a id="forecast-stock-lab-job"></a>
 ### Stock Lab daily update (`forecast.stock_lab_job`)
 
-- **What it means.** The last daily-job run's status as recorded by the job: ok is healthy, partial or skipped degraded, failed failed. Until the owner records decisions A1, A2 and A4, a real run records itself as skipped, with the reason. Failed (`job_overdue`) when the monitor runs more than 6 hours past the run the job said was next: the scheduled job may have stopped, and its last file would otherwise stay green.
-- **Likely causes.** Skipped: approvals pending. Failed: a provider error, an unreadable store, a ledger that does not verify.
+- **What it means.** The last daily-job run's status as recorded by the job: ok is healthy, partial or skipped degraded, failed failed. Until the owner records decisions A1, A2 and A4, a real run records itself as skipped and not yet authorized, with the reason. That reads as not activated (`not_authorized`, insufficient evidence), so the rest of the private Model Health is not shown as degraded. Failed (`job_overdue`) when the monitor runs more than 6 hours past the run the job said was next, authorized or not: the scheduled job may have stopped, and its last file would otherwise stay green.
+- **Likely causes.** Not activated: approvals pending. Skipped (degraded): a step the job could not run. Failed: a provider error, an unreadable store, a ledger that does not verify.
 - **Diagnose.** The detail gives the last success and the next expected run; the private store's job runs keep every run's reason.
 - **Safe retry.** Re-run the job after fixing the cause.
 - **Fallback.** The last valid forecasts stay as they are, labelled stale.
@@ -428,9 +428,15 @@ are never recomputed here.
 <a id="forecast-stock-lab-ledger"></a>
 ### Stock Lab forecast ledger (`forecast.stock_lab_ledger`)
 
-- **What it means.** Whether the Stock Lab ledger's hash chain verifies: every forecast, score and job run has one entry, each naming the previous entry's hash and matching the record it covers. Failed (`ledger_broken`) at the first entry that does not.
-- **Likely causes.** The private store was edited outside the Lab; a copy was restored from an older backup.
-- **Diagnose.** The detail names the first failing entry; compare with a backup of the store.
+- **What it means.** Whether the Stock Lab ledger's hash chain verifies: every forecast, score and job run has one entry, each naming the previous entry's hash and matching the record it covers. The check also compares the chain with the head hash the daily job keeps outside the database (`--ledger-head-backup`; by default `stock_lab_ledger_head` beside the store, and a copy kept elsewhere is stronger).
+  - Failed (`ledger_broken`) at the first entry that does not verify.
+  - Failed (`head_not_in_ledger`) when the chain no longer holds the kept hash. Entries were removed from the end, or the store was replaced, which the chain alone cannot show.
+  - Failed (`ledger_deleted`) when the store is gone but the kept hash shows it held entries.
+  - Unavailable (`head_unusable`) when the kept file is not a 64-hex hash.
+  - Insufficient evidence when no head is kept yet (`head_started` on the first run, `head_not_kept` without a file).
+  - A mismatch never overwrites the kept file, so the failure stays until someone looks.
+- **Likely causes.** The private store was edited outside the Lab; a copy was restored from an older backup; the kept head file was edited or replaced.
+- **Diagnose.** The detail names the first failing entry; compare the kept hash with a backup of the store.
 - **Safe retry.** None: a broken chain is never repaired in place.
 - **Fallback.** Stop recording forecasts, keep the store for inspection, and start a new store only with the owner's decision.
 

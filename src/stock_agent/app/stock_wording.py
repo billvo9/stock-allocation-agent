@@ -186,7 +186,18 @@ DIAGNOSTICS_EXPECTATIONS = (
     "What to expect: day-to-day direction of large US stocks is close to unpredictable, so "
     "most measurable skill is in telling Stable sessions from moving ones (a matter of "
     "volatility), not rises from falls. With a watchlist of a few dozen stocks that move "
-    "together, a small edge in direction would take decades of data to detect."
+    "together, a small edge in direction would take decades of data to detect. The watchlist "
+    "was chosen with hindsight, so every result here is hindsight-selected and "
+    "non-confirmatory: it can show the method works, never that it would work on stocks "
+    "chosen in advance."
+)
+CALIBRATION_STATUS = "**{category}: {status}** · {qualifier}"
+CALIBRATION_REAL = (
+    "Experimental, unvalidated: a development test on a hindsight-selected watchlist, not a "
+    "calibrated forecast"
+)
+CALIBRATION_SYNTHETIC = (
+    "Synthetic data: this checks the machinery only. These are not calibrated forecasts"
 )
 
 # --- the next five sessions ---
@@ -230,7 +241,11 @@ RECORDED = (
     "As of the close of {as_of}; made {created}. Estimator: {estimator}. Model {version}, "
     "features {features}, evaluation {evaluation}."
 )
-SUPERSEDED = "{count} earlier forecast(s) for this stock are kept, each replaced by a newer one."
+SUPERSEDED = (
+    "{count} earlier forecast(s) for this stock were replaced by a recalculation for the same "
+    "session. Each is kept exactly as it was made, and only the replacement counts in the "
+    "scores."
+)
 TRACK_NOTE = (
     "“Tests: 29–37% came true” means: in the walk-forward tests, forecasts in the same range "
     "for this estimator came true that often. It describes past calibration, not certainty."

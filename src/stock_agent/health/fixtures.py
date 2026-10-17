@@ -189,7 +189,13 @@ _STOCK_LAB = {
     "scores": {"n": 300, "rps": 0.205, "baseline_rps": 0.207, "brier": 0.61, "log_loss": 1.05},
     "inputs_drift": [{"feature": "ewma_vol", "psi": 0.08}, {"feature": "ret_20", "psi": 0.03}],
     "traps": {"resolved": 2, "failed": 1, "pending": 1},
-    "ledger": {"entries": 450, "verified": True, "reason": None},
+    "ledger": {
+        "entries": 450,
+        "verified": True,
+        "reason": None,
+        "head": "c" * 64,
+        "kept_head": {"state": "match", "kept": "b" * 64},
+    },
     "lineage": {
         "estimator": "B1",
         "model_version": "synthetic",

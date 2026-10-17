@@ -47,6 +47,12 @@ class Clock:
         return self.now
 
 
+def advance(store: StockLabStore, to: pd.Timestamp) -> None:
+    """Move the store's test clock to `to` (a retrieval is never recorded before it happens)."""
+
+    store._clock.now = to
+
+
 @pytest.fixture
 def store(tmp_path) -> StockLabStore:
     return StockLabStore(tmp_path / "private" / DB_NAME, clock=Clock())
@@ -206,6 +212,7 @@ def test_price_batches_are_vintages_never_overwritten(store):
     revised = bars.iloc[15:].copy()
     revised.loc[revised.index[0], "close"] *= 1.01  # the vendor corrected a close
     later = T0 + pd.Timedelta(days=1)
+    advance(store, later)
     second = store.record_prices(
         "AAPL",
         revised,
@@ -233,6 +240,7 @@ def test_price_batches_are_vintages_never_overwritten(store):
 def test_an_identical_retrieval_is_not_stored_twice(store):
     kwargs = {"source": "f", "data_class": DataClass.REAL, "vintage_note": "v"}
     one = store.record_prices("AAPL", real_bars(), retrieved_at=T0, **kwargs)
+    advance(store, T0 + pd.Timedelta(days=1))
     two = store.record_prices("AAPL", real_bars(), retrieved_at=T0 + pd.Timedelta(days=1), **kwargs)
     assert one == two and len(store.batches("AAPL")) == 1
 

@@ -62,7 +62,7 @@ import json
 import math
 import os
 import sqlite3
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
@@ -266,6 +266,9 @@ BEGIN SELECT RAISE(ABORT, 'write-once table: the snapshot is complete'); END;
 
 class StoreRefused(ValueError):
     """A store location or a write that the rules refuse."""
+
+
+CLOCK_SKEW = pd.Timedelta(minutes=5)  # how far a forecast's created_at may be from the clock
 
 
 def utc_now() -> pd.Timestamp:
@@ -674,6 +677,8 @@ class StockLabStore:
             raise StoreRefused("a price batch needs at least one bar")
         digest = _bars_sha256(checked)
         when = stamp(retrieved_at)
+        if pd.Timestamp(retrieved_at) > self._clock():
+            raise StoreRefused("a price batch cannot be retrieved in the future")
         first = checked["session"].iloc[0].strftime("%Y-%m-%d")
         last = checked["session"].iloc[-1].strftime("%Y-%m-%d")
         newest = self._newest_batch(ticker)
@@ -842,17 +847,46 @@ class StockLabStore:
         forecast is refused unless the caller says the owner's decisions A2
         and A4 are recorded (`real_authorized`; only the owner-run daily
         script passes it, from an explicit flag).
+
+        Timing: a forecast is recorded when it is made, so `created_at` must be
+        within CLOCK_SKEW of the store's clock (no backdating, no future). It
+        cannot be earlier than any stored retrieval of its stock, and it must
+        come before its first target session opens (forecast.opened_by).
+
+        Supersession: at most one live forecast per (symbol, as-of session). A
+        recalculation names the live forecast it replaces, which must exist
+        for the same stock, session and data class. A second forecast for the
+        same key without `supersedes` is refused.
         """
 
         checked = forecast_artifact.check(record)
-        if pd.Timestamp(checked["created_at"]) > self._clock() + pd.Timedelta(minutes=5):
-            raise StoreRefused("a forecast cannot be created in the future")
         if checked["data_class"] == DataClass.REAL.value and real_authorized is not True:
             raise StoreRefused("real forecasts need the owner's decisions A2 and A4")
         demo = "_" in checked["symbol"]
         if (checked["data_class"] == DataClass.SYNTHETIC.value) != demo:
             raise StoreRefused("synthetic forecasts only under demo identifiers, and only they")
+        made = pd.Timestamp(checked["created_at"])
+        now = self._clock()
+        if made > now + CLOCK_SKEW:
+            raise StoreRefused("a forecast cannot be created in the future")
+        if made < now - CLOCK_SKEW:
+            raise StoreRefused(
+                "a forecast is recorded when it is made: created_at is earlier than the "
+                "store's clock (backdating is refused)"
+            )
+        if forecast_artifact.opened_by(checked, checked["target_sessions"][:1]):
+            raise StoreRefused("a forecast must be made before its first target session opens")
         with self._write() as connection:
+            latest = connection.execute(
+                "SELECT MAX(retrieved_at) FROM price_batches WHERE ticker = ?",
+                (checked["symbol"],),
+            ).fetchone()[0]
+            if latest is not None and made < pd.Timestamp(latest):
+                raise StoreRefused(
+                    "a forecast cannot predate data already stored for its stock "
+                    f"(retrieved {latest})"
+                )
+            _check_supersedes(connection, checked)
             text = forecast_artifact.canonical(dict(checked))
             connection.execute(
                 "INSERT INTO forecasts VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -897,8 +931,22 @@ class StockLabStore:
         return tuple(dict(forecast_artifact.check(json.loads(row[0]))) for row in rows)
 
     def latest_forecast(self, symbol: str) -> dict | None:
-        found = self.forecasts(symbol)
-        return found[-1] if found else None
+        """The live forecast (not superseded) of `symbol`'s latest as-of session, or None."""
+
+        replaced = self.superseded_ids()
+        live = [f for f in self.forecasts(symbol) if f["forecast_id"] not in replaced]
+        return max(live, key=lambda f: (f["as_of_session"], f["created_at"]), default=None)
+
+    def live_forecast(self, symbol: str, as_of_session: str) -> dict | None:
+        """The one live forecast of (`symbol`, `as_of_session`), the one a recalculation names."""
+
+        replaced = self.superseded_ids()
+        live = [
+            f
+            for f in self.forecasts(symbol)
+            if f["as_of_session"] == as_of_session and f["forecast_id"] not in replaced
+        ]
+        return live[0] if live else None
 
     # --- scores, job runs and the ledger ---
 
@@ -1002,6 +1050,42 @@ class StockLabStore:
             ).fetchone()
         return None if row is None else row[0]
 
+    def ledger_hashes(self) -> tuple[str, ...]:
+        """Every ledger entry's hash in order (to find a kept head in the chain)."""
+
+        with self._read() as connection:
+            if connection is None:
+                return ()
+            rows = connection.execute(
+                "SELECT entry_sha256 FROM ledger_entries ORDER BY seq"
+            ).fetchall()
+        return tuple(row[0] for row in rows)
+
+    def forecast_recorded_at(self, symbol: str) -> dict[str, str]:
+        """When the store recorded each of `symbol`'s forecasts (its ledger entry, store clock)."""
+
+        with self._read() as connection:
+            if connection is None:
+                return {}
+            rows = connection.execute(
+                "SELECT l.ref, l.recorded_at FROM ledger_entries l "
+                "JOIN forecasts f ON f.forecast_id = l.ref "
+                "WHERE l.kind = 'forecast' AND f.symbol = ?",
+                (symbol,),
+            ).fetchall()
+        return dict(rows)
+
+    def superseded_ids(self) -> frozenset[str]:
+        """Every forecast id that a later recalculation replaced."""
+
+        with self._read() as connection:
+            if connection is None:
+                return frozenset()
+            rows = connection.execute(
+                "SELECT supersedes FROM forecasts WHERE supersedes IS NOT NULL"
+            ).fetchall()
+        return frozenset(row[0] for row in rows)
+
     def verify_ledger(self) -> tuple[int, str | None]:
         """(entries, None) when the chain verifies, else (entries, the first problem)."""
 
@@ -1051,6 +1135,36 @@ class StockLabStore:
         if counted != len(entries):
             return len(entries), "a record has no ledger entry"
         return len(entries), None
+
+
+def _check_supersedes(connection: sqlite3.Connection, record: Mapping) -> None:
+    """At most one live forecast per (symbol, as-of session); see record_forecast."""
+
+    live = connection.execute(
+        "SELECT forecast_id FROM forecasts f WHERE symbol = ? AND as_of_session = ? "
+        "AND NOT EXISTS (SELECT 1 FROM forecasts g WHERE g.supersedes = f.forecast_id)",
+        (record["symbol"], record["as_of_session"]),
+    ).fetchall()
+    replaced = record["supersedes"]
+    if replaced is None:
+        if live:
+            raise StoreRefused(
+                f"{record['symbol']} already has a live forecast as of {record['as_of_session']}: "
+                "a recalculation must name it in supersedes"
+            )
+        return
+    target = connection.execute(
+        "SELECT symbol, as_of_session, data_class FROM forecasts WHERE forecast_id = ?",
+        (replaced,),
+    ).fetchone()
+    if target is None:
+        raise StoreRefused("supersedes names a forecast the store does not hold")
+    if target != (record["symbol"], record["as_of_session"], record["data_class"]):
+        raise StoreRefused(
+            "a forecast may supersede only one for the same stock, as-of session and data class"
+        )
+    if (replaced,) not in live:
+        raise StoreRefused("supersedes names a forecast that was already replaced")
 
 
 def _plain(value):
