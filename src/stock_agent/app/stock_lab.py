@@ -32,6 +32,7 @@ from stock_agent.stock_lab.contracts import (
 )
 from stock_agent.stock_lab.features import build_features, latest_row
 from stock_agent.stock_lab.forecast_view import (
+    band_table,
     calibration_status,
     comparison_table,
     cumulative_cards,
@@ -50,6 +51,8 @@ from stock_agent.stock_lab.forecast_view import (
     scored_summary,
     scores_table,
     selection_sentence,
+    size_design_words,
+    size_table,
     staleness,
     streak_profile,
     streak_table,
@@ -620,6 +623,21 @@ def _diagnostics(store: StockLabStore, selected: Selected | None) -> None:
         say(words.FOLDS_NOTE, "caption")
         st.table(fold_table(evaluation))
         say(words.CANDIDATES.format(family=", ".join(evaluation["candidate_family"])), "caption")
+    design = size_design_words(evaluation)
+    if design is not None:
+        with st.expander(words.SIZE_TITLE):
+            say(words.SIZE_NOTE.format(**design), "caption")
+            for placebo, note in (
+                ("other_vs_other", words.SIZE_SYMMETRIC),
+                ("other_vs_own", words.SIZE_OWN),
+            ):
+                say(note)
+                st.table(size_table(evaluation, placebo))
+    bands = band_table(evaluation)
+    if len(bands):
+        with st.expander(words.BAND_TITLE):
+            say(words.BAND_NOTE, "caption")
+            st.table(bands)
 
 
 def render(

@@ -338,7 +338,35 @@ COMPARISON_TITLE = "Is the difference real?"
 COMPARISON_NOTE = (
     "Each estimator's daily RPS minus the recent-weighted baseline's, averaged per date across "
     "stocks (stocks that move together are not independent evidence), with Newey-West "
-    "standard errors and Holm's correction for the comparisons made."
+    "standard errors and Holm's correction for the comparisons made. Newey-West decides; two "
+    "other tests are shown beside it as checks: a t-test on the yearly averages (fold-block t) "
+    "and a block bootstrap of whole dates."
+)
+SIZE_TITLE = "How often each test is fooled (simulated)"
+SIZE_NOTE = (
+    "Simulated panels shaped like this one ({names} stocks, {years} test years, returns "
+    "correlated {correlation} across stocks and unpredictable over time), where the challenger "
+    "has no skill: it is the recent-weighted baseline read from another stock's history. Each "
+    "cell is the share of {reps} panels in which the test still called the challenger better "
+    "at the {nominal} level, with its simulation error. Near {nominal}, the test's p-values can "
+    "be taken at face value; well above it, they are too small. Rows are the half-lives the "
+    "baseline can use. Reported only: never used to choose an estimator."
+)
+SIZE_SYMMETRIC = (
+    "Against the baseline read from yet another stock's history: a fair coin between two "
+    "equally uninformed estimators, so this table measures the tests themselves."
+)
+SIZE_OWN = (
+    "Against the stock's own baseline, which keeps learning from the very sessions it is "
+    "scored on while the challenger does not. The real comparisons have this imbalance too, "
+    "because the estimators learn from a stock's past in different ways."
+)
+BAND_TITLE = "Sensitivity to the Stable band"
+BAND_NOTE = (
+    "The recent-weighted (B1) and volatility-scaled (B3) estimators re-run on the same test "
+    "years with a narrower and a wider band; mean RPS over the five daily targets. Scores are "
+    "not comparable between rows, because a wider band makes Stable more common: compare B3 "
+    "with B1 within a row. Reported only: never used to choose the band or an estimator."
 )
 RELIABILITY_TITLE = "{category}: said versus happened"
 RELIABILITY_SUBTITLE = "Filled: estimator in use · hollow: recent-weighted baseline (B1)"
