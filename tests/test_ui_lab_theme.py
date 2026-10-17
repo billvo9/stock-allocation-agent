@@ -4,7 +4,8 @@ WCAG contrast of its light and dark tokens and chart identities, the bundled
 OFL fonts and their licence, the script-level Streamlit config generated
 from the tokens (matching light and dark variants, with no research value
 leaking in), local-only font serving, CSS that follows the viewer's active
-theme, charts drawn in the viewer's colour scheme, motion that respects
+theme, charts drawn in the viewer's colour scheme with visible hatching,
+unselected radio rings at 3:1 or more, motion that respects
 prefers-reduced-motion, the phone layout rules, and backward compatibility
 of the shared components the research dashboard and the Model Health Center
 use.
@@ -228,6 +229,35 @@ def _lab_figures(scheme: str) -> dict[str, go.Figure]:
     }
 
 
+def _hatch_background(marker) -> str | None:
+    """The colour Plotly fills behind a bar's hatch lines (None: transparent)."""
+
+    pattern = marker.pattern
+    if pattern.bgcolor is not None:
+        return pattern.bgcolor
+    # "overlay" draws the lines over the bar colour; Plotly's default, "replace",
+    # draws them over a transparent background instead.
+    return marker.color if pattern.fillmode == "overlay" else None
+
+
+# The fixtures in _lab_figures: a partial year first, a thin sample second.
+HATCHED = {"calendar": ["/", ""], "streak": ["", "/"]}
+
+
+@pytest.mark.parametrize("scheme", theme.SCHEMES)
+@pytest.mark.parametrize("name", sorted(HATCHED))
+def test_hatched_bars_are_visibly_hatched_and_the_others_stay_solid(scheme, name):
+    marker = _lab_figures(scheme)[name].data[0].marker
+    assert list(marker.pattern.shape) == HATCHED[name]  # "" draws a solid bar
+    # Surface-coloured lines on a transparent fill vanish into the chart, leaving
+    # the hatched bar an empty outline (or nothing, without an outline).
+    background = _hatch_background(marker)
+    assert background == marker.color, (scheme, name)  # the bar keeps its colour
+    assert marker.pattern.fgcolor == theme.LAB_PALETTES[scheme]["surface"]
+    ratio = theme.contrast_ratio(marker.pattern.fgcolor, background)
+    assert ratio >= 3.0, (scheme, name, ratio)
+
+
 @pytest.mark.parametrize("scheme", theme.SCHEMES)
 def test_every_lab_figure_draws_only_in_its_own_scheme(scheme):
     surface = theme.LAB_PALETTES[scheme]["surface"]
@@ -361,6 +391,43 @@ def test_the_lab_css_follows_the_viewers_active_theme():
     assert "prefers-color-scheme" not in css and "color-scheme:" not in css
     # The research dashboard stays light.
     assert "light-dark(" not in theme.css()
+
+
+# Streamlit 1.64's radio option: a label (data-selected / data-disabled when
+# set) holding a visually hidden input and a row whose first child is the ring.
+RADIO_RING = (
+    '[data-testid="stRadioOption"]:not([data-selected]):not([data-disabled])'
+    " > div > div:first-child"
+)
+
+
+def _radio_ring_role() -> str:
+    css = " ".join(theme.lab_css().split())
+    assert css.count(f"{RADIO_RING} {{") == 1
+    rule = css.split(f"{RADIO_RING} {{")[1].split("}")[0]
+    variable = re.fullmatch(r" background-color: var\(--sa-([a-z-]+)\); ", rule)
+    assert variable, rule
+    return variable.group(1).replace("-", "_")
+
+
+@pytest.mark.parametrize("scheme", theme.SCHEMES)
+@pytest.mark.parametrize("surface", SURFACES)
+def test_unselected_radio_rings_meet_3_to_1_on_every_surface(scheme, surface):
+    # WCAG 1.4.11: a control's boundary needs 3:1 against what is next to it.
+    # Streamlit draws the ring in borderColor (1.5:1 at most); the ring sits on a
+    # card, the canvas or the sidebar and around a disc in the page background.
+    colours = theme.LAB_PALETTES[scheme]
+    ratio = theme.contrast_ratio(colours[_radio_ring_role()], colours[surface])
+    assert ratio >= 3.0, (scheme, surface, ratio)
+
+
+def test_only_the_radio_rings_change_and_other_widget_borders_keep_their_colour():
+    assert _radio_ring_role() != "border"
+    tables = theme.lab_streamlit_theme()
+    for scheme in theme.SCHEMES:
+        border = theme.LAB_PALETTES[scheme]["border"]
+        assert tables[f"theme.{scheme}"]["borderColor"] == border
+        assert tables[f"theme.{scheme}.sidebar"]["borderColor"] == border
 
 
 def test_no_style_reaches_another_host():

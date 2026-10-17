@@ -534,6 +534,14 @@ h4, h5, h6 {{ font-family: var(--sa-sans); }}
   border: 1px solid var(--sa-border-strong);
 }}
 [data-testid="stMultiSelectTagsContainer"] [data-tag] svg {{ fill: var(--sa-accent); }}
+/* Streamlit draws an unselected radio's ring in borderColor, 1.5:1 at most on
+   these surfaces, below WCAG 1.4.11's 3:1 for a control. Redraw only the enabled,
+   unselected rings, in the subtle text token (5.3:1 or more on every surface
+   in both schemes); every other widget border keeps borderColor. */
+[data-testid="stRadioOption"]:not([data-selected]):not([data-disabled])
+  > div > div:first-child {{
+  background-color: var(--sa-text-subtle);
+}}
 [data-testid="stTable"] th {{ color: var(--sa-text-muted); font-weight: 600; }}
 [data-testid="stTable"] td, [data-testid="stTable"] th {{ vertical-align: top; }}
 /* Streamlit's navigation links drop the outline on focus: restore a visible ring. */

@@ -186,8 +186,10 @@ def streak_figure(
             textposition="outside",
             marker={
                 "color": theme.DIRECTION_PALETTES[scheme][opposite],
+                # Surface lines over the bar colour, as on Explore's calendar years.
                 "pattern": {
                     "shape": ["/" if flag else "" for flag in thin],
+                    "fillmode": "overlay",
                     "fgcolor": tokens["surface"],
                 },
                 "line": {
