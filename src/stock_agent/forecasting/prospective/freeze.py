@@ -324,12 +324,7 @@ def freeze(
         "config_sha256": config.sha256,
         "code": dict(provenance["code"]),
         "data_class": data.data_class,
-        "training_data": {
-            **data.fingerprints,
-            "batch_ids": list(data.batch_ids),
-            "max_session": data.max_session.isoformat(),
-            "training_end": config.training_end.isoformat(),
-        },
+        "training_data": training.training_data_block(data, config),
         "registry": {
             f"{t}:h{h}": {"model_id": model_ids[(t, h)], "version": versions[(t, h)].version}
             for t, h in pairs

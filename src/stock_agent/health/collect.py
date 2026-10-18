@@ -46,6 +46,7 @@ import pandas as pd
 
 from stock_agent.data.funds.reader import read_store
 from stock_agent.data.funds.schema import FundDataRefused
+from stock_agent.forecasting.prospective import readiness
 from stock_agent.health import (
     backtest,
     contracts,
@@ -384,6 +385,31 @@ def _previous(path: Path) -> HealthSummary | None:
         return None
 
 
+def _readiness(inputs: PrivateInputs):
+    """
+    The launch-readiness report for the trial check (read-only), when the
+    private script passed the prospective store, its reader and the lookback.
+    """
+
+    sources, calendar = inputs.prospective, inputs.calendar
+    if sources is None or sources.store_root is None or sources.lookback is None:
+        return None
+    if calendar is None:
+        return None
+
+    def report(entries, now):
+        return readiness.closes(
+            entries,
+            calendar=calendar.sessions,
+            now=pd.Timestamp(now),
+            load_window=sources.load_window,
+            store_root=sources.store_root,
+            lookback=sources.lookback,  # the funds are the registration record's
+        )
+
+    return report
+
+
 def run_local(
     environment: Environment,
     output_dir: Path,
@@ -430,6 +456,7 @@ def run_local(
             backup=inputs.ledger_head_backup,
             calendar=inputs.calendar,
             now=environment.now(),
+            readiness=_readiness(inputs),
         )
     )
     checks.extend(backtest.backtest_checks(inputs.artifact_directory(backtest.ARTIFACT)))

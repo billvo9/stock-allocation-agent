@@ -220,6 +220,46 @@ def registration(models: forecast.Models) -> dict:
     )
 
 
+PULL_REQUEST = 120  # the fixture registration pull request's number
+
+
+def github_pull_request(merged_at=REGISTRATION_TIME, **changes) -> dict:
+    """
+    A GitHub API pull-request response for the fixture registration (invented
+    values; unrelated fields included, as the API returns them).
+    """
+
+    if merged_at is None:
+        text = None
+    else:
+        stamp = pd.Timestamp(merged_at)
+        stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
+        text = stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+    response = {
+        "number": PULL_REQUEST,
+        "state": "closed",
+        "title": "Register the ETF forecasters",
+        "merged": True,
+        "merged_at": text,
+        "merge_commit_sha": REGISTRATION_COMMIT,
+        "base": {"ref": "main", "repo": {"full_name": "billvo9/stock-allocation-agent"}},
+        "head": {"ref": "claude/register", "sha": "c" * 40},
+        "user": {"login": "fixture"},
+    }
+    response.update(changes)
+    return response
+
+
+def evidence(pull_request=None, *, source="github_api", fetched_at=None) -> dict:
+    """The registration evidence as the job collects it."""
+
+    return {
+        "source": source,
+        "fetched_at": pd.Timestamp("2026-10-14T14:30:00Z") if fetched_at is None else fetched_at,
+        "pull_request": github_pull_request() if pull_request is None else pull_request,
+    }
+
+
 def register(
     models: forecast.Models,
     ledger_path: Path,
@@ -227,7 +267,7 @@ def register(
     registered_at=REGISTRATION_TIME,
     recorded_at=REGISTERED_RECORDED,
 ):
-    """Append the registration entry (the ledger's first) for `models`."""
+    """Append the registration entry (the ledger's first) for `models`, with its evidence."""
 
     return registration_record.register(
         ledger_path,
@@ -238,6 +278,8 @@ def register(
         registered_at=registered_at,
         recorded_at=recorded_at,
         code=RUN_CODE,
+        # Fetched just before the entry is appended, as the job's script does.
+        evidence=evidence(github_pull_request(merged_at=registered_at), fetched_at=recorded_at),
     )
 
 

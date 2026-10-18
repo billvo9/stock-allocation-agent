@@ -9,4 +9,13 @@ One JSON file per registration of the ETF forecasters, added by a registration p
   - the code commit and the Git object ids of the registered code paths;
   - the commit of the registration document.
 - **What it never holds:** vendor data, a forecast value or the ledger head hash. It is safe to commit publicly.
-- **The registration time** is GitHub's merge time of the pull request that adds the file. After the owner merges it, `scripts/forecast_prospective.py register --record <file> --registration-commit <merge commit> --registered-at <merge time>` appends the ledger's first entry. The job then refuses any forecast that does not match this record.
+- **The registration time** is GitHub's merge time of the pull request that adds the file.
+- **Before the merge**:
+  - `scripts/forecast_prospective.py preflight ...` reports data, software, monitoring and backups, each pass or fail, in a report with its SHA-256;
+  - `readiness --pre-merge --store-root <store>` shows whether the verified window for the latest close is already stored.
+- **After the owner merges it**, `scripts/forecast_prospective.py register --record <file> --registration-commit <merge commit> --registered-at <merge time> --pull-request <number>` appends the ledger's first entry.
+  - It reads the pull request with `gh api`, or with `--evidence-file`, the owner's copy of the same fields.
+  - It refuses a time or commit that the evidence does not show, and a merge that did not add the record. Merge the registration pull request with a merge commit or a squash: a rebase-merge can be refused, on the safe side.
+  - With `--evidence-file`, the recorded fetch time is when the job read the owner's file.
+
+  The job then refuses any forecast that does not match this record.

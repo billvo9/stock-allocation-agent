@@ -127,6 +127,30 @@ class InferenceWindow:
         }
 
 
+def session_one_gaps(win: InferenceWindow, assets: Sequence[str]) -> dict[str, object]:
+    """
+    Section 4, condition 2 (docs/research/prospective_registration.md), for one
+    window: the funds with a close missing (and its sessions), the batches
+    with no recorded spot check against the owner's anchors, and whether the
+    window names no batch at all. The window is eligible as session 1 only
+    when all three are empty or false. The forecast job and the readiness
+    report both use this test.
+    """
+
+    batches = win.batches
+    ids = batches["batch_id"] if "batch_id" in batches else pd.Series(dtype=object)
+    unchecked = ids[batches["anchors_sha256"].isna()] if "anchors_sha256" in batches else ids
+    return {
+        "incomplete": win.incomplete_assets(assets),
+        "unchecked_batches": sorted(str(batch) for batch in unchecked),
+        "no_batch_lineage": bool(batches.empty),
+    }
+
+
+def session_one_ready(gaps: dict[str, object]) -> bool:
+    return not gaps["incomplete"] and not gaps["unchecked_batches"] and not gaps["no_batch_lineage"]
+
+
 def session_stamp(value: object, name: str = "session") -> pd.Timestamp:
     """A session date as 00:00 UTC (naive dates are read as UTC dates)."""
 

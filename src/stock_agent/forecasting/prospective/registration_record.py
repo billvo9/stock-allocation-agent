@@ -30,9 +30,26 @@ registrations are never pooled):
 
     registered_at            GitHub's merge time of the registration pull
                              request: an explicit, timezone-aware input,
-                             never fetched and never a local commit date
+                             never a local commit date, and equal to the
+                             evidence's `merged_at` to the second
     registration_commit      that pull request's merge commit
+    registration_evidence    source (`github_api`, fetched by the job's
+                             script, or `owner_evidence_file`, the same
+                             fields supplied by the owner), fetched_at,
+                             pull_request (number, merged, merged_at,
+                             merge_commit_sha, base.ref, base.repo.full_name:
+                             the fields checked, nothing else) and its sha256
     record_path, record_sha256, record
+
+Registration time (section 1). A time without evidence is refused. The
+evidence must show the pull request merged into `main` of REPOSITORY, with
+`merge_commit_sha` equal to the registration commit and `merged_at` equal to
+the registration time (`registration_unverified` otherwise), and it is
+checked again whenever the entry is read. The evidence is what GitHub or the
+owner reported, recorded as such; this module never calls a network. The
+caller fetches it (the job's script through `gh api`, with the owner's
+existing login; no token is recorded) and checks that the merge commit is in
+the local origin/main history.
 
 Code identity. A code change is a new registration (section 1), but an
 unrelated commit is not: the job compares the Git object ids of CODE_PATHS
@@ -53,6 +70,8 @@ Checks against a registration (each a `ForecastRefused` with its reason):
     registration_tampered     the record does not match its recorded hash, or
                               the entry is malformed
     registration_invalid      a malformed record, commit id or time
+    registration_unverified   no evidence for the registration time, or
+                              evidence that does not support it
     registration_mismatch     the bundle, registry entries, config, training
                               data, band method, rule or code differ from the
                               record: a new registration is needed
@@ -65,9 +84,10 @@ Checks against a registration (each a `ForecastRefused` with its reason):
     record_exists             a record file is written once
 
 Limits. The chain cannot show a consistent rewrite of the whole ledger, the
-registration entry included; the kept head (section 6) does. The recorded
-merge time is the owner's input: the pull request on GitHub is the evidence
-it can be checked against.
+registration entry included; the kept head (section 6) does, and the job's
+script compares the entry's record with the committed record file. The
+evidence is as trustworthy as its source: GitHub's API, or a file the owner
+supplied.
 """
 
 from __future__ import annotations
@@ -88,7 +108,7 @@ from stock_agent.model_diagnostics.record import canonical_json, sha256_json
 RECORD_TYPE = "prospective_registration_record"
 RECORD_SCHEMA_VERSION = "1.0"
 ENTRY_TYPE = "prospective_registration"
-ENTRY_SCHEMA_VERSION = "1.0"
+ENTRY_SCHEMA_VERSION = "1.1"  # 1.1: the registration evidence
 KIND = "registration"
 REGISTRATION_DOCUMENT = "docs/research/prospective_registration.md"
 RECORD_DIRECTORY = PurePosixPath("docs/research/registrations")
@@ -102,8 +122,12 @@ CODE_PATHS = (
     "requirements.txt",
 )
 REGISTERED_AT_RULE = (
-    "GitHub's merge time of the registration pull request, given as an input (never fetched)"
+    "GitHub's merge time of the registration pull request, equal to the merged_at of the "
+    "evidence recorded with it"
 )
+REPOSITORY = "billvo9/stock-allocation-agent"
+BASE_BRANCH = "main"
+EVIDENCE_SOURCES = ("github_api", "owner_evidence_file")
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _RECORD_KEYS = {
@@ -129,7 +153,9 @@ _ENTRY_KEYS = {
     "record_path",
     "record_sha256",
     "record",
+    "registration_evidence",
 }
+_EVIDENCE_KEYS = {"source", "fetched_at", "pull_request", "sha256"}
 
 
 @dataclass(frozen=True)
@@ -144,6 +170,10 @@ class Registration:
     @property
     def rule(self) -> str:
         return str(self.record["zero_volatility_rule"])
+
+    @property
+    def evidence_source(self) -> str:
+        return str(self.entry.payload["registration_evidence"]["source"])
 
     def reference(self) -> dict[str, str]:
         """What each forecast and score entry keeps of its registration."""
@@ -406,6 +436,110 @@ def _record_path(value: str | PurePosixPath) -> str:
     return path.as_posix()
 
 
+def _unverified(detail: str) -> ForecastRefused:
+    return ForecastRefused("registration_unverified", detail)
+
+
+def pull_request_fields(pull_request: object) -> dict[str, object]:
+    """The fields of a GitHub pull request that the registration checks, and nothing else."""
+
+    if not isinstance(pull_request, Mapping):
+        raise _unverified("the evidence holds no pull request")
+    base = pull_request.get("base")
+    repo = base.get("repo") if isinstance(base, Mapping) else None
+    try:
+        fields = {
+            "number": pull_request["number"],
+            "merged": pull_request["merged"],
+            "merged_at": pull_request["merged_at"],
+            "merge_commit_sha": pull_request["merge_commit_sha"],
+            "base": {"ref": base["ref"], "repo": {"full_name": repo["full_name"]}},
+        }
+    except (KeyError, TypeError):
+        raise _unverified(
+            "the pull request lacks number, merged, merged_at, merge_commit_sha, base.ref or "
+            "base.repo.full_name"
+        ) from None
+    if isinstance(fields["number"], bool) or not isinstance(fields["number"], int):
+        raise _unverified("the pull request number is not an integer")
+    return json.loads(canonical_json(fields))
+
+
+def verify_pull_request(
+    fields: Mapping[str, object], *, registration_commit: str, registered_at: pd.Timestamp
+) -> None:
+    """Refuse a registration time or commit that the pull request does not support."""
+
+    base = fields["base"]
+    if fields["merged"] is not True:
+        raise _unverified(f"pull request #{fields['number']} is not merged")
+    if base["repo"]["full_name"] != REPOSITORY:
+        raise _unverified(f"pull request #{fields['number']} is not in {REPOSITORY}")
+    if base["ref"] != BASE_BRANCH:
+        raise _unverified(f"pull request #{fields['number']} was merged into {base['ref']!r}")
+    if fields["merge_commit_sha"] != registration_commit:
+        raise _unverified(
+            f"pull request #{fields['number']} merged as {fields['merge_commit_sha']}, not "
+            f"{registration_commit}"
+        )
+    merged = fields["merged_at"]
+    try:
+        merged_at = pd.Timestamp(merged)
+    except (ValueError, TypeError):
+        raise _unverified(f"merged_at {merged!r} is not a time") from None
+    if not isinstance(merged, str) or merged_at.tzinfo is None:
+        raise _unverified(f"merged_at {merged!r} is not a time with an explicit offset")
+    if merged_at.tz_convert("UTC") != pd.Timestamp(registered_at).tz_convert("UTC"):
+        raise _unverified(
+            f"pull request #{fields['number']} merged at {merged}, not at the registration "
+            f"time {pd.Timestamp(registered_at).isoformat()}"
+        )
+
+
+def registration_evidence(
+    evidence: Mapping[str, object] | None,
+    *,
+    registration_commit: str,
+    registered_at: pd.Timestamp,
+    recorded_at: pd.Timestamp,
+) -> dict[str, object]:
+    """
+    The entry's evidence: source, fetch time, the checked fields and their
+    hash. It must have been fetched after the merge and no later than the
+    entry was appended (registered_at <= fetched_at <= recorded_at).
+    """
+
+    if not isinstance(evidence, Mapping):
+        raise _unverified(
+            "no evidence: a registration time is accepted only with the pull request's "
+            "merged_at from GitHub or from the owner's evidence file"
+        )
+    if evidence.get("source") not in EVIDENCE_SOURCES:
+        raise _unverified(f"the evidence source must be one of {EVIDENCE_SOURCES}")
+    try:
+        fetched = pd.Timestamp(evidence.get("fetched_at"))
+    except (ValueError, TypeError):
+        fetched = pd.NaT
+    if pd.isna(fetched) or fetched.tzinfo is None:
+        raise _unverified("the evidence's fetched_at must be a timezone-aware time")
+    if not pd.Timestamp(registered_at) <= fetched <= pd.Timestamp(recorded_at):
+        raise _unverified(
+            f"the evidence was fetched at {fetched.isoformat()}: not between the merge "
+            f"({pd.Timestamp(registered_at).isoformat()}) and the entry "
+            f"({pd.Timestamp(recorded_at).isoformat()})"
+        )
+    fields = pull_request_fields(evidence.get("pull_request"))
+    verify_pull_request(
+        fields, registration_commit=registration_commit, registered_at=registered_at
+    )
+    return {
+        "source": evidence["source"],
+        "fetched_at": fetched.tz_convert("UTC").isoformat(),
+        "pull_request": fields,
+        "sha256": sha256_json(fields),
+    }
+
+
 def register(
     ledger_path: str | Path,
     record: Mapping[str, object],
@@ -416,11 +550,14 @@ def register(
     registered_at: pd.Timestamp,
     recorded_at: pd.Timestamp,
     code: Mapping[str, object],
+    evidence: Mapping[str, object] | None,
 ) -> ledger.LedgerEntry:
     """
     Append the registration entry: the first entry of a new ledger. The
     record must match `models` and the running `code`; `registered_at` is
-    GitHub's merge time of the registration pull request.
+    GitHub's merge time of the registration pull request, which `evidence`
+    (source, fetched_at and the pull request as GitHub or the owner reported
+    it) must support exactly.
     """
 
     body = validate_record(record)
@@ -450,6 +587,9 @@ def register(
         "record_path": _record_path(record_path),
         "record_sha256": record_sha256(body),
         "record": body,
+        "registration_evidence": registration_evidence(
+            evidence, registration_commit=commit, registered_at=when, recorded_at=now
+        ),
     }
 
     def guard(entries: tuple[ledger.LedgerEntry, ...]) -> None:
@@ -490,6 +630,14 @@ def current(entries: Sequence[ledger.LedgerEntry]) -> Registration | None:
         )
     entry = entries[0]
     payload = entry.payload
+    if (
+        payload.get("registration_schema_version") == "1.0"
+        and "registration_evidence" not in payload
+    ):
+        raise _unverified(
+            "the registration entry predates the evidence requirement (schema 1.0, a typed time "
+            "only): register again in a new ledger, with the pull request's evidence"
+        )
     if set(payload) != _ENTRY_KEYS or payload.get("record_type") != ENTRY_TYPE:
         raise ForecastRefused("registration_tampered", "the registration entry is malformed")
     try:
@@ -503,6 +651,20 @@ def current(entries: Sequence[ledger.LedgerEntry]) -> Registration | None:
     try:
         when = _stamp(payload["registered_at"], "registered_at")
         commit = commit_id(payload["registration_commit"], "registration_commit")
+        kept = payload["registration_evidence"]
+        if not isinstance(kept, Mapping) or set(kept) != _EVIDENCE_KEYS:
+            raise _unverified("the registration evidence is malformed")
+        fields = pull_request_fields(kept["pull_request"])
+        if fields != kept["pull_request"] or sha256_json(fields) != kept["sha256"]:
+            raise _unverified("the registration evidence does not match its recorded hash")
+        rebuilt = registration_evidence(
+            {**kept, "pull_request": fields},
+            registration_commit=commit,
+            registered_at=when,
+            recorded_at=pd.Timestamp(entry.recorded_at),
+        )
+        if rebuilt != dict(kept):
+            raise _unverified("the registration evidence was rewritten")
     except (ForecastRefused, ValueError, TypeError) as error:
         raise ForecastRefused("registration_tampered", str(error)) from None
     return Registration(entry, body, when, commit)

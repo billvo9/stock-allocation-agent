@@ -85,6 +85,18 @@ def is_ancestor(root: str | Path, older: str, newer: str) -> bool:
     return result.returncode == 0
 
 
+def commit_exists(root: str | Path, revision: str) -> bool:
+    """Whether `revision` names a commit in the local repository."""
+
+    result = subprocess.run(
+        ["git", "cat-file", "-e", f"{revision}^{{commit}}"],
+        cwd=Path(root),
+        capture_output=True,
+        check=False,  # a missing object is the answer, not an error
+    )
+    return result.returncode == 0
+
+
 def environment() -> dict[str, object]:
     versions: dict[str, object] = {
         "python": platform.python_version(),

@@ -81,6 +81,9 @@ class ProspectiveSources:
     load_anchors()
         the anchors in the prospective scope (`load_anchors`), raising a
         ValueError (`AnchorsRefused`) when the file is refused
+    lookback
+        the registered config's daily returns per window, for the launch
+        readiness report (None: not reported)
     """
 
     store_root: Path | None
@@ -90,6 +93,7 @@ class ProspectiveSources:
     calendar: RulesCalendar
     load_window: Callable[..., object]
     load_anchors: Callable[[], object] | None = None
+    lookback: int | None = None
 
 
 def _check(check_id: str, **fields) -> Check:

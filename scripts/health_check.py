@@ -146,14 +146,16 @@ def _prospective(arguments, environment: collect.Environment):
             today=pd.Timestamp(environment.now()),
         )
 
+    config = load_config(PROSPECTIVE_CONFIG)
     sources = ProspectiveSources(
         store_root=arguments.prospective_store,
-        assets=tuple(load_config(PROSPECTIVE_CONFIG).assets),
+        assets=tuple(config.assets),
         window_start=WINDOW_START,
         h_end=H_END,
         calendar=calendar,
         load_window=load_inference_window,
         load_anchors=anchors,
+        lookback=config.prospective.lookback_sessions,
     )
     return calendar, sources
 

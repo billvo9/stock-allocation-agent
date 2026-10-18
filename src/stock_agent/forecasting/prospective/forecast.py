@@ -320,17 +320,19 @@ def first_eligible_refusal(win: window.InferenceWindow, assets: Sequence[str]) -
     """
     Why the window's close cannot be session 1 (section 4, condition 2), or
     None: every fund needs its complete window, from batches whose
-    distributions were spot-checked against the owner's anchors.
+    distributions were spot-checked against the owner's anchors
+    (window.session_one_gaps, the readiness report's test too).
     """
 
-    incomplete = win.incomplete_assets(assets)
-    if incomplete:
-        return f"the window is incomplete for {sorted(incomplete)}"
-    if "anchors_sha256" not in win.batches:
-        return "the window's batches record no spot check"
-    unchecked = win.batches.loc[win.batches["anchors_sha256"].isna(), "batch_id"]
-    if len(unchecked):
-        return f"batches {sorted(unchecked)} record no spot check against the owner's anchors"
+    gaps = window.session_one_gaps(win, assets)
+    if gaps["incomplete"]:
+        return f"the window is incomplete for {sorted(gaps['incomplete'])}"
+    if gaps["no_batch_lineage"]:
+        return "the window names no batch"
+    if gaps["unchecked_batches"]:
+        return (
+            f"batches {gaps['unchecked_batches']} record no spot check against the owner's anchors"
+        )
     return None
 
 

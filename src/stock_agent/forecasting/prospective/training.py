@@ -300,6 +300,21 @@ def training_data(
     )
 
 
+def training_data_block(data: TrainingData, config: ProspectiveConfig) -> dict[str, object]:
+    """
+    The bundle's `training_data` block: the data fingerprints, batch ids, last
+    session and training end. Freeze writes it; the registration preflight
+    recomputes it from the research store and compares.
+    """
+
+    return {
+        **data.fingerprints,
+        "batch_ids": list(data.batch_ids),
+        "max_session": data.max_session.isoformat(),
+        "training_end": config.training_end.isoformat(),
+    }
+
+
 def load_training_data(
     store_root, config: ProspectiveConfig, *, zero_vol_rule: str | None = None
 ) -> TrainingData:

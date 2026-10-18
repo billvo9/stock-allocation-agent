@@ -647,3 +647,69 @@ def test_a_calendar_refusing_the_trial_range_is_unavailable(registered, tmp_path
     calendar = RulesCalendar(refusing, "test")
     check = _checks(registered, calendar=calendar, now=NOW)["forecast.ledger_trial"]
     assert (check.state, check.reason) == (HealthState.UNAVAILABLE, "calendar_refused")
+
+
+def test_the_trial_check_shows_each_close_before_session_1(registered, tmp_path):
+    from stock_agent.forecasting.prospective import readiness
+
+    def report(entries, now):
+        return (
+            readiness.Close("2026-10-14", "not_recorded", "operator_missed", {"batches": ["b"]}),
+            readiness.Close("2026-10-15", "pending"),
+        )
+
+    checks = _by_id(
+        ledger_checks(
+            registered,
+            backup=_kept(tmp_path, job_ledger.head(job_ledger.read_ledger(registered))),
+            calendar=CALENDAR,
+            now=NOW,
+            readiness=report,
+        )
+    )
+    trial = checks["forecast.ledger_trial"]
+    assert (trial.state, trial.reason) == (INSUFFICIENT, "awaiting_session_1")  # unchanged
+    assert "close=2026-10-14 status=not_recorded reason=operator_missed" in trial.detail
+    assert "closes before session 1: 1 not_recorded, 1 pending" in trial.detail
+
+
+@pytest.mark.parametrize(
+    "failure", ["ValueError", "CalendarRefused", "FundDataRefused", "LeakageError", "OSError"]
+)
+def test_a_failing_readiness_report_never_changes_the_trial_check(registered, tmp_path, failure):
+    from stock_agent.data.funds.schema import FundDataRefused, RefusalReason
+    from stock_agent.model_validation.audit import LeakageError
+
+    errors = {
+        "ValueError": ValueError("the store could not be read"),
+        "CalendarRefused": CalendarRefused("outside_coverage", "after coverage"),
+        "FundDataRefused": FundDataRefused(RefusalReason.HASH_MISMATCH, "a batch changed"),
+        "LeakageError": LeakageError("a batch retrieved after the decision"),
+        "OSError": OSError("permission denied"),
+    }
+
+    def report(entries, now):
+        raise errors[failure]
+
+    trial = _by_id(
+        ledger_checks(registered, backup=None, calendar=CALENDAR, now=NOW, readiness=report)
+    )["forecast.ledger_trial"]
+    assert trial.reason == "awaiting_session_1"
+    assert f"readiness: not judged ({failure})" in trial.detail
+
+
+def test_the_trial_check_shows_the_proposed_etf_r1_start(registered, tmp_path):
+    _record(registered, DAYS[1])  # session 1 under the rule in force; 10-14 would be missed
+    trial = _trial(registered, tmp_path, _after_deadline(DAYS[1]))
+    assert "proposed ETF-R1 (not in force): session 1 would be 2026-10-14; missed 1" in trial.detail
+    assert trial.state is HealthState.HEALTHY  # a proposal never changes the state
+
+
+def test_a_calendar_refusal_before_session_1_is_shown_not_raised(registered, tmp_path):
+    def refusing(start, end):
+        raise CalendarRefused("outside_coverage", "dates after the rules calendar coverage")
+
+    calendar = RulesCalendar(refusing, "test")
+    checks = _by_id(ledger_checks(registered, backup=None, calendar=calendar, now=NOW))
+    trial = checks["forecast.ledger_trial"]
+    assert "proposed ETF-R1: not judged (CalendarRefused)" in trial.detail

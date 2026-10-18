@@ -243,10 +243,18 @@ A model is **prospectively validated for volatility forecasting of fund A at hor
 
 ## 12. Engineering prerequisites before activation (each reviewed separately)
 
-**Built (2026-10-17; inactive: nothing is registered, frozen or recorded):**
+**Built (2026-10-17 and 2026-10-18; inactive: nothing is registered, frozen or recorded):**
 - **The registration entry kind and the record file** (sections 1 and 4; `src/stock_agent/forecasting/prospective/registration_record.py`).
   - `forecast_prospective.py registration-record` writes the record a registration pull request adds (`docs/research/registrations/<bundle_id>.json`).
-  - `register` appends the ledger's `registration` entry with the merge commit and GitHub's merge time, given by hand and never fetched. It first checks, from the local repository:
+  - `register` appends the ledger's `registration` entry with the merge commit and GitHub's merge time. **A typed time alone is refused** (`registration_unverified`). The time is accepted only with the registration pull request's evidence, which must show:
+    - that the pull request was merged;
+    - that its base is `main` of `billvo9/stock-allocation-agent`;
+    - that its `merge_commit_sha` is the registration commit;
+    - that its `merged_at` equals the registration time to the second.
+
+    The evidence comes from GitHub's API (`--pull-request N`, read with `gh api` and the owner's existing login; no token is recorded or printed) or from an evidence file holding the same fields, supplied by the owner (`--evidence-file`). The entry keeps the checked fields, their SHA-256, the source and the fetch time, and the job checks them again whenever it reads the entry. The source is recorded as such: GitHub's report, or the owner's.
+  - `register` also checks, from the local repository:
+    - that the merge commit is in origin/main's history;
     - that the file in the merge commit is identical;
     - that the record's tree ids are the bundle's commit's and the merge commit's;
     - that the merge time is not before the merge commit's own time;
@@ -266,6 +274,41 @@ A model is **prospectively validated for volatility forecasting of fund A at hor
   - Each section 5 condition is a structured diagnostic line: a chain break, a failed or unresolved kept head, a missed, refused or out-of-window record, and a fund without forecast rows for more than 2 consecutive expected sessions. It fails during the trial and is degraded after it (C3).
   - It reports only: it never decides, voids or writes. `forecast.ledger_sessions` expects every session from session 1.
   - It judges the kept head when it runs. A lapse repaired after its deadline but before the next run is not seen, because the head history file is not read.
+- **The launch-readiness report** (read-only; `src/stock_agent/forecasting/prospective/readiness.py`, `forecast_prospective.py readiness`).
+  - It lists every weekday from the registration time through the first record. Each is one of:
+    - recorded;
+    - refused, with the job's reason and its evidence (`before_registration`, `not_first_eligible_close` with the incomplete funds and unchecked batches, or the store's refusal);
+    - not recorded: the close was eligible, because its complete, spot-checked window was retrieved, per its batch records, before the deadline (operator-missed; the store keeps no separate write time);
+    - market closed;
+    - pending.
+  - A close is eligible if the job could have recorded it at some moment inside its recording window: the store is read at each batch retrieval time in the window, and the window starts no earlier than the registration entry's append time. The store is validated as it is today.
+  - `--pre-merge`, before the registration pull request is merged, shows whether the store already holds the verified 64-close window ending at the latest available close. Under the current rule that close can never itself be session 1, because it closes before the merge; the check shows that the store and its lookback are ready.
+  - **ETF-R1 view (not in force).** The report also shows the proposed ETF-R1 start: the first close after the verified registration time. It marks every later session without a record inside its window as missed, so the start never moves.
+  - Model Health's `forecast.ledger_trial` shows the same rows in its detail.
+  - It changes nothing: session 1 is still the first record after the registration.
+- **The registration preflight** (read-only; `src/stock_agent/forecasting/prospective/preflight.py`, `forecast_prospective.py preflight`), run before the registration pull request is merged. Each check is pass or fail with a reason and evidence, and the report carries its SHA-256:
+  - **Data:**
+    - the verified 64-close window ending at the latest available close, for every fund, with recorded spot checks;
+    - the bundle's training-data fingerprints, recomputed from the research store.
+  - **Software:**
+    - the running code's registered paths are committed and equal the freeze commit's;
+    - the record matches the bundle;
+    - the environment manifest (`not_built`).
+  - **Monitoring:**
+    - Model Health's latest summary is at most 26 hours old, not dated in the future, and neither failed nor unavailable;
+    - the rules calendar reaches session 524 (C24), counted from the latest close. It does not foresee unscheduled closures. **Today it fails:** the calendar ends on 2027-12-31, so the preflight cannot pass until the calendar is extended.
+  - **Backups:**
+    - the kept head's file is configured, outside every repository, a regular file of mode 600 and writable, in a directory of mode 700 that also holds `ledger_head_history.log` (mode 600);
+    - the second medium needs the owner's attestation.
+  - **Not built:** the forecast job's schedule and the checkpoint analysis.
+  - The report names its subject (the bundle and the record's SHA-256). It passes when no check fails; `owner_attestation_required` and `not_built` lines do not fail it.
+    - Its SHA-256 shows integrity, not authenticity: anyone can recompute it, and its time is the local clock.
+    - It lists local paths with the home directory as `~`. Keep it private.
+  - **The gate is not wired.** `register` does not require a preflight: that is part of ETF-R1, not approved. The gate is built and tested. It would refuse a preflight that:
+    - does not match its SHA-256;
+    - names another bundle or record;
+    - has a failing check, lacks a required check, or has any check other than `pass` (the second medium excepted, as an owner attestation);
+    - was made after the merge, or more than 26 hours before it.
 - **The zero-volatility rule as a registered config key** (`zero_volatility_rule: current_drop_and_miss`, `docs/research/zero_vol_floor.md`, section 7). The config hash changed from `ae5d5853…` to `dba70fc2…`; no registration existed.
 
 **Not built yet:**
@@ -276,7 +319,14 @@ A model is **prospectively validated for volatility forecasting of fund A at hor
 
 **Readings built into the code, to confirm with section 13, item 1** (none changes this document's rules):
 - **"The owner's spot checks of that batch passed" (section 4).** It is read as: every batch in session 1's window records an anchors file (`anchors_sha256`). The store keeps distributions only after the spot check against those anchors. Later sessions do not repeat this check.
-- **Session 1 is the first record after the registration.** The operator can still choose the start by not running on an eligible close (section 4, condition 3). An alternative is to fix session 1 as the first eligible close after `register`, recorded or not.
+- **Session 1 is the first record after the registration.** The operator can still choose the start by not running on an eligible close (section 4, condition 3). The readiness report shows every such close.
+  - **Proposed ETF-R1, for the owner's decision.** The quoted text is the draft:
+
+    > "Session 1 is the first session of the registered rules calendar, on or after H_end, whose 18:00 New York close availability is strictly after the registration time (the `merged_at` recorded in the registration entry with its evidence source: GitHub's API or the owner's evidence file). It is fixed by the merge and does not depend on when, or whether, the job runs. Section 4's conditions 2 and 3 no longer select session 1. From session 1 on, every session is handled as section 3 handles any session: a fund whose window is incomplete is refused individually [owner choice: also a fund whose session-1 batches record no spot check], and every fund refused is a `refusal` record. A session with no `forecast` or `refusal` entry appended inside its recording window is missed, including every session whose recording deadline is at or before the time `register` appends the entry. Missed sessions are never backfilled and never move session 1. Section 5 applies unchanged. `register` refuses unless given a preflight report that verifies against its SHA-256, contains every required check, has no failed or not-built check, names the record's SHA-256 and the bundle, and was generated (local clock) before `merged_at` and no more than 26 hours before it. The registration entry records the report's SHA-256 and the owner's second-medium attestation, and the report is kept with the ledger's private files. Merging after 18:00 New York leaves a full session for `register`."
+
+    - The preflight's hash belongs in the entry, not the record file. The preflight checks the record, so the record cannot also hold the preflight's hash.
+    - Adopting it is a contract change: entry schema 1.2 with the preflight hash and the attestation, and the new handling of section 4's condition 2. It needs the owner's approval.
+  - That changes the trial's semantics, so it is not built. The readiness report shows its view.
 - **A data gap takes the phase of its first session.** A fund without rows on sessions 19–21 is a trial condition, although it first exceeds 2 sessions at session 21.
 - **Kept-head phases.**
   - An unresolved kept head takes the phase of the session whose deadline passed.

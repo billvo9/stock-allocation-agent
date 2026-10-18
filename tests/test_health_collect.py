@@ -726,3 +726,66 @@ def test_the_ci_run_takes_no_private_input():
         "output_dir",
         "verify",
     ]
+
+
+def test_the_local_run_passes_the_readiness_report_only_with_a_store(
+    prospective_frozen, prospective_store_root, tmp_path
+):
+    from forecast_prospective_helpers import register
+
+    from stock_agent.calendars import nyse_rules
+    from stock_agent.data.prospective.inference import load_inference_window
+    from stock_agent.forecasting.prospective import ledger as job_ledger
+    from stock_agent.health.ledger import RulesCalendar
+    from stock_agent.health.prospective import ProspectiveSources
+
+    calendar = RulesCalendar(nyse_rules.sessions, nyse_rules.CALENDAR_ID)
+
+    def sources(store, lookback):
+        return ProspectiveSources(
+            store_root=store,
+            assets=("not", "the", "record's"),  # the report uses the registration's funds
+            window_start=pd.Timestamp("2026-07-16", tz="UTC"),
+            h_end=pd.Timestamp("2026-10-14", tz="UTC"),
+            calendar=calendar,
+            load_window=load_inference_window,
+            lookback=lookback,
+        )
+
+    assert collect._readiness(collect.PrivateInputs()) is None
+    without_store = collect.PrivateInputs(calendar=calendar, prospective=sources(None, 63))
+    assert collect._readiness(without_store) is None
+    without_lookback = collect.PrivateInputs(
+        calendar=calendar, prospective=sources(prospective_store_root, None)
+    )
+    assert collect._readiness(without_lookback) is None
+    with_store = collect.PrivateInputs(
+        calendar=calendar, prospective=sources(prospective_store_root, 63)
+    )
+    path = tmp_path / "ledger.jsonl"
+    register(prospective_frozen.models(), path)
+    rows = collect._readiness(with_store)(
+        job_ledger.read_ledger(path), pd.Timestamp("2026-10-16T22:00:00Z")
+    )
+    assert [(row.day, row.status) for row in rows] == [
+        ("2026-10-14", "not_recorded"),
+        ("2026-10-15", "not_recorded"),
+        ("2026-10-16", "pending"),
+    ]
+
+
+def test_the_local_run_hands_the_readiness_report_to_the_ledger_checks(root, tmp_path, monkeypatch):
+    seen = {}
+    real = collect.ledger.ledger_checks
+
+    def spy(*args, **kwargs):
+        seen.update(kwargs)
+        return real(*args, **kwargs)
+
+    sentinel = object()
+    monkeypatch.setattr(collect.ledger, "ledger_checks", spy)
+    monkeypatch.setattr(collect, "_readiness", lambda inputs: sentinel)
+    collect.run_local(
+        environment(root), tmp_path / "private", verify=None, inputs=collect.PrivateInputs()
+    )
+    assert seen["readiness"] is sentinel
