@@ -63,6 +63,9 @@ SCRIPT_CONSUMERS = {
     # The Stock Lab's daily job: the rules calendar only (its expected session and
     # the sessions a stock is behind), passed to the Stock Lab, which never imports it.
     "scripts/stock_lab_daily.py",
+    # The Stock Lab's recent-window fetch: the rules calendar only (the 252 sessions it
+    # requests), passed to the Stock Lab's inference store, which never imports it.
+    "scripts/stock_lab_fetch_recent.py",
 }
 CONSUMER_NAMES = {
     "stock_agent.data.prospective.inference": {

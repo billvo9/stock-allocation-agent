@@ -569,11 +569,11 @@ by the simulated size checks (section 5) and is still open.
 | Id | Decision | Conditions | Status |
 |---|---|---|---|
 | A1 | Tiingo Starter and the private watchlist store: approved | **Staged:** inspection and persistence are separate. The first live operation is the read-only command below, run only after the owner confirms the token is configured and authorizes that exact command. The 30-ticker cap holds. No vendor-adjusted fields, no unauthorized history, no redistribution. After a successful coverage and corporate-action audit, storage (`--store`) is a separate approval. | awaiting the token and authorization of the read-only command |
-| A2 | Trailing 252-session inference window: approved in principle | Fit, tune, select and calibrate only on eligible pre-2025 data. Recent observations from the protected period serve only as inputs to a previously frozen model, kept in a separately controlled prospective/inference store. Protected outcomes are never used for retrospective selection, training or backtest claims. The sealed ETF period and its protections are unchanged. Strict as-of and retrieval-time records. A scoped authorization, not an unlocking of the 2025+ holdout. | to build: the inference store and reader |
+| A2 | Trailing 252-session inference window: approved in principle | Fit, tune, select and calibrate only on eligible pre-2025 data. Recent observations from the protected period serve only as inputs to a previously frozen model, kept in a separately controlled prospective/inference store. Protected outcomes are never used for retrospective selection, training or backtest claims. The sealed ETF period and its protections are unchanged. Strict as-of and retrieval-time records. A scoped authorization, not an unlocking of the 2025+ holdout. | built on fixtures: the inference store, the frozen-model reader and the recent-window fetch (below); nothing fetched or stored |
 | A3 | Exploratory walk-forward evaluation of the saved watchlist on pre-2025 history: approved | Marked hindsight-selected and non-confirmatory. Every challenger is compared with B0/B1, with proper scores, calibration, stock-level coverage, uncertainty and multiple-comparison treatment. No claim of profitable trading or reliable direction. | runnable after storage (`scripts/stock_lab_evaluate.py --real --authorized-evaluation`) |
 | A4 | The write-once forecast and scoring protocol: approved | Activation needs successful data validation, a frozen registered model, verified decision timestamps and a successful end-to-end dry run. No backdating, rewriting of probabilities, or scoring of outcomes that existed before a forecast. Daily updates record skipped tickers, stale observations, model failures and missing outcomes in Model Health. Separate from ETF OD16 and PPO promotion. | protocol built; activation pending |
 | A5 | Version-1 definitions: approved | Daily band ±0.5%. Five-session band ±0.5% × √5 ≈ ±1.12%, shown as different. A Stable session ends a streak by default, and the pause rule is identified whenever used. The bull-trap setup (10% drawdown, 5% rebound, prior 20-session high, 10-session window) may be used for research. **The failure margin f awaits confirmation** (formula and example in section 5) before real-data risk flags. Price returns stay distinct from total returns, and ex-dividend moves are identified. | f to confirm |
-| A6 | Recent observed prices on the private dashboard: supported | Only after the retrieval and storage permissions. An isolated descriptive reader that cannot expose protected outcomes to development, training, tuning or backtesting. Recent observed history is kept distinct from research evidence, and current forecasts from completed outcomes. The holdout policies are not modified. | to build after A1 storage and the A2 store |
+| A6 | Recent observed prices on the private dashboard: supported | Only after the retrieval and storage permissions. An isolated descriptive reader that cannot expose protected outcomes to development, training, tuning or backtesting. Recent observed history is kept distinct from research evidence, and current forecasts from completed outcomes. The holdout policies are not modified. | built on fixtures: the descriptive reader and the Recent prices tab (below), which shows an empty state until something is stored |
 | A7 | Which test decides "beats B1": open | Newey-West (lag 10, as pre-registered; 6–8% simulated size at a nominal 5%), the fold-block t (closest to nominal in simulation, as on the ETF track), or Newey-West against a simulated critical value | packet ready (`docs/research/stock_lab_a7_decision.md`, recommending the fold-block t at a 2.5% family level, 5% as the alternative); awaiting the owner; needed before the A3 evaluation selects |
 
 ### A1 step 1: the read-only audit (awaiting the owner's authorization)
@@ -625,6 +625,156 @@ by the simulated size checks (section 5) and is still open.
   its finding and propose how to handle it: drop it from the watchlist, or
   store it with the finding recorded.
 
+### A2 and A6: the inference store and recent prices (built, not run)
+
+Built on fixtures only. No request has been made and nothing is stored.
+
+**The inference store** (`stock_agent.stock_lab.inference`):
+
+- **Location.** A private SQLite file, `stock_lab_inference.sqlite3`, in
+  its own directory: `STOCK_AGENT_STOCK_LAB_INFERENCE_HOME`, or by default
+  `~/stock-agent-private/stock_lab_inference/`.
+  - A location inside any Git working tree is refused, even under an
+    ignored `data/raw/` (stricter than the research store).
+  - A directory that holds the research store is refused.
+  - The file must have exactly this name.
+- **Identity.** The SQLite header carries the store's own
+  `application_id`.
+  - The research store refuses any file with a non-zero id. It can neither
+    read the inference store nor add its own tables to it.
+  - The inference store refuses any file without its id.
+- **Write-once.** One batch per retrieval of one ticker, never rewritten,
+  with its rows. Each batch records:
+  - `retrieved_at`, when the provider served it;
+  - `recorded_at`, when the store wrote it;
+  - the requested sessions, the calendar id, the content hash and the data
+    class.
+- **What a batch must be** (each refusal has a machine-readable reason):
+  - inside the protected period (sessions from 2025-01-01; older sessions
+    belong to the research store);
+  - exactly one row per calendar session of its request (a session the
+    provider did not serve is a row without prices, so a gap stays a gap);
+  - retrieved no earlier than its last session's close was available, at
+    20:00 America/New_York (the daily job's convention, assumed);
+  - recorded within an hour of its retrieval, and never before it. A batch
+    cannot claim an earlier retrieval than it had.
+
+**The frozen-model reader** (`inference.window.load_inference_window`):
+
+```python
+window = load_inference_window(
+    store_path, "NVDA", "2026-10-16", 252,
+    retrieved_by=decision_time, sessions=nyse_rules.sessions, calendar_id=CALENDAR_ID,
+)
+```
+
+- **The window.** Exactly the 252 sessions ending at the as-of close, both
+  ends included: 252 closes and 251 returns. That is the longest feature
+  window (`features.LONGEST_WINDOW`).
+- **Retrieval cut-off.** Only batches retrieved and recorded by the
+  decision time are read. A re-run with the same decision time
+  reproduces the inputs.
+- **Vintages.** Per session, the newest eligible retrieval wins, and
+  revisions are listed.
+- **Refusals.**
+  - a lookback other than 252;
+  - a window starting before 2025;
+  - a decision before the as-of close was available;
+  - a short window (no padding);
+  - a missing as-of close;
+  - a batch on another calendar;
+  - any integrity failure.
+- **No retrospective decisions.** A decision at or after the next
+  session's open is refused. By then the as-of close is history, and the
+  "forecast" would be a reconstruction scored on outcomes that already
+  exist. The reader reads no clock, so the decision time is the caller's
+  claim. Two other rules keep a replay from becoming a backtest:
+  - only reviewed modules may import the reader; the A4 forecast job must
+    take the decision time from its clock;
+  - the forecast record refuses a `created_at` away from the store's clock.
+
+**The descriptive reader** (`inference.recent.read_recent`, decision A6):
+
+- It returns up to 60 of the latest observed sessions: close, a
+  split-consistent level for the chart, the change from the previous
+  session, notes (gap, ex-dividend, split, large move, revised) and the
+  lineage.
+- It computes no category, feature, streak, probability or score on
+  protected prices.
+- Given the latest forecast's as-of session and its five target sessions,
+  it marks those targets as that forecast's outcomes. Later sessions are
+  not marked, since no forecast covers them.
+
+**The page.** A **Recent prices** tab, apart from History:
+
+- **Until something is stored:** an empty state.
+- **For demo stocks:** a "real stocks only" state.
+- **Once stored:** a badge ("Observed prices, not research evidence"), the
+  last close, the sessions shown, the retrieval time, a chart and a table.
+  The sessions a forecast covers are named as its outcomes.
+- **The research history** still stops at 2024-12-31.
+
+**Isolation** (`tests/test_stock_lab_inference_boundaries.py`):
+
+- **Imports.** Only two consumers may import the package.
+  - The Lab page may import only `read_recent` and `RecentPrices`.
+  - The recent-window fetch script may import only the writer, the
+    frozen-model reader and five schema names.
+- **Research code.** No other module or script imports it. None names its
+  module path, file, directory, environment variable or header id.
+- **Runtime.** The research, evaluation, training, tuning and backtest
+  entry points load nothing from it, which is checked in a subprocess.
+- **Readers and writer.** The readers never load the writer, and only the
+  writer writes.
+
+**The recent-window fetch** (`scripts/stock_lab_fetch_recent.py`): off by
+default, never run.
+
+- It reads the watchlist and the listing checks from the research store,
+  which it never writes.
+- Exact flags only: abbreviations are refused.
+- A ticker is stored only when its audit is ready and the provider served
+  every session of the window. A session not served is held for the
+  owner's review: a split or dividend on it would be invisible to the
+  audit, and there is deliberately no override yet.
+- Printed paths show the home folder as `~`.
+
+| Command | What it does |
+|---|---|
+| `.venv/bin/python scripts/stock_lab_fetch_recent.py` | prints the plan: tickers, window, request URLs, store path; no request |
+| `... --authorized` | one request per watched ticker whose research listing check is supported (at most 30), for the 252 NYSE sessions ending at the last complete session; prints the audit; writes nothing |
+| `... --authorized --store` | also writes each ready batch to the inference store and reads its window back |
+
+**Before the first real inference, the owner must:**
+
+1. Run the A1 research steps: the read-only audit, then storage. The
+   recent-window fetch requests only tickers that the research store's
+   listing check marks supported.
+2. Authorize the recent-window read-only command, which requests
+   2025-and-later prices for AMD, MRVL, MU and NVDA. Then approve its
+   storage, a separate step.
+3. Confirm the conventions this store assumes:
+   - the window is 252 closes ending at the as-of close, not 253;
+   - a close is final at 20:00 New York time;
+   - a decision must come before the next 09:30 open;
+   - batches are recorded within an hour of retrieval.
+4. Decide how a frozen model's state uses the window. B1's recency-weighted
+   counts would otherwise be computed from these 252 sessions alone, not
+   from the development history.
+5. Decide where scoring reads its outcomes. Scoring reads the research
+   store, which the research fetch fills only through 2024; A4 needs a
+   reader that returns only the sessions after each forecast.
+6. Approve A7 and A4: the test that decides "beats B1", the frozen
+   registered model, the verified decision timestamps and the end-to-end
+   dry run. Only A4 activates real forecasts. The daily job still refuses
+   `--inference-window` and `--record-real`.
+7. Keep A3 and A7 choices independent of the recent prices. The Recent
+   prices tab shows protected-period outcomes to the owner, and no code can
+   stop what is seen from shaping a choice made afterwards. Settle the
+   model and the test, or record what was viewed and when, before
+   reading the tab.
+
+
 ## 8. Learning notes
 
 - **Problem.** Honest probabilities for a three-way daily outcome, and
@@ -665,6 +815,21 @@ by the simulated size checks (section 5) and is still open.
   discrete-time survival hazards; Hansen's SPA test for many comparisons;
   fixed-b asymptotics for Newey-West, which explain why a short lag
   over-rejects.
+- **The inference window (A2) in point-in-time terms.**
+  - A decision at time d uses a batch only if its `recorded_at` ≤ d. The
+    window is a function of (store, ticker, as-of, d), so the same d always
+    gives the same inputs.
+  - Bounding d to [close available, next open) makes "no retrospective
+    decision" a rule of the reader. A loop over past as-of dates finds only
+    the batches recorded inside each one's decision interval, so it can
+    rebuild what a real decision would have seen and nothing later.
+  - Example: the as-of is Thursday 2026-10-15. A batch retrieved at 20:30
+    and recorded at 20:31 New York time is readable from 20:31 until
+    Friday 09:30. A revision retrieved at 22:00 is invisible to a decision
+    at 21:00.
+  - What could mislead: a vendor that revises a close after 20:00. The
+    reader then lists the session as revised in a later decision's window;
+    it never rewrites the earlier window.
 - **Exercise.** Show that under the "breaks" rule the per-session view
   reports, at each run's last session, that run's length. That is the
   property tested in `test_every_run_row_matches_the_per_session_view_at_its_end`.

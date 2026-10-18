@@ -99,6 +99,68 @@ def recent_figure(
     return figure
 
 
+def observed_figure(recent, *, scheme: str = "light") -> go.Figure:
+    """
+    Recent observed closes (decision A6) on the last shown session's share
+    basis: one line in the accent colour, so it never reads as the research
+    history's price line; gaps stay open; no direction colour or marker,
+    because these sessions get no category. The subtitle carries the
+    retrieval time (a chart may be exported alone). When the latest forecast's
+    as-of session is among the shown sessions, a dotted line marks it: the
+    sessions it covers follow.
+    """
+
+    tokens = theme.LAB_PALETTES[scheme]
+    days = [pd.Timestamp(row.session) for row in recent.sessions]
+    figure = go.Figure(
+        go.Scatter(
+            x=days,
+            y=[row.level for row in recent.sessions],
+            mode="lines+markers",
+            name=words.OBSERVED_SERIES,
+            line={"color": tokens["accent"], "width": 1.75},
+            marker={"size": 4},
+            connectgaps=False,
+            hovertemplate=f"%{{x|%Y-%m-%d}}: %{{y:,.2f}} {words.OBSERVED_HOVER}<extra></extra>",
+        )
+    )
+    as_of = recent.forecast_as_of
+    if as_of is not None and days and days[0] <= pd.Timestamp(as_of) <= days[-1]:
+        day = pd.Timestamp(as_of)
+        figure.add_shape(
+            type="line",
+            xref="x",
+            yref="paper",
+            x0=day,
+            x1=day,
+            y0=0,
+            y1=1,
+            line={"color": tokens["reference_line"], "dash": "dot", "width": 1},
+        )
+        figure.add_annotation(
+            x=day,
+            y=1,
+            xref="x",
+            yref="paper",
+            text=words.OBSERVED_FORECAST_LINE,
+            showarrow=False,
+            yanchor="bottom",
+            font={"color": tokens["text_muted"]},
+        )
+    retrieved = recent.retrieved_at[:16].replace("T", " ") if recent.retrieved_at else "—"
+    layout = style.lab_layout(
+        words.OBSERVED_CHART_TITLE,
+        x_title="Session date",
+        y_title=words.OBSERVED_AXIS,
+        subtitle=words.OBSERVED_CHART_SUBTITLE.format(retrieved=retrieved),
+        height=360,
+        scheme=scheme,
+    )
+    layout["showlegend"] = False
+    figure.update_layout(**layout)
+    return figure
+
+
 # --- the modelled views (PR 2) ---
 
 

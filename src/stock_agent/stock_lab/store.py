@@ -52,6 +52,11 @@ whatever the connection's settings), and a recorded
 batch or listing cannot gain rows after its count is reached, so a recorded
 event, listing or price can never be rewritten in place. Reads also check
 each batch's row count and content hash.
+
+A file that another store marked as its own in the SQLite header (a non-zero
+`application_id`, such as the Stock Lab's separate inference store) is
+refused before any statement runs: this store never reads it or adds its
+tables to it.
 """
 
 from __future__ import annotations
@@ -420,6 +425,7 @@ class StockLabStore:
             raise StoreRefused(f"{self.path} is readable by other users; restrict it (chmod 600)")
         connection = sqlite3.connect(self.path, timeout=10.0)
         try:
+            self._check_own(connection)  # before any statement that could change the file
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA recursive_triggers = ON")
             connection.execute("PRAGMA journal_mode = WAL")
@@ -441,10 +447,26 @@ class StockLabStore:
             return
         connection = sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True, timeout=10.0)
         try:
+            self._check_own(connection)
             self._check_version(connection)
             yield connection
         finally:
             connection.close()
+
+    @staticmethod
+    def _check_own(connection: sqlite3.Connection) -> None:
+        """
+        Refuses a file that another store marked as its own in the SQLite
+        header (a non-zero application id): this store never reads such a file
+        or adds its tables to it. Its own files keep the default id, 0.
+        """
+
+        try:
+            (application,) = connection.execute("PRAGMA application_id").fetchone()
+        except sqlite3.DatabaseError:
+            raise StoreRefused("the file is not a research store (not a database)") from None
+        if application != 0:
+            raise StoreRefused("the file is not a research store (another store's file)")
 
     @staticmethod
     def _check_version(connection: sqlite3.Connection) -> None:
