@@ -30,6 +30,7 @@ TABS = (
     "Watchlist",
     "Next five sessions",
     "History",
+    "Recent prices",
     "Reversals",
     "Bull traps",
     "Model diagnostics",
@@ -129,8 +130,10 @@ RULE_HELP = (
 )
 SHOWN_THROUGH = "Shown through {day}."
 REAL_CUTOFF = (
-    "Real stocks are shown through 2024-12-31 only. Prices from 2025 on are held back for a "
-    "final, one-time test of the models, so they are not shown or used here yet."
+    "Real stocks' history here stops at 2024-12-31. Prices from 2025 on are held back for a "
+    "final, one-time test of the models, so they are never used here to fit, tune or test "
+    "them. Recent observed prices, once stored, are shown apart in Recent prices, for "
+    "reference only."
 )
 PRICE_TITLE = "Price, split-consistent"
 PRICE_SERIES = "Split-consistent price"
@@ -411,3 +414,74 @@ REPLAY_NOTE = (
     "To see forecasts scored as sessions close, run a synthetic replay: it reveals the demo "
     "stocks' last sessions one simulated day at a time, with models fitted only on earlier data."
 )
+
+# --- recent observed prices (decision A6) ---
+
+OBSERVED_TITLE = "Recent observed prices"
+OBSERVED_SCOPE = (
+    "What the stock's price did recently, as the data provider served it. Shown for reference "
+    "only, apart from the research history. Nothing on this tab fits, tunes, selects, tests "
+    "or scores the models, and nothing here is a forecast."
+)
+OBSERVED_BADGE = "Observed prices, not research evidence"
+OBSERVED_DEMO_TITLE = "Real stocks only"
+OBSERVED_DEMO = (
+    "Recent observed prices are shown for saved real stocks, once they are stored. The "
+    "synthetic demo stocks have none."
+)
+OBSERVED_NONE_TITLE = "No recent prices stored yet"
+OBSERVED_NONE = {
+    "no_store": (
+        "Nothing has been retrieved for the recent period yet. Recent prices are stored only "
+        "after their retrieval and, separately, their storage are authorized; until then this "
+        "space stays empty, and nothing is estimated in its place."
+    ),
+    "no_data": (
+        "The recent-prices store holds nothing for {ticker} yet, so nothing is shown and "
+        "nothing is estimated in its place."
+    ),
+}
+OBSERVED_UNREADABLE_TITLE = "Recent prices could not be read"
+OBSERVED_UNREADABLE = (
+    "The recent-prices file failed its safety checks ({reason}), so nothing is shown. The "
+    "research history is unaffected."
+)
+OBSERVED_LAST = "Last observed close"
+OBSERVED_LAST_CAPTION = "on {day}"
+OBSERVED_SHOWN = "Sessions shown"
+OBSERVED_SHOWN_CAPTION = "{first} to {last}"
+OBSERVED_RETRIEVED = "Retrieved (UTC)"
+OBSERVED_RETRIEVED_CAPTION = "from {source}"
+OBSERVED_CHART_TITLE = "Recent observed closes"
+OBSERVED_CHART_SUBTITLE = (
+    "Observed, not research evidence · retrieved {retrieved} UTC · closes put on the last "
+    "session's share basis across splits · dividends not added back · gaps left open"
+)
+OBSERVED_SERIES = "Observed close"
+OBSERVED_AXIS = "Close"
+OBSERVED_HOVER = "(last session's share basis)"
+OBSERVED_FORECAST_LINE = "Latest forecast made after this close"
+OBSERVED_TABLE = "Recent observed prices"
+OBSERVED_COLUMNS = ("Session date", "Close as served", "Change", "Notes")
+OBSERVED_NOTES_KEY = (
+    "Notes: gap, a session the provider did not serve; ex-dividend, its change includes the "
+    "dividend's mechanical drop; split, a split applied on that session; large move, a rise "
+    "of 90% or more or a fall of 47% or more without a split, flagged for review; revised, "
+    "changed by a later retrieval (the earlier value is kept)."
+)
+OBSERVED_CHANGE_NOTE = (
+    "Change is the price change from the previous session, split-consistent, with dividends not "
+    "added back; there is none after a gap. These sessions get no Increase, Stable or Decrease "
+    "label: those are what the models predict, and this tab never scores them."
+)
+OBSERVED_LINEAGE = (
+    "Retrieved {retrieved} UTC from {source} ({batches}). Prices are as served then; a later "
+    "retrieval that changes a session marks it revised and never overwrites it. {gaps} "
+    "session(s) not served (gaps, left open); {revised} revised."
+)
+OBSERVED_OUTCOMES = (
+    "{count} of these sessions are ones the latest forecast (as of {as_of}) covers: they are "
+    "its outcomes. It is scored only in the forecast history, once each session has closed, "
+    "never here."
+)
+OBSERVED_FORECAST_TARGET = "covered by the latest forecast"

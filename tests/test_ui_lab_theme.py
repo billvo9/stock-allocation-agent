@@ -213,6 +213,14 @@ def _lab_figures(scheme: str) -> dict[str, go.Figure]:
         }
     )
     price = pd.DataFrame({"session": sessions, "display_level": [10.0, 10.2, 10.1]})
+    observed = SimpleNamespace(  # the shape of inference.recent.RecentPrices that it reads
+        sessions=tuple(
+            SimpleNamespace(session=f"2026-10-{day}", level=level)
+            for day, level in ((13, 10.0), (14, None), (15, 10.1))
+        ),
+        forecast_as_of="2026-10-14",
+        retrieved_at="2026-10-16T00:30:00.000000Z",
+    )
     growth = pd.Series([1e4, 1.01e4, 1.02e4], index=sessions)
     kw = {"synthetic": True, "scheme": scheme}
     return {
@@ -221,6 +229,7 @@ def _lab_figures(scheme: str) -> dict[str, go.Figure]:
         ),
         "calendar": figures.calendar_year_figure([(history, calendar)], styles, scheme=scheme),
         "price": stock_figures.price_figure(price, **kw),
+        "observed": stock_figures.observed_figure(observed, scheme=scheme),
         "recent": stock_figures.recent_figure(recent, StableBand(), **kw),
         "five": stock_figures.five_session_figure(five, "increase", **kw),
         "streak": stock_figures.streak_figure(profile, "increase", 1, **kw),

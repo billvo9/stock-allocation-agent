@@ -465,3 +465,17 @@ def linear_run_root(tmp_path_factory, panel_factory):
     root = tmp_path_factory.mktemp("linear_outputs")
     artifacts.write_run(run, root, extra_record={"status": "completed"})
     return root, run, labeled, folds, design
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _hermetic_stock_lab_inference(tmp_path_factory):
+    """
+    No test reads the owner's private Stock Lab inference store: the Lab's
+    Stock Probability page reads recent observed prices from the store named
+    by this variable, a directory that does not exist unless a test writes it.
+    """
+
+    with pytest.MonkeyPatch.context() as patch:
+        missing = tmp_path_factory.mktemp("no-stock-lab-inference") / "inference"
+        patch.setenv("STOCK_AGENT_STOCK_LAB_INFERENCE_HOME", str(missing))
+        yield

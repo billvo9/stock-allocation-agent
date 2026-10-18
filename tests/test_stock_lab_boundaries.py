@@ -21,7 +21,7 @@ from stock_agent.ui import theme
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 PROJECT = SOURCE.parent
 PACKAGE = SOURCE / "stock_agent" / "stock_lab"
-MODULES = sorted(PACKAGE.glob("*.py"))
+MODULES = sorted(PACKAGE.rglob("*.py"))  # the inference subpackage included
 ALLOWED_THIRD_PARTY = {"numpy", "pandas"}
 # The research-side modules and the one extra each may import. The Lab's page
 # never imports any of them (tested below and in test_app_explore.py).
@@ -46,6 +46,12 @@ RESEARCH_SIDE = (
 CONSUMERS = ("stock_agent/app/", "stock_agent/stock_lab/")
 
 
+def _key(path: Path) -> str:
+    """The module's path inside the package without .py ("tiingo", "inference/store")."""
+
+    return path.relative_to(PACKAGE).with_suffix("").as_posix()
+
+
 def _imports(path: Path) -> set[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names = set()
@@ -59,9 +65,9 @@ def _imports(path: Path) -> set[str]:
     return names
 
 
-@pytest.mark.parametrize("path", MODULES, ids=lambda p: p.stem)
+@pytest.mark.parametrize("path", MODULES, ids=lambda p: p.relative_to(PACKAGE).as_posix())
 def test_stock_lab_modules_import_only_the_standard_library_numpy_pandas_and_itself(path):
-    extra = EXTRA.get(path.stem, set())
+    extra = EXTRA.get(_key(path), set())
     for name in _imports(path):
         top = name.split(".")[0]
         assert (
@@ -75,7 +81,7 @@ def test_stock_lab_modules_import_only_the_standard_library_numpy_pandas_and_its
 def test_only_the_tiingo_adapter_may_reach_the_network():
     network = {"urllib", "http", "socket", "requests", "httpx", "urllib3", "aiohttp"}
     for path in MODULES:
-        if path.stem == "tiingo":
+        if _key(path) == "tiingo":
             continue
         assert not {n.split(".")[0] for n in _imports(path)} & network, path.name
 
@@ -97,18 +103,20 @@ def test_the_app_never_imports_the_research_side():
 def test_page_side_modules_never_import_the_research_side():
     forbidden = {f"stock_agent.stock_lab.{name}" for name in RESEARCH_SIDE}
     for path in MODULES:
-        if path.stem in RESEARCH_SIDE:
+        if _key(path) in RESEARCH_SIDE:
             continue
         assert not _imports(path) & forbidden, path.name
 
 
-def test_only_the_fetch_script_uses_the_adapter():
+def test_only_the_fetch_scripts_use_the_adapter():
+    # The research fetch (pre-2025 history into the research store) and the
+    # recent-window fetch (the inference window into the inference store).
     users = [
         script.name
         for script in sorted((PROJECT / "scripts").glob("*.py"))
         if "stock_agent.stock_lab.tiingo" in _imports(script)
     ]
-    assert users == ["stock_lab_fetch.py"]
+    assert users == ["stock_lab_fetch.py", "stock_lab_fetch_recent.py"]
 
 
 def test_importing_the_page_side_loads_no_network_or_research_module():

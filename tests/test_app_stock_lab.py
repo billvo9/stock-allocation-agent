@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from stock_lab_inference_helpers import AS_OF, CALENDAR_ID, make_bars, ny, weekdays, window_start
 from streamlit.testing.v1 import AppTest
 from test_app_destinations import scan_for_advice, text_of
 
@@ -19,6 +20,9 @@ from stock_agent.app import navigation
 from stock_agent.app import stock_wording as words
 from stock_agent.stock_lab import synthetic
 from stock_agent.stock_lab.contracts import DataClass
+from stock_agent.stock_lab.inference.schema import DB_NAME as INFERENCE_DB_NAME
+from stock_agent.stock_lab.inference.schema import HOME_ENV as INFERENCE_HOME_ENV
+from stock_agent.stock_lab.inference.store import InferenceStore
 from stock_agent.stock_lab.store import DB_NAME, HOME_ENV, StockLabStore
 from stock_agent.stock_lab.symbols import parse_tickers
 
@@ -339,3 +343,171 @@ def test_a_forecast_older_than_the_expected_session_is_labelled_stale_never_repl
     warning = " ".join(w.value for w in app.warning)
     assert f"Stale: made as of {latest['as_of_session']}" in warning and "(failed)" in warning
     assert store.latest_forecast("DEMO_CALM") == latest  # nothing was invented
+
+
+# --- recent observed prices (decision A6) ---
+
+
+@pytest.fixture
+def inference_home(tmp_path, monkeypatch) -> Path:
+    directory = tmp_path / "inference-home"
+    monkeypatch.setenv(INFERENCE_HOME_ENV, str(directory))
+    return directory
+
+
+def _real_history(home: Path) -> StockLabStore:
+    store = StockLabStore(home / DB_NAME)
+    store.add(parse_tickers("NVDA"))
+    bars = synthetic.demo_bars("DEMO_CALM").copy()
+    bars["session"] = pd.bdate_range(end="2024-12-31", periods=len(bars), tz="UTC").as_unit("us")
+    store.record_prices(
+        "NVDA",
+        bars,
+        source="fixture",
+        retrieved_at=pd.Timestamp("2026-10-16T22:00:00Z"),
+        data_class=DataClass.REAL,
+        vintage_note="fixture",
+    )
+    return store
+
+
+def _recent_batch(inference_home: Path) -> None:
+    first = window_start(AS_OF)
+    retrieved = ny(AS_OF, "20:30")
+    store = InferenceStore(
+        inference_home / INFERENCE_DB_NAME, clock=lambda: retrieved + pd.Timedelta(minutes=1)
+    )
+    store.record_batch(
+        "NVDA",
+        make_bars(first, AS_OF),
+        source="fixture",
+        retrieved_at=retrieved,
+        request_start=first,
+        request_end=AS_OF,
+        sessions=weekdays,
+        calendar_id=CALENDAR_ID,
+        data_class="real",
+        vintage_note="fixture",
+    )
+
+
+def _observed_keys(app: AppTest) -> list[str]:
+    return [chart.key for chart in app.get("plotly_chart") if "observed" in chart.key]
+
+
+def test_a_demo_stock_has_no_recent_observed_prices(home):
+    text = text_of(page())
+    assert words.OBSERVED_TITLE in text and words.OBSERVED_DEMO_TITLE in text
+
+
+def test_recent_prices_show_an_honest_empty_state_until_stored(home, inference_home):
+    _real_history(home)
+    app = page()
+    assert app.selectbox[0].value == "NVDA"
+    text = text_of(app)
+    assert words.OBSERVED_NONE_TITLE in text and words.OBSERVED_NONE["no_store"] in text
+    assert words.OBSERVED_BADGE not in text and _observed_keys(app) == []
+    assert not inference_home.exists()  # reading created nothing
+    scan_for_advice(text)
+
+
+def test_stored_recent_prices_are_shown_apart_from_the_research_history(home, inference_home):
+    _real_history(home)
+    _recent_batch(inference_home)
+    app = page()
+    text = text_of(app)
+    assert words.OBSERVED_BADGE in text and words.OBSERVED_CHANGE_NOTE in text
+    assert "Retrieved 2026-10-16 00:30 UTC from fixture" in text
+    cards = {m.label: m.value for m in app.metric}
+    assert (
+        cards[words.OBSERVED_LAST]
+        == f"{make_bars(window_start(AS_OF), AS_OF)['close'].iloc[-1]:,.2f}"
+    )
+    assert cards[words.OBSERVED_SHOWN] == "60"
+    assert cards[words.OBSERVED_RETRIEVED] == "2026-10-16 00:30"
+    table = next(
+        t.value
+        for t in app.table
+        if t.value.index.name == "Session date" and "Notes" in t.value.columns
+    )
+    assert table.index[0] == AS_OF and len(table) == 60  # newest first
+    assert not {"Increase", "Stable", "Decrease"} & set(" ".join(table.to_numpy().ravel()).split())
+    assert _observed_keys(app) == ["stock-lab-observed-chart"]
+    chart = next(c for c in app.get("plotly_chart") if c.key == "stock-lab-observed-chart")
+    assert words.OBSERVED_CHART_SUBTITLE.format(retrieved="2026-10-16 00:30") in chart.proto.spec
+    # The research history is unchanged: still through 2024-12-31 only.
+    assert "Shown through 2024-12-31." in text and words.REAL_CUTOFF in text
+    research = next(c for c in app.get("plotly_chart") if c.key == "stock-lab-price-chart")
+    assert "2025-" not in research.proto.spec and "2026-" not in research.proto.spec
+    scan_for_advice(text)
+
+
+def test_recent_prices_follow_the_dark_scheme(home, inference_home, monkeypatch):
+    from stock_agent.ui import components, theme
+
+    _real_history(home)
+    _recent_batch(inference_home)
+    light = page()
+    monkeypatch.setattr(components, "colour_scheme", lambda: "dark")
+    dark = page()
+    assert text_of(dark) == text_of(light)
+    spec = json.loads(next(c for c in dark.get("plotly_chart") if "observed" in c.key).proto.spec)
+    colours = theme.LAB_DARK_COLOURS
+    assert spec["layout"]["paper_bgcolor"] == spec["layout"]["plot_bgcolor"] == colours["surface"]
+    assert spec["data"][0]["line"]["color"] == colours["accent"]
+    for scheme in theme.SCHEMES:  # the observed line keeps 3:1 against the chart surface
+        palette = theme.LAB_PALETTES[scheme]
+        assert theme.contrast_ratio(palette["accent"], palette["surface"]) >= 3.0
+
+
+def test_an_unreadable_recent_store_is_said_never_shown(home, inference_home):
+    _real_history(home)
+    inference_home.mkdir(mode=0o700)
+    (inference_home / INFERENCE_DB_NAME).write_bytes(b"not a database at all" * 20)
+    app = page()
+    text = text_of(app)
+    assert words.OBSERVED_UNREADABLE_TITLE in text and "not_inference_store" in text
+    assert _observed_keys(app) == []
+
+
+def _recent_fixture(forecast_as_of=None, targets=()):
+    from types import SimpleNamespace
+
+    days = ["2026-10-12", "2026-10-13", "2026-10-14", "2026-10-15"]
+    return SimpleNamespace(
+        sessions=tuple(
+            SimpleNamespace(
+                session=day,
+                close=None if day == "2026-10-13" else 10.0,
+                level=None if day == "2026-10-13" else 10.0,
+                change=None,
+                notes=("gap",) if day == "2026-10-13" else (),
+                forecast_target=day in targets,
+            )
+            for day in days
+        ),
+        forecast_as_of=forecast_as_of,
+        retrieved_at="2026-10-16T00:30:00.000000Z",
+    )
+
+
+def test_the_forecast_line_is_drawn_only_inside_the_shown_sessions():
+    from stock_agent.app import stock_figures
+
+    inside = stock_figures.observed_figure(_recent_fixture("2026-10-13"))
+    assert [shape.x0 for shape in inside.layout.shapes] == [pd.Timestamp("2026-10-13")]
+    assert words.OBSERVED_FORECAST_LINE in [a.text for a in inside.layout.annotations]
+    old = stock_figures.observed_figure(_recent_fixture("2026-02-02"))  # a stale forecast
+    assert old.layout.shapes == () and not old.layout.annotations
+    assert "retrieved 2026-10-16 00:30 UTC" in old.layout.title.subtitle.text
+
+
+def test_the_observed_table_names_gaps_and_the_forecasts_targets_newest_first():
+    from stock_agent.app.stock_lab import _observed_table
+
+    table = _observed_table(_recent_fixture("2026-10-13", ("2026-10-14", "2026-10-15")))
+    assert table.index.tolist() == ["2026-10-15", "2026-10-14", "2026-10-13", "2026-10-12"]
+    notes = table["Notes"].tolist()
+    assert notes[:2] == [words.OBSERVED_FORECAST_TARGET] * 2
+    assert notes[2] == "gap" and notes[3] == "—"
+    assert table["Close as served"].tolist()[2] == "—"

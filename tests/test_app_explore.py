@@ -689,7 +689,9 @@ HEALTH_MODULES = ("stock_agent.health.model", "stock_agent.health.view")
 # descriptive views (standard library, numpy and pandas only); never its Tiingo
 # adapter, which only the owner-run fetch script uses, nor the fitted models and
 # their evaluation (logistic, evaluation, predict), whose results it reads as
-# stored records.
+# stored records. From the inference store it reads only recent observed prices
+# through the descriptive reader (decision A6), never the writer or the
+# frozen-model reader.
 STOCK_LAB_MODULES = tuple(
     f"stock_agent.stock_lab.{name}"
     for name in (
@@ -707,6 +709,8 @@ STOCK_LAB_MODULES = tuple(
         "traps",
         "scores",
         "estimators",
+        "inference.recent",
+        "inference.schema",
     )
 )
 APP_PROJECT_PREFIXES = (
@@ -717,8 +721,15 @@ APP_PROJECT_PREFIXES = (
     *STOCK_LAB_MODULES,
 )
 # Loaded with them: the health and Stock Lab packages themselves (docstrings only).
-APP_PROJECT_PACKAGES = {"stock_agent", "stock_agent.health", "stock_agent.stock_lab"}
+APP_PROJECT_PACKAGES = {
+    "stock_agent",
+    "stock_agent.health",
+    "stock_agent.stock_lab",
+    "stock_agent.stock_lab.inference",
+}
 FORBIDDEN = (
+    "stock_agent.stock_lab.inference.store",
+    "stock_agent.stock_lab.inference.window",
     "stock_agent.stock_lab.tiingo",
     "stock_agent.stock_lab.logistic",
     "stock_agent.stock_lab.evaluation",
@@ -816,7 +827,7 @@ def test_rendering_the_app_loads_no_forbidden_module():
     assert {"stock_agent.stock_lab.store", "stock_agent.stock_lab.view"} <= loaded
 
 
-@pytest.mark.parametrize("package", ["health", "stock_lab"])
+@pytest.mark.parametrize("package", ["health", "stock_lab", "stock_lab/inference"])
 def test_the_health_and_stock_lab_package_inits_import_nothing(package):
     # The app may load these packages only because their __init__ runs no import.
     source = (SOURCE / "stock_agent" / package / "__init__.py").read_text(encoding="utf-8")

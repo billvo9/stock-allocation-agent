@@ -1,7 +1,8 @@
 """
 The Stock Probability page (Streamlit): the saved watchlist, one stock's
 history, its probabilities for the next five sessions where a stored forecast
-exists, its reversals and failed breakouts, and the model diagnostics.
+exists, its recent observed prices once stored, its reversals and failed
+breakouts, and the model diagnostics.
 
 The watchlist is stored in the private SQLite store (`stock_lab.store`), so
 it survives restarts; the page writes only watchlist events there. Prices
@@ -10,7 +11,10 @@ the page never imports) or come from the synthetic demo generator, always
 labelled. Descriptive numbers are computed by `stock_lab.view` and
 `stock_lab.forecast_view` from stored history; probabilities and test
 results come only from stored, checked records (the fitted models are never
-imported here); the page lays them out.
+imported here); the page lays them out. Recent observed prices come only
+through the inference store's descriptive reader (`read_recent`, decision
+A6), which the page shows apart from the research history and never as
+research evidence.
 """
 
 from __future__ import annotations
@@ -58,15 +62,18 @@ from stock_agent.stock_lab.forecast_view import (
     streak_table,
     trap_view,
 )
+from stock_agent.stock_lab.inference.recent import RecentPrices, read_recent
 from stock_agent.stock_lab.runs import RunRule
 from stock_agent.stock_lab.store import StockLabStore
 from stock_agent.stock_lab.symbols import MAX_TICKERS_PER_PASTE, parse_tickers
 from stock_agent.stock_lab.synthetic import demo_spec, is_demo
 from stock_agent.stock_lab.view import (
+    DASH,
     TYPICAL_LABEL,
     demo_rows,
     feature_table,
     headline,
+    percent,
     price_table,
     real_bars_shown,
     recent_sessions,
@@ -321,6 +328,105 @@ def _detail(selected: Selected | None) -> None:
     if detail.limitations:
         section(words.LIMITATIONS_TITLE)
         bullets(detail.limitations)
+
+
+def _observed_table(recent: RecentPrices) -> pd.DataFrame:
+    """The recent observed sessions as text, newest first (decision A6)."""
+
+    rows = list(reversed(recent.sessions))
+    date, close, change, notes = words.OBSERVED_COLUMNS
+    return pd.DataFrame(
+        {
+            date: [row.session for row in rows],
+            close: [DASH if row.close is None else f"{row.close:,.2f}" for row in rows],
+            change: [percent(row.change, signed=True, digits=2) for row in rows],
+            notes: [
+                ", ".join(
+                    [*row.notes, *([words.OBSERVED_FORECAST_TARGET] if row.forecast_target else [])]
+                )
+                or DASH
+                for row in rows
+            ],
+        }
+    ).set_index(date)
+
+
+def _observed(store: StockLabStore, selected: Selected | None) -> None:
+    """
+    Recent observed prices from the inference store (decision A6), apart from
+    the research history and never as research evidence: only for a saved
+    real stock, and only once something is stored; otherwise a state card.
+    """
+
+    section(words.OBSERVED_TITLE, words.OBSERVED_SCOPE)
+    if selected is None:
+        say(words.DETAIL_EMPTY)
+        return
+    if selected.synthetic:
+        with ui.state_card("stock-lab-observed-demo"):
+            ui.pill("FUTURE", words.OBSERVED_DEMO_TITLE)
+            say(words.OBSERVED_DEMO)
+        return
+    latest = store.latest_forecast(selected.stock_id)
+    recent = read_recent(
+        selected.stock_id,
+        forecast_as_of=None if latest is None else latest["as_of_session"],
+        forecast_targets=() if latest is None else latest["target_sessions"],
+    )
+    if recent.state == "unreadable":
+        with ui.state_card("stock-lab-observed-unreadable"):
+            ui.pill("WARNING", words.OBSERVED_UNREADABLE_TITLE)
+            say(words.OBSERVED_UNREADABLE.format(reason=recent.reason))
+        return
+    if recent.state != "observed":
+        with ui.state_card("stock-lab-observed-empty"):
+            ui.pill("FUTURE", words.OBSERVED_NONE_TITLE)
+            say(words.OBSERVED_NONE[recent.state].format(ticker=selected.stock_id))
+        return
+    ui.pills([("NOTICE", words.OBSERVED_BADGE)])
+    retrieved = recent.retrieved_at
+    ui.stat_row(
+        [
+            ui.Stat(
+                words.OBSERVED_LAST,
+                DASH if recent.last_close is None else f"{recent.last_close:,.2f}",
+                caption=words.OBSERVED_LAST_CAPTION.format(day=recent.last_session),
+            ),
+            ui.Stat(
+                words.OBSERVED_SHOWN,
+                f"{len(recent.sessions)}",
+                caption=words.OBSERVED_SHOWN_CAPTION.format(
+                    first=recent.first_session, last=recent.last_session
+                ),
+            ),
+            ui.Stat(
+                words.OBSERVED_RETRIEVED,
+                retrieved[:16].replace("T", " "),
+                caption=words.OBSERVED_RETRIEVED_CAPTION.format(source=recent.source),
+            ),
+        ]
+    )
+    ui.chart(
+        stock_figures.observed_figure(recent, scheme=ui.colour_scheme()),
+        key=f"{PREFIX}observed-chart",
+    )
+    with st.expander(words.AS_TABLE.format(chart=words.OBSERVED_TABLE)):
+        st.table(_observed_table(recent))
+        say(words.OBSERVED_NOTES_KEY, "caption")
+    say(words.OBSERVED_CHANGE_NOTE, "caption")
+    covered = sum(row.forecast_target for row in recent.sessions)
+    if covered:
+        say(words.OBSERVED_OUTCOMES.format(count=covered, as_of=recent.forecast_as_of), "notice")
+    say(
+        words.OBSERVED_LINEAGE.format(
+            retrieved=retrieved[:16].replace("T", " "),
+            source=recent.source,
+            batches=", ".join(recent.batch_ids),
+            gaps=recent.gaps,
+            revised=recent.revised,
+        ),
+        "caption",
+    )
 
 
 def _cards(cards) -> None:
@@ -667,10 +773,12 @@ def render(
     with tabs[2]:
         _detail(selected)
     with tabs[3]:
-        _reversals(selected)
+        _observed(store, selected)
     with tabs[4]:
-        _traps(selected)
+        _reversals(selected)
     with tabs[5]:
+        _traps(selected)
+    with tabs[6]:
         _diagnostics(store, selected)
     section(wording.CANNOT_TELL_TITLE)
     say(wording.CANNOT_TELL)
