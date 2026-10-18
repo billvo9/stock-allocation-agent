@@ -28,6 +28,7 @@ from forecast_prospective_helpers import (
     prospective_store,
     prospective_tables,
     record,
+    register,
     research_batch,
     score,
     small_config,
@@ -343,7 +344,10 @@ def test_a_forecast_records_every_field_once(prospective_frozen, ledger_path, st
     entries = {str(e.ref): e.entry_sha256 for e in prospective_frozen.result.entries}
     for row in payload["rows"]:
         assert entries[f"{row['model_id']}@v{row['model_version']}"] == row["entry_sha256"]
-    assert ledger.read_ledger(ledger_path) == (entry,)
+    registration, written = ledger.read_ledger(ledger_path)
+    assert registration.kind == "registration" and written == entry
+    assert payload["registration"]["entry_sha256"] == registration.entry_sha256
+    assert payload["session"] == {"number": 1, "phase": "trial", "first_session": AS_OF}
 
 
 def test_a_second_forecast_for_the_same_session_and_version_is_refused(
@@ -353,7 +357,7 @@ def test_a_second_forecast_for_the_same_session_and_version_is_refused(
     with pytest.raises(forecast.ForecastRefused) as refused:
         record(prospective_frozen, ledger_path, store, created=CREATED + pd.Timedelta(hours=1))
     assert refused.value.reason == "duplicate_forecast"
-    assert len(ledger.read_ledger(ledger_path)) == 1
+    assert _kinds(ledger_path) == ["registration", "forecast"]
 
 
 @pytest.mark.parametrize(
@@ -370,7 +374,7 @@ def test_timing_rules_refuse_backdated_early_or_late_records(
     with pytest.raises(forecast.ForecastRefused) as refused:
         record(prospective_frozen, ledger_path, store, as_of=as_of, created=pd.Timestamp(created))
     assert refused.value.reason == reason
-    assert not ledger_path.exists()
+    assert _kinds(ledger_path) == ["registration"]
 
 
 def test_a_friday_forecast_may_be_recorded_until_monday_morning(
@@ -421,7 +425,7 @@ def test_a_loader_returning_any_row_after_the_close_is_refused(
 ):
     with pytest.raises(LeakageError, match="after the forecast close"):
         record(prospective_frozen, ledger_path, store, loader=_leaky(extra))
-    assert not ledger_path.exists()
+    assert _kinds(ledger_path) == ["registration"]
 
 
 def test_a_loader_reading_batches_retrieved_after_the_decision_is_refused(
@@ -438,7 +442,7 @@ def test_a_loader_reading_batches_retrieved_after_the_decision_is_refused(
 
     with pytest.raises(LeakageError, match="retrieved after the decision time"):
         record(prospective_frozen, ledger_path, store, loader=late)
-    assert not ledger_path.exists()
+    assert _kinds(ledger_path) == ["registration"]
 
 
 def _revising(factor: float, after: str):
@@ -530,12 +534,18 @@ def test_window_features_equal_the_features_of_the_full_history(store):
 # --- an incomplete window is refused, never median-filled ---
 
 
-@pytest.mark.parametrize("missing", [["2026-09-15"], [AS_OF]])
+# Session 1 needs every fund's complete window (section 4), so each test records session 1
+# from the complete store first; the gap then falls on a later session.
+LATER, LATER_CREATED = "2026-10-15", pd.Timestamp("2026-10-15T23:00:00Z")
+
+
+@pytest.mark.parametrize("missing", [["2026-09-15"], [AS_OF], [LATER]])
 def test_an_asset_with_a_missing_close_is_refused_not_filled(
-    prospective_frozen, ledger_path, tmp_path, missing
+    prospective_frozen, ledger_path, tmp_path, store, missing
 ):
     gap = prospective_store(tmp_path / "gap", edit=without_close("VTI", missing))
-    entry = record(prospective_frozen, ledger_path, gap)
+    first = record(prospective_frozen, ledger_path, store)  # session 1, complete
+    entry = record(prospective_frozen, ledger_path, gap, as_of=LATER, created=LATER_CREATED)
     assert entry.kind == "forecast"
     rows = pd.DataFrame(entry.payload["rows"])
     assert set(rows["asset"]) == {"AGG", "SHV"}  # no VTI row, filled or otherwise
@@ -551,12 +561,15 @@ def test_an_asset_with_a_missing_close_is_refused_not_filled(
     assert [(m["fund_id"], m["session_date"][:10]) for m in data["missing"]] == [
         ("VTI", day) for day in missing
     ]
-    written, _ = score(ledger_path, "2026-12-31", "2027-01-01T00:00:00Z", gap)
-    assert set(pd.DataFrame(written.payload["scores"])["asset"]) == {"AGG", "SHV"}
+    written, _ = score(ledger_path, "2026-12-31", "2027-01-01T00:00:00Z", store)
+    scored = pd.DataFrame(written.payload["scores"])
+    later = scored["forecast_entry_sha256"] == entry.entry_sha256
+    assert set(scored.loc[later, "asset"]) == {"AGG", "SHV"}
+    assert set(scored.loc[~later, "forecast_entry_sha256"]) == {first.entry_sha256}
 
 
 def test_when_every_asset_is_incomplete_a_refusal_is_recorded_never_a_forecast(
-    prospective_frozen, ledger_path, tmp_path
+    prospective_frozen, ledger_path, tmp_path, store
 ):
     def edit(retrieval, tables):
         for fund in ASSETS:
@@ -564,12 +577,25 @@ def test_when_every_asset_is_incomplete_a_refusal_is_recorded_never_a_forecast(
         return tables
 
     gap = prospective_store(tmp_path / "gaps", edit=edit)
-    entry = record(prospective_frozen, ledger_path, gap)
+    first = record(prospective_frozen, ledger_path, store)  # session 1, complete
+    entry = record(prospective_frozen, ledger_path, gap, as_of=LATER, created=LATER_CREATED)
     assert entry.kind == "refusal"
     assert "rows" not in entry.payload
     assert {r["asset"] for r in entry.payload["refusals"]} == set(ASSETS)
-    assert [e.kind for e in ledger.read_ledger(ledger_path)] == ["refusal"]
-    assert forecast.pending_rows(ledger.read_ledger(ledger_path)) == []
+    assert entry.payload["session"]["number"] == 2
+    assert _kinds(ledger_path) == ["registration", "forecast", "refusal"]
+    pending = forecast.pending_rows(ledger.read_ledger(ledger_path))
+    assert {e.entry_sha256 for e, _ in pending} == {first.entry_sha256}
+
+
+def test_a_first_session_with_an_incomplete_window_records_nothing(
+    prospective_frozen, ledger_path, tmp_path
+):
+    gap = prospective_store(tmp_path / "gap", edit=without_close("VTI", ["2026-09-15"]))
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        record(prospective_frozen, ledger_path, gap)
+    assert refused.value.reason == "not_first_eligible_close"
+    assert _kinds(ledger_path) == ["registration"]
 
 
 # --- the ledger refuses edits ---
@@ -577,6 +603,10 @@ def test_when_every_asset_is_incomplete_a_refusal_is_recorded_never_a_forecast(
 
 def _lines(path):
     return path.read_text(encoding="utf-8").splitlines(keepends=True)
+
+
+def _kinds(path):
+    return [entry.kind for entry in ledger.read_ledger(path)]
 
 
 @pytest.fixture
@@ -595,8 +625,8 @@ def two_entry_ledger(prospective_frozen, ledger_path, store):
 @pytest.mark.parametrize("edit", ["value", "reorder", "remove_first", "partial"])
 def test_the_ledger_refuses_edits(prospective_frozen, two_entry_ledger, store, edit):
     lines = _lines(two_entry_ledger)
-    if edit == "value":
-        lines[0] = lines[0].replace('"as_of_session":"2026-10-14"', '"as_of_session":"2026-10-13"')
+    if edit == "value":  # line 0 is the registration, line 1 the first forecast
+        lines[1] = lines[1].replace('"as_of_session":"2026-10-14"', '"as_of_session":"2026-10-13"')
     elif edit == "reorder":
         lines = [lines[1], lines[0]]
     elif edit == "remove_first":
@@ -620,11 +650,11 @@ def test_an_edit_that_rehashes_its_own_line_still_breaks_the_chain(two_entry_led
     from stock_agent.model_diagnostics.record import canonical_json, sha256_json
 
     lines = _lines(two_entry_ledger)
-    first = json.loads(lines[0])
+    first = json.loads(lines[1])  # the first forecast (line 0 is the registration)
     first.pop("entry_sha256")
     first["payload"]["rows"][0]["point"] = 0.5
     first["entry_sha256"] = sha256_json(first)
-    lines[0] = canonical_json(first) + "\n"
+    lines[1] = canonical_json(first) + "\n"
     two_entry_ledger.write_text("".join(lines), encoding="utf-8")
     with pytest.raises(ledger.LedgerError, match="breaks the chain"):
         ledger.read_ledger(two_entry_ledger)
@@ -643,7 +673,7 @@ def test_a_kept_head_detects_a_removed_last_line(two_entry_ledger):
     ledger.check_head(entries, kept)
     two_entry_ledger.write_text("".join(_lines(two_entry_ledger)[:-1]), encoding="utf-8")
     truncated = ledger.read_ledger(two_entry_ledger)  # the chain alone cannot see it
-    assert len(truncated) == 1
+    assert len(truncated) == 2
     with pytest.raises(ledger.LedgerError, match="not in the ledger"):
         ledger.check_head(truncated, kept)
 
@@ -691,7 +721,7 @@ def test_a_matured_forecast_is_scored_once_and_never_edited(prospective_frozen, 
     again, _ = score(ledger_path, "2026-10-23", "2026-10-24T00:00:00Z", store)
     assert again is None
     entries = ledger.read_ledger(ledger_path)
-    assert entries[0] == forecast_entry
+    assert entries[1] == forecast_entry
     final, left = score(ledger_path, "2026-12-31", "2027-01-01T00:00:00Z", store)
     assert len(final.payload["scores"]) == 12 and not left
     assert len(forecast.scored_keys(ledger.read_ledger(ledger_path))) == 18
@@ -758,6 +788,7 @@ def test_a_zero_volatility_outcome_is_scored_outside_the_band(
 
 def test_models_registered_after_the_forecast_are_refused(prospective_frozen, ledger_path, store):
     models = prospective_frozen.models()
+    register(models, ledger_path)  # the registration itself is of the real registry entries
     later = {
         key: {**value, "registered_at": "2026-10-15T00:00:00+00:00"}
         for key, value in models.entries.items()

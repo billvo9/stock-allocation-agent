@@ -44,7 +44,7 @@ The owner's principles (2026-10-17, verbatim), which these rules make exact:
 **How it is registered:**
 1. A registration pull request adds one record of those hashes. The owner merges it to `main`.
 2. **The registration time is GitHub's merge time of that pull request.** It is a third-party timestamp; a local commit date can be set to anything.
-3. The ledger's first entry is a registration entry that points to the registration commit and the bundle. That entry kind does not exist yet and must be built before activation (section 12).
+3. The ledger's first entry is a registration entry that points to the registration commit and the bundle. That entry kind is built (section 12); nothing is registered.
 
 **What counts as a new registration.** Any change to the code that produces or scores forecasts, the config, the training-data fingerprint, the band method or the zero-volatility rule.
 - The earlier registration's record closes at the last session it recorded.
@@ -241,12 +241,56 @@ A model is **prospectively validated for volatility forecasting of fund A at hor
 
 **Neither a pass nor a fail authorizes** allocation decisions, recommendations or paper trading. Each needs its own owner decision.
 
-## 12. What is not built yet (needed before activation, each reviewed separately)
+## 12. Engineering prerequisites before activation (each reviewed separately)
 
-- A registration entry kind in the ledger (section 1) and the registration record file.
-- Cadence-aware Model Health: today `forecast.ledger_sessions` expects every session, which matches section 3, but it does not yet know session 1, the trial or the phase sessions.
-- The zero-volatility rule as a registered config key, so that the config hash states the rule (`docs/research/zero_vol_floor.md`, section 7).
-- The checkpoint analysis: non-overlapping selection, the HAC sensitivity, Holm, the exact binomial test and C1–C4. `registration.py` holds only the arithmetic of this document.
+**Built (2026-10-17; inactive: nothing is registered, frozen or recorded):**
+- **The registration entry kind and the record file** (sections 1 and 4; `src/stock_agent/forecasting/prospective/registration_record.py`).
+  - `forecast_prospective.py registration-record` writes the record a registration pull request adds (`docs/research/registrations/<bundle_id>.json`).
+  - `register` appends the ledger's `registration` entry with the merge commit and GitHub's merge time, given by hand and never fetched. It first checks, from the local repository:
+    - that the file in the merge commit is identical;
+    - that the record's tree ids are the bundle's commit's and the merge commit's;
+    - that the merge time is not before the merge commit's own time;
+    - that the registration document's commit is in the merge commit's history.
+  - One registration per ledger: a new registration starts a new ledger, so two are never pooled.
+  - The forecast job refuses a forecast before the registration (`not_registered`). It also refuses:
+    - a close not after the registration time (`before_registration`);
+    - a session 1 whose window is incomplete for any fund, or uses a batch with no recorded spot check against the owner's anchors (`not_first_eligible_close`; nothing is recorded);
+    - a tampered entry, or a ledger record that differs from the record file in its registration commit (`registration_tampered`);
+    - a second record for a session already recorded or refused (`duplicate_forecast`).
+  - **A change is detected, not just recorded.** The job compares the bundle, its registry entries, the config hash, the training-data fingerprint, the band method and the zero-volatility rule with the record.
+    - It also compares the Git object ids of the code that produces or scores forecasts (`src`, `scripts/forecast_prospective.py`, `configs/prospective`, `pyproject.toml`, `requirements.txt`) with those of the bundle's freeze commit. It refuses any difference, any uncommitted change, and a package imported from another checkout than the one checked (`registration_mismatch`).
+    - Scoring checks the running code, the registered rule, and each pending forecast's bundle manifest and config hash against the record.
+    - **Operational consequence.** Any later change under those paths on `main`, even an unrelated one, is a code change. The job must run from a checkout pinned at the registration commit, and the registration pull request must leave those paths as they were at the freeze.
+- **Cadence-aware Model Health** (sections 3 and 5): `forecast.ledger_trial`, with `src/stock_agent/forecasting/prospective/cadence.py`.
+  - It reports session 1 (the first record after the registration), the trial (sessions 1–20) and the confirmatory phase (from session 21).
+  - Each section 5 condition is a structured diagnostic line: a chain break, a failed or unresolved kept head, a missed, refused or out-of-window record, and a fund without forecast rows for more than 2 consecutive expected sessions. It fails during the trial and is degraded after it (C3).
+  - It reports only: it never decides, voids or writes. `forecast.ledger_sessions` expects every session from session 1.
+  - It judges the kept head when it runs. A lapse repaired after its deadline but before the next run is not seen, because the head history file is not read.
+- **The zero-volatility rule as a registered config key** (`zero_volatility_rule: current_drop_and_miss`, `docs/research/zero_vol_floor.md`, section 7). The config hash changed from `ae5d5853…` to `dba70fc2…`; no registration existed.
+
+**Not built yet:**
+- The checkpoint analysis: non-overlapping selection, the HAC sensitivity, Holm, the exact binomial test and C1–C4. `registration.py` holds only the arithmetic of this document. It waits on the decisions in section 13.
+- **Exchange-calendar coverage beyond 2027.** The rules calendar (`nyse_full_day_rules_2003_2027_v1`) ends on 2027-12-31, 306 sessions after H_end.
+  - C12 (session 272) is reachable only if session 1 is no later than 2026-12-02. C24 (session 524) and every outcome exiting in 2028 are not reachable.
+  - Extending the calendar is a change under `src`, and so a new registration. It must therefore be built before the freeze.
+
+**Readings built into the code, to confirm with section 13, item 1** (none changes this document's rules):
+- **"The owner's spot checks of that batch passed" (section 4).** It is read as: every batch in session 1's window records an anchors file (`anchors_sha256`). The store keeps distributions only after the spot check against those anchors. Later sessions do not repeat this check.
+- **Session 1 is the first record after the registration.** The operator can still choose the start by not running on an eligible close (section 4, condition 3). An alternative is to fix session 1 as the first eligible close after `register`, recorded or not.
+- **A data gap takes the phase of its first session.** A fund without rows on sessions 19–21 is a trial condition, although it first exceeds 2 sessions at session 21.
+- **Kept-head phases.**
+  - An unresolved kept head takes the phase of the session whose deadline passed.
+  - A failed one takes the phase of the latest due session.
+  - Both count as trial conditions before session 1.
+- **A refused session stays refused.** The job does not record a forecast after a refusal for the same session; section 3 counts the refusal as the session's record.
+- **A whole-session refusal for a duplicate leaves the session recorded.** It is therefore never a void.
+- **One registration per ledger.**
+  - A new registration starts a new ledger, so an earlier registration "closes" when its ledger stops receiving records.
+  - The code does not stop an old checkout from continuing to append to an old ledger.
+- **Package versions are not compared.** The installed versions and the Python version are not compared with the registration; only the dependency pin files are.
+
+**For the owner to decide before activation:**
+- **Unscheduled exchange closures.** The rules calendar cannot know an unscheduled full-day closure. Every fund would lack that close, so its window and the next 63 sessions' windows are incomplete. That is a void during the trial, and after it about 13% of the sessions to C24, beyond C3's 5%. Adding the closure to the calendar is a code change, so a new registration. A rule is needed before activation.
 
 ## 13. Decisions for the owner
 

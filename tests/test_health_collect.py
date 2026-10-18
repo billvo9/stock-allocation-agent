@@ -76,6 +76,7 @@ PRIVATE_CHECKS = [
     "forecast.ledger_backup",
     "forecast.ledger_sessions",
     "forecast.ledger_scores",
+    "forecast.ledger_trial",
     "portfolio.turnover",
     "portfolio.costs",
     "portfolio.concentration",

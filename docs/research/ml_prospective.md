@@ -19,6 +19,8 @@ Recorded verbatim in `docs/PROJECT_STATE.md`, "prospective forecasting track":
 | Step | Command | Reads | Writes (once) |
 |---|---|---|---|
 | Freeze | `forecast_prospective.py freeze --research-store <F1 store>` | The F1 research store (sessions to 2024-12-31) | `reports/ml/prospective/`: the experiment run, the frozen bundle, six registry entries |
+| Registration record | `forecast_prospective.py registration-record --bundle <bundle> --registration-doc-commit <commit>` | The bundle and registry; the tree ids of the registered code paths at the bundle's commit | `docs/research/registrations/<bundle_id>.json`, added by a registration pull request (nothing is registered) |
+| Register | `forecast_prospective.py register --bundle <bundle> --record <file> --registration-commit <merge commit> --registered-at <GitHub merge time>` | The record, checked against the bundle, the running code and the file in the merge commit | The ledger's first entry, `registration` |
 | Forecast | `forecast_prospective.py forecast --bundle <bundle> --store-root <store> --forecast-close <date>` | The bundle and registry; the prospective store through `load_inference_window(..., retrieved_by=created_at)` | One `forecast` entry in the ledger (or a `refusal` when every asset's window is incomplete) |
 | Score | `forecast_prospective.py score --store-root <store> --score-close <date>` | The ledger; the prospective store through the same loader | One `score` entry for the rows that matured |
 | Report | `forecast_prospective.py report` | The ledger | Nothing |
@@ -27,9 +29,10 @@ Recorded verbatim in `docs/PROJECT_STATE.md`, "prospective forecasting track":
 
 1. Store the approved pre-2025 batch in the F1 research store.
 2. Freeze once: `freeze --research-store <root>`. Expect six entries at `engineering_only`.
-3. Once the prospective store holds the latest complete session, record the forecast as of that session. Run it between 18:00 New York that day and 09:30 New York the next weekday.
-4. Keep a copy of the printed ledger head hash outside the ledger (removing the last line is undetectable otherwise). `report --expect-head <hash>` refuses a ledger that no longer holds it.
-5. Later, `score --score-close <latest session>` and `report`.
+3. Register (`docs/research/prospective_registration.md`, sections 1 and 4): write the record with `registration-record`, open the registration pull request that adds it, and after the owner merges it run `register` with the merge commit and GitHub's merge time. The job refuses every forecast before this entry (`not_registered`).
+4. Once the prospective store holds the latest complete session, record the forecast as of that session. Run it between 18:00 New York that day and 09:30 New York the next weekday, from a clean checkout whose registered code paths match the registration (`registration_mismatch` otherwise). The first record (session 1) needs a close after the registration time (`before_registration`) and every fund's complete, spot-checked window (`not_first_eligible_close`); nothing is recorded otherwise.
+5. Keep a copy of the printed ledger head hash outside the ledger (removing the last line is undetectable otherwise). `report --expect-head <hash>` refuses a ledger that no longer holds it.
+6. Later, `score --score-close <latest session>` and `report`.
 
 The ledger defaults to `data/raw/prospective_forecasts/ledger.jsonl`. It is private and ignored by Git, and it is a sibling of any `data/raw/prospective/` store root, so a fail-closed store reader never sees it.
 
@@ -123,7 +126,8 @@ So 80% is a target, not a guarantee. The sequential development estimate has the
 
 ## The ledger
 
-- **Format.** One canonical JSON line per entry: `sequence`, `kind` (`forecast` or `score`), `recorded_at`, `payload`, `prev_entry_sha256` and `entry_sha256`, the SHA-256 of every other field.
+- **Format.** One canonical JSON line per entry: `sequence`, `kind` (`registration`, `forecast`, `score` or `refusal`), `recorded_at`, `payload`, `prev_entry_sha256` and `entry_sha256`, the SHA-256 of every other field.
+- **Registration.** The first entry, and the only registration in its ledger: a new registration starts a new ledger, so two are never pooled (`registration_record.py`). It holds the record (bundle manifest, the six registry entries, config hash, training-data fingerprint, band method, zero-volatility rule, code commit and tree ids, the registration document's commit), its hash, the merge commit and the registration time. Never vendor data or the head hash.
 - **What is refused on read:**
   - an edited, inserted, removed or reordered line;
   - a non-canonical line;
@@ -149,6 +153,7 @@ Per asset × horizon × target:
 Per record:
 - `as_of_session`, `created_at`, `close_available_at` and `record_deadline`;
 - the bundle id, manifest hash, config hash and status, and the zero-volatility rule the bundle was trained under (`bundle.zero_volatility_rule`);
+- the registration it was recorded under (`registration`: entry and record hashes, merge commit, time) and its session (`session`: number, `trial` or `confirmatory`, and session 1), forecast schema 1.2;
 - the window fingerprint, the calendar id, `retrieved_by`, 63 returns from 64 closes, and the window's `batches`, `missing`, `revisions` and `complete` flag;
 - any refused assets (`refusals`), the code state, the conventions and the fixed labels.
 
@@ -158,7 +163,7 @@ Per record:
 - **When a row waits.** A row whose inputs are incomplete (a missing close in its window) is left pending with its reason, never scored as missing.
 - **Zero realized volatility.** If every return in a volatility outcome's window is 0 (possible for SHV, whose close moves in $0.01 steps), the log volatility is minus infinity, below every band. It is scored as outside the band, with no error, and never left pending: leaving such outcomes out would bias coverage upward.
   - Every scored volatility row also records the zero-volatility rule, `sigma_raw`, `measured_zero`, `floored`, `sigma_floor`, the `as_of_close` used and whether the store has since revised it (score schema 1.1).
-  - Scoring refuses any rule other than the forecast's bundle rule (`zero_vol_rule_not_trained`), and a ledger is never scored under two rules (`zero_vol_rule_mismatch`).
+  - Scoring refuses any rule other than the forecast's bundle rule (`zero_vol_rule_not_trained`), and a ledger is never scored under two rules (`zero_vol_rule_mismatch`). The rule is the registration's, and scoring refuses any other (`zero_vol_rule_mismatch`), code other than the registered code and forecasts from another bundle or config (`registration_mismatch`). Each score entry records its registration (score schema 1.2).
   - The research-only floor B2 and its development check are in `docs/research/zero_vol_floor.md`. The rule in force is unchanged until the owner decides.
 - **The cumulative report.** Each scoring run stores it:
   - per variant (bundle, config hash, model id and version), asset, horizon and target: n, hits, coverage and a Wilson 95% interval. A re-freeze is never pooled with earlier forecasts;
@@ -213,7 +218,7 @@ These synthetic numbers verify the pipeline. They are not evidence about the fun
 
 - Kupiec (unconditional) and Christoffersen (independence) coverage tests per asset, once enough non-overlapping scores exist.
 - Diebold-Mariano or Clark-West comparisons of the model and the null on the prospective record, after a pre-registered burn-in.
-- A pre-registered forecasting cadence, so missed sessions are visible as gaps: proposed in `docs/research/prospective_registration.md` (every session, 18 forecasts), awaiting approval.
+- A pre-registered forecasting cadence, so missed sessions are visible as gaps: proposed in `docs/research/prospective_registration.md` (every session, 18 forecasts), awaiting approval. Model Health's `forecast.ledger_trial` already reports session 1, the trial and section 5's conditions from a registered ledger.
 - Fund-level evidence rules (owner decision) before any fund entry can reach `development_evaluated`.
 - **Owner decision before freezing on real data: flat windows.** Options considered:
   - keep dropping them, with the count reported;

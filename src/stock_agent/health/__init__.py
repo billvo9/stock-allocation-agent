@@ -23,7 +23,8 @@ Modules:
     registry      registry health through the ML track's read API, with each
                   version's stage and blockers
     forecast      forecast coverage and calibration from the registry export
-    ledger        the prospective forecast ledger: chain, kept head, sessions
+    ledger        the prospective forecast ledger: chain, kept head, sessions,
+                  scores, the registered trial and its void conditions
     backtest      portfolio limits from a backtest summary
     policy        constraint violations, fallback decisions and risk-diagnostics
                   availability from backtest summaries and RL evaluations

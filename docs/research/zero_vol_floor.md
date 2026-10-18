@@ -1,6 +1,6 @@
 # Zero realized volatility: the floor decision (rule B2)
 
-Status (2026-10-17): research only, for the owner's decision. Rule B2 is implemented as an explicitly named, non-default option (`zero_vol.B2`, `"research_b2_half_tick_floor"`). The rule in force is unchanged (`zero_vol.CURRENT`, `"current_drop_and_miss"`), and the forecast job, `freeze` and every default use it. The registered config `etf_prospective_v1` is unchanged; a test pins its hash (`ae5d5853…`). Nothing has been frozen and no real data has been read. The development-data check (section 6) runs once the owner approves storing the pre-2025 VTI/AGG/SHV batch.
+Status (2026-10-17): research only, for the owner's decision. Rule B2 is implemented as an explicitly named, non-default option (`zero_vol.B2`, `"research_b2_half_tick_floor"`). The rule in force is unchanged (`zero_vol.CURRENT`, `"current_drop_and_miss"`), and the forecast job, `freeze` and every default use it. The registered config `etf_prospective_v1` names the rule in force (`zero_volatility_rule: current_drop_and_miss`), so its hash states the rule; a test pins the new hash (`dba70fc2…`) and that the key is its only change from the previous hash (`ae5d5853…`). Nothing has been frozen and no real data has been read. The development-data check (section 6) runs once the owner approves storing the pre-2025 VTI/AGG/SHV batch.
 
 Revised 2026-10-17 after an independent review, still before any real data existed:
 - scoring now refuses any rule other than the bundle's training rule;
@@ -210,7 +210,7 @@ What the criteria guard against:
 - The development coverage is computed on folds from 2010 to 2024. The sealed period (2025-01-01 to H_end) is never used to choose or check the floor.
 - Marginal coverage can pass while zero rows stay under-covered (section 5). The zero/non-zero split is reported so that this is visible. It is not a criterion, because no fixed threshold for it was justified in advance.
 - A floored label is a modeling convention, not a measurement: ln(sigma_floor,h) says "below half a tick", not "this was the volatility".
-- On approval, the rule must enter the registered configuration (a new key), so that the config hash and every bundle state which rule they used. That is a config-schema change, a new registered variant before any freeze, with its own review.
+- The rule is a registered config key, `zero_volatility_rule`, so the config hash and every bundle state which rule they used. It names the rule in force: only `zero_vol.REGISTRABLE` (the rule in force alone) may be named, frozen or registered, `freeze` and `forecast` refuse a config whose rule differs from the bundle's (`zero_vol_rule_mismatch`). `score` refuses any rule other than the registration's, which equals the config key and every fit's rule, or than each pending forecast's bundle rule. The job's CLI has no option that selects a rule. On approval of B2, B2 would join `REGISTRABLE` and the config would name it: a new registered variant before any freeze, with its own review.
 
 ## 8. Learning Notes
 

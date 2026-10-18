@@ -22,7 +22,13 @@ from stock_agent.data.funds.schema import Instrument
 from stock_agent.data.prospective.inference import load_inference_window
 from stock_agent.data.prospective.store import ProspectiveBatch, ingest_prospective
 from stock_agent.data.prospective.window import WINDOW_START
-from stock_agent.forecasting.prospective import forecast, freeze, synthetic, window
+from stock_agent.forecasting.prospective import (
+    forecast,
+    freeze,
+    registration_record,
+    synthetic,
+    window,
+)
 from stock_agent.forecasting.prospective.config import ProspectiveConfig, parse_config
 from stock_agent.registry import open_registry
 
@@ -37,6 +43,18 @@ STARTED = datetime(2026, 10, 14, 12, tzinfo=UTC)
 REGISTERED_AT = datetime(2026, 10, 14, 13, tzinfo=UTC)
 AS_OF = "2026-10-14"  # H_end, a Wednesday
 CREATED = pd.Timestamp("2026-10-14T23:00:00Z")  # 19:00 New York, after the 18:00 close rule
+# Invented Git object ids: the code the fixture bundle was frozen from, and the running code.
+CODE_TREES = {
+    path: f"{index + 1:040x}" for index, path in enumerate(registration_record.CODE_PATHS)
+}
+RUN_CODE = {**PROVENANCE["code"], "trees": CODE_TREES, "trees_dirty": False}
+DOCUMENT_COMMIT = "d" * 40  # the commit of docs/research/prospective_registration.md
+REGISTRATION_COMMIT = "e" * 40  # the registration pull request's merge commit
+# GitHub's merge time of the registration pull request: after the fixture's freeze
+# (REGISTERED_AT) and before 18:00 New York on AS_OF, so AS_OF is the first eligible close.
+REGISTRATION_TIME = pd.Timestamp("2026-10-14T14:00:00Z")
+REGISTERED_RECORDED = pd.Timestamp("2026-10-14T15:00:00Z")  # when the entry was appended
+RECORD_PATH = "docs/research/registrations/fixture.json"
 
 
 def registered_raw() -> dict:
@@ -194,6 +212,35 @@ def without_close(fund: str, sessions: list[str], from_retrieval: str = RETRIEVA
     return edit
 
 
+def registration(models: forecast.Models) -> dict:
+    """The fixture's registration record for `models`."""
+
+    return registration_record.build_record(
+        models, code_trees=CODE_TREES, registration_document_commit=DOCUMENT_COMMIT
+    )
+
+
+def register(
+    models: forecast.Models,
+    ledger_path: Path,
+    *,
+    registered_at=REGISTRATION_TIME,
+    recorded_at=REGISTERED_RECORDED,
+):
+    """Append the registration entry (the ledger's first) for `models`."""
+
+    return registration_record.register(
+        ledger_path,
+        registration(models),
+        models,
+        record_path=RECORD_PATH,
+        registration_commit=REGISTRATION_COMMIT,
+        registered_at=registered_at,
+        recorded_at=recorded_at,
+        code=RUN_CODE,
+    )
+
+
 def record(
     frozen: Frozen,
     ledger_path: Path,
@@ -203,15 +250,23 @@ def record(
     created=CREATED,
     loader=load_inference_window,
     models=None,
+    code=None,
 ):
+    """One forecast; a ledger with no entry is first registered for these models."""
+
+    models = frozen.models() if models is None else models
+    # Only a new or empty ledger is registered first: the job itself reads (and refuses)
+    # anything else.
+    if not Path(ledger_path).exists() or Path(ledger_path).stat().st_size == 0:
+        register(models, ledger_path)
     return forecast.record_forecast(
-        frozen.models() if models is None else models,
+        models,
         loader=loader,
         store_root=store,
         forecast_close=as_of,
         ledger_path=ledger_path,
         created_at=created,
-        code=PROVENANCE["code"],
+        code=RUN_CODE if code is None else code,
         calendar=exchange_calendar,
     )
 
@@ -223,6 +278,6 @@ def score(ledger_path: Path, score_close: str, scored_at: str, store: Path):
         store_root=store,
         score_close=score_close,
         scored_at=pd.Timestamp(scored_at),
-        code=PROVENANCE["code"],
+        code=RUN_CODE,
         calendar=exchange_calendar,
     )

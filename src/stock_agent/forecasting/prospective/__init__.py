@@ -13,6 +13,13 @@ Modules:
     freeze      develop, refit, write and register, once
     window      the inference-window contract and timing conventions
     ledger      the write-once, hash-chained forecast ledger
+    registration_record
+                the registration record and the ledger's registration entry
+    cadence     session 1, the trial and section 5's conditions (diagnostics)
     forecast    forecast records, scoring of matured records, coverage report
+    refusal     the track's machine-readable refusal
+    zero_vol    zero realized volatility: the rule in force and research B2
+    registration
+                the arithmetic of the proposed registration rules
     synthetic   fixtures (tests and demonstrations only)
 """

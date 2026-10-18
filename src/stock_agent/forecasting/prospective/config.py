@@ -4,8 +4,9 @@ The prospective track's registered configuration: strict YAML and its hash.
 One config file (configs/prospective/etf_prospective_v1.yaml) pre-registers every
 choice before the first forecast: assets, horizons, targets, features, the
 training window, the fold geometry, the ridge grid, the band method and
-level, the prospective timing conventions and the fixed labels. Unknown keys
-are errors. The config hash is the SHA-256 of the canonical JSON of the
+level, the zero-volatility rule (`zero_volatility_rule`: the rule in force,
+since only zero_vol.REGISTRABLE may be named), the prospective timing
+conventions and the fixed labels. Unknown and missing keys are errors. The config hash is the SHA-256 of the canonical JSON of the
 parsed config, so formatting and key order do not change it. Changing any
 value is a new variant: it registers new model versions, which the registry
 counts (forecasting.metrics.prior_trials).
@@ -22,6 +23,7 @@ import yaml
 
 from stock_agent.forecasting.config import NAME_PATTERN, ConfigError
 from stock_agent.forecasting.etf_data import CONTRACTS_BY_NAME
+from stock_agent.forecasting.prospective import zero_vol
 from stock_agent.model_diagnostics.nested import RIDGE_GRID
 from stock_agent.model_diagnostics.record import sha256_json
 from stock_agent.model_validation.folds import MODEL_HOLDOUT_START
@@ -201,6 +203,7 @@ class ProspectiveConfig:
     horizons: tuple[int, ...]
     entry_lag: int
     targets: tuple[str, ...]
+    zero_volatility_rule: str
     features: tuple[str, ...]
     data: DataSection
     folds: FoldSection
@@ -225,6 +228,19 @@ class ProspectiveConfig:
     @property
     def h_end(self) -> pd.Timestamp:
         return _date(self.prospective.h_end, "prospective.h_end")
+
+
+def _zero_volatility_rule(value: object) -> str:
+    if not isinstance(value, str) or value not in zero_vol.RULES:
+        raise ConfigError(
+            f"unknown zero-volatility rule {value!r}; expected one of {zero_vol.RULES}."
+        )
+    if not zero_vol.registrable(value):
+        raise ConfigError(
+            f"zero_volatility_rule {value!r} is research only (not approved by the owner); a "
+            f"registered config may name only {zero_vol.REGISTRABLE}."
+        )
+    return value
 
 
 def parse_config(raw: Mapping[str, object]) -> ProspectiveConfig:
@@ -264,6 +280,7 @@ def parse_config(raw: Mapping[str, object]) -> ProspectiveConfig:
         horizons=horizons,
         entry_lag=_int(raw["entry_lag"], "entry_lag", 1),  # same-close labels are refused
         targets=_names(raw["targets"], "targets", TARGETS),
+        zero_volatility_rule=_zero_volatility_rule(raw["zero_volatility_rule"]),
         features=features,
         data=_section(DataSection, raw["data"], "data"),
         folds=_section(FoldSection, raw["folds"], "folds"),

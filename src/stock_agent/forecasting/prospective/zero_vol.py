@@ -32,6 +32,12 @@ B2, "research_b2_half_tick_floor" (research only; NOT approved by the owner)
 Measured zero volatility stays distinguishable from the modeling floor: every
 row records sigma_raw, measured_zero and floored under either rule. Where a
 row is not floored, B2's y is the current rule's y bit for bit.
+
+The registered config names its rule (`zero_volatility_rule`), so the config
+hash states it. Only a rule in REGISTRABLE may be named there, frozen or
+registered: the rule in force alone. B2 joins it only on the owner's approval
+(docs/research/zero_vol_floor.md); until then research code selects B2 by an
+explicit argument, never through the config, the job's CLI or freeze.
 """
 
 from __future__ import annotations
@@ -46,6 +52,7 @@ CURRENT = "current_drop_and_miss"
 B2 = "research_b2_half_tick_floor"
 RULES = (CURRENT, B2)
 DEFAULT = CURRENT
+REGISTRABLE = (CURRENT,)  # B2 is research only: not approved by the owner
 TICK = 0.01  # dollars: the price grid of the funds' closes
 DIAGNOSTIC_COLUMNS = ("sigma_raw", "measured_zero", "floored", "sigma_floor")
 DESCRIPTIONS = {
@@ -64,6 +71,12 @@ def check_rule(rule: str) -> str:
     if rule not in RULES:
         raise ValueError(f"Unknown zero-volatility rule {rule!r}; expected one of {RULES}.")
     return rule
+
+
+def registrable(rule: str) -> bool:
+    """Whether `rule` may be named by a registered config, frozen or registered."""
+
+    return check_rule(rule) in REGISTRABLE
 
 
 def sigma_floor(as_of_close: object, horizon: int, tick: float = TICK) -> np.ndarray:
@@ -138,10 +151,12 @@ __all__ = [
     "DEFAULT",
     "DESCRIPTIONS",
     "DIAGNOSTIC_COLUMNS",
+    "REGISTRABLE",
     "RULES",
     "TICK",
     "as_of_closes",
     "check_rule",
+    "registrable",
     "sigma_floor",
     "volatility_labels",
 ]

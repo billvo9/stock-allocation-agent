@@ -4,8 +4,12 @@ forecast).
 
     freeze(config, research_store_root, output_root, provenance, started_at)
 
-1. Reads the F1 research store (training.load_training_data): sessions up
-   to 2024-12-31 only.
+1. Refuses a config naming a zero-volatility rule that is not registrable
+   (`zero_vol_rule_not_registrable`: the research option B2 is never frozen),
+   then reads the F1 research store (training.load_training_data): sessions
+   up to 2024-12-31 only, labelled under the config's rule. Data labelled
+   under any other rule is refused (`zero_vol_rule_mismatch`) before
+   anything is developed, written or registered.
 2. Develops: nested purged out-of-fold predictions, bands and metrics
    (training.develop).
 3. Refits each (asset, horizon, target) once on every training row
@@ -44,8 +48,9 @@ from stock_agent.features.training import TARGET_RETURN_COLUMN
 from stock_agent.forecasting import etf_data
 from stock_agent.forecasting import metrics as em
 from stock_agent.forecasting.experiment import write_directory
-from stock_agent.forecasting.prospective import bands, frozen, training
+from stock_agent.forecasting.prospective import bands, frozen, training, zero_vol
 from stock_agent.forecasting.prospective.config import TARGET_SHORT, TRACK, ProspectiveConfig
+from stock_agent.forecasting.prospective.refusal import ForecastRefused
 from stock_agent.model_diagnostics import linear
 from stock_agent.model_diagnostics import runner as t2
 from stock_agent.model_diagnostics.record import canonical_json, run_id, sha256_json
@@ -262,7 +267,20 @@ def freeze(
     for key in ("code", "environment"):
         if key not in provenance:
             raise ValueError(f"provenance must include {key!r}.")
-    data = training.load_training_data(research_store_root, config)
+    rule = config.zero_volatility_rule
+    if not zero_vol.registrable(rule):
+        raise ForecastRefused(
+            "zero_vol_rule_not_registrable",
+            f"the config names {rule!r}, a research-only rule; only {zero_vol.REGISTRABLE} "
+            "may be frozen",
+        )
+    data = training.load_training_data(research_store_root, config, zero_vol_rule=rule)
+    if data.zero_vol_rule != rule:
+        raise ForecastRefused(
+            "zero_vol_rule_mismatch",
+            f"the training data is labelled under {data.zero_vol_rule!r}, the config names "
+            f"{rule!r}; one rule in the config, the labels and the bundle",
+        )
     dev = training.develop(data, config)
     checks = dev.checks.to_dict("records")
     fits = [
