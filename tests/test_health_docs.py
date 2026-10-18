@@ -65,7 +65,7 @@ def sections() -> dict[str, str]:
 def test_every_check_has_a_runbook_entry_and_no_entry_is_orphaned():
     anchors = sections()
     expected = {runbook_for(check_id).split("#")[1] for check_id in CHECK_IDS}
-    assert len(CHECK_IDS) == len(set(CHECK_IDS)) == 43
+    assert len(CHECK_IDS) == len(set(CHECK_IDS)) == 44
     assert set(anchors) == expected
 
 

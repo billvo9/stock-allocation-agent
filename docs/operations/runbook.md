@@ -494,7 +494,7 @@ The scheduled private run (launchd steps, outputs, keeping it private) is in
 <a id="forecast-ledger-sessions"></a>
 ### Sessions with a forecast record (`forecast.ledger_sessions`)
 
-- **What it means.** Rules-calendar sessions from the first recorded as-of session to the last one whose recording deadline (09:30 New York, next weekday) has passed, without a forecast or refusal record. No cadence is pre-registered, so every session is expected (operator default): gaps are degraded and listed.
+- **What it means.** Rules-calendar sessions from the first recorded as-of session to the last one whose recording deadline (09:30 New York, next weekday) has passed, without a forecast or refusal record. In a registered ledger the first record is session 1 and every later session is expected (the registered cadence, section 3 of `docs/research/prospective_registration.md`); without a registration every session is expected as an operator default. Gaps are degraded and listed.
 - **Likely causes.** A missed scheduled run; the job refused to record (a refusal counts as a record).
 - **Diagnose.** The detail lists the sessions without a record.
 - **Safe retry.** None for a past session: a forecast is never backdated.
@@ -508,6 +508,15 @@ The scheduled private run (launchd steps, outputs, keeping it private) is in
 - **Diagnose.** The detail lists the due rows without a score, oldest first; the score step prints the rows it leaves pending and why.
 - **Safe retry.** Run the score step after the exit session's close is stored: a row is scored once, and the ledger refuses a duplicate.
 - **Fallback.** Coverage and error reports count only scored rows; nothing is filled or estimated.
+
+<a id="forecast-ledger-trial"></a>
+### Registered trial and its void conditions (`forecast.ledger_trial`)
+
+- **What it means.** The ledger's registration, session 1 (the first record after it), the latest due session's number and phase (the trial is sessions 1-20; the confirmatory phase starts at 21), and every section 5 condition of `docs/research/prospective_registration.md`, one `condition=... phase=... session=... number=... asset=...` line each: `chain_break`, `kept_head_failed`, `kept_head_unresolved` (behind past the next recording deadline), `session_not_recorded`, `session_refused`, `record_outside_window`, `record_before_registration`, `record_off_calendar` and `data_gap` (a fund without forecast rows for more than 2 consecutive expected sessions). Failed (`trial_void_condition`) when a condition falls in the trial; degraded (`condition_after_trial`) when only later ones exist, which count against C3; failed (`records_without_registration`) when the ledger does not open with a registration; insufficient evidence before the registration (`not_registered`), before session 1 (`awaiting_session_1`) or without a usable kept head (`kept_head_not_judged`).
+- **Likely causes.** A missed or late run; every fund refused; a fund's prospective batch missing closes; the kept head not copied after an append; an edited or truncated ledger.
+- **Diagnose.** The detail lists each condition with its session and fund; `.venv/bin/python scripts/forecast_prospective.py report` prints the registration, and the job's own refusal names the reason.
+- **Safe retry.** None for a past session: a forecast is never backdated, and health never writes to the ledger.
+- **Fallback.** Health reports and changes nothing. Under section 5 a condition during the trial voids the registration; recording that and re-registering (a new registration and a new ledger) are the owner's decisions. The kept head is judged when the check runs: a lapse repaired between two runs is not seen.
 
 ## Policy limits and fallbacks (local monitor)
 

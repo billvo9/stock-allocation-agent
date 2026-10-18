@@ -168,14 +168,17 @@ def training_data(
     batches: pd.DataFrame,
     config: ProspectiveConfig,
     *,
-    zero_vol_rule: str = zero_vol.DEFAULT,
+    zero_vol_rule: str | None = None,
 ) -> TrainingData:
     """
     Frames for every (asset, horizon) from F1 research-store tables, with the
-    log-volatility label under `zero_vol_rule` (the rule in force by default;
-    `zero_vol.B2` is a research-only option the owner has not approved).
+    log-volatility label under `zero_vol_rule`: the config's registered rule
+    by default. Research code may pass `zero_vol.B2`, a research-only option
+    the owner has not approved; freeze refuses data built under any rule other
+    than the config's.
     """
 
+    zero_vol_rule = config.zero_volatility_rule if zero_vol_rule is None else zero_vol_rule
     zero_vol.check_rule(zero_vol_rule)
     last = config.training_end
     _refuse_after("price sessions", prices["session_date"], last)
@@ -298,7 +301,7 @@ def training_data(
 
 
 def load_training_data(
-    store_root, config: ProspectiveConfig, *, zero_vol_rule: str = zero_vol.DEFAULT
+    store_root, config: ProspectiveConfig, *, zero_vol_rule: str | None = None
 ) -> TrainingData:
     """`training_data` from an F1 research store, read by its fail-closed reader."""
 

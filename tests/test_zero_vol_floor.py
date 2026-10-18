@@ -23,11 +23,14 @@ import yaml
 from forecast_prospective_helpers import (
     AS_OF,
     ASSETS,
+    PROVENANCE,
     REGISTERED,
     REPO,
+    RUN_CODE,
     exchange_calendar,
     prospective_store,
     record,
+    registered_raw,
     small_config,
 )
 from prospective_helpers import batch, stored
@@ -37,8 +40,10 @@ from stock_agent.calendars import nyse_rules
 from stock_agent.data.funds.ingest import ingest_batch
 from stock_agent.data.funds.reader import read_store
 from stock_agent.data.prospective.inference import load_inference_window
+from stock_agent.forecasting.config import ConfigError
 from stock_agent.forecasting.prospective import (
     forecast,
+    freeze,
     ledger,
     registration,
     series,
@@ -46,14 +51,17 @@ from stock_agent.forecasting.prospective import (
     zero_vol,
     zero_vol_check,
 )
-from stock_agent.forecasting.prospective.config import load_config
+from stock_agent.forecasting.prospective.config import load_config, parse_config
+from stock_agent.model_diagnostics.record import sha256_json
 from stock_agent.model_validation.audit import table_sha256
 
 SCRIPT = REPO / "scripts" / "check_zero_vol_floor.py"
 ZERO_VOL_DOC = REPO / "docs" / "research" / "zero_vol_floor.md"
 REGISTRATION_DOC = REPO / "docs" / "research" / "prospective_registration.md"
-# The registered config's hash on main at b7293f9: this work must not change it.
-REGISTERED_SHA256 = "ae5d5853c40f7e65df1b990f149f0071b403dd8409fd1e66d07dee452087c31a"
+# The registered config's hash before the zero-volatility rule was a config key (main at
+# b3d5bec), and after: the key is the only change (docs/research/zero_vol_floor.md, section 7).
+PRE_KEY_SHA256 = "ae5d5853c40f7e65df1b990f149f0071b403dd8409fd1e66d07dee452087c31a"
+REGISTERED_SHA256 = "dba70fc29659de260365fbd1c5c6a95e1badcbf4d648fa377669037a89d2d6a6"
 CLOCK = datetime(2026, 10, 17, 21, 0, tzinfo=UTC)
 
 
@@ -187,10 +195,94 @@ def test_an_unknown_rule_is_refused():
 # --- training ----------------------------------------------------------------------------
 
 
-def test_the_registered_config_is_unchanged():
+def test_the_registered_config_states_the_rule_in_force_and_nothing_else_changed():
     config = load_config(REGISTERED)
-    assert config.sha256 == REGISTERED_SHA256
-    assert "zero" not in json.dumps(config.to_json())  # no zero-volatility choice in it
+    assert config.zero_volatility_rule == zero_vol.CURRENT
+    assert config.sha256 == REGISTERED_SHA256 != PRE_KEY_SHA256
+    before = config.to_json()
+    before.pop("zero_volatility_rule")
+    assert sha256_json(before) == PRE_KEY_SHA256  # every other value is as before the key
+    assert "zero" not in json.dumps(before)
+
+
+@pytest.mark.parametrize(
+    ("value", "match"),
+    [
+        (None, "missing"),
+        (zero_vol.B2, "research only"),
+        ("floor_at_one_tick", "unknown zero-volatility rule"),
+    ],
+)
+def test_the_config_refuses_a_missing_research_or_unknown_rule(value, match):
+    raw = registered_raw()
+    if value is None:
+        del raw["zero_volatility_rule"]
+    else:
+        raw["zero_volatility_rule"] = value
+    with pytest.raises(ConfigError, match=match):
+        parse_config(raw)
+
+
+def test_only_the_rule_in_force_is_registrable():
+    assert zero_vol.REGISTRABLE == (zero_vol.CURRENT,)
+    assert zero_vol.B2 in zero_vol.RULES and zero_vol.B2 not in zero_vol.REGISTRABLE
+
+
+def test_freezing_refuses_a_research_rule_before_reading_any_data(prospective_frozen, tmp_path):
+    config = dataclasses.replace(prospective_frozen.config, zero_volatility_rule=zero_vol.B2)
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        freeze.freeze(
+            config,
+            research_store_root=tmp_path / "never_read",
+            output_root=tmp_path / "out",
+            provenance=PROVENANCE,
+            started_at=CLOCK,
+        )
+    assert refused.value.reason == "zero_vol_rule_not_registrable"
+    assert not (tmp_path / "out").exists()
+
+
+def test_freezing_trains_under_the_config_rule_and_refuses_a_disagreement(
+    prospective_frozen, tmp_path, monkeypatch
+):
+    fits = prospective_frozen.result.bundle.document["fits"]
+    assert {fit["training"]["zero_volatility_rule"] for fit in fits} == {zero_vol.CURRENT}
+    assert prospective_frozen.config.zero_volatility_rule == zero_vol.CURRENT
+    real = training.load_training_data
+
+    def other_rule(store_root, config, **_):
+        return real(store_root, config, zero_vol_rule=zero_vol.B2)
+
+    monkeypatch.setattr(freeze.training, "load_training_data", other_rule)
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        freeze.freeze(
+            prospective_frozen.config,
+            research_store_root=prospective_frozen.store,
+            output_root=tmp_path / "out",
+            provenance=PROVENANCE,
+            started_at=CLOCK,
+        )
+    assert refused.value.reason == "zero_vol_rule_mismatch"
+    assert not (tmp_path / "out").exists()  # nothing written or registered
+
+
+def test_a_forecast_refuses_a_bundle_whose_rule_differs_from_its_config(
+    prospective_frozen, tmp_path, flat_store
+):
+    ledger_path = tmp_path / "ledger.jsonl"
+    record(prospective_frozen, ledger_path, flat_store)  # registered, session 1
+    trained_b2 = _with_rule(prospective_frozen.models(), zero_vol.B2, config_too=False)
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        record(
+            prospective_frozen,
+            ledger_path,
+            flat_store,
+            as_of="2026-10-15",
+            created=pd.Timestamp("2026-10-15T23:00:00Z"),
+            models=trained_b2,
+        )
+    assert refused.value.reason == "zero_vol_rule_mismatch"
+    assert [e.kind for e in ledger.read_ledger(ledger_path)] == ["registration", "forecast"]
 
 
 @pytest.fixture(scope="module")
@@ -312,7 +404,7 @@ def _score(ledger_path, store, rule=zero_vol.DEFAULT):
         store_root=store,
         score_close="2026-10-23",
         scored_at=pd.Timestamp("2026-10-23T23:00:00Z"),
-        code={"git_sha": "0" * 40},
+        code=RUN_CODE,
         calendar=exchange_calendar,
         zero_vol_rule=rule,
     )
@@ -328,11 +420,11 @@ def test_scoring_by_default_keeps_the_miss_and_records_the_flags(
 ):
     ledger_path = tmp_path / "ledger.jsonl"
     entry = record(prospective_frozen, ledger_path, flat_store)
-    assert entry.payload["forecast_schema_version"] == "1.1"
+    assert entry.payload["forecast_schema_version"] == "1.2"
     assert entry.payload["bundle"]["zero_volatility_rule"] == zero_vol.CURRENT
     assert all(row["as_of_close"] > 0 for row in entry.payload["rows"])
     written, _ = _score(ledger_path, flat_store)
-    assert written.payload["score_schema_version"] == "1.1"
+    assert written.payload["score_schema_version"] == "1.2"
     flat = _vol_scores(written).loc[("SHV", 5)]
     assert not flat["inside_band"]
     assert flat["outcome_note"] == "zero_realized_volatility" and pd.isna(flat["outcome"])
@@ -346,13 +438,27 @@ def test_scoring_by_default_keeps_the_miss_and_records_the_flags(
     assert returns.loc[returns["target"] == "total_log_return", "zero_vol_rule"].isna().all()
 
 
-def _with_rule(models: forecast.Models, rule: str) -> forecast.Models:
-    """The fixture's models as if their bundle had been trained under `rule` (freeze cannot)."""
+def _with_rule(models: forecast.Models, rule: str, *, config_too: bool = True) -> forecast.Models:
+    """
+    The fixture's models as if their bundle had been trained under `rule`
+    (freeze cannot), with the config key naming it too unless `config_too` is
+    False (a bundle that disagrees with its own config).
+    """
 
     document = copy.deepcopy(dict(models.bundle.document))
     for fit in document["fits"]:
         fit["training"]["zero_volatility_rule"] = rule
+    if config_too:
+        document["config"]["zero_volatility_rule"] = rule
+        document["config_sha256"] = parse_config(document["config"]).sha256
     return forecast.Models(dataclasses.replace(models.bundle, document=document), models.entries)
+
+
+@pytest.fixture
+def b2_approved(monkeypatch):
+    """B2 as a registrable rule, as it would be after the owner's approval (it is not)."""
+
+    monkeypatch.setattr(zero_vol, "REGISTRABLE", zero_vol.RULES)
 
 
 def test_scoring_refuses_a_rule_the_bundle_was_not_trained_under(
@@ -364,7 +470,7 @@ def test_scoring_refuses_a_rule_the_bundle_was_not_trained_under(
     with pytest.raises(forecast.ForecastRefused) as refused:
         _score(ledger_path, flat_store, zero_vol.B2)
     assert refused.value.reason == "zero_vol_rule_not_trained"
-    assert len(ledger.read_ledger(ledger_path)) == 1  # nothing written
+    assert len(ledger.read_ledger(ledger_path)) == 2  # the registration and forecast only
 
 
 def test_a_bundle_whose_fits_disagree_on_the_rule_is_refused(prospective_frozen):
@@ -377,7 +483,7 @@ def test_a_bundle_whose_fits_disagree_on_the_rule_is_refused(prospective_frozen)
 
 
 def test_a_b2_bundle_scores_a_flat_outcome_at_its_recorded_as_of_floor(
-    prospective_frozen, tmp_path, flat_store
+    prospective_frozen, tmp_path, flat_store, b2_approved
 ):
     ledger_path = tmp_path / "ledger.jsonl"
     models = _with_rule(prospective_frozen.models(), zero_vol.B2)
@@ -401,7 +507,7 @@ def test_a_b2_bundle_scores_a_flat_outcome_at_its_recorded_as_of_floor(
     assert flat["inside_band"] == (flat["band_low"] <= flat["outcome"] <= flat["band_high"])
 
 
-def test_a_revised_as_of_close_never_moves_the_floor(prospective_frozen, tmp_path):
+def test_a_revised_as_of_close_never_moves_the_floor(prospective_frozen, tmp_path, b2_approved):
     days = nyse_rules.sessions("2026-10-15", "2026-10-22")
     as_of = pd.Timestamp(AS_OF, tz="UTC").as_unit("us")
 
@@ -427,27 +533,40 @@ def test_a_revised_as_of_close_never_moves_the_floor(prospective_frozen, tmp_pat
     assert flat["sigma_floor"] != float(zero_vol.sigma_floor(recorded + 0.05, 5))
 
 
-def test_a_ledger_is_never_scored_under_two_rules(prospective_frozen, tmp_path, flat_store):
+def test_a_ledger_is_never_scored_under_two_rules(
+    prospective_frozen, tmp_path, flat_store, b2_approved
+):
     ledger_path = tmp_path / "ledger.jsonl"
-    record(prospective_frozen, ledger_path, flat_store)
+    first_forecast = record(prospective_frozen, ledger_path, flat_store)
     first, _ = forecast.score_matured(
         ledger_path=ledger_path,
         loader=load_inference_window,
         store_root=flat_store,
         score_close="2026-10-22",  # the h = 5 rows mature at the 2026-10-22 close
         scored_at=pd.Timestamp("2026-10-22T23:00:00Z"),
-        code={"git_sha": "0" * 40},
+        code=RUN_CODE,
         calendar=exchange_calendar,
     )
     assert first is not None
     later = _with_rule(prospective_frozen.models(), zero_vol.B2)
-    record(
-        prospective_frozen,
-        ledger_path,
-        flat_store,
-        as_of="2026-10-15",
-        created=pd.Timestamp("2026-10-15T23:00:00Z"),
-        models=later,
+    with pytest.raises(forecast.ForecastRefused) as refused:  # the job never records it
+        record(
+            prospective_frozen,
+            ledger_path,
+            flat_store,
+            as_of="2026-10-15",
+            created=pd.Timestamp("2026-10-15T23:00:00Z"),
+            models=later,
+        )
+    assert refused.value.reason == "registration_mismatch"
+    # A ledger holding a B2 forecast anyway (written outside the job) is still never scored
+    # under two rules.
+    planted = copy.deepcopy(dict(first_forecast.payload))
+    planted["as_of_session"] = "2026-10-15"
+    planted["forecast_id"] = "planted_b2"
+    planted["bundle"]["zero_volatility_rule"] = zero_vol.B2
+    ledger.append_entry(
+        ledger_path, "forecast", planted, recorded_at=pd.Timestamp("2026-10-15T23:00:00Z")
     )
     with pytest.raises(forecast.ForecastRefused) as refused:
         _score(ledger_path, flat_store, zero_vol.B2)

@@ -1,8 +1,10 @@
 """
-Prospective forecast ledger health: chain integrity, the kept head copy and
-the sessions without a record, in every state. A missing ledger, backup or
-calendar is never healthy; a broken chain or a ledger that lost its kept
-head fails; a truncated tail raises a deterioration alert.
+Prospective forecast ledger health: chain integrity, the kept head copy, the
+sessions without a record and the registered trial's conditions, in every
+state. A missing ledger, backup or calendar is never healthy; a broken chain
+or a ledger that lost its kept head fails; a truncated tail raises a
+deterioration alert; a section 5 condition during the trial fails, and
+health never writes to the ledger.
 """
 
 from __future__ import annotations
@@ -65,7 +67,7 @@ def _checks(path, *, backup=None, calendar=CALENDAR, now=NOW):
 
 def test_no_ledger_path_is_insufficient_evidence_everywhere():
     checks = _checks(None)
-    assert list(checks) == [*CHAIN_CHECKS, "forecast.ledger_scores"]
+    assert list(checks) == [*CHAIN_CHECKS, "forecast.ledger_scores", "forecast.ledger_trial"]
     for check in checks.values():
         assert (check.state, check.value) == (INSUFFICIENT, None)
     assert checks["forecast.ledger"].reason == "input_not_configured"
@@ -97,6 +99,8 @@ def test_a_deleted_ledger_with_a_kept_head_fails(tmp_path):
     )
     sessions = checks["forecast.ledger_sessions"]
     assert (sessions.state, sessions.reason) == (HealthState.UNAVAILABLE, "ledger_deleted")
+    trial = checks["forecast.ledger_trial"]
+    assert (trial.state, trial.reason) == (HealthState.FAILED, "kept_head_failed")
     assert all(check.state is not HealthState.HEALTHY for check in checks.values())
 
 
@@ -435,3 +439,211 @@ def test_a_broken_chain_leaves_scoring_unavailable(tmp_path):
     path.write_text(lines[0].replace('"VTI"', '"AGG"') + "\n", encoding="utf-8")
     check = _scores(path)
     assert (check.state, check.value) == (HealthState.UNAVAILABLE, None)
+
+
+# --- the registered trial (forecast.ledger_trial) ---
+
+FUNDS = ("VTI", "AGG", "SHV")
+DAYS = [f"{d:%Y-%m-%d}" for d in nyse_rules.sessions("2026-10-14", "2026-12-31")]
+
+
+def _evening(session: str) -> pd.Timestamp:
+    return pd.Timestamp(f"{session} 19:00").tz_localize("America/New_York").tz_convert("UTC")
+
+
+def _after_deadline(session: str) -> datetime:
+    following = DAYS[DAYS.index(session) + 1]  # a weekday session here: its 09:30 has passed
+    stamp = pd.Timestamp(f"{following} 10:00").tz_localize("America/New_York")
+    return stamp.tz_convert("UTC").to_pydatetime()
+
+
+def _record(path: Path, session: str, funds=FUNDS, kind="forecast"):
+    payload = {"as_of_session": session, "data": {"data_class": "real"}, "refusals": []}
+    if kind == "forecast":
+        payload["rows"] = [
+            {"asset": f, "horizon": 5, "target": "total_log_return", "entry_lag": 1, "status": "ok"}
+            for f in funds
+        ]
+    return job_ledger.append_entry(path, kind, payload, recorded_at=_evening(session))
+
+
+@pytest.fixture
+def registered(prospective_frozen, tmp_path):
+    from forecast_prospective_helpers import register
+
+    path = tmp_path / "registered.jsonl"
+    register(prospective_frozen.models(), path)
+    return path
+
+
+def _trial(path, tmp_path, now, *, kept=True):
+    backup = _kept(tmp_path, job_ledger.head(job_ledger.read_ledger(path))) if kept else None
+    return _checks(path, backup=backup, now=now)["forecast.ledger_trial"]
+
+
+def test_without_a_registration_the_trial_is_not_judged(tmp_path):
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text("", encoding="utf-8")
+    check = _checks(empty)["forecast.ledger_trial"]
+    assert (check.state, check.reason) == (INSUFFICIENT, "not_registered")
+
+
+def test_records_without_a_registration_fail(tmp_path):
+    check = _checks(_ledger(tmp_path))["forecast.ledger_trial"]
+    assert (check.state, check.reason) == (HealthState.FAILED, "records_without_registration")
+
+
+def test_a_registration_awaits_session_1(registered, tmp_path):
+    check = _trial(registered, tmp_path, NOW)
+    assert (check.state, check.reason, check.value) == (INSUFFICIENT, "awaiting_session_1", 0)
+    assert "registered 2026-10-14T14:00:00+00:00" in check.detail
+
+
+def test_a_complete_trial_so_far_is_healthy_and_names_its_sessions(registered, tmp_path):
+    for session in DAYS[:3]:
+        _record(registered, session)
+    before = registered.read_bytes()
+    check = _trial(registered, tmp_path, _after_deadline(DAYS[2]))
+    assert (check.state, check.value, check.unit) == (
+        HealthState.HEALTHY,
+        0,
+        "section 5 conditions",
+    )
+    assert "session 1 2026-10-14" in check.detail
+    assert "latest due session 3 (trial)" in check.detail
+    assert "trial: sessions 1-20, to 2026-11-10" in check.detail
+    assert "confirmatory phase from session 21, 2026-11-11" in check.detail
+    assert registered.read_bytes() == before  # health never writes to the ledger
+
+
+def test_a_missed_trial_session_is_a_void_condition_reported_not_decided(registered, tmp_path):
+    _record(registered, DAYS[0])
+    _record(registered, DAYS[2])
+    check = _trial(registered, tmp_path, _after_deadline(DAYS[2]))
+    assert (check.state, check.reason, check.value) == (
+        HealthState.FAILED,
+        "trial_void_condition",
+        1,
+    )
+    assert f"condition=session_not_recorded phase=trial session={DAYS[1]} number=2" in check.detail
+    assert "owner" in check.summary and "changes nothing" in check.summary
+
+
+def test_a_refused_session_and_a_data_gap_are_listed(registered, tmp_path):
+    _record(registered, DAYS[0])
+    _record(registered, DAYS[1], funds=("AGG", "SHV"))
+    _record(registered, DAYS[2], kind="refusal")
+    _record(registered, DAYS[3], funds=("AGG", "SHV"))
+    check = _trial(registered, tmp_path, _after_deadline(DAYS[3]))
+    assert check.state is HealthState.FAILED
+    assert f"condition=session_refused phase=trial session={DAYS[2]}" in check.detail
+    assert f"condition=data_gap phase=trial session={DAYS[3]} number=4 asset=VTI" in check.detail
+
+
+def test_a_condition_after_the_trial_counts_against_c3_not_as_a_void(registered, tmp_path):
+    for session in DAYS[:21]:
+        _record(registered, session)
+    _record(registered, DAYS[22])  # DAYS[21], session 22, missed
+    check = _trial(registered, tmp_path, _after_deadline(DAYS[22]))
+    assert (check.state, check.reason) == (HealthState.DEGRADED, "condition_after_trial")
+    assert "phase=confirmatory" in check.detail and "C3" in check.summary
+
+
+def test_a_lost_or_stale_kept_head_is_a_trial_condition(registered, tmp_path):
+    _record(registered, DAYS[0])
+    lost = _checks(registered, backup=_kept(tmp_path, "a" * 64), now=_after_deadline(DAYS[0]))
+    assert "condition=kept_head_failed" in lost["forecast.ledger_trial"].detail
+    stale_head = job_ledger.read_ledger(registered)[0].entry_sha256
+    stale = _checks(registered, backup=_kept(tmp_path, stale_head), now=_after_deadline(DAYS[0]))
+    assert "condition=kept_head_unresolved" in stale["forecast.ledger_trial"].detail
+    assert stale["forecast.ledger_trial"].state is HealthState.FAILED
+
+
+def test_without_a_kept_head_the_trial_is_never_healthy(registered, tmp_path):
+    _record(registered, DAYS[0])
+    check = _trial(registered, tmp_path, _after_deadline(DAYS[0]), kept=False)
+    assert (check.state, check.reason) == (INSUFFICIENT, "kept_head_not_judged")
+
+
+def test_a_broken_chain_is_a_trial_condition(registered, tmp_path):
+    _record(registered, DAYS[0])
+    lines = registered.read_text(encoding="utf-8").splitlines(keepends=True)
+    registered.write_text(lines[1], encoding="utf-8")  # the registration line removed
+    check = _checks(registered, now=_after_deadline(DAYS[0]))["forecast.ledger_trial"]
+    assert (check.state, check.reason) == (HealthState.FAILED, "chain_break")
+    assert "condition=chain_break" in check.detail
+
+
+def test_registered_sessions_are_expected_from_session_1(registered, tmp_path):
+    _record(registered, DAYS[0])
+    _record(registered, DAYS[2])
+    sessions = _checks(registered, now=_after_deadline(DAYS[2]))["forecast.ledger_sessions"]
+    assert (sessions.state, sessions.value) == (HealthState.DEGRADED, 1)
+    assert "session 1" in sessions.threshold and "section 3" in sessions.summary
+    assert "No cadence is pre-registered" not in sessions.summary
+    integrity = _checks(registered, now=NOW)["forecast.ledger"]
+    assert "1 registrations, 2 forecasts" in integrity.detail
+
+
+def test_a_synthetic_registered_trial_is_insufficient_evidence(registered, tmp_path):
+    payload = {
+        "as_of_session": DAYS[0],
+        "data": {"data_class": "synthetic"},
+        "rows": [{"asset": "VTI", "status": "ok"}],
+    }
+    job_ledger.append_entry(registered, "forecast", payload, recorded_at=_evening(DAYS[0]))
+    check = _trial(registered, tmp_path, _after_deadline(DAYS[0]))
+    assert (check.state, check.reason) == (INSUFFICIENT, "synthetic_input")
+
+
+@pytest.mark.parametrize(
+    ("missed", "state", "reason"),
+    [
+        (19, HealthState.FAILED, "trial_void_condition"),  # session 20
+        (20, HealthState.DEGRADED, "condition_after_trial"),  # session 21
+    ],
+)
+def test_session_20_closes_the_trial(registered, tmp_path, missed, state, reason):
+    for index in range(23):
+        if index != missed:
+            _record(registered, DAYS[index])
+    check = _trial(registered, tmp_path, _after_deadline(DAYS[22]))
+    assert (check.state, check.reason, check.value) == (state, reason, 1)
+
+
+def test_a_second_registration_entry_fails_the_trial(registered, tmp_path):
+    first = job_ledger.read_ledger(registered)[0]
+    job_ledger.append_entry(
+        registered, "registration", dict(first.payload), recorded_at=_evening(DAYS[0])
+    )
+    check = _checks(registered, now=NOW)["forecast.ledger_trial"]
+    assert (check.state, check.reason) == (HealthState.FAILED, "registration_not_unique")
+
+
+def test_without_a_calendar_the_trial_is_not_counted(registered, tmp_path):
+    _record(registered, DAYS[0])
+    check = _checks(registered, calendar=None, now=NOW)["forecast.ledger_trial"]
+    assert (check.state, check.reason) == (INSUFFICIENT, "calendar_not_configured")
+
+
+def test_a_synthetic_trial_with_a_void_condition_still_fails(registered, tmp_path):
+    for session in (DAYS[0], DAYS[2]):  # DAYS[1] missed
+        payload = {
+            "as_of_session": session,
+            "data": {"data_class": "synthetic"},
+            "rows": [{"asset": fund, "status": "ok"} for fund in FUNDS],
+        }
+        job_ledger.append_entry(registered, "forecast", payload, recorded_at=_evening(session))
+    check = _trial(registered, tmp_path, _after_deadline(DAYS[2]))
+    assert (check.state, check.reason) == (HealthState.FAILED, "trial_void_condition")
+
+
+def test_a_calendar_refusing_the_trial_range_is_unavailable(registered, tmp_path):
+    _record(registered, DAYS[0])
+
+    def refusing(start, end):
+        raise CalendarRefused("outside_coverage", "dates after the rules calendar coverage")
+
+    calendar = RulesCalendar(refusing, "test")
+    check = _checks(registered, calendar=calendar, now=NOW)["forecast.ledger_trial"]
+    assert (check.state, check.reason) == (HealthState.UNAVAILABLE, "calendar_refused")

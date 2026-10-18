@@ -20,6 +20,10 @@ assets: [VTI, AGG, SHV]
 horizons: [5, 20, 30]
 entry_lag: 1
 targets: [total_log_return, log_realized_volatility]
+# A window whose realized volatility is 0: training drops the row, scoring counts it outside
+# the band (stock_agent.forecasting.prospective.zero_vol; docs/research/zero_vol_floor.md). The
+# only registrable rule; the research option B2 needs the owner's approval first.
+zero_volatility_rule: current_drop_and_miss
 features: [tsmom_20d, tsmom_60d, log_rv_5d, log_rv_20d, log_rv_60d]
 data:
   source: f1_research_store

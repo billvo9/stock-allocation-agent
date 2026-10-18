@@ -7,10 +7,18 @@ session, `forecast_close`):
 1. The frozen bundle and its registry entries are verified: every file
    against its manifest, every entry's artifacts against their hashes, the
    entry's bundle reference against this bundle, and the computed stage is
-   at most `development_evaluated`.
+   at most `development_evaluated`. The bundle's zero-volatility rule must
+   be its config's (`zero_vol_rule_mismatch`).
 2. The timing rules hold (window.py): as_of >= H_end; created_at at or after
    the close's assumed availability (18:00 America/New_York); created_at
    before the record deadline (09:30 America/New_York on the next weekday).
+   The ledger opens with its registration (registration_record.py;
+   `not_registered` otherwise), the models and the running code are exactly
+   what it registered (`registration_mismatch`), and the close is after the
+   registration time (`before_registration`). The first record, session 1,
+   also needs every fund's complete window from spot-checked batches
+   (`not_first_eligible_close`); nothing is recorded for a session that is
+   not eligible.
 3. The window (`load_inference_window(store_root, assets, forecast_close,
    lookback, retrieved_by=created_at)`: lookback daily returns, so
    lookback + 1 closes) is checked by window.coerce_window: nothing after the
@@ -23,9 +31,11 @@ session, `forecast_close`):
    predicts.
 5. One "forecast" entry is appended to the ledger (with the window's
    batches, missing closes, revisions and completeness, and any refused
-   assets), refused if the ledger already holds a forecast for this as-of
-   session and bundle. When every asset is refused, a "refusal" entry is
-   appended instead: never a forecast.
+   assets, its registration and its session number and phase), refused if
+   the ledger already holds a forecast or a refusal for this as-of session
+   (`duplicate_forecast`: a session is recorded once, and a refusal counts as
+   its record). When every asset is refused, a "refusal" entry is appended
+   instead: never a forecast.
 
 Per asset, horizon and target a row holds the point forecast, the 10% and
 90% band ends, the historical-mean null, the model id, version and entry
@@ -40,18 +50,20 @@ the outcome, whether it lies inside the band, its error and the null's
 error, with its variant (bundle, config hash, model id and version) and the
 outcome window's lineage. The window runs from the earliest pending as-of
 session to the scoring close, read with retrieved_by = scored_at. Forecast
-entries are never edited; a row is scored once.
+entries are never edited; a row is scored once. Scoring uses the
+registration's zero-volatility rule and refuses code, bundles or configs
+other than the registered ones.
 
 Zero realized volatility (zero_vol.py). One treatment everywhere: a forecast
 records the rule its bundle was trained under, and scoring refuses any other
 rule (`zero_vol_rule_not_trained`); a ledger is never scored under two rules
 (`zero_vol_rule_mismatch`). The rule in force is `zero_vol.CURRENT` (a zero
-outcome is outside the band); `freeze` and the job cannot select the
-unapproved research option `zero_vol.B2`. Each forecast row records its
-unadjusted as-of close, and B2's floor is computed from that recorded value,
-so a later revision of the close cannot move it. Every scored volatility row
-records the rule, sigma_raw, measured_zero, floored, sigma_floor and the
-as-of close used.
+outcome is outside the band); the registered config names it, and `freeze`,
+the job and its CLI cannot select the unapproved research option
+`zero_vol.B2`. Each forecast row records its unadjusted as-of close, and
+B2's floor is computed from that recorded value, so a later revision of the
+close cannot move it. Every scored volatility row records the rule,
+sigma_raw, measured_zero, floored, sigma_floor and the as-of close used.
 """
 
 from __future__ import annotations
@@ -64,15 +76,26 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from stock_agent.forecasting.prospective import frozen, ledger, series, window, zero_vol
+from stock_agent.forecasting.prospective import (
+    cadence,
+    frozen,
+    ledger,
+    registration_record,
+    series,
+    window,
+    zero_vol,
+)
 from stock_agent.forecasting.prospective.config import parse_config
+from stock_agent.forecasting.prospective.refusal import ForecastRefused
 from stock_agent.model_diagnostics import inference as inf
 from stock_agent.model_diagnostics.record import sha256_json
 from stock_agent.registry import EntryRef, RegistryReader
 from stock_agent.registry.stages import STAGES
 
-FORECAST_SCHEMA_VERSION = "1.1"  # 1.1: the bundle's zero-volatility rule; rows' as-of close
-SCORE_SCHEMA_VERSION = "1.1"  # 1.1: volatility rows record the zero-volatility rule and flags
+# 1.1: the bundle's zero-volatility rule; rows' as-of close. 1.2: the registration and session.
+FORECAST_SCHEMA_VERSION = "1.2"
+# 1.1: volatility rows record the zero-volatility rule and flags. 1.2: the registration.
+SCORE_SCHEMA_VERSION = "1.2"
 ALLOWED_STAGES = STAGES[:2]  # engineering_only, development_evaluated; never higher
 UNITS = {
     "total_log_return": "total log return over the horizon (F5.1, distributions reinvested)",
@@ -87,15 +110,6 @@ def display_percent(target: str, value: float | None) -> float | None:
     if value is None or not math.isfinite(value):
         return None
     return 100.0 * (value if target == "total_log_return" else math.exp(value))
-
-
-class ForecastRefused(ValueError):
-    """A forecast or score was refused; `reason` is machine-readable."""
-
-    def __init__(self, reason: str, detail: str) -> None:
-        super().__init__(f"{reason}: {detail}")
-        self.reason = reason
-        self.detail = detail
 
 
 @dataclass(frozen=True, eq=False)
@@ -118,16 +132,7 @@ def training_rule(bundle: frozen.Bundle) -> str:
     frozen before the rule was recorded used the rule in force.
     """
 
-    rules = {
-        fit.get("training", {}).get("zero_volatility_rule", zero_vol.CURRENT)
-        for fit in bundle.document["fits"]
-    }
-    if len(rules) != 1:
-        raise ForecastRefused("models_unverified", f"the fits disagree on the rule: {rules}")
-    rule = rules.pop()
-    if rule not in zero_vol.RULES:
-        raise ForecastRefused("models_unverified", f"unknown zero-volatility rule {rule!r}")
-    return rule
+    return registration_record.bundle_rule(bundle)
 
 
 def load_models(bundle_path: str | Path, registry: RegistryReader) -> Models:
@@ -162,7 +167,8 @@ def load_models(bundle_path: str | Path, registry: RegistryReader) -> Models:
             "registered_at": entry.created_at,
             "stage": stage,
         }
-    training_rule(bundle)  # refuses a bundle whose fits disagree on the rule
+    # Refuses a bundle whose fits disagree on the rule, or name another rule than its config.
+    registration_record.checked_rule(bundle)
     return Models(bundle, entries)
 
 
@@ -269,22 +275,77 @@ def forecast_rows(
     return rows, refusals
 
 
-def _duplicate_guard(as_of: str, bundle_id: str):
+RECORD_KINDS = ("forecast", "refusal")
+
+
+def _guard(as_of: str, bundle_id: str, registration_sha256: str, records: int):
+    """
+    Under the append lock: the same registration, no record since the read,
+    and no earlier record (forecast or refusal) for the session.
+    """
+
     def guard(entries: tuple[ledger.LedgerEntry, ...]) -> None:
+        if not entries or entries[0].entry_sha256 != registration_sha256:
+            raise ForecastRefused("ledger_changed", "the ledger's registration changed; run again")
+        if sum(entry.kind in RECORD_KINDS for entry in entries) != records:
+            raise ForecastRefused(
+                "ledger_changed", "a record was appended while this forecast ran; run again"
+            )
         for entry in entries:
-            payload = entry.payload
-            if (
-                entry.kind == "forecast"
-                and payload.get("as_of_session") == as_of
-                and payload.get("bundle", {}).get("bundle_id") == bundle_id
-            ):
+            # One record per session: a refusal counts as the session's record (section 3),
+            # so neither a second forecast nor a forecast after a refusal is appended.
+            if entry.kind in RECORD_KINDS and entry.payload.get("as_of_session") == as_of:
                 raise ForecastRefused(
                     "duplicate_forecast",
-                    f"the ledger already holds a forecast for {as_of} from {bundle_id} "
-                    f"(entry {entry.sequence}); a forecast is recorded once",
+                    f"the ledger already holds a {entry.kind} for {as_of} (entry "
+                    f"{entry.sequence}, bundle {bundle_id}); a session is recorded once",
                 )
 
     return guard
+
+
+def registered(entries: Sequence[ledger.LedgerEntry]) -> registration_record.Registration:
+    """The ledger's registration; refused (`not_registered`) when it has none."""
+
+    found = registration_record.current(entries)
+    if found is None:
+        raise ForecastRefused(
+            "not_registered",
+            "the ledger holds no registration entry; nothing is recorded before registration",
+        )
+    return found
+
+
+def first_eligible_refusal(win: window.InferenceWindow, assets: Sequence[str]) -> str | None:
+    """
+    Why the window's close cannot be session 1 (section 4, condition 2), or
+    None: every fund needs its complete window, from batches whose
+    distributions were spot-checked against the owner's anchors.
+    """
+
+    incomplete = win.incomplete_assets(assets)
+    if incomplete:
+        return f"the window is incomplete for {sorted(incomplete)}"
+    if "anchors_sha256" not in win.batches:
+        return "the window's batches record no spot check"
+    unchecked = win.batches.loc[win.batches["anchors_sha256"].isna(), "batch_id"]
+    if len(unchecked):
+        return f"batches {sorted(unchecked)} record no spot check against the owner's anchors"
+    return None
+
+
+def session_of(
+    records: Sequence[ledger.LedgerEntry], as_of: pd.Timestamp, calendar: window.Calendar
+) -> dict[str, object]:
+    """Session 1 is the first record's as-of session; numbers count calendar sessions."""
+
+    first = (
+        min(pd.Timestamp(entry.payload["as_of_session"], tz="UTC") for entry in records)
+        if records
+        else as_of
+    )
+    number = len(calendar(first, as_of))
+    return {"number": number, "phase": cadence.phase_of(number), "first_session": str(first.date())}
 
 
 def record_forecast(
@@ -298,9 +359,10 @@ def record_forecast(
     code: Mapping[str, object],
     calendar: window.Calendar,
 ) -> ledger.LedgerEntry:
-    """Check the timing, read the window, forecast and append one ledger entry."""
+    """Check the timing and registration, read the window, forecast, append one entry."""
 
     config = models.config
+    rule = registration_record.checked_rule(models.bundle)
     as_of = window.session_stamp(forecast_close, "forecast_close")
     created = pd.Timestamp(created_at)
     if created.tzinfo is None:
@@ -322,9 +384,26 @@ def record_forecast(
             "past_record_deadline",
             f"a forecast as of {as_of.date()} must be recorded before {times['record_deadline']}",
         )
+    entries = ledger.read_ledger(ledger_path)
+    found = registered(entries)
+    registration_record.check_record(found.record, models)
+    registration_record.check_code(found.record, code)
+    if times["close_available_at"] <= found.registered_at:
+        raise ForecastRefused(
+            "before_registration",
+            f"the {as_of.date()} close (available {times['close_available_at']}) is not after the "
+            f"registration time {found.registered_at.isoformat()}: it cannot be session 1",
+        )
+    if created < pd.Timestamp(found.entry.recorded_at):
+        raise ForecastRefused(
+            "before_registration",
+            f"created_at {created.isoformat()} precedes the registration entry "
+            f"({found.entry.recorded_at}): nothing is recorded before the registration",
+        )
     for identity in models.entries.values():
         if pd.Timestamp(identity["registered_at"]) > created:
             raise ForecastRefused("not_frozen", "the models were registered after this forecast")
+    records = [entry for entry in entries if entry.kind in RECORD_KINDS]
     lookback = config.prospective.lookback_sessions  # daily returns: lookback + 1 closes
     result = loader(store_root, list(config.assets), as_of, lookback=lookback, retrieved_by=created)
     win = window.coerce_window(
@@ -335,6 +414,14 @@ def record_forecast(
         calendar=calendar,
         retrieved_by=created,
     )
+    if not records:
+        why = first_eligible_refusal(win, config.assets)
+        if why is not None:
+            raise ForecastRefused(
+                "not_first_eligible_close",
+                f"{as_of.date()} is not the first eligible close: {why}; nothing is recorded "
+                "for it, and the next session is considered (section 4)",
+            )
     rows, refusals = forecast_rows(models, win)
     bundle = models.bundle
     as_of_text = str(as_of.date())
@@ -352,8 +439,10 @@ def record_forecast(
             "config_sha256": bundle.document["config_sha256"],
             "run_id": bundle.document["run_id"],
             "status": bundle.document["status"],
-            "zero_volatility_rule": models.zero_vol_rule,
+            "zero_volatility_rule": rule,
         },
+        "registration": found.reference(),
+        "session": session_of(records, as_of, calendar),
         "data": {
             "data_class": bundle.document["data_class"],
             "window_fingerprint": win.fingerprint,
@@ -385,17 +474,14 @@ def record_forecast(
         "rows": rows,
         "refusals": refusals,
     }
+    guard = _guard(as_of_text, bundle.bundle_id, found.entry.entry_sha256, len(records))
     if not rows:  # every asset refused: a refusal, never a forecast
         refusal = {**payload, "record_type": "prospective_refusal"}
         refusal.pop("rows")
-        return ledger.append_entry(ledger_path, "refusal", refusal, recorded_at=created)
-    return ledger.append_entry(
-        ledger_path,
-        "forecast",
-        payload,
-        recorded_at=created,
-        guard=_duplicate_guard(as_of_text, bundle.bundle_id),
-    )
+        return ledger.append_entry(
+            ledger_path, "refusal", refusal, recorded_at=created, guard=guard
+        )
+    return ledger.append_entry(ledger_path, "forecast", payload, recorded_at=created, guard=guard)
 
 
 # --- scoring ---
@@ -521,22 +607,28 @@ def score_matured(
     scored_at: pd.Timestamp,
     code: Mapping[str, object],
     calendar: window.Calendar,
-    zero_vol_rule: str = zero_vol.DEFAULT,
+    zero_vol_rule: str | None = None,
 ) -> tuple[ledger.LedgerEntry | None, list[dict[str, object]]]:
     """
     Score every matured, unscored forecast row (one "score" entry), and
     return the rows left pending with their reason (not_matured,
     close_not_available, outcome_inputs_unavailable, as_of_outside_window).
 
-    `zero_vol_rule` is the rule in force unless research code passes the
-    unapproved `zero_vol.B2`. It must be the rule every pending forecast's
-    bundle was trained under (`zero_vol_rule_not_trained` otherwise), and a
-    ledger already scored under another rule is refused
-    (`zero_vol_rule_mismatch`), so two rules are never pooled.
+    The ledger must open with its registration (`not_registered`), and the
+    running `code` must be the registered code (`registration_mismatch`).
+    `zero_vol_rule` is the registered rule unless research code passes
+    another; scoring refuses any rule other than the one every pending
+    forecast's bundle was trained under (`zero_vol_rule_not_trained`), a
+    ledger already scored under another rule (`zero_vol_rule_mismatch`), so
+    two rules are never pooled, and any rule other than the registration's
+    (`zero_vol_rule_mismatch`).
     """
 
-    zero_vol.check_rule(zero_vol_rule)
     entries = ledger.read_ledger(ledger_path)
+    found = registration_record.current(entries)
+    if zero_vol_rule is None:
+        zero_vol_rule = zero_vol.DEFAULT if found is None else found.rule
+    zero_vol.check_rule(zero_vol_rule)
     _refuse_other_rule(entries, zero_vol_rule)
     pending = pending_rows(entries)
     if not pending:
@@ -550,6 +642,24 @@ def score_matured(
                 "zero_vol_rule_not_trained",
                 f"entry {entry.sequence} comes from a bundle trained under {trained!r}; it is "
                 f"never scored under {zero_vol_rule!r} (one treatment in training and scoring)",
+            )
+    if zero_vol_rule != found.rule:
+        raise ForecastRefused(
+            "zero_vol_rule_mismatch",
+            f"the registration names {found.rule!r}; this ledger is never scored under "
+            f"{zero_vol_rule!r}",
+        )
+    registration_record.check_code(found.record, code)
+    for entry in {e.entry_sha256: e for e, _ in pending}.values():
+        bundle = entry.payload["bundle"]
+        if (bundle.get("manifest_sha256"), bundle.get("config_sha256")) != (
+            found.record["bundle"]["manifest_sha256"],
+            found.record["config_sha256"],
+        ):
+            raise ForecastRefused(
+                "registration_mismatch",
+                f"entry {entry.sequence} comes from another bundle or config than the "
+                "registration's",
             )
     close = window.session_stamp(score_close, "score_close")
     stamp = pd.Timestamp(scored_at).tz_convert("UTC")
@@ -686,6 +796,7 @@ def score_matured(
         "retrieved_by": stamp.isoformat(),
         "outcome_data": win.lineage(),
         "code": dict(code),
+        "registration": found.reference(),
         "scores": scores,
         "cumulative": cumulative.to_dict("records"),
     }

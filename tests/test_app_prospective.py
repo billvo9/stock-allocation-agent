@@ -63,17 +63,21 @@ def test_a_recorded_forecast_shows_its_point_band_null_as_of_and_labels(
 
 
 def test_an_asset_refused_for_a_missing_close_is_named_not_filled(
-    prospective_frozen, ledger_path, tmp_path
+    prospective_frozen, ledger_path, tmp_path, prospective_store_root
 ):
+    import pandas as pd
     from forecast_prospective_helpers import prospective_store, without_close
 
     gap = prospective_store(tmp_path / "gap", edit=without_close("VTI", ["2026-09-15"]))
-    record(prospective_frozen, ledger_path, gap)
+    record(prospective_frozen, ledger_path, prospective_store_root)  # session 1, complete
+    later = pd.Timestamp("2026-10-15T23:00:00Z")
+    record(prospective_frozen, ledger_path, gap, as_of="2026-10-15", created=later)
     app = running("experiments")
     text = text_of(app)
     assert wording.PROSPECTIVE_REFUSED.format(assets="VTI") in text
-    (table,) = _tables(app)
-    assert "VTI" not in set(table[wording.PROSPECTIVE_COLUMNS["fund"]])
+    latest, first = _tables(app)  # the latest forecast first
+    assert "VTI" not in set(latest[wording.PROSPECTIVE_COLUMNS["fund"]])
+    assert "VTI" in set(first[wording.PROSPECTIVE_COLUMNS["fund"]])
 
 
 def test_scores_appear_only_once_matured(prospective_frozen, ledger_path, prospective_store_root):

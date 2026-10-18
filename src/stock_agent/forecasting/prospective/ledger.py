@@ -10,11 +10,13 @@ data/raw/prospective_forecasts/ledger.jsonl):
 `entry_sha256` is the SHA-256 of the canonical JSON of every other field,
 and `prev_entry_sha256` is the previous line's (zeros for the first), so an
 edited, inserted, removed or reordered line breaks the chain and the whole
-ledger is refused on read. Kinds: "forecast" (one forecast run: every
-asset, horizon and target at one as-of session), "score" (outcomes of
-matured forecast rows) and "refusal" (a forecast run in which every asset
-was refused, for example for an incomplete inference window). Nothing is ever rewritten; a correction would be a
-new entry.
+ledger is refused on read. Kinds: "registration" (the ledger's first entry:
+the registration record and its commit and time, registration_record.py),
+"forecast" (one forecast run: every asset, horizon and target at one as-of
+session), "score" (outcomes of matured forecast rows) and "refusal" (a
+forecast run in which every asset was refused, for example for an
+incomplete inference window). Nothing is ever rewritten; a correction would
+be a new entry.
 
 Appending takes an exclusive lock, re-reads and verifies the whole chain,
 runs the caller's guard on the verified entries (so a duplicate check
@@ -44,7 +46,7 @@ import pandas as pd
 from stock_agent.model_diagnostics.record import canonical_json, sha256_json
 
 LEDGER_SCHEMA_VERSION = "1.0"
-KINDS = ("forecast", "score", "refusal")
+KINDS = ("registration", "forecast", "score", "refusal")
 GENESIS = "0" * 64
 DEFAULT_LEDGER = Path("data") / "raw" / "prospective_forecasts" / "ledger.jsonl"
 _FIELDS = {

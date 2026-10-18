@@ -27,10 +27,13 @@ forecast.ledger_sessions
     Missing expected dates: rules-calendar sessions from the first recorded
     as-of session to the last session whose recording deadline (09:30
     America/New_York on the next weekday, the job's convention) has passed,
-    with no forecast or refusal record. No cadence is pre-registered yet, so
-    every session is expected (an operator default, not owner policy): gaps
-    are degraded and listed. The calendar is injected by the private script,
-    because research code may not import the prospective side.
+    with no forecast or refusal record. In a registered ledger the first
+    record is session 1 and every later session is expected (the registered
+    cadence, section 3 of docs/research/prospective_registration.md); in a
+    ledger without a registration every session is expected as an operator
+    default. Gaps are degraded and listed. The calendar is injected by the
+    private script, because research code may not import the prospective
+    side.
 forecast.ledger_scores
     Matured forecast rows without a score: a row (asset, horizon, target of
     a forecast entry) matures at its exit session, the entry_lag + horizon-th
@@ -41,6 +44,22 @@ forecast.ledger_scores
     or its outcome inputs are missing; nothing is filled); no row due yet is
     insufficient_evidence (`none_matured`); every due row scored is healthy.
     Only the identities in the ledger are read: never a forecast value.
+forecast.ledger_trial
+    The registered trial and section 5's conditions, from the job's own
+    cadence (forecasting.prospective.cadence): session 1, the latest due
+    session's number and phase (the trial is sessions 1-20, the confirmatory
+    phase starts at 21), and every condition as one `key=value` line
+    (condition, phase, session, number, fund): a chain break, a failed or
+    unresolved kept head, a missed, refused or out-of-window session record,
+    a record before the registration, and a fund without forecast rows for
+    more than 2 consecutive expected sessions. A condition during the trial
+    fails (`trial_void_condition`); one after the trial is degraded
+    (`condition_after_trial`: it counts against C3). Health reports these and
+    changes nothing: voiding and re-registering are the owner's decisions.
+    Records in a ledger that does not open with a registration fail
+    (`records_without_registration`); a registration without a record yet is
+    insufficient_evidence (`awaiting_session_1`), and so is a trial whose kept
+    head is not configured (`kept_head_not_judged`).
 
 In the private scope a ledger whose records are all synthetic is at most
 insufficient_evidence (`synthetic_input`); a failure still shows. Health
@@ -58,6 +77,7 @@ from pathlib import Path
 import pandas as pd
 
 from stock_agent.calendars.nyse import CalendarRefused
+from stock_agent.forecasting.prospective import cadence, registration_record
 from stock_agent.forecasting.prospective.ledger import (
     GENESIS,
     LedgerEntry,
@@ -65,6 +85,7 @@ from stock_agent.forecasting.prospective.ledger import (
     head,
     read_ledger,
 )
+from stock_agent.forecasting.prospective.refusal import ForecastRefused
 from stock_agent.forecasting.prospective.window import local_instant, next_weekday
 from stock_agent.health.inputs import SYNTHETIC_FINDING, Finding, worst_finding
 from stock_agent.health.model import Area, Better, Check, HealthState
@@ -74,10 +95,11 @@ TITLES = {
     "forecast.ledger_backup": "Kept copy of the ledger head",
     "forecast.ledger_sessions": "Sessions with a forecast record",
     "forecast.ledger_scores": "Matured forecasts with a score",
+    "forecast.ledger_trial": "Registered trial and its void conditions",
 }
 ROW_FIELDS = ("asset", "horizon", "target", "entry_lag", "status")
 RECORD_KINDS = ("forecast", "refusal")
-KINDS = ("forecast", "score", "refusal")
+KINDS = ("registration", "forecast", "score", "refusal")
 DEADLINE_LOCAL = "09:30"
 TIMEZONE = "America/New_York"
 SHOWN_DATES = 20
@@ -224,8 +246,8 @@ def _integrity(read: _Read, *, now: datetime, evidence: str | None, allow_synthe
     )
     lines = [
         (
-            f"chain verified: {len(entries)} entries ({kinds['forecast']} forecasts, "
-            f"{kinds['score']} scores, {kinds['refusal']} refusals)"
+            f"chain verified: {len(entries)} entries ({kinds['registration']} registrations, "
+            f"{kinds['forecast']} forecasts, {kinds['score']} scores, {kinds['refusal']} refusals)"
         ),
         (
             f"head hash {head(entries)} (entry {last.sequence}, {last.kind}, recorded "
@@ -392,10 +414,15 @@ def _sessions(
     allow_synthetic: bool,
 ) -> Check:
     check_id = "forecast.ledger_sessions"
+    registered = read.entries is not None and _registered(read.entries)
     threshold = (
-        "a forecast or refusal record for every rules-calendar session from the first record to "
-        "the last one whose 09:30 New York deadline has passed (operator default: no cadence is "
-        "pre-registered)"
+        "a forecast or refusal record for every rules-calendar session from session 1, the "
+        "first record after the registration, to the last one whose 09:30 New York deadline has "
+        "passed (the registered cadence, section 3)"
+        if registered
+        else "a forecast or refusal record for every rules-calendar session from the first "
+        "record to the last one whose 09:30 New York deadline has passed (operator default: no "
+        "cadence is pre-registered)"
     )
     if read.entries is None:
         not_read = _Read(
@@ -471,7 +498,10 @@ def _sessions(
         finding = Finding(
             HealthState.DEGRADED,
             "sessions_without_record",
-            f"{len(missing)} sessions since the first record have no forecast or refusal "
+            f"{len(missing)} sessions since session 1 have no forecast or refusal record. "
+            "Every session from session 1 is expected (section 3), and none is backfilled."
+            if registered
+            else f"{len(missing)} sessions since the first record have no forecast or refusal "
             "record. No cadence is pre-registered, so every session is expected.",
         )
     else:
@@ -489,6 +519,195 @@ def _sessions(
         measured_at=now,
         value=len(missing),
         unit="sessions without a record",
+        better=Better.LOWER,
+        tolerance=0,
+        summary=finding.summary,
+        detail="\n".join(lines),
+        **common,
+    )
+
+
+def _registered(entries: Sequence[LedgerEntry]) -> bool:
+    try:
+        return registration_record.current(entries) is not None
+    except ForecastRefused:
+        return False
+
+
+def _trial(
+    read: _Read,
+    kept: str | None,
+    calendar: RulesCalendar | None,
+    *,
+    now: datetime,
+    evidence: str | None,
+    allow_synthetic: bool,
+) -> Check:
+    check_id = "forecast.ledger_trial"
+    unit = "section 5 conditions"
+    threshold = (
+        "no section 5 condition: the chain and the kept head verify, every due session from "
+        "session 1 has a record inside its window and is not refused, and no fund lacks forecast "
+        "rows for more than 2 consecutive sessions"
+    )
+    common = {"threshold": threshold, "evidence": evidence}
+    if read.entries is None:
+        if read.state is HealthState.FAILED:
+            # A deleted ledger whose kept head shows it held records lost its kept head; any
+            # other refusal is a chain break. The phase cannot be read from a refused ledger.
+            kind = "kept_head_failed" if read.reason == DELETED else "chain_break"
+            what = "its kept head is lost" if kind == "kept_head_failed" else "a chain break"
+            line = cadence.Condition(kind, "-", None, None, None, read.detail).line()
+            return _check(
+                check_id,
+                state=HealthState.FAILED,
+                reason=kind,
+                measured_at=now,
+                value=None,
+                unit=None,
+                summary=f"The forecast ledger fails its integrity check: {what}. That is a void "
+                "condition during the trial (section 5) and a C3 failure after it (section 11); "
+                "the phase cannot be read from a refused ledger. Health reports it and changes "
+                "nothing; re-registration is the owner's decision.",
+                detail=line,
+                **common,
+            )
+        return _not_judged(
+            check_id, read, evidence=evidence, summary="No forecast has been recorded yet."
+        )
+    entries = read.entries
+    if not entries:
+        return _check(
+            check_id,
+            state=HealthState.INSUFFICIENT_EVIDENCE,
+            reason="not_registered",
+            measured_at=now,
+            value=None,
+            unit=None,
+            summary="The ledger holds no registration yet, so no trial has started.",
+            detail="0 entries.",
+            **common,
+        )
+    try:
+        found = registration_record.current(entries)
+    except ForecastRefused as refused:
+        reason = (
+            "records_without_registration"
+            if refused.reason == "not_registered"
+            else (refused.reason)
+        )
+        return _check(
+            check_id,
+            state=HealthState.FAILED,
+            reason=reason,
+            measured_at=now,
+            value=None,
+            unit=None,
+            summary="The ledger's records are not under a valid registration: none of them can "
+            "count toward the trial or a checkpoint.",
+            detail=f"{refused.reason}: {refused.detail}",
+            **common,
+        )
+    if calendar is None:
+        return _check(
+            check_id,
+            state=HealthState.INSUFFICIENT_EVIDENCE,
+            reason="calendar_not_configured",
+            measured_at=None,
+            value=None,
+            unit=None,
+            summary="No exchange calendar was given, so the trial's sessions are not counted.",
+            detail="The private script passes the rules calendar; this run had none.",
+            **common,
+        )
+    try:
+        report = cadence.cadence(entries, calendar=calendar.sessions, now=now, kept=kept)
+    except (CalendarRefused, ValueError) as error:
+        return _check(
+            check_id,
+            state=HealthState.UNAVAILABLE,
+            reason="calendar_refused",
+            measured_at=now,
+            value=None,
+            unit=None,
+            summary="The exchange calendar refused the date range, so the trial is not judged.",
+            detail=f"{calendar.calendar_id}: {error}",
+            **common,
+        )
+    record = found.record
+    lines = [
+        (
+            f"registered {found.registered_at.isoformat()} at {found.registration_commit} "
+            f"(entry {found.entry.sequence}; bundle {record['bundle']['bundle_id']}; config "
+            f"{record['config_sha256'][:12]}; rule {record['zero_volatility_rule']})"
+        )
+    ]
+    if report.first_session is None:
+        lines.append("session 1: not recorded yet")
+    else:
+        latest = (
+            f"latest due session {report.number} ({report.phase})"
+            if report.number is not None
+            else "no session due yet"
+        )
+        lines += [
+            f"session 1 {report.first_session}; {latest}",
+            (
+                f"trial: sessions 1-{cadence.TRIAL_SESSIONS}, to "
+                f"{report.trial_last_session or '?'}; confirmatory phase from session "
+                f"{cadence.TRIAL_SESSIONS + 1}, {report.confirmatory_first_session or '?'}"
+            ),
+            f"sessions due: {len(report.due)}; sessions recorded: {len(report.recorded)}",
+        ]
+    lines.append(
+        "kept head: judged" if kept is not None else "kept head: not configured or unusable"
+    )
+    lines += [condition.line() for condition in report.conditions]
+    trial, later = report.trial_conditions, report.later_conditions
+    if trial:
+        kinds = ", ".join(sorted({c.condition for c in trial}))
+        finding = Finding(
+            HealthState.FAILED,
+            "trial_void_condition",
+            f"{len(trial)} section 5 conditions during the trial ({kinds}): each voids the "
+            "registration under section 5. Health reports them and changes nothing; "
+            "re-registering is the owner's decision.",
+        )
+    elif later:
+        kinds = ", ".join(sorted({c.condition for c in later}))
+        finding = Finding(
+            HealthState.DEGRADED,
+            "condition_after_trial",
+            f"{len(later)} conditions after the trial ({kinds}). They count against C3 "
+            "(section 11), not as a void; nothing is changed.",
+        )
+    elif report.first_session is None:
+        finding = Finding(
+            HealthState.INSUFFICIENT_EVIDENCE,
+            "awaiting_session_1",
+            "Registered; no record yet. Session 1 is the first eligible close (section 4).",
+        )
+    elif kept is None:
+        finding = Finding(
+            HealthState.INSUFFICIENT_EVIDENCE,
+            "kept_head_not_judged",
+            "No usable kept head, so its void conditions cannot be checked.",
+        )
+    else:
+        finding = Finding(
+            HealthState.HEALTHY,
+            None,
+            f"No section 5 condition through session {report.number or 0} "
+            f"({report.phase or 'none due'}).",
+        )
+    finding = _finish([finding], _records(entries), allow_synthetic)
+    return _check(
+        check_id,
+        state=finding.state,
+        reason=finding.reason,
+        measured_at=now,
+        value=len(report.conditions),
+        unit=unit,
         better=Better.LOWER,
         tolerance=0,
         summary=finding.summary,
@@ -711,8 +930,8 @@ def ledger_checks(
     allow_synthetic: bool = False,
 ) -> list[Check]:
     """
-    `forecast.ledger`, `forecast.ledger_backup`, `forecast.ledger_sessions` and
-    `forecast.ledger_scores`.
+    `forecast.ledger`, `forecast.ledger_backup`, `forecast.ledger_sessions`,
+    `forecast.ledger_scores` and `forecast.ledger_trial`.
     """
 
     read = _read(path)
@@ -735,6 +954,7 @@ def ledger_checks(
         _backup(read, backup, kept, **common),
         _sessions(read, calendar, **common),
         _scores(read, calendar, **common),
+        _trial(read, kept if isinstance(kept, str) else None, calendar, **common),
     ]
 
 
