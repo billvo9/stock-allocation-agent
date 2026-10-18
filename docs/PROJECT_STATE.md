@@ -801,6 +801,23 @@ the owner's answers and messages in session:
     additional synthetic optimization."
   - Not authorized: merging ("Do not auto-merge"), formula approval,
     purchases, protected outcomes for training, and trading activation.
+- 2026-10-18, the ETF registration build's breaking contract changes
+  (owner, by choosing these options in the lead session; the quoted text is
+  the option chosen):
+  - "Approve both (Recommended)":
+    - `zero_volatility_rule` becomes a required key of the registered
+      config. Its hash changes from `ae5d5853…` to `dba70fc2…`, and a
+      config or bundle without the key is refused.
+    - The forecast job and scoring refuse a ledger that does not begin
+      with a registration entry.
+
+    No real config, frozen model or ledger existed at the time.
+  - "Refusal is final (Recommended)": a whole-session refusal is that
+    session's one record. No forecast is recorded later for the same
+    session.
+  - These approve the contract changes only. They approve no section 13
+    decision, no zero-volatility rule change, and no freeze, registration
+    or activation.
 - Pending:
   - Stock Lab, in order (open item 10):
     1. authorization of the A1 read-only audit, after the token is
@@ -1411,8 +1428,9 @@ numpy 2.5.1, pyarrow 25.0.1, streamlit 1.64.0, plotly 7.1.0, scikit-learn
       (`scripts/check_zero_vol_floor.py check`), reported to the owner;
       then the owner decides the zero-volatility rule and the section 13
       registration decisions.
-   5. Lead (engineering, no approval needed to build): the section 12
-      activation prerequisites:
+   5. Lead (engineering; breaking contract changes need owner approval,
+      given 2026-10-18 for the three listed under "Owner decisions"): the
+      section 12 activation prerequisites:
       - the ledger's registration entry and record file;
       - cadence-aware Model Health;
       - the zero-volatility rule as a registered config key;
