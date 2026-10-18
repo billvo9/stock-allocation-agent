@@ -25,11 +25,19 @@ never from the realized data: the family at a checkpoint is every fund x
 horizon cell with n(h, c) >= MIN_OUTCOMES, and a cell in the family whose
 realized count falls short (missed sessions) enters Holm with p = 1.
 
-Power (normal approximation, one-sided test of a mean loss differential d
-with standard deviation s_d over n independent outcomes, at level a):
+Power (exact, one-sided t-test of a mean loss differential d with standard
+deviation s_d over n independent outcomes, at level a; delta = E[d] / s_d).
+The statistic t = mean(d) / (s / sqrt(n)) follows a noncentral t with n - 1
+degrees of freedom and noncentrality delta sqrt(n), so
 
-    power(delta, n, a) = Phi(delta sqrt(n) - z_{1-a}),      delta = E[d] / s_d
-    MDE(n, a)          = (z_{1-a} + z_{0.8}) / sqrt(n)        (80% power)
+    power(delta, n, a) = P(T'_{n-1, delta sqrt(n)} > t_{1-a, n-1})
+                       = E_V[ Phi_bar(t_{1-a, n-1} sqrt(V / (n - 1)) - delta sqrt(n)) ],
+                         V ~ chi-square(n - 1)
+    MDE(n, a)          = the delta at which power = 0.8
+
+The expectation over V is a numerical integral (no new dependency). The
+normal approximation (z_{1-a} + z_{0.8}) / sqrt(n) is smaller, for example
+0.458 instead of 0.471 at n = 50 and a = 0.025 / 3.
 
 The honest level for a cell is the first Holm step, a = ALPHA / m, with m
 the family size at that checkpoint: the level a lone true effect must beat.
@@ -90,24 +98,56 @@ def first_holm_level(checkpoint: int, tests_per_cell: int = 1) -> float | None:
     return ALPHA_PER_CHECKPOINT / size if size else None
 
 
-def power(effect: float, n: int, alpha: float) -> float:
-    """One-sided power of a mean test at standardized effect E[d] / s_d (normal approx)."""
+GRID_POINTS = 4001  # the integration grid over the chi-square variable
 
-    return inf.normal_cdf(effect * math.sqrt(n) - inf.normal_ppf(1.0 - alpha))
+
+def power(effect: float, n: int, alpha: float) -> float:
+    """Exact one-sided power of a t-test of the mean at standardized effect E[d] / s_d."""
+
+    if n < 2:
+        raise ValueError("A t-test needs at least 2 outcomes.")
+    df = n - 1
+    critical = inf.student_t_ppf(1.0 - alpha, df)
+    # V ~ chi-square(df): integrate over [0, df + 12 sqrt(2 df) + 40], which holds all but a
+    # negligible tail; the density is evaluated in logs for large df.
+    upper = df + 12.0 * math.sqrt(2.0 * df) + 40.0
+    step = upper / (GRID_POINTS - 1)
+    log_norm = (df / 2.0) * math.log(2.0) + math.lgamma(df / 2.0)
+    total = 0.0
+    for k in range(1, GRID_POINTS):
+        v = k * step
+        density = math.exp((df / 2.0 - 1.0) * math.log(v) - v / 2.0 - log_norm)
+        tail = 1.0 - inf.normal_cdf(critical * math.sqrt(v / df) - effect * math.sqrt(n))
+        weight = 0.5 if k == GRID_POINTS - 1 else 1.0
+        total += weight * density * tail
+    return min(1.0, max(0.0, total * step))
 
 
 def minimum_detectable_effect(n: int, alpha: float, target: float = POWER_TARGET) -> float:
-    """The standardized effect E[d] / s_d detected with `target` power (normal approx)."""
+    """The standardized effect E[d] / s_d detected with `target` power (exact t-test)."""
 
-    return (inf.normal_ppf(1.0 - alpha) + inf.normal_ppf(target)) / math.sqrt(n)
+    low, high = 0.0, 10.0
+    for _ in range(60):
+        middle = (low + high) / 2.0
+        low, high = (middle, high) if power(middle, n, alpha) < target else (low, middle)
+    return high
 
 
 def outcomes_for_power(effect: float, alpha: float, target: float = POWER_TARGET) -> int | None:
-    """The independent outcomes needed for `target` power at `effect` (None if effect <= 0)."""
+    """The fewest independent outcomes giving `target` power at `effect` (None if <= 0)."""
 
     if not effect > 0:
         return None
-    return math.ceil(((inf.normal_ppf(1.0 - alpha) + inf.normal_ppf(target)) / effect) ** 2)
+    high = 2
+    while power(effect, high, alpha) < target:
+        high *= 2
+        if high > 10**6:
+            return None
+    low = max(2, high // 2)
+    while low < high:
+        middle = (low + high) // 2
+        low, high = (middle + 1, high) if power(effect, middle, alpha) < target else (low, middle)
+    return high
 
 
 def binomial_acceptance(n: int, p: float, alpha: float) -> tuple[int, int]:

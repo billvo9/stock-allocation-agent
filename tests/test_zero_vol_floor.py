@@ -8,6 +8,8 @@ fixtures, including a tick-discretized SHV-like series.
 
 from __future__ import annotations
 
+import copy
+import dataclasses
 import importlib.util
 import json
 import math
@@ -19,6 +21,7 @@ import pandas as pd
 import pytest
 import yaml
 from forecast_prospective_helpers import (
+    AS_OF,
     ASSETS,
     REGISTERED,
     REPO,
@@ -28,7 +31,7 @@ from forecast_prospective_helpers import (
     small_config,
 )
 from prospective_helpers import batch, stored
-from zero_vol_helpers import tick_batch
+from zero_vol_helpers import MILD_REGIMES, tick_batch
 
 from stock_agent.calendars import nyse_rules
 from stock_agent.data.funds.ingest import ingest_batch
@@ -36,6 +39,7 @@ from stock_agent.data.funds.reader import read_store
 from stock_agent.data.prospective.inference import load_inference_window
 from stock_agent.forecasting.prospective import (
     forecast,
+    ledger,
     registration,
     series,
     training,
@@ -323,7 +327,10 @@ def test_scoring_by_default_keeps_the_miss_and_records_the_flags(
     prospective_frozen, tmp_path, flat_store
 ):
     ledger_path = tmp_path / "ledger.jsonl"
-    record(prospective_frozen, ledger_path, flat_store)
+    entry = record(prospective_frozen, ledger_path, flat_store)
+    assert entry.payload["forecast_schema_version"] == "1.1"
+    assert entry.payload["bundle"]["zero_volatility_rule"] == zero_vol.CURRENT
+    assert all(row["as_of_close"] > 0 for row in entry.payload["rows"])
     written, _ = _score(ledger_path, flat_store)
     assert written.payload["score_schema_version"] == "1.1"
     flat = _vol_scores(written).loc[("SHV", 5)]
@@ -332,27 +339,92 @@ def test_scoring_by_default_keeps_the_miss_and_records_the_flags(
     assert flat["zero_vol_rule"] == zero_vol.CURRENT
     assert flat["measured_zero"] and not flat["floored"]
     assert flat["sigma_raw"] == 0.0 and pd.isna(flat["sigma_floor"])
+    assert not flat["as_of_close_revised"]
     moved = _vol_scores(written).loc[("VTI", 5)]
     assert not moved["measured_zero"] and moved["sigma_raw"] > 0
     returns = pd.DataFrame(written.payload["scores"])
     assert returns.loc[returns["target"] == "total_log_return", "zero_vol_rule"].isna().all()
 
 
-def test_b2_scores_a_flat_outcome_at_the_as_of_floor(prospective_frozen, tmp_path, flat_store):
+def _with_rule(models: forecast.Models, rule: str) -> forecast.Models:
+    """The fixture's models as if their bundle had been trained under `rule` (freeze cannot)."""
+
+    document = copy.deepcopy(dict(models.bundle.document))
+    for fit in document["fits"]:
+        fit["training"]["zero_volatility_rule"] = rule
+    return forecast.Models(dataclasses.replace(models.bundle, document=document), models.entries)
+
+
+def test_scoring_refuses_a_rule_the_bundle_was_not_trained_under(
+    prospective_frozen, tmp_path, flat_store
+):
     ledger_path = tmp_path / "ledger.jsonl"
     entry = record(prospective_frozen, ledger_path, flat_store)
+    assert entry.payload["bundle"]["zero_volatility_rule"] == zero_vol.CURRENT
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        _score(ledger_path, flat_store, zero_vol.B2)
+    assert refused.value.reason == "zero_vol_rule_not_trained"
+    assert len(ledger.read_ledger(ledger_path)) == 1  # nothing written
+
+
+def test_a_bundle_whose_fits_disagree_on_the_rule_is_refused(prospective_frozen):
+    models = prospective_frozen.models()
+    document = copy.deepcopy(dict(models.bundle.document))
+    document["fits"][0]["training"]["zero_volatility_rule"] = zero_vol.B2
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        forecast.training_rule(dataclasses.replace(models.bundle, document=document))
+    assert refused.value.reason == "models_unverified"
+
+
+def test_a_b2_bundle_scores_a_flat_outcome_at_its_recorded_as_of_floor(
+    prospective_frozen, tmp_path, flat_store
+):
+    ledger_path = tmp_path / "ledger.jsonl"
+    models = _with_rule(prospective_frozen.models(), zero_vol.B2)
+    entry = record(prospective_frozen, ledger_path, flat_store, models=models)
+    assert entry.payload["bundle"]["zero_volatility_rule"] == zero_vol.B2
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        _score(ledger_path, flat_store)  # the rule in force: not what this bundle used
+    assert refused.value.reason == "zero_vol_rule_not_trained"
     written, _ = _score(ledger_path, flat_store, zero_vol.B2)
     flat = _vol_scores(written).loc[("SHV", 5)]
-    as_of = load_inference_window(
-        flat_store, ["SHV"], entry.payload["as_of_session"], retrieved_by=pd.Timestamp.now("UTC")
-    ).prices
-    close = float(as_of.loc[as_of["session_date"].idxmax(), "close"])
-    floor = float(zero_vol.sigma_floor(close, 5))
-    assert flat["outcome"] == math.log(floor)
+    recorded = next(
+        row["as_of_close"]
+        for row in entry.payload["rows"]
+        if (row["asset"], row["horizon"]) == ("SHV", 5)
+    )
+    floor = float(zero_vol.sigma_floor(recorded, 5))
+    assert flat["outcome"] == math.log(floor) and flat["sigma_floor"] == floor
     assert flat["measured_zero"] and flat["floored"]
     assert flat["outcome_note"] == "floored_realized_volatility"
-    assert flat["sigma_floor"] == floor and flat["sigma_raw"] == 0.0
+    assert flat["as_of_close"] == recorded and not flat["as_of_close_revised"]
     assert flat["inside_band"] == (flat["band_low"] <= flat["outcome"] <= flat["band_high"])
+
+
+def test_a_revised_as_of_close_never_moves_the_floor(prospective_frozen, tmp_path):
+    days = nyse_rules.sessions("2026-10-15", "2026-10-22")
+    as_of = pd.Timestamp(AS_OF, tz="UTC").as_unit("us")
+
+    def flat_and_revised(retrieval, tables):
+        prices, distributions, splits = tables
+        if retrieval >= "2026-10-22":
+            prices = prices.copy()
+            shv = prices["fund_id"] == "SHV"
+            entry_close = prices.loc[shv & (prices["session_date"] == days[0]), "close"].iloc[0]
+            prices.loc[shv & prices["session_date"].isin(days), "close"] = float(entry_close)
+            prices.loc[shv & (prices["session_date"] == as_of), "close"] += 0.05  # a revision
+        return prices, distributions, splits
+
+    store = prospective_store(tmp_path / "revised", edit=flat_and_revised)
+    ledger_path = tmp_path / "ledger.jsonl"
+    models = _with_rule(prospective_frozen.models(), zero_vol.B2)
+    entry = record(prospective_frozen, ledger_path, store, models=models)
+    written, _ = _score(ledger_path, store, zero_vol.B2)
+    flat = _vol_scores(written).loc[("SHV", 5)]
+    recorded = next(r["as_of_close"] for r in entry.payload["rows"] if r["asset"] == "SHV")
+    assert flat["as_of_close_revised"] and flat["as_of_close"] == recorded
+    assert flat["sigma_floor"] == float(zero_vol.sigma_floor(recorded, 5))
+    assert flat["sigma_floor"] != float(zero_vol.sigma_floor(recorded + 0.05, 5))
 
 
 def test_a_ledger_is_never_scored_under_two_rules(prospective_frozen, tmp_path, flat_store):
@@ -368,42 +440,66 @@ def test_a_ledger_is_never_scored_under_two_rules(prospective_frozen, tmp_path, 
         calendar=exchange_calendar,
     )
     assert first is not None
+    later = _with_rule(prospective_frozen.models(), zero_vol.B2)
+    record(
+        prospective_frozen,
+        ledger_path,
+        flat_store,
+        as_of="2026-10-15",
+        created=pd.Timestamp("2026-10-15T23:00:00Z"),
+        models=later,
+    )
     with pytest.raises(forecast.ForecastRefused) as refused:
         _score(ledger_path, flat_store, zero_vol.B2)
-    assert refused.value.reason == "zero_vol_rule_mismatch"
+    assert refused.value.reason == "zero_vol_rule_mismatch"  # earlier scores used CURRENT
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        _score(ledger_path, flat_store)
+    assert refused.value.reason == "zero_vol_rule_not_trained"  # a pending B2 forecast
 
 
 # --- the development check -----------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def check_run(tick_store, tmp_path_factory):
-    """One run of the script's check on the tick fixture (the test variant of the config)."""
+def _store(root, regimes):
+    root.mkdir()
+    ingest_batch(root, tick_batch(regimes=regimes))
+    return root
 
-    root = tmp_path_factory.mktemp("check")
+
+def _check(store, root):
+    """One run of the script's check (the test variant of the config) and its report."""
+
     config_path = root / "config.yaml"
     config_path.write_text(yaml.safe_dump(small_config().to_json()), encoding="utf-8")
     output = root / "out"
-    argv = [
-        "check",
-        "--research-store",
-        str(tick_store),
-        "--config",
-        str(config_path),
-        "--output-dir",
-        str(output),
-    ]
+    argv = ["check", "--research-store", str(store), "--config", str(config_path)]
+    argv += ["--output-dir", str(output)]
     code = _script().main(argv, clock=lambda: CLOCK)
     directory = output / CLOCK.strftime("%Y%m%dT%H%M%SZ")
     document = json.loads((directory / "report.json").read_text(encoding="utf-8"))
     return {"code": code, "directory": directory, "document": document, "argv": argv}
 
 
+@pytest.fixture(scope="module")
+def check_run(tmp_path_factory):
+    """The passing case: a mild flat stretch (MILD_REGIMES)."""
+
+    root = tmp_path_factory.mktemp("mild")
+    return _check(_store(root / "f1_research_store", MILD_REGIMES), root)
+
+
+@pytest.fixture(scope="module")
+def heavy_run(tick_store, tmp_path_factory):
+    """The failing case: the default REGIMES, about 10% zeros at h = 5, stops at Z2."""
+
+    return _check(tick_store, tmp_path_factory.mktemp("heavy"))
+
+
 def _frame(document, name):
     return pd.DataFrame(document["tables"][name])
 
 
-def test_the_check_reports_every_table_and_passes_on_the_tick_fixture(check_run):
+def test_the_check_passes_on_the_mild_fixture(check_run):
     document = check_run["document"]
     assert check_run["code"] == 0 and document["status"] == "pass"
     assert [c["id"] for c in document["criteria"]] == ["Z1", "Z2", "Z3", "Z4"]
@@ -412,13 +508,32 @@ def test_the_check_reports_every_table_and_passes_on_the_tick_fixture(check_run)
     assert document["config_sha256"] == small_config().sha256
     assert set(document["rules"]) == set(zero_vol.RULES)
     assert (check_run["directory"] / "report.md").read_text().startswith("# Zero-volatility")
-    assert document["registration_power"]  # added only after every criterion passed
     assert "research only" in " ".join(document["labels"])
+    power = pd.DataFrame(document["registration_power"])  # only after every criterion passed
+    vol = power.loc[power["target"] == "log_realized_volatility"]
+    assert set(vol["loss"]) == {"squared_error", "qlike"}
+    assert set(power.loc[power["target"] == "total_log_return", "loss"]) == {"squared_error"}
+    (reported,) = document["reported_checks"]
+    assert reported["id"] == "R1" and reported["status"] == "reported"
 
 
-def test_the_window_counts_and_the_cent_grid(check_run):
-    totals = _frame(check_run["document"], "window_totals").set_index(["asset", "horizon"])
-    by_year = _frame(check_run["document"], "windows_by_year")
+def test_the_heavy_fixture_stops_at_z2(heavy_run):
+    document = heavy_run["document"]
+    assert heavy_run["code"] == 1 and document["status"] == "fail"
+    status = {c["id"]: c["status"] for c in document["criteria"]}
+    assert status == {"Z1": "pass", "Z2": "fail", "Z3": "not_evaluated", "Z4": "not_evaluated"}
+    assert document["registration_power"] is None
+    assert document["reported_checks"][0]["id"] == "R1"  # reported even after a failure
+    shares = _frame(document, "nonzero_coverage").set_index(["asset", "horizon"])
+    assert shares.loc[("SHV", 5), "difference"] > zero_vol_check.NONZERO_COVERAGE_TOLERANCE
+    assert (shares.drop(index=("SHV", 5))["difference"] == 0.0).all()
+    z2 = next(c for c in document["criteria"] if c["id"] == "Z2")
+    assert "measured zeros" in z2["measured"]
+
+
+def test_the_window_counts_and_the_cent_grid(heavy_run):
+    totals = _frame(heavy_run["document"], "window_totals").set_index(["asset", "horizon"])
+    by_year = _frame(heavy_run["document"], "windows_by_year")
     summed = by_year.groupby(["asset", "horizon"])[["n_windows", "n_zero", "n_floored"]].sum()
     pd.testing.assert_frame_equal(
         summed, totals[["n_windows", "n_zero", "n_floored"]], check_dtype=False
@@ -427,13 +542,13 @@ def test_the_window_counts_and_the_cent_grid(check_run):
     assert totals.loc[("SHV", 5), "n_floored"] == totals.loc[("SHV", 5), "n_zero"]
     for asset in ("VTI", "AGG"):
         assert (totals.loc[asset, "n_floored"] == 0).all()
-    grid = _frame(check_run["document"], "cent_grid").set_index("asset")
+    grid = _frame(heavy_run["document"], "cent_grid").set_index("asset")
     assert (grid.loc["SHV", "share_on_grid"] == 1.0).all()  # tick-discretized closes
     assert (grid.loc["VTI", "share_on_grid"] < 0.1).all()  # the GARCH fixture's float closes
 
 
-def test_the_current_bands_lose_coverage_when_zeros_count_as_misses(check_run):
-    coverage = _frame(check_run["document"], "coverage")
+def test_the_current_bands_lose_coverage_when_zeros_count_as_misses(heavy_run):
+    coverage = _frame(heavy_run["document"], "coverage")
     vol = coverage.loc[coverage["target"] == "log_realized_volatility"]
     shv5 = vol.loc[(vol["asset"] == "SHV") & (vol["horizon"] == 5)].set_index("rule")
     assert shv5.loc[zero_vol_check.CURRENT_AS_MISS, "n_zero_as_miss"] > 0
@@ -451,19 +566,21 @@ def test_the_current_bands_lose_coverage_when_zeros_count_as_misses(check_run):
             ].iloc[0]
             for column in ("n", "estimate", "se", "boot_ci_low", "boot_ci_high"):
                 assert cell[column] == same[column], column
-    split = _frame(check_run["document"], "zero_split").set_index(["rule", "asset", "horizon"])
+    split = _frame(heavy_run["document"], "zero_split").set_index(["rule", "asset", "horizon"])
     assert split.loc[(zero_vol_check.CURRENT_AS_MISS, "SHV", 5), "coverage_zero_rows"] == 0.0
     assert split.loc[(zero_vol.B2, "SHV", 5), "coverage_zero_rows"] > 0.0
 
 
-def test_bit_identity_and_the_residual_shift(check_run):
-    identity = _frame(check_run["document"], "bit_identity").set_index(["asset", "horizon"])
+def test_bit_identity_and_the_residual_shift(heavy_run):
+    identity = _frame(heavy_run["document"], "bit_identity").set_index(["asset", "horizon"])
     assert identity.loc[identity["required"], "identical"].all()
     assert not identity.loc[("SHV", 5), "required"]
     assert not identity.loc[("SHV", 5), "identical"]  # the floor changed SHV h5, as designed
-    shift = _frame(check_run["document"], "residual_shift").set_index(["asset", "horizon"])
+    shift = _frame(heavy_run["document"], "residual_shift").set_index(["asset", "horizon"])
     assert (shift.drop(index=("SHV", 5))["mean_shift"] == 0.0).all()
     assert 0 < abs(shift.loc[("SHV", 5), "mean_shift"]) <= zero_vol_check.RESIDUAL_SHIFT_MAX
+    losses = _frame(heavy_run["document"], "mse_improvement")
+    assert set(losses["rule"]) == set(zero_vol.RULES)
 
 
 def test_a_report_is_written_once(check_run, capsys):
@@ -476,32 +593,17 @@ def _passing_tables(check_run):
 
 
 @pytest.mark.parametrize(
-    ("failing", "edit"),
+    ("failing", "name", "edit"),
     [
-        ("Z1", lambda t: t["bit_identity"].assign(identical=False)),
-        (
-            "Z2",
-            lambda t: t["coverage"].assign(
-                estimate=np.where(
-                    (t["coverage"]["rule"] == zero_vol.B2) & (t["coverage"]["asset"] == "SHV"),
-                    0.70,
-                    t["coverage"]["estimate"],
-                )
-            ),
-        ),
-        ("Z3", lambda t: t["window_totals"].assign(share_floored_not_zero=0.02)),
-        ("Z4", lambda t: t["residual_shift"].assign(mean_shift=0.06)),
+        ("Z1", "bit_identity", lambda t: t.assign(identical=False)),
+        ("Z2", "nonzero_coverage", lambda t: t.assign(difference=0.03)),
+        ("Z3", "window_totals", lambda t: t.assign(share_floored_not_zero=0.02)),
+        ("Z4", "residual_shift", lambda t: t.assign(mean_shift=0.06)),
     ],
 )
-def test_the_first_failing_criterion_stops_the_evaluation(check_run, failing, edit):
+def test_the_first_failing_criterion_stops_the_evaluation(check_run, failing, name, edit):
     tables = _passing_tables(check_run)
-    name = {
-        "Z1": "bit_identity",
-        "Z2": "coverage",
-        "Z3": "window_totals",
-        "Z4": "residual_shift",
-    }[failing]
-    tables[name] = edit(tables)
+    tables[name] = edit(tables[name])
     results = zero_vol_check.evaluate_criteria(tables, small_config())
     status = {r["id"]: r["status"] for r in results}
     order = ["Z1", "Z2", "Z3", "Z4"]
@@ -511,17 +613,19 @@ def test_the_first_failing_criterion_stops_the_evaluation(check_run, failing, ed
     assert all(status[i] == "not_evaluated" for i in order[stop + 1 :])
 
 
-def test_b2_coverage_below_the_zeros_as_misses_coverage_fails_z2(check_run):
+def test_band_calibration_is_reported_and_never_a_criterion(check_run):
     tables = _passing_tables(check_run)
     coverage = tables["coverage"]
-    miss = (coverage["rule"] == zero_vol_check.CURRENT_AS_MISS) & (coverage["asset"] == "SHV")
-    tables["coverage"] = coverage.assign(estimate=np.where(miss, 0.84, coverage["estimate"]))
-    results = {r["id"]: r for r in zero_vol_check.evaluate_criteria(tables, small_config())}
-    assert results["Z2"]["status"] == "fail"
+    shv = (coverage["rule"] == zero_vol.B2) & (coverage["asset"] == "SHV")
+    tables["coverage"] = coverage.assign(estimate=np.where(shv, 0.60, coverage["estimate"]))
+    results = zero_vol_check.evaluate_criteria(tables, small_config())
+    assert all(r["status"] == "pass" for r in results)
+    (reported,) = zero_vol_check.evaluate_reported(tables, small_config())
+    assert reported["status"] == "reported" and reported["within"] is False
 
 
 def test_a_failed_check_exits_1_and_names_the_rule_in_force(
-    check_run, tick_store, tmp_path, monkeypatch, capsys
+    check_run, tmp_path, monkeypatch, capsys
 ):
     script = _script()
     tables = _passing_tables(check_run)
@@ -541,7 +645,8 @@ def test_a_failed_check_exits_1_and_names_the_rule_in_force(
         registration_power=None,
     )
     monkeypatch.setattr(script.zero_vol_check, "run_check", lambda *args: planted)
-    argv = ["check", "--research-store", str(tick_store), "--output-dir", str(tmp_path / "out")]
+    store = check_run["argv"][2]
+    argv = ["check", "--research-store", store, "--output-dir", str(tmp_path / "out")]
     assert script.main(argv, clock=lambda: CLOCK) == 1
     assert zero_vol.CURRENT in capsys.readouterr().out
     document = json.loads(next((tmp_path / "out").rglob("report.json")).read_text())
@@ -598,6 +703,9 @@ def test_the_doc_holds_the_scripts_worked_examples_and_criteria(capsys):
     assert printed in text
     for identifier, statement in zero_vol_check.CRITERIA:
         assert f"**{identifier}.** {statement}" in text
+    for identifier, statement in zero_vol_check.REPORTED_CHECKS:
+        assert f"**{identifier}.** {statement}" in text
+    assert zero_vol_check.ORIGINAL_Z2 in text  # the revised criterion stays visible
 
 
 def test_the_registration_doc_holds_the_scripts_schedule(capsys):

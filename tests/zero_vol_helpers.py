@@ -24,8 +24,12 @@ START = pd.Timestamp("2019-01-02", tz="UTC")
 END_EXCLUSIVE = pd.Timestamp("2025-01-01", tz="UTC")
 RETRIEVED = pd.Timestamp("2026-10-14T12:00:00Z")
 SHV_START = 110.30
-# (first session, daily latent sigma in bp, daily drift in bp): moving, then flat, then accruing
+# (first session, daily latent sigma in bp, daily drift in bp): moving, then flat, then accruing.
+# REGIMES makes about 10% of SHV's 5-session development rows measured zeros; under B2 the
+# band widens and over-covers the non-zero rows by more than Z2 allows (a failing case).
 REGIMES = (("2019-01-02", 1.5, 0.0), ("2021-01-04", 0.25, 0.0), ("2022-07-01", 1.5, 1.6))
+# MILD_REGIMES: a shorter flat stretch, about 2% zeros; every criterion passes (a passing case).
+MILD_REGIMES = (("2019-01-02", 1.5, 0.0), ("2021-07-01", 0.3, 0.0), ("2022-01-03", 1.5, 1.6))
 
 
 def tick_closes(

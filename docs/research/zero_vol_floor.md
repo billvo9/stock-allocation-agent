@@ -2,6 +2,12 @@
 
 Status (2026-10-17): research only, for the owner's decision. Rule B2 is implemented as an explicitly named, non-default option (`zero_vol.B2`, `"research_b2_half_tick_floor"`). The rule in force is unchanged (`zero_vol.CURRENT`, `"current_drop_and_miss"`), and the forecast job, `freeze` and every default use it. The registered config `etf_prospective_v1` is unchanged; a test pins its hash (`ae5d5853…`). Nothing has been frozen and no real data has been read. The development-data check (section 6) runs once the owner approves storing the pre-2025 VTI/AGG/SHV batch.
 
+Revised 2026-10-17 after an independent review, still before any real data existed:
+- scoring now refuses any rule other than the bundle's training rule;
+- each forecast row records its as-of close, which fixes the floor;
+- criterion Z2 now tests the floor rather than the band (section 6; the original wording is kept there);
+- the simulation code is in the repository (section 5).
+
 Code: `src/stock_agent/forecasting/prospective/zero_vol.py` (the rules), `zero_vol_check.py` (the development check), `scripts/check_zero_vol_floor.py` (the command). Tests: `tests/test_zero_vol_floor.py`.
 
 **Owner decision (pending, one line):** approve rule B2 (section 2) as the log-volatility target in training labels, calibration and scoring for the first frozen ETF model, provided the development check passes Z1–Z4 (section 6) — **yes / no**.
@@ -82,20 +88,32 @@ The sub-tick rows show why the floor also protects the rule in force. With no fl
 | Development folds and nested selection | Zero rows are absent | Floored rows are ordinary rows |
 | Conformal calibration (sequential and frozen quantiles) | Scores come from moving rows only | Floored rows' scores are included, so the band learns the point mass at the floor |
 | Historical-mean null | The mean of moving rows' labels | The mean of every label, floored ones included |
-| Prospective scoring (`forecast.score_matured`) | outcome = None, `inside_band` = false, note `zero_realized_volatility` | outcome = ln(sigma_floor,h) at the forecast's own as-of close, scored like any outcome, note `floored_realized_volatility` |
-| Recorded per scored volatility row | `zero_vol_rule`, `sigma_raw`, `measured_zero`, `floored` (false), `sigma_floor` (null) | the same flags; `floored` true when the floor binds |
+| Forecast record (`forecast.record_forecast`) | `bundle.zero_volatility_rule` and each row's `as_of_close` | the same |
+| Prospective scoring (`forecast.score_matured`) | outcome = None, `inside_band` = false, note `zero_realized_volatility` | outcome = ln(sigma_floor,h) at the as-of close the forecast recorded, scored like any outcome, note `floored_realized_volatility` |
+| Recorded per scored volatility row | `zero_vol_rule`, `sigma_raw`, `measured_zero`, `floored` (false), `sigma_floor` (null), `as_of_close`, `as_of_close_revised` | the same flags; `floored` true when the floor binds |
 | QLIKE (`training._qlike`, the registration's primary loss) | Undefined at a zero outcome (σ² = 0) | Finite everywhere |
 
 Guards:
-- **The defaults.** Every function defaults to the rule in force. The forecast job's CLI and `freeze` cannot select B2.
-- **No mixing.** A ledger already scored under one rule refuses scoring under the other (`zero_vol_rule_mismatch`). Scores written before the rule was recorded count as the rule in force.
-- **Lineage.** The frozen bundle's fits record `training.zero_volatility_rule`, and score entries are schema 1.1, which adds the volatility flags.
+- **The defaults.** Every function defaults to the rule in force. The forecast job's CLI and `freeze` cannot select B2. A test runs the job's `forecast` and `score` subcommands and checks that every score records the rule in force.
+- **The bundle decides the scoring rule.** A forecast records the rule its bundle was trained under (`bundle.zero_volatility_rule`). Scoring refuses any other rule (`zero_vol_rule_not_trained`), so training, calibration and scoring always share one treatment. A bundle whose fits disagree on the rule is refused when it is loaded. Bundles and forecasts from before the rule was recorded count as the rule in force.
+- **No mixing.** A ledger already scored under one rule refuses scoring under the other (`zero_vol_rule_mismatch`).
+- **The floor is fixed at the decision time.** Each forecast row records its unadjusted as-of close (`as_of_close`), and B2's floor is computed from that recorded value. A later revision of the close in the prospective store cannot move the floor; it shows up as `as_of_close_revised` on the score. B2 scoring refuses a forecast without a recorded close (`as_of_close_not_recorded`).
+- **Lineage.** The frozen bundle's fits record `training.zero_volatility_rule`. Forecast entries are schema 1.1 (the bundle's rule and the rows' as-of close), and score entries are schema 1.1 (the volatility flags).
 
 Unchanged by B2: the features (a flat 5-session feature window is still imputed with the training median, as today), the total-return target, the band method, the fold geometry, the sealed period, and the registered config.
 
 ## 5. Simulation evidence (SIMULATION ONLY; not development-data evidence)
 
-Lead session study, 2026-10-17 (scratch code, not in the repository). The setup:
+Lead session study, 2026-10-17. The code is in `scripts/research/` (`zero_vol_simulation.py`, `zero_vol_simulation_tables.py`, `zero_vol_simulation_examples.py`), labelled simulation, and reproduces the study's result files byte for byte (about 15 s):
+
+```bash
+.venv/bin/python scripts/research/zero_vol_simulation.py <output directory>
+.venv/bin/python scripts/research/zero_vol_simulation_tables.py <output directory>
+```
+
+`tests/test_zero_vol_simulation.py` checks that it is deterministic and that its floor equals the production formula.
+
+The setup:
 - **Latent process.** A daily log return μ + σε, with the price rounded to the cent and distributions as paid.
 - **Paths.** P₀ = $110.30 or $50.00; yields of 0%, 0.5% and 4%; σ from 0.25 to 5 bp a day; random-walk, mean-reverting and stochastic-volatility variants. That is 54 scenarios × 10 seeds × h ∈ {5, 20, 30} (162 cells), plus one SHV-history-like path.
 - **Forecaster.** Ridge on the same five features, α = 0.1·n fixed, with split-conformal 80% bands on separate train, calibration and test segments.
@@ -143,28 +161,47 @@ What it reports, per fund, under both rules, with the registered config `etf_pro
    - under the rule in force;
    - under B2;
    - for the current bands re-scored with every measured zero in a scored fold counted as a miss. That is what prospective scoring does today.
-4. **Coverage on zero and non-zero rows separately.**
-5. **Band width.**
-6. **QLIKE.** The improvement over the historical-mean null, under both rules.
-7. **Residual shift.** On non-zero rows, B2 minus the rule in force.
-8. **Bit identity.** Per fund × h, whether predictions, bands, metrics and selections are identical under both rules.
+4. **Coverage on zero and non-zero rows separately**, per rule.
+5. **Coverage on non-zero rows under both rules, on the same rows** (`nonzero_coverage`): the rows that have a band under both rules and are not measured zeros, each rule's share inside its own band, and the difference. This is what Z2 reads.
+6. **Band width.**
+7. **Losses.** The QLIKE and squared-error improvements over the historical-mean null, under both rules.
+8. **Residual shift.** On non-zero rows, B2 minus the rule in force.
+9. **Bit identity.** Per fund × h, whether predictions, bands, metrics and selections are identical under both rules.
 
 **Pre-stated acceptance criteria, evaluated in this order:**
 
 - **Z1.** VTI, AGG and every asset-horizon without a floored window give bit-identical development predictions, bands, metrics and selections under both rules.
-- **Z2.** SHV volatility-band coverage under B2 (fold-block estimate) is within 0.80 +- 0.05 at every horizon, and no lower than the current bands with measured zeros as misses.
+- **Z2.** On the volatility rows scored under both rules, B2's band coverage on non-zero rows is within 0.02 of the current rule's coverage for every asset and horizon; coverage on measured-zero rows is reported.
 - **Z3.** Floored windows that are not measured zeros are at most 1% of the eligible windows of every asset and horizon.
 - **Z4.** The mean residual shift (B2 minus current, log volatility) on non-zero development rows is at most 0.05 in absolute value for every asset and horizon.
 
 The check runs under the registered config. It is written down here before any real run, so neither the thresholds nor the order can be tuned to a result.
 
+**A reported check, never a criterion:**
+
+- **R1.** Band calibration (reported, never a criterion): SHV volatility-band coverage under B2 (fold-block estimate) against 0.80 +- 0.05 at every horizon, and against the current bands with measured zeros as misses.
+
+R1 is reported whatever happens to Z1–Z4, including after a stop. It never stops the run and is never a reason to adopt or reject B2.
+
+**Revision record (2026-10-17, before any real data existed).** The first version of these criteria, merged in PR #91, had this Z2:
+
+> SHV volatility-band coverage under B2 (fold-block estimate) is within 0.80 +- 0.05 at every horizon, and no lower than the current bands with measured zeros as misses.
+
+An independent review found that it tests the band's calibration, not the floor. The simulation's SHV-like path, with coverage of 0.708, 0.591 and 0.537, would fail it under every rule, because no zero-volatility rule fixes a regime change. The criterion was replaced by the Z2 above, and the old test is kept as the reported check R1. No real data had been stored or read when this was decided, so the revision cannot have been tuned to a result.
+
+**What to expect from Z2, stated before any real run.** A marginal band that has to cover floored rows widens. With a share p of floored rows that the band covers with probability c₀, keeping overall coverage near 0.80 implies non-zero coverage of about (0.80 − p·c₀)/(1 − p). That is above 0.80 by about p·(0.80 − c₀)/(1 − p).
+- For c₀ = 0.35 (the simulation's average), Z2's 0.02 tolerance is reached near p = 4%.
+- With small calibration sets, a few extreme floored scores can move the quantile further. On the synthetic test variant, 13 zero rows in about 870 moved SHV's 5-session non-zero coverage by +0.08.
+
+So Z2 may fail for SHV at h = 5 if 2010–2015 had many flat 5-session windows. The window counts (item 1) show that share. A failure would mean B2, as specified, distorts the rows it does not floor. It would be reported, not repaired by changing the tolerance.
+
 **Failure.** The first failing criterion stops the run. The criteria after it are not evaluated, and the run exits 1 with the measured numbers. A failure is reported to the owner. It is never resolved by switching rules, changing the floor or loosening a threshold: any of those would be a new, separately approved proposal.
 
-**Pass.** It means only that B2 behaves as designed on development data. It is not approval, and the rule in force stays until the owner records a decision. After a pass the report adds the registration power estimates (development loss differentials on non-overlapping outcomes; `docs/research/prospective_registration.md`, section 7).
+**Pass.** It means only that B2 behaves as designed on development data. It is not approval, and the rule in force stays until the owner records a decision. After a pass the report adds the registration power estimates: development loss differentials on non-overlapping outcomes, for squared error on log volatility and for QLIKE (`docs/research/prospective_registration.md`, sections 7 and 10).
 
 What the criteria guard against:
 - **Z1:** the option changing anything where it should not bind.
-- **Z2:** the incoherence in section 1. B2 must stay calibrated and do no worse than today's prospective scoring.
+- **Z2:** the floor distorting the bands of the rows it does not floor. Marginal calibration, which no zero rule can guarantee across regimes, is reported as R1.
 - **Z3:** the regime where the floor would replace measured movements. The simulation found it.
 - **Z4:** the floor shifting the model itself, not only the flat rows.
 
