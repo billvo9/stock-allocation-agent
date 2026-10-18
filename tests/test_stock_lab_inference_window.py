@@ -381,7 +381,7 @@ def test_a_deleted_row_is_refused(stored):
 
 def test_a_batch_on_another_calendar_is_refused(stored):
     with refused(Refusal.CALENDAR_MISMATCH):
-        load(stored[0], calendar_id="nyse_full_day_rules_2003_2027_v1")
+        load(stored[0], calendar_id="nyse_full_day_rules_2003_2030_v1")
 
 
 def test_a_missing_store_and_a_research_store_are_refused(tmp_path):

@@ -435,7 +435,7 @@ def test_the_default_run_is_a_read_only_report(tmp_path, repo, capsys, monkeypat
     lines = out.splitlines()
     assert lines[1] == (
         "H_end 2026-10-14; lookback 63 sessions; window start 2026-07-16; calendar "
-        "nyse_full_day_rules_2003_2027_v1"
+        "nyse_full_day_rules_2003_2030_v1"
     )
     assert "request: VTI AGG SHV [2026-07-16, 2026-10-14] (64 sessions)" in lines[2]
     assert f"  sha256 {hashlib.sha256(anchors.read_bytes()).hexdigest()}" in lines

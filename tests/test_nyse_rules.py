@@ -1,7 +1,9 @@
 """
 The rule-based NYSE calendar (`calendars/nyse_rules.py`): it reproduces the
-frozen research calendar exactly, and extends coverage through 2027 for the
-prospective path. The frozen calendar's contract is pinned byte for byte.
+frozen research calendar exactly, and its default (the 2030 version since the
+owner's 2026-10-18 switch) extends coverage through 2030 for the prospective
+path. The frozen calendar's contract is pinned byte for byte. The 2027
+version's own coverage is tested in test_nyse_rules_2030.py.
 """
 
 import hashlib
@@ -19,8 +21,10 @@ FROZEN_SESSIONS_SHA256 = "f1ca058de450a6c916353697d847afeaac9285d9cb63bc57ffed8c
 FROZEN_CLOSURES_SHA256 = "d26f606d661c1925c8b81697ba783728a9f86633de7b3002cb76bc159012dcfb"
 FROZEN_SESSION_COUNT = 5537
 
-# NYSE's published full-day closures for 2025-2027, entered by hand from the
-# exchange's holiday schedule as recalled (not re-fetched in this change).
+# Full-day closures for 2025-2027. 2026 and 2027 equal NYSE's published "Holidays &
+# Trading Hours" page, retrieved 2026-10-18 (test_nyse_rules_2030.py embeds it with its
+# citation). 2025 was entered by hand as recalled; NYSE's 2025 page was not retrieved, so
+# 2025 is rule-generated (expected, not verified: nyse_rules.year_source(2025)).
 PUBLISHED = {
     2025: [
         date(2025, 1, 1),  # New Year's Day
@@ -152,9 +156,9 @@ def test_the_full_coverage_is_typed_and_contiguous():
     every = nyse_rules.sessions(nyse_rules.COVERAGE.first, nyse_rules.COVERAGE.last)
     assert str(every.dtype) == "datetime64[us, UTC]"
     assert every[0] == pd.Timestamp("2003-01-02", tz="UTC")
-    assert every[-1] == pd.Timestamp("2027-12-31", tz="UTC")
+    assert every[-1] == pd.Timestamp("2030-12-31", tz="UTC")
     assert every.is_monotonic_increasing and every.is_unique
-    weekdays = pd.bdate_range("2003-01-02", "2027-12-31", tz="UTC")
+    weekdays = pd.bdate_range("2003-01-02", "2030-12-31", tz="UTC")
     assert len(weekdays) - len(every) == len(nyse_rules.FULL_DAY_CLOSURES) - 1  # 2003-01-01
 
 
@@ -171,7 +175,7 @@ def test_session_offset_counts_sessions_not_days():
     ("call", "reason"),
     [
         (lambda: nyse_rules.session_offset("2026-07-03", -1), "not_a_session"),
-        (lambda: nyse_rules.session_offset("2027-12-31", 1), "outside_coverage"),
+        (lambda: nyse_rules.session_offset("2030-12-31", 1), "outside_coverage"),
         (lambda: nyse_rules.session_offset("2003-01-02", -1), "outside_coverage"),
         (lambda: nyse_rules.session_offset("2026-10-14", 1.0), "invalid_offset"),
         (lambda: nyse_rules.session_offset("2026-10-14", True), "invalid_offset"),
@@ -186,7 +190,7 @@ def test_session_offset_refusals(call, reason):
 @pytest.mark.parametrize(
     ("value", "reason"),
     [
-        ("2028-01-03", "outside_coverage"),
+        ("2031-01-02", "outside_coverage"),
         ("2002-12-31", "outside_coverage"),
         ("2026-1-2", "invalid_date"),
         ("2026-02-29", "invalid_date"),
@@ -206,7 +210,7 @@ def test_dates_outside_coverage_or_malformed_are_refused(value, reason):
 
 
 def test_full_day_closures_refuses_years_outside_coverage():
-    for years in ((2002, 2003), (2027, 2028), (2026, 2025)):
+    for years in ((2002, 2003), (2030, 2031), (2026, 2025)):
         with pytest.raises(nyse.CalendarRefused):
             nyse_rules.full_day_closures(*years)
 
@@ -215,4 +219,4 @@ def test_every_closure_is_a_weekday_inside_coverage():
     closures = nyse_rules.FULL_DAY_CLOSURES
     assert all(day.weekday() < 5 for day in closures)
     assert list(closures) == sorted(set(closures))
-    assert {day.year for day in closures} == set(range(2003, 2028))
+    assert {day.year for day in closures} == set(range(2003, 2031))

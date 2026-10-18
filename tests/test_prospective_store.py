@@ -110,7 +110,7 @@ def test_no_session_is_complete_before_the_window_or_past_the_calendar():
         last_complete_session,
         utc("2026-07-16T17:00:00-04:00"),
     )
-    refused(RefusalReason.OUTSIDE_COVERAGE, last_complete_session, utc("2028-01-04T23:00:00Z"))
+    refused(RefusalReason.OUTSIDE_COVERAGE, last_complete_session, utc("2031-01-02T23:00:00Z"))
     refused(RefusalReason.INVALID_TIMESTAMP, last_complete_session, pd.Timestamp("2026-10-14"))
 
 
@@ -122,7 +122,7 @@ def test_no_session_is_complete_before_the_window_or_past_the_calendar():
         ("2024-12-31", "2026-10-14", ProspectiveRefusal.BEFORE_WINDOW),
         ("2026-07-16", "2026-10-15", ProspectiveRefusal.INCOMPLETE_SESSION),
         ("2026-10-14", "2026-07-16", RefusalReason.INVALID_REQUEST),
-        ("2026-07-16", "2028-01-03", RefusalReason.OUTSIDE_COVERAGE),
+        ("2026-07-16", "2031-01-02", RefusalReason.OUTSIDE_COVERAGE),
     ],
 )
 def test_requests_outside_the_window_or_incomplete_are_refused(start, end, reason):
@@ -151,6 +151,7 @@ def test_a_new_root_is_private_and_holds_only_the_marker(tmp_path):
     assert json.loads((root / MARKER_FILE).read_text()) == marker_document()
     assert marker_document()["h_end"] == "2026-10-14"
     assert marker_document()["window_start"] == "2026-07-16"
+    assert marker_document()["calendar_id"] == "nyse_full_day_rules_2003_2030_v1"
     assert prepare_store(root) is None  # an existing store is accepted as it is
 
 
@@ -210,6 +211,8 @@ def test_a_research_store_or_any_non_empty_directory_is_refused(tmp_path):
         {"lookback_sessions": 64},
         {"window_start": "2026-07-15"},
         {"calendar_id": "nyse_full_day_2003_2024_v1"},
+        # The calendar before the owner's 2026-10-18 switch: a store made under it is refused.
+        {"calendar_id": "nyse_full_day_rules_2003_2027_v1"},
         {"store_kind": "research"},
     ],
 )
@@ -426,7 +429,7 @@ def test_the_default_window_is_the_lookback_and_h_end(tmp_path):
         "2026-10-01",
         "2026-09-28",
     ]
-    assert len(result.batches) == 1 and result.calendar_id == "nyse_full_day_rules_2003_2027_v1"
+    assert len(result.batches) == 1 and result.calendar_id == "nyse_full_day_rules_2003_2030_v1"
 
 
 def test_nothing_after_the_forecast_close_or_before_the_window_is_returned(tmp_path):
@@ -595,7 +598,7 @@ def test_an_empty_store_gives_typed_empty_tables(tmp_path):
         (("AGG",), "2026-10-17", 63),  # a Saturday
         (("AGG",), "2026-10-14T00:00", 63),
         (("AGG",), pd.Timestamp("2026-10-14 15:00", tz="UTC"), 63),
-        (("AGG",), "2028-01-03", 63),
+        (("AGG",), "2031-01-02", 63),
         (("AGG",), H_END, 0),
         (("AGG",), H_END, True),
         (("AGG",), H_END, 63.0),
