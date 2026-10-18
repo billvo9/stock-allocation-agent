@@ -27,6 +27,7 @@ from forecast_prospective_helpers import (
     REGISTERED,
     REPO,
     RUN_CODE,
+    RUN_ENVIRONMENT,
     exchange_calendar,
     prospective_store,
     record,
@@ -406,6 +407,7 @@ def _score(ledger_path, store, rule=zero_vol.DEFAULT):
         scored_at=pd.Timestamp("2026-10-23T23:00:00Z"),
         code=RUN_CODE,
         calendar=exchange_calendar,
+        environment=RUN_ENVIRONMENT,
         zero_vol_rule=rule,
     )
 
@@ -420,11 +422,11 @@ def test_scoring_by_default_keeps_the_miss_and_records_the_flags(
 ):
     ledger_path = tmp_path / "ledger.jsonl"
     entry = record(prospective_frozen, ledger_path, flat_store)
-    assert entry.payload["forecast_schema_version"] == "1.2"
+    assert entry.payload["forecast_schema_version"] == "1.3"
     assert entry.payload["bundle"]["zero_volatility_rule"] == zero_vol.CURRENT
     assert all(row["as_of_close"] > 0 for row in entry.payload["rows"])
     written, _ = _score(ledger_path, flat_store)
-    assert written.payload["score_schema_version"] == "1.2"
+    assert written.payload["score_schema_version"] == "1.3"
     flat = _vol_scores(written).loc[("SHV", 5)]
     assert not flat["inside_band"]
     assert flat["outcome_note"] == "zero_realized_volatility" and pd.isna(flat["outcome"])
@@ -546,6 +548,7 @@ def test_a_ledger_is_never_scored_under_two_rules(
         scored_at=pd.Timestamp("2026-10-22T23:00:00Z"),
         code=RUN_CODE,
         calendar=exchange_calendar,
+        environment=RUN_ENVIRONMENT,
     )
     assert first is not None
     later = _with_rule(prospective_frozen.models(), zero_vol.B2)

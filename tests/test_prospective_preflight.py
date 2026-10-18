@@ -105,9 +105,10 @@ def test_the_record_must_match_the_bundle(prospective_frozen):
     assert (missing.status, missing.reason) == ("fail", "no_record")
 
 
-def test_the_environment_manifest_is_reported_as_not_built():
-    item = preflight.environment_manifest()
-    assert (item.status, item.reason) == ("not_built", "environment_manifest_not_built")
+def test_the_environment_check_is_built():
+    from forecast_prospective_helpers import RUN_ENVIRONMENT
+
+    assert preflight.environment_manifest(RUN_ENVIRONMENT, RUN_ENVIRONMENT).status == "pass"
 
 
 # --- monitoring -------------------------------------------------------------------------------

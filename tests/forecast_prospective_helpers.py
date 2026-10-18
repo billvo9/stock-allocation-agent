@@ -35,9 +35,39 @@ from stock_agent.registry import open_registry
 REPO = Path(__file__).resolve().parents[1]
 REGISTERED = REPO / "configs" / "prospective" / "etf_prospective_v1.yaml"
 ASSETS = ("VTI", "AGG", "SHV")
+# An invented environment manifest: the interpreter, platform, pins and the jobs' imported
+# distributions (forecasting.prospective.environment). Freeze writes it into the bundle.
+RUN_ENVIRONMENT = {
+    "manifest_schema_version": "1.0",
+    "python": {
+        "version": "3.12.2",
+        "minor": "3.12",
+        "implementation": "cpython",
+        "executable_sha256": "1" * 64,
+    },
+    "platform": {"system": "Darwin", "release": "27.0.0", "version": "27.0.1", "machine": "arm64"},
+    "pins": {"requirements.txt": "2" * 64, "pyproject.toml": "3" * 64},
+    "timezone": {"key": "America/New_York", "source": "/usr/share/zoneinfo", "sha256": "f" * 64},
+    "distributions": {
+        name: {"version": version, "content_sha256": f"{index + 4:064x}"}
+        for index, (name, version) in enumerate(
+            [
+                ("numpy", "2.5.1"),
+                ("pandas", "3.1.0"),
+                ("pyarrow", "25.0.1"),
+                ("python-dateutil", "2.9.0.post0"),
+                ("pyyaml", "6.0.3"),
+                ("scikit-learn", "1.9.1"),
+                ("scipy", "1.17.0"),
+                ("tzdata", "2026.1"),
+            ]
+        )
+    },
+}
 PROVENANCE = {
     "code": {"git_sha": "0" * 40, "git_dirty": False},
     "environment": {"python": "3.12"},
+    "environment_manifest": RUN_ENVIRONMENT,
 }
 STARTED = datetime(2026, 10, 14, 12, tzinfo=UTC)
 REGISTERED_AT = datetime(2026, 10, 14, 13, tzinfo=UTC)
@@ -293,6 +323,7 @@ def record(
     loader=load_inference_window,
     models=None,
     code=None,
+    environment=None,
 ):
     """One forecast; a ledger with no entry is first registered for these models."""
 
@@ -310,6 +341,7 @@ def record(
         created_at=created,
         code=RUN_CODE if code is None else code,
         calendar=exchange_calendar,
+        environment=RUN_ENVIRONMENT if environment is None else environment,
     )
 
 
@@ -322,4 +354,5 @@ def score(ledger_path: Path, score_close: str, scored_at: str, store: Path):
         scored_at=pd.Timestamp(scored_at),
         code=RUN_CODE,
         calendar=exchange_calendar,
+        environment=RUN_ENVIRONMENT,
     )

@@ -31,6 +31,7 @@ from forecast_prospective_helpers import (
     REGISTRATION_COMMIT,
     REGISTRATION_TIME,
     RUN_CODE,
+    RUN_ENVIRONMENT,
     evidence,
     exchange_calendar,
     github_pull_request,
@@ -83,6 +84,7 @@ def _forecast(
         created_at=pd.Timestamp(created),
         code=code,
         calendar=exchange_calendar,
+        environment=RUN_ENVIRONMENT,
     )
 
 
@@ -719,7 +721,7 @@ def test_each_record_carries_its_registration_and_session(models, ledger_path, t
     store = prospective_store(tmp_path / "long", retrievals=retrievals)
     registration_entry = register(models, ledger_path)
     first = _forecast(models, ledger_path, store)
-    assert first.payload["forecast_schema_version"] == "1.2"
+    assert first.payload["forecast_schema_version"] == "1.3"
     assert first.payload["registration"] == {
         "entry_sha256": registration_entry.entry_sha256,
         "record_sha256": registration_record.record_sha256(registration(models)),
@@ -763,6 +765,7 @@ def test_scoring_records_the_registration_and_refuses_other_code(
             scored_at=pd.Timestamp("2026-10-23T23:00:00Z"),
             code={**RUN_CODE, "trees": {**CODE_TREES, "src": "f" * 40}},
             calendar=exchange_calendar,
+            environment=RUN_ENVIRONMENT,
         )
     assert refused.value.reason == "registration_mismatch"
     written, _ = score(ledger_path, "2026-10-23", "2026-10-23T23:00:00Z", store)
@@ -796,6 +799,7 @@ def test_scoring_refuses_a_rule_other_than_the_registered_one(
         "scored_at": pd.Timestamp("2026-10-23T23:00:00Z"),
         "code": RUN_CODE,
         "calendar": exchange_calendar,
+        "environment": RUN_ENVIRONMENT,
     }
     reason = _refused(forecast.score_matured, **common, zero_vol_rule=zero_vol.B2)
     assert reason == "zero_vol_rule_mismatch"  # B2 is not the registered rule

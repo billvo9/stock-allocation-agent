@@ -16,7 +16,9 @@ Health summary, the kept head's path) and passes them in.
     software     code_identity   the running code's registered paths are
                                  committed and equal the bundle's freeze commit
                  record          the registration record matches the bundle
-                 environment     the environment manifest (not built yet)
+                 environment     the running environment against the bundle's
+                                 manifest (a Python minor or key-package change
+                                 fails; other differences are listed)
     monitoring   model_health    Model Health's latest summary is at most
                                  26 hours old and not failed
                  calendar        the exchange calendar covers the 24-month
@@ -54,7 +56,7 @@ import pandas as pd
 
 from stock_agent.calendars.nyse import CalendarRefused
 from stock_agent.data.private_paths import repository_of
-from stock_agent.forecasting.prospective import registration, registration_record
+from stock_agent.forecasting.prospective import environment, registration, registration_record
 from stock_agent.forecasting.prospective.readiness import PreMerge
 from stock_agent.forecasting.prospective.refusal import ForecastRefused
 from stock_agent.model_diagnostics.record import canonical_json, sha256_json
@@ -173,14 +175,16 @@ def record_match(record: Mapping[str, object] | None, models) -> Item:
     )
 
 
-def environment_manifest() -> Item:
-    return Item(
-        "software",
-        "environment",
-        NOT_BUILT,
-        "environment_manifest_not_built",
-        {"note": "the environment manifest is built in a separate pull request"},
-    )
+def environment_manifest(
+    registered: Mapping[str, object] | None, running: Mapping[str, object]
+) -> Item:
+    """The running environment against the bundle's (forecasting.prospective.environment)."""
+
+    try:
+        checked = environment.check(registered, running)
+    except ForecastRefused as refused:
+        return _item("software", "environment", refused.reason, {"detail": refused.detail})
+    return _item("software", "environment", None, checked)
 
 
 # --- monitoring -------------------------------------------------------------------------------

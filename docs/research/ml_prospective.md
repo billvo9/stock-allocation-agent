@@ -156,6 +156,7 @@ Per record:
 - `as_of_session`, `created_at`, `close_available_at` and `record_deadline`;
 - the bundle id, manifest hash, config hash and status, and the zero-volatility rule the bundle was trained under (`bundle.zero_volatility_rule`);
 - the registration it was recorded under (`registration`: entry and record hashes, merge commit, time) and its session (`session`: number, `trial` or `confirmatory`, and session 1), forecast schema 1.2;
+- the environment check (`environment`: the bundle's manifest, its and the running environment's SHA-256, and what differs), forecast schema 1.3;
 - the window fingerprint, the calendar id, `retrieved_by`, 63 returns from 64 closes, and the window's `batches`, `missing`, `revisions` and `complete` flag;
 - any refused assets (`refusals`), the code state, the conventions and the fixed labels.
 

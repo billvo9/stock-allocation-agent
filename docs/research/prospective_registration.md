@@ -46,7 +46,7 @@ The owner's principles (2026-10-17, verbatim), which these rules make exact:
 2. **The registration time is GitHub's merge time of that pull request.** It is a third-party timestamp; a local commit date can be set to anything.
 3. The ledger's first entry is a registration entry that points to the registration commit and the bundle. That entry kind is built (section 12); nothing is registered.
 
-**What counts as a new registration.** Any change to the code that produces or scores forecasts, the config, the training-data fingerprint, the band method or the zero-volatility rule.
+**What counts as a new registration.** Any change to the code that produces or scores forecasts, the config, the training-data fingerprint, the band method, the zero-volatility rule, or the registered environment. The environment change counts when the Python minor version or a key package's version or content differs from the frozen bundle's manifest (owner approval of 2026-10-18; `docs/operations/forecasting_checkout.md`).
 - The earlier registration's record closes at the last session it recorded.
 - It is reported on its own and never pooled with the new one.
 - The new registration has its own trial.
@@ -293,7 +293,7 @@ A model is **prospectively validated for volatility forecasting of fund A at hor
   - **Software:**
     - the running code's registered paths are committed and equal the freeze commit's;
     - the record matches the bundle;
-    - the environment manifest (`not_built`).
+    - the running environment against the bundle's manifest.
   - **Monitoring:**
     - Model Health's latest summary is at most 26 hours old, not dated in the future, and neither failed nor unavailable;
     - the rules calendar reaches session 524 (C24), counted from the latest close. It does not foresee unscheduled closures. **Today it fails:** the calendar ends on 2027-12-31, so the preflight cannot pass until the calendar is extended.
@@ -310,6 +310,22 @@ A model is **prospectively validated for volatility forecasting of fund A at hor
     - has a failing check, lacks a required check, or has any check other than `pass` (the second medium excepted, as an owner attestation);
     - was made after the merge, or more than 26 hours before it.
 - **The zero-volatility rule as a registered config key** (`zero_volatility_rule: current_drop_and_miss`, `docs/research/zero_vol_floor.md`, section 7). The config hash changed from `ae5d5853…` to `dba70fc2…`; no registration existed.
+
+- **The environment manifest** (`src/stock_agent/forecasting/prospective/environment.py`). Freeze writes it into the bundle, so the bundle's manifest SHA-256, already in the registration record, registers it. It records:
+  - the Python version, implementation and executable's SHA-256;
+  - the platform;
+  - the SHA-256 of the dependency pins;
+  - the `America/New_York` zone file;
+  - the version and content digest of every distribution the forecast and score jobs import, found in a fresh interpreter. The digest covers the installed files' actual bytes, without install-location files.
+
+  **Refused (`environment_mismatch`):**
+  - a different Python minor version or implementation;
+  - a key distribution's change: numpy, pandas, pyarrow, python-dateutil, pyyaml, scikit-learn or scipy;
+  - any difference in bottleneck, numexpr or numba.
+
+  Forecast and score record every other difference, with both values. Imports made only at call time are not seen. Each forecast entry carries the bundle's manifest, so scoring applies the same rule without the bundle. A bundle without a manifest is refused (`environment_unregistered`).
+  - The code identity stays broad: all of `src`, the job's script, `configs/prospective` and the pins.
+  - `docs/operations/forecasting_checkout.md` proposes the dedicated pinned forecasting checkout that makes this cheap, how to update dependencies safely, and re-registration.
 
 **Not built yet:**
 - The checkpoint analysis: non-overlapping selection, the HAC sensitivity, Holm, the exact binomial test and C1–C4. `registration.py` holds only the arithmetic of this document. It waits on the decisions in section 13.

@@ -37,6 +37,10 @@ Subcommands, run from the repository root:
                holds the verified window ending at the latest close
         .venv/bin/python scripts/forecast_prospective.py readiness --store-root <store>
         .venv/bin/python scripts/forecast_prospective.py readiness --pre-merge --store-root <store>
+    environment
+               print a bundle's environment manifest as pip constraints, to build
+               the pinned forecasting checkout's venv
+        .venv/bin/python scripts/forecast_prospective.py environment --bundle <bundle>
     preflight  read-only registration preflight, before the registration pull request
                is merged: data, software, monitoring and backups, each pass or fail
                with its reason and evidence, in a report with its SHA-256
@@ -88,6 +92,9 @@ from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
 from stock_agent.data.funds.schema import FundDataRefused
 from stock_agent.data.prospective.inference import load_inference_window
 from stock_agent.forecasting.prospective import (
+    environment as job_environment,
+)
+from stock_agent.forecasting.prospective import (
     forecast,
     freeze,
     frozen,
@@ -106,6 +113,7 @@ from stock_agent.forecasting.provenance import (
     commit_time,
     committed_file,
     environment,
+    environment_manifest,
     is_ancestor,
     paths_dirty,
 )
@@ -129,6 +137,29 @@ exchange_calendar.calendar_id = CALENDAR_ID
 
 def _now() -> pd.Timestamp:
     return pd.Timestamp(datetime.now(UTC))
+
+
+# The modules the freeze, forecast and score jobs run: their imported distributions are the
+# environment manifest (forecasting.prospective.environment).
+JOB_MODULES = (
+    "stock_agent.forecasting.prospective.forecast",
+    "stock_agent.forecasting.prospective.freeze",
+    "stock_agent.data.prospective.inference",
+    "stock_agent.calendars.nyse_rules",
+)
+
+
+def _environment() -> dict[str, object]:
+    """The running environment's manifest (the local interpreter and installed metadata)."""
+
+    try:
+        return environment_manifest(
+            PROJECT_ROOT, JOB_MODULES, required=job_environment.KEY_DISTRIBUTIONS
+        )
+    except (subprocess.CalledProcessError, OSError, ValueError, ImportError, KeyError):
+        raise ForecastRefused(
+            "environment_invalid", "the environment manifest could not be read"
+        ) from None
 
 
 def _imported_here() -> None:
@@ -299,7 +330,11 @@ def _models(bundle: Path) -> forecast.Models:
 def _freeze(args) -> int:
     _imported_here()  # the bundle's code commit must describe the code that trains it
     config = load_config(args.config)
-    provenance = {"code": code_provenance(PROJECT_ROOT), "environment": environment()}
+    provenance = {
+        "code": code_provenance(PROJECT_ROOT),
+        "environment": environment(),
+        "environment_manifest": _environment(),
+    }
     result = freeze.freeze(
         config,
         research_store_root=args.research_store,
@@ -437,6 +472,7 @@ def _forecast(args) -> int:
         created_at=_now(),
         code=_code(),
         calendar=exchange_calendar,
+        environment=_environment(),
     )
     session = entry.payload["session"]
     print(f"session {session['number']} ({session['phase']}; session 1 {session['first_session']})")
@@ -467,6 +503,7 @@ def _score(args) -> int:
         scored_at=_now(),
         code=_code(),
         calendar=exchange_calendar,
+        environment=_environment(),
     )
     print(f"scored {0 if entry is None else len(entry.payload['scores'])} rows")
     if left:
@@ -604,7 +641,14 @@ def _preflight(args) -> int:
         items.append(preflight.record_match(record, models))
     except ForecastRefused as refused:
         items.append(preflight.Item("software", "record", preflight.FAIL, refused.reason))
-    items.append(preflight.environment_manifest())
+    try:
+        items.append(
+            preflight.environment_manifest(
+                bundle.document.get("environment_manifest"), _environment()
+            )
+        )
+    except ForecastRefused as refused:
+        items.append(preflight.Item("software", "environment", preflight.FAIL, refused.reason))
     items.append(_health_item(args.health_summary, now))
     start = pd.Timestamp(pre.close, tz="UTC") if pre.close else now
     items.append(preflight.calendar_coverage(exchange_calendar, start))
@@ -630,6 +674,26 @@ def _preflight(args) -> int:
     print(f"preflight {verdict} at {document['generated_at']}; sha256 {document['sha256']}")
     print("nothing is registered; registration does not yet require a preflight (ETF-R1)")
     return 0 if document["passed"] else 1
+
+
+def _environment_command(args) -> int:
+    """Print the bundle's environment manifest as pip constraints (read-only)."""
+
+    bundle = frozen.read_bundle(args.bundle)
+    manifest = bundle.document.get("environment_manifest")
+    if manifest is None:
+        raise ForecastRefused("environment_unregistered", "the bundle records no manifest")
+    manifest = job_environment.validate_manifest(manifest)
+    python, system = manifest["python"], manifest["platform"]
+    print(
+        f"# python {python['version']} ({python['implementation']}); executable sha256 "
+        f"{python['executable_sha256']}"
+    )
+    print(f"# platform {system['system']} {system['release']} {system['machine']}")
+    print(f"# bundle {bundle.bundle_id}; constraints for the pinned forecasting checkout")
+    for name, item in manifest["distributions"].items():
+        print(f"{name}=={item['version']}")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -706,6 +770,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     checking.add_argument("--ledger-head-backup", type=Path, help="the kept head's file")
     checking.add_argument("--out", type=Path, help="write the report here (once)")
+    pinning = commands.add_parser("environment")
+    pinning.add_argument("--bundle", type=Path, required=True)
     reporting = commands.add_parser("report")
     reporting.add_argument(
         "--expect-head", help="a head hash kept outside the ledger; refused if it is missing"
@@ -724,6 +790,7 @@ def main(argv: list[str] | None = None) -> int:
         "report": _report,
         "readiness": _readiness,
         "preflight": _preflight,
+        "environment": _environment_command,
     }
     return handlers[args.command](args)
 

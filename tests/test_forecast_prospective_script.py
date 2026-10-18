@@ -24,6 +24,7 @@ from forecast_prospective_helpers import (
     REGISTRATION_COMMIT,
     REPO,
     RUN_CODE,
+    RUN_ENVIRONMENT,
     github_pull_request,
     register,
     registration,
@@ -47,6 +48,7 @@ def _offline(
     monkeypatch,
     script,
     *,
+    running=None,
     files=None,
     trees=None,
     committed_at=MERGED,
@@ -69,6 +71,9 @@ def _offline(
         return files[(commit, path)]
 
     monkeypatch.setattr(script, "_code", lambda: RUN_CODE)
+    monkeypatch.setattr(
+        script, "_environment", lambda: RUN_ENVIRONMENT if running is None else running
+    )
     monkeypatch.setattr(script, "_code_trees", lambda commit: (trees or {}).get(commit, CODE_TREES))
     monkeypatch.setattr(script, "_committed_file", committed)
     monkeypatch.setattr(script, "_commit_time", lambda commit: pd.Timestamp(committed_at))
@@ -385,6 +390,7 @@ def test_the_script_offers_no_zero_volatility_rule_anywhere():
         "report",
         "readiness",
         "preflight",
+        "environment",
     }
     for name, command in commands.items():
         for action in command._actions:
@@ -708,7 +714,7 @@ def test_the_preflight_reports_every_check_with_its_hash(
         "data.fingerprint": "pass",
         "software.code_identity": "pass",
         "software.record": "pass",
-        "software.environment": "not_built",
+        "software.environment": "pass",
         "monitoring.model_health": "pass",
         # The rules calendar ends 2027-12-31: C24 is out of reach until it is extended.
         "monitoring.calendar": "fail",
@@ -794,3 +800,117 @@ def test_the_preflight_reports_input_failures_as_failed_checks(
         f"{i['area']}.{i['check']}": i["reason"] for i in document["items"] if i["status"] == "fail"
     }
     assert failed[expected[0]] == expected[1]
+
+
+def test_the_job_reads_the_environment_of_its_own_modules(monkeypatch):
+    script = _script()
+    seen = []
+
+    def manifest(root, modules, required=()):
+        seen.append((root, tuple(modules), tuple(required)))
+        return RUN_ENVIRONMENT
+
+    monkeypatch.setattr(script, "environment_manifest", manifest)
+    assert script._environment() == RUN_ENVIRONMENT
+    ((root, modules, required),) = seen
+    assert root == script.PROJECT_ROOT
+    from stock_agent.forecasting.prospective import environment as job_environment
+
+    assert tuple(required) == job_environment.KEY_DISTRIBUTIONS
+    assert {
+        "stock_agent.forecasting.prospective.forecast",
+        "stock_agent.forecasting.prospective.freeze",
+        "stock_agent.data.prospective.inference",
+    } <= set(modules)
+
+
+def test_an_unreadable_environment_is_a_refusal(monkeypatch):
+    script = _script()
+
+    def failing(root, modules, required=()):
+        raise subprocess.CalledProcessError(1, ["python"])
+
+    monkeypatch.setattr(script, "environment_manifest", failing)
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        script._environment()
+    assert refused.value.reason == "environment_invalid"
+
+
+def test_the_bundles_environment_prints_as_pip_constraints(prospective_frozen, capsys):
+    script = _script()
+    argv = ["environment", "--bundle", str(prospective_frozen.result.bundle.path)]
+    assert script.main(argv) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert "numpy==2.5.1" in out and "scikit-learn==1.9.1" in out
+    assert out[0].startswith("# python 3.12.2 (cpython)")
+    assert all(line.startswith("#") or "==" in line for line in out)
+
+
+def _other_minor():
+    import copy
+
+    other = copy.deepcopy(RUN_ENVIRONMENT)
+    other["python"] = {**other["python"], "minor": "3.13", "version": "3.13.0"}
+    return other
+
+
+def test_the_forecast_script_refuses_another_environment(
+    prospective_frozen, prospective_store_root, tmp_path, monkeypatch
+):
+    script = _script()
+    monkeypatch.setattr(script, "_now", lambda: CREATED)
+    _offline(
+        monkeypatch,
+        script,
+        files=_fixture_files(prospective_frozen.models()),
+        running=_other_minor(),
+    )
+    path = tmp_path / "ledger.jsonl"
+    register(prospective_frozen.models(), path)
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        script.main(_forecast_argv(prospective_frozen, prospective_store_root, path))
+    assert refused.value.reason == "environment_mismatch"
+
+
+def test_the_preflight_fails_another_environment(
+    prospective_frozen, prospective_store_root, tmp_path, monkeypatch
+):
+    script = _script()
+    monkeypatch.setattr(script, "_now", lambda: pd.Timestamp("2026-10-15T23:00:00Z"))
+    _offline(monkeypatch, script, files={}, running=_other_minor())
+    argv, out = _preflight_argv(prospective_frozen, prospective_store_root, tmp_path)
+    assert script.main(argv) == 1
+    document = json.loads(out.read_text(encoding="utf-8"))
+    item = next(i for i in document["items"] if i["check"] == "environment")
+    assert (item["status"], item["reason"]) == ("fail", "environment_mismatch")
+
+
+@pytest.mark.parametrize(
+    "error", [ImportError("no such distribution"), KeyError("Name")], ids=["missing", "metadata"]
+)
+def test_an_unreadable_environment_of_any_kind_is_a_refusal(monkeypatch, error):
+    script = _script()
+
+    def failing(root, modules, required=()):
+        raise error
+
+    monkeypatch.setattr(script, "environment_manifest", failing)
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        script._environment()
+    assert refused.value.reason == "environment_invalid"
+
+
+def test_the_environment_command_refuses_a_bundle_without_a_manifest(
+    prospective_frozen, tmp_path, monkeypatch
+):
+    import dataclasses
+
+    script = _script()
+    bundle = prospective_frozen.result.bundle
+    document = {k: v for k, v in bundle.document.items() if k != "environment_manifest"}
+    monkeypatch.setattr(
+        script.frozen, "read_bundle", lambda path: dataclasses.replace(bundle, document=document)
+    )
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        script.main(["environment", "--bundle", str(bundle.path)])
+    assert refused.value.reason == "environment_unregistered"
