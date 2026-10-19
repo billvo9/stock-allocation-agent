@@ -66,6 +66,10 @@ SCRIPT_CONSUMERS = {
     # The Stock Lab's recent-window fetch: the rules calendar only (the 252 sessions it
     # requests), passed to the Stock Lab's inference store, which never imports it.
     "scripts/stock_lab_fetch_recent.py",
+    # The Stock Lab's premarket briefing: the rules calendar only (which session a briefing
+    # is for, and the weekends and holidays before it), passed to the Stock Lab's briefing
+    # modules, which never import it.
+    "scripts/stock_lab_briefing.py",
 }
 CONSUMER_NAMES = {
     "stock_agent.data.prospective.inference": {

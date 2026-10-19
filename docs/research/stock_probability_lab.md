@@ -7,6 +7,8 @@ Status: experimental.
 - PR 2 builds the estimators, the five-session forecasts, the reversal
   analyzer, bull and bear traps, the walk-forward evaluation and the
   modelled views.
+- Briefing PR 1 adds the read-only daily premarket briefing and its
+  reliability foundations (section 9).
 
 Probabilities exist only for the synthetic demo stocks. No live request has
 been made. Owner brief: 2026-10-16.
@@ -835,3 +837,195 @@ default, never run.
   property tested in `test_every_run_row_matches_the_per_session_view_at_its_end`.
   Then explain why the "pauses" rule cannot have it for short Stable
   stretches.
+
+## 9. The daily premarket briefing (briefing PR 1, offline)
+
+Owner brief: 2026-10-18. The goal is a trustworthy morning briefing that
+measures its own reliability, not another prediction dashboard. Briefing
+PR 1 is offline: it reads stored records, renders them and previews
+locally. It sends nothing, schedules nothing and reads no credential.
+
+**What it reads** (`stock_lab.briefing.report`, read-only):
+
+- **Records.** The watchlist, the recorded forecasts (re-checked against
+  their ids), their scores, the evaluation runs, the daily job's runs and
+  the ledger check.
+- **Read-only access.** The store is opened through `ReadOnlyRecords`,
+  which has no write method, and every connection uses SQLite `mode=ro`.
+  A test shows the database file's bytes are unchanged afterwards.
+- **What it never does.** It never retrains, recomputes a forecast, writes
+  to a ledger or runs the evening job.
+- **As known when prepared.** A record counts only if it existed then: a
+  forecast created and recorded by then, a score written by then, a job
+  run finished by then. A recalculation replaces a forecast only once the
+  recalculation itself exists.
+- **One data class.** A briefing is wholly real (the watchlist, minus
+  SKHY and SNDK by the owner's choice) or wholly synthetic (the demo
+  stocks). The two are never mixed.
+
+**Timing** (`stock_lab.briefing.timing`):
+
+- **Target.** 08:30 America/New_York on an NYSE session morning, from the
+  IANA zone: 13:30 UTC in winter, 12:30 UTC in summer.
+- **States.** `premarket` (before 09:30 on a session day; the only state a
+  scheduled delivery may use), `after_open`, `advance` (from 20:00, for
+  the next session) and `closed_day` (a weekend or holiday, skipped unless
+  asked for).
+- **The data.** The briefing reads the prior session's forecast. The days
+  between that close and the market date when the market was closed are
+  named. A Monday briefing says plainly that Friday's end-of-day data holds
+  nothing from the weekend.
+- **Calendar.** The exchange calendar is passed in by the script, so the
+  calendar module is unchanged.
+
+**Per stock:**
+
+- **Statuses.**
+  - `fresh`: the stored probabilities are shown exactly as recorded.
+  - `stale`: the newest forecast is older than the prior session. It is
+    named, and its probabilities are not shown as today's.
+  - `unavailable`: no forecast, a refusal, a failed ledger check, or a
+    first target session that is not the market date. The reason is
+    always given.
+  - A probability is never filled in.
+- **Contents.**
+  - the next session's three probabilities, with the development track
+    record of the same range;
+  - the five sessions and the separate five-session total;
+  - the change since the prior forecast, only at the same band;
+  - the current run, the reversal statistics with counts and 90% Jeffreys
+    intervals, and the bull-trap signal, all from the forecast record;
+  - the stored close and lineage.
+- **Point-in-time limits.**
+  - Momentum, volatility and the volatility regime (descriptive) and the
+    bear-trap check are computed from stored prices through the as-of
+    close. This happens only for synthetic stocks or sessions through
+    2024-12-31.
+  - For a real stock after that, decision A6 forbids features on protected
+    prices outside the frozen forecast job, so these show as unavailable
+    until that job records them with each forecast.
+  - Trap flags on real data are withheld until the failure margin f is
+    confirmed (A5).
+
+**Reliability** (`stock_lab.briefing.reliability`). Development and
+prospective evidence are kept apart and never pooled across horizons,
+stable bands, estimators or model versions.
+
+- **Development.**
+  - The stored evaluation is read as stored: the forecast estimator's
+    scores against B1's on the same rows (RPS, Brier, log loss), the stored
+    comparison (reported only), and the reliability bins.
+  - A bin with fewer than 20 distinct dates is labelled insufficient
+    evidence.
+- **Prospective.** The recorded forecasts and their scores.
+  - Per target definition and category, equal-width buckets give the mean
+    predicted probability, the observed frequency, the count, the distinct
+    forecast dates and a date-clustered 90% interval.
+  - The record covers every stock with scored forecasts, including those
+    no longer on the watchlist. Dropping a stock never removes its track
+    record, which would be survivorship.
+  - A bucket with fewer than 20 independent units (the dates, or the
+    dates / 5 for the total) or an effective count below 20 is insufficient
+    evidence: counts are shown, frequencies are not.
+  - A rolling 63-date summary carries a small-sample warning, and Model
+    Health's threshold (250 targets over 50 sessions) gates any summary.
+- **The interval.** The observed frequency p = hits / rows gets a
+  cluster-robust variance over forecast dates g in time order. Here
+  u_g = y_g − p·m_g, with y_g the hits and m_g the rows of date g:
+
+  ```text
+  Var(p) = C / (C - 1) * max(G_0, G_0 + 2 * sum_{l=1..L} G_l) / n^2,  G_l = sum_g u_g u_(g+l)
+  n_eff  = min(n, p (1 - p) / Var(p))
+  ```
+
+  - **Lags.** L is 0 for a single session's target. Within one horizon,
+    each date is settled by a different session.
+  - **The total.** L is 4 for the five-session total, whose dates up to
+    four sessions apart share sessions. This is a truncated-kernel HAC
+    variance, floored at the lag-0 term.
+  - **The interval.** It is the Jeffreys interval at n_eff, which lies
+    between the dates and the rows. When p is 0 or 1, or the variance is
+    zero, n_eff falls back to the independent units (the cautious reading).
+  - **Daily coverage.** In a seeded simulation (60 dates, ten stocks sharing
+    each date's probability of 0.40 or 0.90), the interval covered the true
+    0.65 in 90.8% of 2,000 panels at a nominal 90%. Counting rows as
+    independent covered 65.5%.
+  - **Total coverage.** For overlapping five-session totals (five stocks at
+    correlation 0.5, 250 dates), the lagged variance covered 91% of 400
+    panels. Without the lag terms the coverage was 58%; non-overlapping
+    blocks of five dates would under-state the variance by about a third.
+  - **Small panels.** With two to five stocks a day, 25 dates and a 10%
+    rate, the coverage was 91%. The tests rerun smaller versions of these
+    simulations.
+  - **What it does not cover.** The interval reflects date-to-date noise in
+    the period observed. If the true frequency moves with long calm or
+    volatile stretches that the forecast ignores, the interval is too
+    narrow, and a short record cannot show that.
+- **Matched comparison with B1.** It uses only the same stock, as-of
+  session, horizon, band and model version, with equal outcomes.
+  - The difference is the mean of per-date differences.
+  - Per-date differences are serially dependent, as the A7 packet measured.
+    So the standard error comes from the means of blocks of 20 consecutive
+    dates, with a t interval on (blocks − 1) degrees of freedom.
+  - Fewer than 100 matched dates give no difference. Rows that differ in
+    outcome are reported, not compared.
+  - Today the ledger holds only the selected estimator's forecast, so no
+    prospective comparison exists. Recording B1 beside each forecast is an
+    additive store change for the owner to approve.
+  - A comparison is reported, never a decision. A7 must be resolved and
+    registered before any challenger is promoted on real data.
+
+**Rendering and delivery** (`render`, `delivery`):
+
+- **Formats.** Plain text and one self-contained HTML page: no script,
+  link, image or fetched font, and no dashboard link. The page uses the
+  Lab's palette in light and dark, and every category is written in words
+  beside its marker. A JSON copy keeps the structured briefing.
+- **Adapters.** `DeliveryAdapter` is the interface. The only adapter,
+  `PreviewAdapter`, writes the three files (mode 0o600, never overwritten)
+  into `STOCK_AGENT_STOCK_LAB_BRIEFING_HOME` or
+  `~/stock-agent-private/stock_lab_briefings/` (mode 0o700). That
+  directory is refused inside any Git working tree and beside the research
+  store.
+- **Duplicate sends.** `DeliveryLog` is an append-only SQLite file in that
+  directory, a regular file owned by the user. It allows one delivery per
+  market date, channel and data class (claimed, then sent or failed),
+  claimed in an immediate transaction.
+  - An unfinished claim blocks a second send.
+  - A failure records only the error's type and is never chained into
+    another traceback.
+  - The preview adapter writes all three files or none.
+- **Previews and deliveries.** Only a briefing prepared before the open
+  (`premarket`) is a delivery and uses the log. A preview prepared at any
+  other time is written under its own labelled name and never uses up that
+  day's delivery.
+
+| Command | What it does |
+|---|---|
+| `.venv/bin/python scripts/stock_lab_briefing.py --demo` | replays 8 synthetic sessions in a temporary store and prints the synthetic briefing |
+| `... --demo --preview` | also writes its HTML, text and JSON to the private directory |
+| `... ` (no flag) | prints the real watchlist's briefing; today every stock is unavailable (A4) |
+| `... --preview` | also writes the real briefing's files, once per market date |
+| `... --at 2026-10-19T08:30-04:00 --include-closed-days` | prepares as of a time, including a closed day |
+
+**Next steps, each needing the owner's approval:**
+
+1. **Delivery.** An 08:30 schedule, extending the existing schedule
+   printer, and an email adapter. Credentials would come from the macOS
+   Keychain at send time, never from Git, logs or artifacts. The repository
+   is public, so public CI holds no secret.
+   - When the Mac is asleep, `pmset repeat wakeorpoweron` at 08:25 on
+     weekdays is a local option, and a late run must not send after 09:30.
+   - A private hosted sender is a separate approval: render the evening
+     before, after the job, and deliver at 08:30. It needs a check of the
+     data licence.
+   - A Model Health "missed delivery" check is coordinated with the health
+     owner.
+2. **Reliability.** Record B1 beside each forecast, then compare on
+   matched records. Add forecast-change monitoring.
+3. **Market regime.** Descriptive diagnostics (5/20/63/252 sessions). For
+   real stocks this needs the A4 job to record the context.
+4. **Shadow models.** Research only after real prospective data exists.
+   Updating B1's running state from recent observations probably fits A2
+   (frozen parameters, state as a function of the inputs). Section 7, item 4
+   still leaves that choice to the owner.

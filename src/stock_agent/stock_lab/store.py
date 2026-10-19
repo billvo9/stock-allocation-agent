@@ -863,6 +863,21 @@ class StockLabStore:
             raise StoreRefused("an evaluation record does not match its hash")
         return json.loads(row[1])
 
+    def evaluations(self, data_class: DataClass) -> tuple[dict, ...]:
+        """Every evaluation of `data_class`, oldest first, each re-checked against its hash."""
+
+        with self._read() as connection:
+            if connection is None:
+                return ()
+            rows = connection.execute(
+                "SELECT content_sha256, record FROM evaluations WHERE data_class = ? "
+                "ORDER BY created_at, run_id",
+                (DataClass(data_class).value,),
+            ).fetchall()
+        if any(hashlib.sha256(text.encode("utf-8")).hexdigest() != sha for sha, text in rows):
+            raise StoreRefused("an evaluation record does not match its hash")
+        return tuple(json.loads(text) for _, text in rows)
+
     def record_forecast(self, record: dict, *, real_authorized: bool = False) -> str:
         """
         Store one checked forecast (write-once); returns its id. A real-data
