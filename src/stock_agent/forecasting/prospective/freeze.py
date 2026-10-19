@@ -17,6 +17,8 @@ forecast).
    development score.
 4. Writes, once each, the experiment directory (record.json, config.json and
    the development tables) and the frozen bundle (frozen.py).
+   The bundle also holds the environment manifest from the provenance
+   (forecasting.prospective.environment), refused when missing or malformed.
 5. Registers one registry version per (target, horizon): the ridge fits of
    all assets, with the experiment run and the bundle as artifacts, the data
    fingerprints, the code state and the config hash. The registry computes
@@ -48,7 +50,7 @@ from stock_agent.features.training import TARGET_RETURN_COLUMN
 from stock_agent.forecasting import etf_data
 from stock_agent.forecasting import metrics as em
 from stock_agent.forecasting.experiment import write_directory
-from stock_agent.forecasting.prospective import bands, frozen, training, zero_vol
+from stock_agent.forecasting.prospective import bands, environment, frozen, training, zero_vol
 from stock_agent.forecasting.prospective.config import TARGET_SHORT, TRACK, ProspectiveConfig
 from stock_agent.forecasting.prospective.refusal import ForecastRefused
 from stock_agent.model_diagnostics import linear
@@ -267,6 +269,9 @@ def freeze(
     for key in ("code", "environment"):
         if key not in provenance:
             raise ValueError(f"provenance must include {key!r}.")
+    # The environment the bundle is frozen in (forecasting.prospective.environment): written
+    # into the bundle, so its manifest SHA-256 registers it.
+    manifest = environment.validate_manifest(provenance.get("environment_manifest"))
     rule = config.zero_volatility_rule
     if not zero_vol.registrable(rule):
         raise ForecastRefused(
@@ -324,12 +329,8 @@ def freeze(
         "config_sha256": config.sha256,
         "code": dict(provenance["code"]),
         "data_class": data.data_class,
-        "training_data": {
-            **data.fingerprints,
-            "batch_ids": list(data.batch_ids),
-            "max_session": data.max_session.isoformat(),
-            "training_end": config.training_end.isoformat(),
-        },
+        "training_data": training.training_data_block(data, config),
+        "environment_manifest": manifest,
         "registry": {
             f"{t}:h{h}": {"model_id": model_ids[(t, h)], "version": versions[(t, h)].version}
             for t, h in pairs

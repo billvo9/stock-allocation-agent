@@ -31,7 +31,10 @@ from forecast_prospective_helpers import (
     REGISTRATION_COMMIT,
     REGISTRATION_TIME,
     RUN_CODE,
+    RUN_ENVIRONMENT,
+    evidence,
     exchange_calendar,
+    github_pull_request,
     prospective_store,
     record,
     register,
@@ -81,6 +84,7 @@ def _forecast(
         created_at=pd.Timestamp(created),
         code=code,
         calendar=exchange_calendar,
+        environment=RUN_ENVIRONMENT,
     )
 
 
@@ -264,6 +268,7 @@ def test_a_tampered_record_file_is_never_registered(models, ledger_path, edit):
         registered_at=REGISTRATION_TIME,
         recorded_at=REGISTERED_RECORDED,
         code=RUN_CODE,
+        evidence=evidence(),
     )
     assert reason == "registration_mismatch"
     assert not ledger_path.exists()
@@ -281,6 +286,7 @@ def test_registering_needs_the_registered_code_and_a_commit_id(models, ledger_pa
         "record_path": RECORD_PATH,
         "registered_at": REGISTRATION_TIME,
         "recorded_at": REGISTERED_RECORDED,
+        "evidence": evidence(),
     }
     record_ = registration(models)
     reason = _refused(
@@ -304,6 +310,155 @@ def test_registering_needs_the_registered_code_and_a_commit_id(models, ledger_pa
     )
     assert reason == "registration_invalid"
     assert not ledger_path.exists()
+
+
+# --- the registration time, verified against GitHub ---------------------------------------
+
+
+def _register_with(models, ledger_path, proof, *, registered_at=REGISTRATION_TIME):
+    return registration_record.register(
+        ledger_path,
+        registration(models),
+        models,
+        record_path=RECORD_PATH,
+        registration_commit=REGISTRATION_COMMIT,
+        registered_at=registered_at,
+        recorded_at=REGISTERED_RECORDED,
+        code=RUN_CODE,
+        evidence=proof,
+    )
+
+
+@pytest.mark.parametrize("source", ["github_api", "owner_evidence_file"])
+def test_the_entry_keeps_the_pull_requests_evidence(models, ledger_path, source):
+    entry = _register_with(models, ledger_path, evidence(source=source))
+    kept = entry.payload["registration_evidence"]
+    assert kept["source"] == source
+    assert kept["fetched_at"] == "2026-10-14T14:30:00+00:00"
+    assert kept["pull_request"] == {
+        "number": 120,
+        "merged": True,
+        "merged_at": "2026-10-14T14:00:00Z",
+        "merge_commit_sha": REGISTRATION_COMMIT,
+        "base": {"ref": "main", "repo": {"full_name": "billvo9/stock-allocation-agent"}},
+    }  # the fields checked, and nothing else the API returned
+    assert kept["sha256"] == sha256_json(kept["pull_request"])
+    assert "independently attested" not in canonical_json(entry.payload)
+    found = registration_record.current(ledger.read_ledger(ledger_path))
+    assert found.evidence_source == source
+
+
+@pytest.mark.parametrize(
+    "pull_request",
+    [
+        github_pull_request(merged_at=REGISTRATION_TIME + pd.Timedelta(seconds=1)),
+        github_pull_request(merged_at=REGISTRATION_TIME - pd.Timedelta(hours=1)),
+        github_pull_request(merge_commit_sha="f" * 40),
+        github_pull_request(merged=False, merged_at=None),
+        github_pull_request(merged=False),  # closed unmerged, with a plausible time anyway
+        github_pull_request(merged="true"),  # not the boolean true
+        github_pull_request(number=True),
+        github_pull_request(number="120"),
+        {**github_pull_request(), "merged_at": "2026-10-14T14:00:00"},  # no offset
+        github_pull_request(
+            base={"ref": "develop", "repo": {"full_name": "billvo9/stock-allocation-agent"}}
+        ),
+        github_pull_request(
+            base={"ref": "main", "repo": {"full_name": "someone/stock-allocation-agent"}}
+        ),
+        {"number": 120, "merged": True},  # fields missing
+    ],
+    ids=[
+        "merged_1s_later",
+        "merged_1h_earlier",
+        "other_merge_commit",
+        "not_merged",
+        "not_merged_with_a_time",
+        "merged_as_text",
+        "boolean_number",
+        "text_number",
+        "naive_merge_time",
+        "base_not_main",
+        "another_repository",
+        "incomplete",
+    ],
+)
+def test_a_registration_time_the_evidence_does_not_support_is_refused(
+    models, ledger_path, pull_request
+):
+    reason = _refused(_register_with, models, ledger_path, evidence(pull_request))
+    assert reason == "registration_unverified"
+    assert not ledger_path.exists()
+
+
+@pytest.mark.parametrize(
+    "proof",
+    [
+        None,  # a typed time alone
+        {**evidence(), "source": "typed_by_hand"},
+        {**evidence(), "fetched_at": pd.Timestamp("2026-10-14T14:30:00")},  # naive
+        {"source": "github_api", "fetched_at": pd.Timestamp("2026-10-14T14:30:00Z")},
+        {**evidence(), "fetched_at": "yesterday"},
+        evidence(fetched_at=pd.Timestamp("2026-10-14T13:59:59Z")),  # before the merge
+        evidence(fetched_at=pd.Timestamp("2026-10-14T15:00:01Z")),  # after the entry
+    ],
+    ids=[
+        "missing",
+        "unknown_source",
+        "naive_fetch_time",
+        "no_pull_request",
+        "garbage_fetch_time",
+        "fetched_before_the_merge",
+        "fetched_after_the_entry",
+    ],
+)
+def test_a_registration_without_usable_evidence_is_refused(models, ledger_path, proof):
+    assert _refused(_register_with, models, ledger_path, proof) == "registration_unverified"
+    assert not ledger_path.exists()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda e: e["pull_request"].update(merged_at="2026-10-14T13:00:00Z"),
+        lambda e: e.update(sha256="0" * 64),
+        lambda e: e["pull_request"]["base"].update(ref="develop"),
+        lambda e: e.update(source="typed_by_hand"),
+        lambda e: e.update(fetched_at="2026-10-14T15:00:01+00:00"),  # after the entry
+        lambda e: e.update(fetched_at="2026-10-14T13:59:59+00:00"),  # before the merge
+    ],
+    ids=["earlier_merge_time", "hash", "base", "source", "fetched_after", "fetched_before"],
+)
+def test_evidence_edited_after_the_entry_was_written_is_refused(models, ledger_path, store, change):
+    register(models, ledger_path)
+
+    def edit(payload):
+        change(payload["registration_evidence"])
+        kept = payload["registration_evidence"]
+        if "sha256" in kept and kept["sha256"] != "0" * 64:  # a consistent rewrite of the hash
+            kept["sha256"] = sha256_json(kept["pull_request"])
+
+    _rewrite_first(ledger_path, edit)
+    assert _refused(_forecast, models, ledger_path, store) == "registration_tampered"
+
+
+def test_a_rewritten_registration_time_is_refused(models, ledger_path, store):
+    # Backdating: only the entry's time is rewritten (the chain re-made); the evidence's
+    # merged_at no longer equals it.
+    register(models, ledger_path)
+    _rewrite_first(ledger_path, lambda p: p.update(registered_at="2026-10-14T13:30:00+00:00"))
+    assert _refused(_forecast, models, ledger_path, store) == "registration_tampered"
+
+
+def test_an_entry_from_before_evidence_was_required_is_refused(models, ledger_path, store):
+    register(models, ledger_path)
+
+    def legacy(payload):  # the schema 1.0 entry of #97: a typed time, no evidence
+        payload.pop("registration_evidence")
+        payload["registration_schema_version"] = "1.0"
+
+    _rewrite_first(ledger_path, legacy)
+    assert _refused(_forecast, models, ledger_path, store) == "registration_unverified"
 
 
 # --- the forecast job and the registration ------------------------------------------------
@@ -566,7 +721,7 @@ def test_each_record_carries_its_registration_and_session(models, ledger_path, t
     store = prospective_store(tmp_path / "long", retrievals=retrievals)
     registration_entry = register(models, ledger_path)
     first = _forecast(models, ledger_path, store)
-    assert first.payload["forecast_schema_version"] == "1.2"
+    assert first.payload["forecast_schema_version"] == "1.3"
     assert first.payload["registration"] == {
         "entry_sha256": registration_entry.entry_sha256,
         "record_sha256": registration_record.record_sha256(registration(models)),
@@ -610,6 +765,7 @@ def test_scoring_records_the_registration_and_refuses_other_code(
             scored_at=pd.Timestamp("2026-10-23T23:00:00Z"),
             code={**RUN_CODE, "trees": {**CODE_TREES, "src": "f" * 40}},
             calendar=exchange_calendar,
+            environment=RUN_ENVIRONMENT,
         )
     assert refused.value.reason == "registration_mismatch"
     written, _ = score(ledger_path, "2026-10-23", "2026-10-23T23:00:00Z", store)
@@ -643,6 +799,7 @@ def test_scoring_refuses_a_rule_other_than_the_registered_one(
         "scored_at": pd.Timestamp("2026-10-23T23:00:00Z"),
         "code": RUN_CODE,
         "calendar": exchange_calendar,
+        "environment": RUN_ENVIRONMENT,
     }
     reason = _refused(forecast.score_matured, **common, zero_vol_rule=zero_vol.B2)
     assert reason == "zero_vol_rule_mismatch"  # B2 is not the registered rule
@@ -662,3 +819,16 @@ def test_scoring_refuses_a_forecast_from_another_bundle_or_config(
     reason = _refused(score, ledger_path, "2026-10-23", "2026-10-23T23:00:00Z", store)
     assert reason == "registration_mismatch"
     assert _kinds(ledger_path) == ["registration", "forecast"]  # nothing scored
+
+
+def test_a_first_window_naming_no_batch_is_not_eligible(models, ledger_path, store):
+    def unattributed(store_root, assets, forecast_close, lookback=63, *, retrieved_by):
+        win = load_inference_window(
+            store_root, assets, forecast_close, lookback, retrieved_by=retrieved_by
+        )
+        return dataclasses.replace(win, batches=win.batches.iloc[0:0])
+
+    register(models, ledger_path)
+    reason = _refused(_forecast, models, ledger_path, store, loader=unattributed)
+    assert reason == "not_first_eligible_close"
+    assert _kinds(ledger_path) == ["registration"]

@@ -35,9 +35,39 @@ from stock_agent.registry import open_registry
 REPO = Path(__file__).resolve().parents[1]
 REGISTERED = REPO / "configs" / "prospective" / "etf_prospective_v1.yaml"
 ASSETS = ("VTI", "AGG", "SHV")
+# An invented environment manifest: the interpreter, platform, pins and the jobs' imported
+# distributions (forecasting.prospective.environment). Freeze writes it into the bundle.
+RUN_ENVIRONMENT = {
+    "manifest_schema_version": "1.0",
+    "python": {
+        "version": "3.12.2",
+        "minor": "3.12",
+        "implementation": "cpython",
+        "executable_sha256": "1" * 64,
+    },
+    "platform": {"system": "Darwin", "release": "27.0.0", "version": "27.0.1", "machine": "arm64"},
+    "pins": {"requirements.txt": "2" * 64, "pyproject.toml": "3" * 64},
+    "timezone": {"key": "America/New_York", "source": "/usr/share/zoneinfo", "sha256": "f" * 64},
+    "distributions": {
+        name: {"version": version, "content_sha256": f"{index + 4:064x}"}
+        for index, (name, version) in enumerate(
+            [
+                ("numpy", "2.5.1"),
+                ("pandas", "3.1.0"),
+                ("pyarrow", "25.0.1"),
+                ("python-dateutil", "2.9.0.post0"),
+                ("pyyaml", "6.0.3"),
+                ("scikit-learn", "1.9.1"),
+                ("scipy", "1.17.0"),
+                ("tzdata", "2026.1"),
+            ]
+        )
+    },
+}
 PROVENANCE = {
     "code": {"git_sha": "0" * 40, "git_dirty": False},
     "environment": {"python": "3.12"},
+    "environment_manifest": RUN_ENVIRONMENT,
 }
 STARTED = datetime(2026, 10, 14, 12, tzinfo=UTC)
 REGISTERED_AT = datetime(2026, 10, 14, 13, tzinfo=UTC)
@@ -220,6 +250,46 @@ def registration(models: forecast.Models) -> dict:
     )
 
 
+PULL_REQUEST = 120  # the fixture registration pull request's number
+
+
+def github_pull_request(merged_at=REGISTRATION_TIME, **changes) -> dict:
+    """
+    A GitHub API pull-request response for the fixture registration (invented
+    values; unrelated fields included, as the API returns them).
+    """
+
+    if merged_at is None:
+        text = None
+    else:
+        stamp = pd.Timestamp(merged_at)
+        stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
+        text = stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+    response = {
+        "number": PULL_REQUEST,
+        "state": "closed",
+        "title": "Register the ETF forecasters",
+        "merged": True,
+        "merged_at": text,
+        "merge_commit_sha": REGISTRATION_COMMIT,
+        "base": {"ref": "main", "repo": {"full_name": "billvo9/stock-allocation-agent"}},
+        "head": {"ref": "claude/register", "sha": "c" * 40},
+        "user": {"login": "fixture"},
+    }
+    response.update(changes)
+    return response
+
+
+def evidence(pull_request=None, *, source="github_api", fetched_at=None) -> dict:
+    """The registration evidence as the job collects it."""
+
+    return {
+        "source": source,
+        "fetched_at": pd.Timestamp("2026-10-14T14:30:00Z") if fetched_at is None else fetched_at,
+        "pull_request": github_pull_request() if pull_request is None else pull_request,
+    }
+
+
 def register(
     models: forecast.Models,
     ledger_path: Path,
@@ -227,7 +297,7 @@ def register(
     registered_at=REGISTRATION_TIME,
     recorded_at=REGISTERED_RECORDED,
 ):
-    """Append the registration entry (the ledger's first) for `models`."""
+    """Append the registration entry (the ledger's first) for `models`, with its evidence."""
 
     return registration_record.register(
         ledger_path,
@@ -238,6 +308,8 @@ def register(
         registered_at=registered_at,
         recorded_at=recorded_at,
         code=RUN_CODE,
+        # Fetched just before the entry is appended, as the job's script does.
+        evidence=evidence(github_pull_request(merged_at=registered_at), fetched_at=recorded_at),
     )
 
 
@@ -251,6 +323,7 @@ def record(
     loader=load_inference_window,
     models=None,
     code=None,
+    environment=None,
 ):
     """One forecast; a ledger with no entry is first registered for these models."""
 
@@ -268,6 +341,7 @@ def record(
         created_at=created,
         code=RUN_CODE if code is None else code,
         calendar=exchange_calendar,
+        environment=RUN_ENVIRONMENT if environment is None else environment,
     )
 
 
@@ -280,4 +354,5 @@ def score(ledger_path: Path, score_close: str, scored_at: str, store: Path):
         scored_at=pd.Timestamp(scored_at),
         code=RUN_CODE,
         calendar=exchange_calendar,
+        environment=RUN_ENVIRONMENT,
     )

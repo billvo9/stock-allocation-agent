@@ -59,7 +59,11 @@ forecast.ledger_trial
     Records in a ledger that does not open with a registration fail
     (`records_without_registration`); a registration without a record yet is
     insufficient_evidence (`awaiting_session_1`), and so is a trial whose kept
-    head is not configured (`kept_head_not_judged`).
+    head is not configured (`kept_head_not_judged`). With the prospective
+    store, the detail also lists each close from the registration through
+    session 1 as recorded, refused (reason and evidence), not recorded
+    (operator-missed) or market closed (forecasting.prospective.readiness):
+    information only, since session 1 is the first record.
 
 In the private scope a ledger whose records are all synthetic is at most
 insufficient_evidence (`synthetic_input`); a failure still shows. Health
@@ -77,6 +81,7 @@ from pathlib import Path
 import pandas as pd
 
 from stock_agent.calendars.nyse import CalendarRefused
+from stock_agent.data.funds.schema import FundDataRefused
 from stock_agent.forecasting.prospective import cadence, registration_record
 from stock_agent.forecasting.prospective.ledger import (
     GENESIS,
@@ -85,10 +90,12 @@ from stock_agent.forecasting.prospective.ledger import (
     head,
     read_ledger,
 )
+from stock_agent.forecasting.prospective.readiness import fixed_start
 from stock_agent.forecasting.prospective.refusal import ForecastRefused
 from stock_agent.forecasting.prospective.window import local_instant, next_weekday
 from stock_agent.health.inputs import SYNTHETIC_FINDING, Finding, worst_finding
 from stock_agent.health.model import Area, Better, Check, HealthState
+from stock_agent.model_validation.audit import LeakageError
 
 TITLES = {
     "forecast.ledger": "Forecast ledger integrity",
@@ -534,6 +541,27 @@ def _registered(entries: Sequence[LedgerEntry]) -> bool:
         return False
 
 
+def _readiness_lines(report, entries, now: datetime) -> list[str]:
+    """The launch-readiness rows before session 1 (read-only; never changes the state)."""
+
+    try:
+        rows = report(entries, now)
+    except (FundDataRefused, LeakageError, ValueError, OSError) as error:
+        # A report only: a store it cannot read is shown, never a reason to hide the check.
+        return [f"readiness: not judged ({type(error).__name__})"]
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[row.status] = counts.get(row.status, 0) + 1
+    before = [row for row in rows if row.status != "recorded"]
+    summary = ", ".join(
+        f"{n} {status}" for status, n in sorted(counts.items()) if status != "recorded"
+    )
+    return [
+        f"closes before session 1: {summary or 'none'} (the session-1 rule is unchanged)",
+        *(row.line() for row in before),
+    ]
+
+
 def _trial(
     read: _Read,
     kept: str | None,
@@ -542,6 +570,7 @@ def _trial(
     now: datetime,
     evidence: str | None,
     allow_synthetic: bool,
+    readiness=None,
 ) -> Check:
     check_id = "forecast.ledger_trial"
     unit = "section 5 conditions"
@@ -663,6 +692,19 @@ def _trial(
         "kept head: judged" if kept is not None else "kept head: not configured or unusable"
     )
     lines += [condition.line() for condition in report.conditions]
+    try:
+        proposed = fixed_start(entries, calendar=calendar.sessions, now=pd.Timestamp(now))
+    except (CalendarRefused, ValueError) as error:
+        lines.append(f"proposed ETF-R1: not judged ({type(error).__name__})")
+    else:
+        if proposed.session_1 is not None:
+            shown = ", ".join(proposed.missed[:SHOWN_DATES]) or "none"
+            lines.append(
+                f"proposed ETF-R1 (not in force): session 1 would be {proposed.session_1}; "
+                f"missed {len(proposed.missed)} ({shown})"
+            )
+    if readiness is not None:
+        lines += _readiness_lines(readiness, entries, now)
     trial, later = report.trial_conditions, report.later_conditions
     if trial:
         kinds = ", ".join(sorted({c.condition for c in trial}))
@@ -928,10 +970,13 @@ def ledger_checks(
     calendar: RulesCalendar | None,
     now: datetime,
     allow_synthetic: bool = False,
+    readiness=None,
 ) -> list[Check]:
     """
     `forecast.ledger`, `forecast.ledger_backup`, `forecast.ledger_sessions`,
-    `forecast.ledger_scores` and `forecast.ledger_trial`.
+    `forecast.ledger_scores` and `forecast.ledger_trial`. `readiness(entries,
+    now)`, when given, is the launch-readiness report: each close from the
+    registration through session 1, shown in the trial check's detail only.
     """
 
     read = _read(path)
@@ -954,7 +999,9 @@ def ledger_checks(
         _backup(read, backup, kept, **common),
         _sessions(read, calendar, **common),
         _scores(read, calendar, **common),
-        _trial(read, kept if isinstance(kept, str) else None, calendar, **common),
+        _trial(
+            read, kept if isinstance(kept, str) else None, calendar, readiness=readiness, **common
+        ),
     ]
 
 

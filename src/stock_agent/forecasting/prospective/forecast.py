@@ -85,6 +85,9 @@ from stock_agent.forecasting.prospective import (
     window,
     zero_vol,
 )
+from stock_agent.forecasting.prospective import (
+    environment as job_environment,
+)
 from stock_agent.forecasting.prospective.config import parse_config
 from stock_agent.forecasting.prospective.refusal import ForecastRefused
 from stock_agent.model_diagnostics import inference as inf
@@ -93,9 +96,11 @@ from stock_agent.registry import EntryRef, RegistryReader
 from stock_agent.registry.stages import STAGES
 
 # 1.1: the bundle's zero-volatility rule; rows' as-of close. 1.2: the registration and session.
-FORECAST_SCHEMA_VERSION = "1.2"
+# 1.3: the environment check.
+FORECAST_SCHEMA_VERSION = "1.3"
 # 1.1: volatility rows record the zero-volatility rule and flags. 1.2: the registration.
-SCORE_SCHEMA_VERSION = "1.2"
+# 1.3: the environment check.
+SCORE_SCHEMA_VERSION = "1.3"
 ALLOWED_STAGES = STAGES[:2]  # engineering_only, development_evaluated; never higher
 UNITS = {
     "total_log_return": "total log return over the horizon (F5.1, distributions reinvested)",
@@ -320,17 +325,19 @@ def first_eligible_refusal(win: window.InferenceWindow, assets: Sequence[str]) -
     """
     Why the window's close cannot be session 1 (section 4, condition 2), or
     None: every fund needs its complete window, from batches whose
-    distributions were spot-checked against the owner's anchors.
+    distributions were spot-checked against the owner's anchors
+    (window.session_one_gaps, the readiness report's test too).
     """
 
-    incomplete = win.incomplete_assets(assets)
-    if incomplete:
-        return f"the window is incomplete for {sorted(incomplete)}"
-    if "anchors_sha256" not in win.batches:
-        return "the window's batches record no spot check"
-    unchecked = win.batches.loc[win.batches["anchors_sha256"].isna(), "batch_id"]
-    if len(unchecked):
-        return f"batches {sorted(unchecked)} record no spot check against the owner's anchors"
+    gaps = window.session_one_gaps(win, assets)
+    if gaps["incomplete"]:
+        return f"the window is incomplete for {sorted(gaps['incomplete'])}"
+    if gaps["no_batch_lineage"]:
+        return "the window names no batch"
+    if gaps["unchecked_batches"]:
+        return (
+            f"batches {gaps['unchecked_batches']} record no spot check against the owner's anchors"
+        )
     return None
 
 
@@ -358,6 +365,7 @@ def record_forecast(
     created_at: pd.Timestamp,
     code: Mapping[str, object],
     calendar: window.Calendar,
+    environment: Mapping[str, object],
 ) -> ledger.LedgerEntry:
     """Check the timing and registration, read the window, forecast, append one entry."""
 
@@ -388,6 +396,9 @@ def record_forecast(
     found = registered(entries)
     registration_record.check_record(found.record, models)
     registration_record.check_code(found.record, code)
+    checked_environment = job_environment.check(
+        models.bundle.document.get("environment_manifest"), environment
+    )
     if times["close_available_at"] <= found.registered_at:
         raise ForecastRefused(
             "before_registration",
@@ -443,6 +454,12 @@ def record_forecast(
         },
         "registration": found.reference(),
         "session": session_of(records, as_of, calendar),
+        # The bundle's manifest travels with the record (chained), so scoring can apply the
+        # same check without the bundle.
+        "environment": {
+            **checked_environment,
+            "manifest": models.bundle.document.get("environment_manifest"),
+        },
         "data": {
             "data_class": bundle.document["data_class"],
             "window_fingerprint": win.fingerprint,
@@ -607,6 +624,7 @@ def score_matured(
     scored_at: pd.Timestamp,
     code: Mapping[str, object],
     calendar: window.Calendar,
+    environment: Mapping[str, object],
     zero_vol_rule: str | None = None,
 ) -> tuple[ledger.LedgerEntry | None, list[dict[str, object]]]:
     """
@@ -650,6 +668,8 @@ def score_matured(
             f"{zero_vol_rule!r}",
         )
     registration_record.check_code(found.record, code)
+    # The bundle's environment: every forecast entry carries its manifest.
+    checked_environment = _scoring_environment(entries, environment)
     for entry in {e.entry_sha256: e for e, _ in pending}.values():
         bundle = entry.payload["bundle"]
         if (bundle.get("manifest_sha256"), bundle.get("config_sha256")) != (
@@ -797,11 +817,46 @@ def score_matured(
         "outcome_data": win.lineage(),
         "code": dict(code),
         "registration": found.reference(),
+        "environment": checked_environment,
         "scores": scores,
         "cumulative": cumulative.to_dict("records"),
     }
     written = ledger.append_entry(ledger_path, "score", payload, recorded_at=stamp, guard=guard)
     return written, left
+
+
+def _scoring_environment(
+    entries: Sequence[ledger.LedgerEntry], running: Mapping[str, object]
+) -> dict[str, object]:
+    """
+    The running environment against the one the ledger's forecasts were made
+    in: the bundle's manifest each forecast entry recorded (one manifest per
+    ledger), checked with the forecast job's own rule.
+    """
+
+    manifests = {}
+    for entry in entries:
+        if entry.kind != "forecast":
+            continue
+        kept = entry.payload.get("environment")
+        if not isinstance(kept, Mapping) or not isinstance(kept.get("manifest"), Mapping):
+            raise ForecastRefused(
+                "environment_unregistered",
+                f"forecast entry {entry.sequence} records no environment manifest",
+            )
+        sha = job_environment.manifest_sha256(kept["manifest"])
+        if sha != kept.get("registered_sha256"):
+            raise ForecastRefused(
+                "environment_invalid",
+                f"forecast entry {entry.sequence}'s manifest does not match its recorded hash",
+            )
+        manifests[sha] = kept["manifest"]
+    if len(manifests) > 1:
+        raise ForecastRefused(
+            "environment_mismatch", "the ledger's forecasts name more than one environment"
+        )
+    registered = next(iter(manifests.values()), None)
+    return job_environment.check(registered, running)
 
 
 def _refuse_other_rule(entries: Sequence[ledger.LedgerEntry], rule: str) -> None:
