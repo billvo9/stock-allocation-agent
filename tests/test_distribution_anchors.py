@@ -340,7 +340,7 @@ def test_duplicates_in_any_status_are_refused():
 
 @pytest.mark.parametrize(
     "ex_date",
-    ["2024-6-3", "2024-06-31", "2024-02-30", "20240603", "2024-06-01", "2024-07-04", "2028-01-03"],
+    ["2024-6-3", "2024-06-31", "2024-02-30", "20240603", "2024-06-01", "2024-07-04", "2031-01-02"],
 )
 def test_bad_or_non_session_ex_dates_are_refused(ex_date):
     refused(AnchorRefusal.INVALID_DATE, row(ex_date=ex_date))

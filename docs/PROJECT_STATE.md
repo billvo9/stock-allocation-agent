@@ -818,6 +818,57 @@ the owner's answers and messages in session:
   - These approve the contract changes only. They approve no section 13
     decision, no zero-volatility rule change, and no freeze, registration
     or activation.
+- 2026-10-18, verified registration time (owner's brief "PR #97 Final
+  Review and ETF Activation Readiness": verify the registration timestamp
+  against the registration pull request's GitHub `merged_at` and merge
+  SHA, and add a negative test). The owner chose "Approve
+  (Recommended)" in the lead session for this breaking contract change:
+  - The registration ledger entry becomes schema 1.1 and carries GitHub
+    evidence.
+  - A schema 1.0 entry (a typed time with no evidence, from #97) is
+    refused as `registration_unverified`.
+  - The evidence must satisfy merge time ≤ evidence fetch time ≤ the
+    entry's write time.
+
+  No real ledger or registration existed. This approves the contract
+  change only. It does not approve the session-1 rule (ETF-R1), a freeze,
+  a registration or activation.
+- 2026-10-18, the "ETF Registration Follow-through and Real-Data
+  Readiness" brief (owner; preferences, not approvals):
+  - The open ETF registration decisions are named ETF-R1 to ETF-R7, kept
+    apart from the approved T5a D1-D8.
+  - Session 1, the principle supported: "The first eligible session is
+    determined objectively by the approved registration rule, not by when
+    an operator chooses to run the first forecast." The formal approval
+    waits for a preflight that prevents a premature registration.
+  - Recording deadline: "I favor the existing 09:30 AM New York
+    next-weekday recording deadline because it is stricter and already
+    implemented, provided we can demonstrate reliable daily execution and
+    holiday handling."
+  - Primary loss: squared error on log realized volatility, with QLIKE as
+    a secondary sensitivity. This comes after the zero-volatility
+    treatment is resolved on pre-2025 development data.
+  - The code identity must not be narrowed so that "a modified transitive
+    dependency could change forecasts without detection".
+- 2026-10-18, two breaking changes on the path to the ETF freeze (owner, by
+  choosing these options in the lead session; the quoted text is the option
+  chosen):
+  - Calendar, "Approve switch (Recommended)":
+    - `nyse_rules.CALENDAR_ID` becomes `nyse_full_day_rules_2003_2030_v1`,
+      so every consumer records and requires the 2003-2030 rules calendar.
+    - Stores and the Stock Lab inference window refuse batches recorded
+      under the 2027 id.
+    - No fund, prospective or Stock Lab inference store existed; the lead
+      checked that the directories were absent. Sessions through
+      2027-12-31 are identical in both versions.
+  - Environment, "Refuse on mismatch (Recommended)":
+    - The forecast and score jobs refuse when the Python minor version, or
+      a key package's version or hash, differs from the frozen bundle's
+      environment manifest, and when a bundle has no manifest.
+    - This adds the registered environment to section 1's list of changes
+      that require a new registration.
+  - Neither approves ETF-R1, ETF-R2 (the unscheduled-closure rule), a
+    freeze, a registration or activation.
 - Pending:
   - Stock Lab, in order (open item 10):
     1. authorization of the A1 read-only audit, after the token is

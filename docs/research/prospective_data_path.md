@@ -16,7 +16,7 @@ This slice builds the data path that the prospective forecasting track needs: a 
 
 | Module | Role |
 |---|---|
-| `calendars/nyse_rules.py` | Rule-based NYSE closures; equal to the frozen list through 2024; coverage through 2027-12-31 |
+| `calendars/nyse_rules.py` | Rule-based NYSE closures; equal to the frozen list through 2024; coverage through 2030-12-31 since 2026-10-18 (section 1) |
 | `data/prospective/window.py` | `H_END`, `LOOKBACK_SESSIONS`, `WINDOW_START`, the complete-session request rule |
 | `data/prospective/validation.py` | The store marker, the batch record and the batch checks (shared by writer and reader) |
 | `data/prospective/store.py` | The write-once writer (the only module that writes into a prospective root) |
@@ -32,17 +32,146 @@ The research path is unchanged in what it accepts: the frozen calendar `calendar
 
 ## 1. The NYSE calendar beyond 2024
 
-`calendars/nyse_rules.py` generates full-day closures from the exchange's holiday rules (NYSE Rule 7.2, as recalled):
+`calendars/nyse_rules.py` generates full-day closures from the exchange's holiday rules (NYSE Rule 7.2):
 - New Year's Day; Martin Luther King Jr. Day (third Monday of January); Washington's Birthday (third Monday of February); Good Friday (two days before Western Easter, from the anonymous Gregorian computus); Memorial Day (last Monday of May); Juneteenth (June 19, from 2022); Independence Day; Labor Day (first Monday of September); Thanksgiving Day (fourth Thursday of November); Christmas Day.
-- A Sunday holiday closes the Monday after. A Saturday holiday closes the Friday before, unless that Friday is the month's last weekday (it ends an accounting period): New Year's Day on a Saturday closes nothing, so 2027-12-31 is expected to trade.
+- A Sunday holiday closes the Monday after. A Saturday holiday closes the Friday before, unless that Friday is the month's last weekday (it ends an accounting period). New Year's Day on a Saturday therefore closes nothing. NYSE's published page agrees for 2028 ("Because the holiday falls on Saturday, January 1, 2028, no New Year's Day holiday is observed"), so 2027-12-31 trades.
+
+**Two calendar versions, each resolvable by its id** (`nyse_rules.calendar(id)`). Both come from the same rules and special closures, and are identical through 2027-12-31: a test shows the 2027 version's sessions are a byte-identical prefix of the 2030 version's. Only the two listed (id, last year) pairs can be constructed.
+
+| Id | Coverage | Role |
+|---|---|---|
+| `nyse_full_day_rules_2003_2030_v1` | 2003-01-02 to 2030-12-31 | `CALENDAR_ID` since 2026-10-18: the calendar every consumer uses and records. Registered code needs no calendar change before C24, if session 1 is no later than 2028-11-29 |
+| `nyse_full_day_rules_2003_2027_v1` | 2003-01-02 to 2027-12-31 | The earlier default. It stays resolvable by its id |
+
+**Where each year's closures come from** (`nyse_rules.YEAR_SOURCES`, `year_source(year)`).
+- "Verified" describes the holiday schedule, not the sessions: it equalled NYSE's published page as of `retrieved_on`.
+- A session after that date stays an expected session, because an unscheduled closure can still occur.
+- Every session in an unverified year is expected.
+- `to_json_dict` says so (`schedule_verified`, `note`).
+
+| Years | Status | Source |
+|---|---|---|
+| 2003-2024 | `frozen_research_list` | Equal to `nyse.FULL_DAY_CLOSURES`. Its special closures were not re-checked externally (`f1_fund_data.md`) |
+| 2025 | `rule_generated` | The rules plus the special closure 2025-01-09. NYSE's 2025 page was not retrieved |
+| 2026-2028 | `verified_published` | NYSE, "Holidays & Trading Hours", https://www.nyse.com/markets/hours-calendars, retrieved 2026-10-18 |
+| 2029-2030 | `rule_generated` | The rules only. Not yet published when retrieved |
+
+A verified source must carry an `https://` URL and a retrieval date, and any other source must carry neither.
+
+`check_published(year, closures)` compares a published list with the rules.
+- It reports closures the rules have but the list lacks (`unexpected`), and the reverse (`missing`).
+- It refuses a malformed list (`invalid_date`) and a date listed more than once (`duplicate_date`).
+- When NYSE publishes 2029, the year can be verified with it. Marking a year verified edits `YEAR_SOURCES` and the test's embedded published lists, which is a code change.
+
+**The switch of `CALENDAR_ID` to the 2030 version (approved by the owner on 2026-10-18; done).** The switch was one line in `nyse_rules.py`. It is breaking under AGENTS.md, because two stores compare the recorded id exactly:
+- The prospective store's marker and batch records hold `calendar_id`. A root or batch written under the 2027 id is refused (`not_prospective_store`).
+- The Stock Lab inference window refuses a batch recorded under another id (`calendar_mismatch`).
+
+No fund, prospective or Stock Lab inference store existed when it was made, so no real data was invalidated. The forecast ledger's `calendar` and `checked_against` fields are recorded, never compared. The switch is a change under `src`, so it lands before the freeze.
 
 Tests:
-- the generated 2003-2024 closures equal `nyse.FULL_DAY_CLOSURES` exactly, year by year;
+- the default is the 2030 version, and the module-level calendar refuses dates after 2030-12-31;
+- a prospective store marker under the 2027 id is refused;
+- the generated 2003-2024 closures equal `nyse.FULL_DAY_CLOSURES` exactly, year by year, in both versions;
 - the extended sessions through 2024 equal the frozen sessions byte for byte;
 - the frozen calendar's contract is pinned: its id, coverage, session count (5,537) and the sha256 of its sessions and closures;
-- 2025, 2026 and 2027 equal a hand-entered copy of NYSE's published schedule (as recalled; not re-fetched), including 2026-07-03 (Independence Day observed), 2027-06-18 (Juneteenth observed), 2027-07-05 and 2027-12-24.
+- 2026-2028 equal NYSE's published closures exactly. The test embeds the list with its citation and makes no request. The published early closes (2026-11-27, 2026-12-24, 2027-11-26, 2028-07-03, 2028-11-24) are sessions;
+- 2025 matches a hand-entered list (as recalled) and is labelled rule-generated;
+- 2029 and 2030 equal hand-computed expected closures (pinned, labelled rule-generated);
+- each version's full session list is pinned by count and sha256 (2027 version: 6,289 sessions; 2030 version: 7,042);
+- observance through 2030, including 2026-07-03, 2027-06-18, 2027-07-05, 2027-12-24 and 2027-12-31 (a session);
+- Good Friday 2029-03-30 and 2030-04-19;
+- 251 sessions in each year from 2026 to 2030, and 250 in 2025;
+- source labels per year: exactly the years with an embedded published list are verified, each with its citation;
+- negative checks:
+  - a fabricated closure, a missing holiday and a wrong observance each fail `check_published`;
+  - a duplicate date is refused;
+  - a verified source without a citation is refused;
+  - an unknown (id, last year) pair is refused.
 
 **Unscheduled closures cannot be predicted.** National days of mourning, storms and emergencies are announced at short notice. `SPECIAL_CLOSURES` holds the five in the frozen list and 2025-01-09 (the national day of mourning for Jimmy Carter). A closure announced later is missing until someone adds it with a source; until then the prospective store reports that date as a missing session for every fund (never filled), and a session count across it is one too high. No network fetch is made.
+
+### Unscheduled closures after registration: proposed rule ETF-R2 (design only; owner decision pending)
+
+Nothing here is implemented. Until the owner approves ETF-R2, the code keeps today's semantics for the trial, session numbering, cadence and confirmation (`prospective_registration.md`; `forecasting/prospective/cadence.py`).
+
+**Why a rule is needed.** Without one, an unscheduled closure remains a calendar session with no close for any fund.
+- The window ending there is incomplete for every fund, and so are the next 63 windows.
+- Every fund is refused. During the trial that is a void. After it, those 64 sessions (the closure and the next 63) are about 12% of the 524 sessions from session 1 to C24 (64/524 ≈ 12.2%), beyond C3's 5%. `prospective_registration.md`, section 12, rounds it to 13%.
+- Adding the date to `SPECIAL_CLOSURES` changes `src`, so it would be a new registration.
+
+**Proposed rule.**
+1. **Evidence, never inference.** A closure enters only as an amendment.
+   - An amendment is one line appended to a private, append-only, hash-chained amendments file. Each line holds the date, the occasion, the exchange notice's `https://` URL (NYSE or ICE), the retrieval time (UTC), the sha256 of the retrieved notice, the recording time (UTC) and the previous line's sha256.
+   - The file lives outside every checkout. The forecast job runs from a checkout pinned at the registration commit, so a file inside it could never change.
+   - Nothing creates an amendment from missing vendor prices. A date without a close for every fund stays a reported missing session until an amendment exists.
+   - Validation refuses:
+     - a date that is not a session of the registered calendar;
+     - a duplicate date;
+     - a recording time before the retrieval time;
+     - a malformed URL or hash;
+     - any change to an earlier line.
+2. **A non-session from its recording time.** A record made at or after the amendment's recording time uses the registered calendar minus the amended dates. The lookup is as of the record's own decision time, backward only.
+   - That date is not a model error, a missed or refused session, or a data gap.
+   - No price is invented for it.
+   - Inference windows stay the 64 actual closes ending at the as-of close. A window spanning the closure reaches one session further back.
+3. **The ledger and every recorded forecast, refusal and score are never altered.** A record already made for the closure date stays in the ledger. It is reported, but it does not count as a session record.
+4. **Late amendments excuse nothing else.** An amendment recorded after a session's recording deadline does not excuse that session's refusals or gaps. Only the closure date itself is reclassified.
+   - The alternative is to also excuse refusals caused only by that date. It is more forgiving, but it lets gaps be explained after the fact.
+
+**Effects** (per amended closure after session 1):
+- **Session numbering.** Session n is the n-th session of the amended calendar from session 1. Every session after the closure is numbered one lower than on the unamended calendar. Numbers never skip, and session 1 does not move.
+- **Trial status.** The trial is still sessions 1-20; it ends one session later in calendar time. The gap rule counts expected sessions only, so the closure cannot start or extend a gap.
+- **Open forecasts.** Exit = entry + h sessions of the amended calendar (horizons count trading sessions). A forecast spanning the closure exits one session later in calendar time.
+  - Scoring computes exits from the calendar as of the scoring time; exits are not stored at recording, so no forecast entry changes.
+  - This uses an amendment recorded after the forecast, but only on the outcome side: it fixes which close is the h-th trading session after entry. It is never a model input or a feature, so it is not leakage. The forecast's inputs remain what was visible at its own decision time.
+  - Before the amendment, the missing close keeps such a forecast pending (`outcome_inputs_unavailable`). It cannot be scored on the wrong session.
+- **Checkpoints.** C12 (session 272) and C24 (session 524) keep their session numbers and registered outcome counts (section 10's table is unchanged). Their calendar dates move one session later.
+
+**Code identity.** The amendments file is data outside the registered code identity: appending to it is not a new registration and does not fail C4.
+- The code that reads and validates the file is registered. It must be built before the freeze, in the forecast job, scoring and Model Health.
+- Every forecast, refusal and score entry records the head sha256 and line count of the amendments it used, so each record's calendar can be reproduced.
+- A rewritten or removed amendment line is an integrity failure under C3, like a failed kept head.
+
+**Numerical example** (hypothetical; `tests/test_etf_r2_closure_example.py` reproduces every date).
+- Session 1 is Monday 2026-11-02.
+- On Friday 2026-11-13 (session 10), NYSE announces a full-day closure on Wednesday 2026-11-18.
+- The amendment is recorded that day at 21:00 UTC (16:00 New York), before session 10's recording window opens at 18:00 New York.
+- Sessions come from `nyse_full_day_rules_2003_2030_v1`, which is identical to the 2027 version through 2027-12-31. C24 falls in 2028, beyond the 2027 version.
+
+| | Without an amendment (today) | With ETF-R2 |
+|---|---|---|
+| 2026-11-18 | Session 13, expected. Every fund lacks its close, so every fund is refused: a trial void | Not a session: nothing is expected or recorded, and no price exists |
+| Sessions 13-20 | 11-18, 11-19, 11-20, 11-23, 11-24, 11-25, 11-27, 11-30 | 11-19, 11-20, 11-23, 11-24, 11-25, 11-27, 11-30, 12-01 |
+| Last trial session (20) | 2026-11-30 | 2026-12-01 |
+| Session 21 (first confirmatory) | 2026-12-01 | 2026-12-02 |
+| C12 (session 272) | 2027-12-01 | 2027-12-02 |
+| C24 (session 524) | 2028-11-30 | 2028-12-01 |
+| Window of the next forecast, as-of 2026-11-19 | Session 14: the 64 sessions 2026-08-21 to 2026-11-19, including 11-18 without a close, so incomplete and refused | Session 13: the 64 actual closes 2026-08-20 to 2026-11-19 |
+
+Open forecasts (entry = the session after the as-of; exit = entry + h sessions). 2026-11-27 is an early close, so it is a session.
+
+| As-of (session) | Entry without / with | h = 5 without / with | h = 20 without / with | h = 30 without / with |
+|---|---|---|---|---|
+| 2026-11-12 (9), recorded before the announcement | 11-13 / 11-13 | 11-20 / 11-23 | 12-14 / 12-15 | 12-29 / 12-30 |
+| 2026-11-17 (12), recorded after the amendment | 11-18 / 11-19 | 11-25 / 11-27 | 12-17 / 12-18 | 2027-01-04 / 2027-01-05 |
+
+- Without the amendment, these outcomes span the missing 11-18 close, so they stay pending (`outcome_inputs_unavailable`) and are never scored on a wrong session.
+- With ETF-R2, they are scored at the later exits.
+- In both cases the ledger entries are byte-identical, because exits are computed at scoring and never stored at recording.
+- Session 1, sessions 1-12 and every earlier record are unchanged.
+
+> **ETF-R2 (owner decision, pending): unscheduled NYSE closures during the prospective trial and confirmation.**
+> No code may change trial, session-numbering or confirmation semantics for this rule before the owner approves ETF-R2. The amendment reader and validator are then a separate change, built and reviewed before the freeze.
+>
+> "I approve ETF-R2 for every prospective registration.
+> (1) An unscheduled full-day NYSE closure enters the prospective calendar only through an amendment appended to the private, append-only, hash-chained amendments file. The amendment holds the date, the occasion, the exchange notice URL, the retrieval time (UTC), the sha256 of the retrieved notice and the recording time. It is never inferred from missing vendor prices.
+> (2) From its recording time the date is not an exchange session. It is not a model error, a missed session, a refused session or a data gap, and no price is invented for it.
+> (3) Inference windows remain the 64 actual closes ending at the as-of close.
+> (4) The ledger and every recorded forecast, refusal and score stay unaltered. A record already made for that date is reported but not counted.
+> (5) Sessions are numbered on the amended calendar. The trial (sessions 1–20), forecast exit sessions (entry + h sessions) and the checkpoints C12 (session 272) and C24 (session 524) keep their session counts and move later in calendar time by one session per closure. Exit sessions are computed with the calendar, amendments included, as of the scoring time. That is the outcome side, never a model input or a feature, so it is not leakage.
+> (6) An amendment recorded after a session's recording deadline does not excuse that session's refusals or gaps.
+> (7) The amendments file is outside the registered code identity, so an amendment is not a new registration and does not fail C4. The code that validates it is registered, and every ledger entry records the amendments head hash it used."
 
 Research code may not import `nyse_rules` (it serves dates in the sealed holdout); `nyse.py` remains the research calendar.
 
@@ -90,7 +219,7 @@ The implementation is the union of the other two, so the owner's confirmation of
 | `retrieved_on` | The day you copied it, `YYYY-MM-DD` | `2026-10-15` |
 | `notes` | Optional free text | |
 
-**Validation (any failure refuses the whole file, naming the row and column, never a value):** a wrong header or field count; a repeated (fund, ex_date) in any status; a malformed date, an ex-date that is not an NYSE session or is outside 2003-2027; a retrieval date after tomorrow (UTC); a non-positive or malformed amount (no sign, exponent, thousands separator or leading `.`); a `decimals` count that does not match the amount string (it catches a spreadsheet dropping trailing zeros); another basis; a malformed status, publisher or URL; control characters; invalid UTF-8 (a leading byte-order mark is fine).
+**Validation (any failure refuses the whole file, naming the row and column, never a value):** a wrong header or field count; a repeated (fund, ex_date) in any status; a malformed date, an ex-date that is not an NYSE session or is outside 2003-2030; a retrieval date after tomorrow (UTC); a non-positive or malformed amount (no sign, exponent, thousands separator or leading `.`); a `decimals` count that does not match the amount string (it catches a spreadsheet dropping trailing zeros); another basis; a malformed status, publisher or URL; control characters; invalid UTF-8 (a leading byte-order mark is fine).
 
 **The anchors lockbox.**
 - Research scope (the pre-2025 audit and the research store): ex-dates before 2025-01-01.
@@ -213,7 +342,7 @@ PYTHONPATH=src .venv/bin/python scripts/collect_prospective.py --authorized
 ```
 
 Three requests for [2026-07-16, the last complete session], nothing written. **A good result** (exit code 0):
-- `H_end 2026-10-14; lookback 63 sessions; window start 2026-07-16; calendar nyse_full_day_rules_2003_2027_v1`.
+- `H_end 2026-10-14; lookback 63 sessions; window start 2026-07-16; calendar nyse_full_day_rules_2003_2030_v1` (the 2030 calendar since the owner's 2026-10-18 switch).
 - `request: VTI AGG SHV [2026-07-16, 2026-10-14] (64 sessions)` when run that evening; later runs end at a later session.
 - The request rule line, the allowlist line and the anchors lines (prospective scope).
 - Per fund: `price rows (unadjusted): 64`, `missing NYSE sessions: 0 (none)`, `distributions served: N (ex-dates ...)` (expect about 3 for AGG and SHV and 1 for VTI) and the basis verification.
@@ -229,7 +358,7 @@ Expect VTI to show `NOT verified ... verified distributions in the window: 1 (ne
 | `Refused: before_window` | `--start` before 2025-01-01 (the research store's period) |
 | `Refused: incomplete_session` | `--end` after the last complete session (before 18:00 New York time, or a future date), or no session of the window is complete yet |
 | `Refused: invalid_request` | Repeated, lower-case or malformed fund ids, or more than 20 |
-| `Refused: outside_coverage` | After 2027-12-31: the calendar must be extended first |
+| `Refused: outside_coverage` | After 2030-12-31: the calendar must be extended first (a new calendar id) |
 
 **Refused retrievals (exit code 1, nothing written):** the token, HTTP, transport, allowlist and split refusals of 6.1, plus `REFUSED sealed_holdout` or `REFUSED before_window` (Tiingo served a row before the window) and `REFUSED outside_request` (a row after the requested end).
 
@@ -258,7 +387,7 @@ Run 6.3 and 6.4 again after each session's 18:00. Each run is a new batch coveri
 - **The spot check is a sample.** Two matching anchors do not validate every distribution or show that none is missing.
 - **Early closes** wait for 18:00 like any session.
 - **Not run.** Every live behaviour above (Tiingo's honouring of `columns`, its date format, its `divCash` basis) is still unverified until the owner's runs.
-- **The 2025-2027 holidays** were entered from NYSE's schedule as recalled; compare them with NYSE's published holiday page.
+- **Holiday verification.** 2026-2028 equal NYSE's published page (retrieved 2026-10-18). 2025, 2029 and 2030 are rule-generated: expected sessions, not verified (`nyse_rules.year_source`). Check 2029 and 2030 with `check_published` once NYSE publishes them; a difference would need a new calendar id.
 
 Follow-ups (not done here):
 - The store checks a batch's tables, not its raw payload; the payload's dates are checked by the Tiingo prospective parser before storing and re-parsed by the collection script after storing. A store-level payload check would couple the store to one adapter.
@@ -271,7 +400,7 @@ Follow-ups (not done here):
 
 - **Problem.** Feed frozen forecasters real inputs without touching the sealed holdout, and make it impossible for research code to read those inputs.
 - **Concepts.** A lockbox (sealed holdout) keeps one honest out-of-sample test; prospective evaluation (forecast now, score later) is the only evaluation that cannot be overfitted by hindsight. Anchors are verification data, not model inputs: they test what a vendor's numbers mean.
-- **Assumptions.** NYSE holiday rules hold through 2027 apart from unscheduled closures; Tiingo's `close` is unadjusted and `divCash` per share as paid (checked, not assumed, where anchors exist); the 18:00 New York convention.
+- **Assumptions.** NYSE holiday rules hold through 2030 apart from unscheduled closures (checked against the published schedule for 2026-2028 only); Tiingo's `close` is unadjusted and `divCash` per share as paid (checked, not assumed, where anchors exist); the 18:00 New York convention.
 - **Formulation.** With closes P_0..P_63 for the 64 sessions ending at the forecast close, the 63 daily total returns are r_t = (P_t + D_t) / P_{t-1} - 1 (D_t the distribution with ex-date t), and a 63-session realized volatility is sqrt(mean(log(1 + r_t)^2)). These formulas belong to the forecasters (OD8 group A for returns); the loader only supplies P, D and splits.
 - **Small example.** A forecast at 2026-10-14 uses [2026-07-16, 2026-10-14]; a forecast at 2026-10-15 uses [2026-07-17, 2026-10-15]: the window rolls by one session and never reaches back into the sealed period.
 - **Leakage risks.** Collecting or anchoring sealed-period values (refused at the request, the element, the payload, the store and the anchors file); a forecast made inside the lookback with a short window and scored on later lookback closes (refused: forecast closes start at H_end); a re-run reading a later download (refused: `retrieved_by` is required); research code reading prospective rows (boundary tests); the extended calendar used in research (forbidden import); reading the 18:00 convention as evidence that a close was knowable then.
