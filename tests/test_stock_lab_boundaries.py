@@ -37,6 +37,7 @@ RESEARCH_SIDE = (
     "evaluation",
     "logistic",
     "predict",
+    "registry",
     "replay",
     "size_simulation",
     "decision_tests",

@@ -572,7 +572,7 @@ by the simulated size checks (section 5) and is still open.
 |---|---|---|---|
 | A1 | Tiingo Starter and the private watchlist store: approved | **Staged:** inspection and persistence are separate. The first live operation is the read-only command below, run only after the owner confirms the token is configured and authorizes that exact command. The 30-ticker cap holds. No vendor-adjusted fields, no unauthorized history, no redistribution. After a successful coverage and corporate-action audit, storage (`--store`) is a separate approval. | awaiting the token and authorization of the read-only command |
 | A2 | Trailing 252-session inference window: approved in principle | Fit, tune, select and calibrate only on eligible pre-2025 data. Recent observations from the protected period serve only as inputs to a previously frozen model, kept in a separately controlled prospective/inference store. Protected outcomes are never used for retrospective selection, training or backtest claims. The sealed ETF period and its protections are unchanged. Strict as-of and retrieval-time records. A scoped authorization, not an unlocking of the 2025+ holdout. | built on fixtures: the inference store, the frozen-model reader and the recent-window fetch (below); nothing fetched or stored |
-| A3 | Exploratory walk-forward evaluation of the saved watchlist on pre-2025 history: approved | Marked hindsight-selected and non-confirmatory. Every challenger is compared with B0/B1, with proper scores, calibration, stock-level coverage, uncertainty and multiple-comparison treatment. No claim of profitable trading or reliable direction. | runnable after storage (`scripts/stock_lab_evaluate.py --real --authorized-evaluation`) |
+| A3 | Exploratory walk-forward evaluation of the saved watchlist on pre-2025 history: approved | Marked hindsight-selected and non-confirmatory. Every challenger is compared with B0/B1, with proper scores, calibration, stock-level coverage, uncertainty and multiple-comparison treatment. No claim of profitable trading or reliable direction. | runnable after storage (`scripts/stock_lab_evaluate.py --real --authorized-evaluation`); `--freeze` also registers the frozen model (below) |
 | A4 | The write-once forecast and scoring protocol: approved | Activation needs successful data validation, a frozen registered model, verified decision timestamps and a successful end-to-end dry run. No backdating, rewriting of probabilities, or scoring of outcomes that existed before a forecast. Daily updates record skipped tickers, stale observations, model failures and missing outcomes in Model Health. Separate from ETF OD16 and PPO promotion. | protocol built; activation pending |
 | A5 | Version-1 definitions: approved | Daily band ±0.5%. Five-session band ±0.5% × √5 ≈ ±1.12%, shown as different. A Stable session ends a streak by default, and the pause rule is identified whenever used. The bull-trap setup (10% drawdown, 5% rebound, prior 20-session high, 10-session window) may be used for research. **The failure margin f awaits confirmation** (formula and example in section 5) before real-data risk flags. Price returns stay distinct from total returns, and ex-dividend moves are identified. | f to confirm |
 | A6 | Recent observed prices on the private dashboard: supported | Only after the retrieval and storage permissions. An isolated descriptive reader that cannot expose protected outcomes to development, training, tuning or backtesting. Recent observed history is kept distinct from research evidence, and current forecasts from completed outcomes. The holdout policies are not modified. | built on fixtures: the descriptive reader and the Recent prices tab (below), which shows an empty state until something is stored |
@@ -760,9 +760,8 @@ default, never run.
    - a close is final at 20:00 New York time;
    - a decision must come before the next 09:30 open;
    - batches are recorded within an hour of retrieval.
-4. Decide how a frozen model's state uses the window. B1's recency-weighted
-   counts would otherwise be computed from these 252 sessions alone, not
-   from the development history.
+4. Decide how a frozen model's state uses the window. Decided on 2026-10-19:
+   `frozen_long_run` (below, "The frozen, registered model").
 5. Decide where scoring reads its outcomes. Scoring reads the research
    store, which the research fetch fills only through 2024; A4 needs a
    reader that returns only the sessions after each forecast.
@@ -775,6 +774,93 @@ default, never run.
    stop what is seen from shaping a choice made afterwards. Settle the
    model and the test, or record what was viewed and when, before
    reading the tab.
+
+
+### The frozen, registered model (built, not run)
+
+`scripts/stock_lab_evaluate.py --real --authorized-evaluation --freeze` evaluates the watchlist (A3)
+and then freezes and registers one model (`stock_agent.stock_lab.registry`; the record's contract is
+`stock_lab.frozen_model`). Nothing is fitted, tuned, selected or calibrated afterwards. No real model
+exists yet.
+
+**What is frozen.** One record holds everything a forecast needs. The record is checked against its
+id (the sha256 of its content) when it is stored and again whenever it is read. Any change, for
+example another estimator, half-life, state rule or environment, makes a new model with a new id.
+
+- The estimator, and the B1 benchmark that is recorded beside every forecast.
+- The settings, the band, B1's half-life (the fold majority), and the feature version.
+- The parameters the estimator needs:
+  - B0's long-run mix per stock, for the daily and the five-session categories;
+  - B2's tilt;
+  - B3's error distributions;
+  - M1's coefficients and preprocessing.
+
+  A part the estimator does not use is left out.
+- Per stock, what followed rising and falling runs of 1 to 7 sessions in development history.
+  The forecast record cites this, because on a 2025+ window every such event would be censored.
+- The decile edges and shares of the drift inputs, for Model Health.
+- The data fingerprints:
+  - the evaluation's panel hash;
+  - each stock's sessions, rows and content hash, over every stored field (evaluation schema 1.2
+    records them);
+  - the stored batches that supplied development sessions.
+- The environment (Python's minor version, numpy, pandas and scikit-learn), the commit, and
+  whether the checkout had uncommitted changes. A real model is frozen only from a clean checkout.
+- A parameters hash, shared by two freezes of the same model.
+
+**The rules.**
+
+- **Real data stops at 2024-12-31.** A protected-period session is refused (`protected_period`),
+  never trimmed. The evaluation must have censored its outcomes there.
+- **The histories and settings must be the evaluation's own.** That means the same stocks, the
+  same bars field by field, the same panel and the same settings. The model names the stored
+  evaluation by run id and content hash.
+- **Only B1 until A7.** Until the owner confirms which test decides "beats B1", only B1, the
+  pre-registered default, is frozen. The evaluation's own selection is recorded and reported.
+  A challenger is frozen only when the evaluation records an owner-confirmed decision rule
+  (`registry.CONFIRMED_DECISION_RULES`, empty today). Then it must be exactly that selection.
+- **Round trip.** The stored record is loaded back. It must reproduce the fitted model's
+  probabilities, for its estimator and for B1, at every stock's last development session, within
+  1e-12.
+- **Loading refuses a mismatch.** A different feature version or environment is refused, and so is
+  a stock outside the model.
+- **The store re-checks.** The record's own check repeats the real-data and A7 rules, so the store
+  refuses a hand-made record whose id was recomputed after an edit. The store also compares the
+  record with the stored evaluation (settings, stocks, panel and history hashes) and refuses a
+  creation time before that evaluation or after its clock.
+
+**The state rule (decision A2, item 4: `frozen_long_run`, the owner's choice on 2026-10-19).** The parameters never change. A
+frozen model's running state is a function of the frozen parameters and one forecast's inputs:
+
+| Rule | B0, the long-run mix | From the 252-session window |
+|---|---|---|
+| `frozen_long_run` (the owner's choice; every real model) | frozen at 2024-12-31 | B1's recency-weighted counts, the volatility, the run, every feature |
+| `window_only` (synthetic checks only) | recomputed from the window: a one-year mix | the same, and B0 |
+
+- **What the window leaves out depends on the half-life.** The half-life is the folds' majority
+  choice from {21, 63, 126, 252}. The weight beyond a 252-session window is λ²⁵² with λ = 2^(−1/H):
+  1/16 at H = 63, but 1/4 at H = 126 and 1/2 at H = 252. The record keeps that share
+  (`window_tail_weight`). At H = 252, B1 from a window is a materially different estimator from the
+  evaluated one, under either rule.
+- **The development state check.** It is reported only and never used to select. It is
+  computed on development data only, on each stock's last 252 development sessions:
+  - B1 from the trailing window, under each rule. For `frozen_long_run` the prior is the
+    long-run mix as of that session.
+  - Compared with B1 from the full history.
+  - Scored by the next session's RPS where it matured, with the mean and largest probability
+    differences.
+
+  `scripts/stock_lab_evaluate.py --freeze` prints it, and the record keeps it (`state_check`).
+  The two rules count as two variants tried.
+- **Why `frozen_long_run` was recommended.** Its prior (κ = 40) keeps pointing at the long-run mix the
+  development evaluation used, not at a one-year mix. It needs no other stock's window: under
+  `window_only`, B0 pools every model stock's window, so one stale stock blocks every forecast
+  (`panel_stocks_mismatch`). Whether either windowed B1 is close enough to the evaluated one is
+  what the state check measures; it is not assumed.
+- Rejected option: continuing the development state through every protected session. That would
+  read more than the 252-session window, which is outside A2.
+- The rule is recorded with the model. A real model under another rule is refused
+  (`state_rule_not_approved`).
 
 
 ## 8. Learning notes

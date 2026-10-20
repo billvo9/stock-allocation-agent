@@ -40,24 +40,45 @@ DRIFT_FEATURES = ("ewma_vol", "ret_20", "rel_dollar_volume", "band_over_vol")
 PSI_FLOOR = 1e-4
 
 
-def psi(development: np.ndarray, recent: np.ndarray, bins: int = 10) -> float | None:
-    """Population stability index of `recent` against `development` (decile bins)."""
+def drift_reference(development: np.ndarray, bins: int = 10) -> dict | None:
+    """
+    The development distribution PSI compares against: decile edges and the
+    share of development values in each bin (None with too few values). A
+    frozen model keeps one per input (registry), so a later drift check needs
+    no development data.
+    """
 
     development = development[np.isfinite(development)]
-    recent = recent[np.isfinite(recent)]
-    if len(development) < 100 or len(recent) < 20:
+    if len(development) < 100:
         return None
     edges = np.unique(np.quantile(development, np.linspace(0, 1, bins + 1)))
     if len(edges) < 3:
         return None
-    inner = edges[1:-1]
     expected = np.bincount(
-        np.searchsorted(inner, development, side="right"), minlength=len(edges) - 1
+        np.searchsorted(edges[1:-1], development, side="right"), minlength=len(edges) - 1
     )
-    actual = np.bincount(np.searchsorted(inner, recent, side="right"), minlength=len(edges) - 1)
-    e = np.maximum(expected / expected.sum(), PSI_FLOOR)
+    return {"edges": edges.tolist(), "expected": (expected / expected.sum()).tolist()}
+
+
+def psi_against(reference: Mapping | None, recent: np.ndarray) -> float | None:
+    """Population stability index of `recent` against a `drift_reference`."""
+
+    recent = recent[np.isfinite(recent)]
+    if reference is None or len(recent) < 20:
+        return None
+    edges = np.asarray(reference["edges"], dtype="float64")
+    actual = np.bincount(
+        np.searchsorted(edges[1:-1], recent, side="right"), minlength=len(edges) - 1
+    )
+    e = np.maximum(np.asarray(reference["expected"], dtype="float64"), PSI_FLOOR)
     a = np.maximum(actual / actual.sum(), PSI_FLOOR)
     return float(((a - e) * np.log(a / e)).sum())
+
+
+def psi(development: np.ndarray, recent: np.ndarray, bins: int = 10) -> float | None:
+    """Population stability index of `recent` against `development` (decile bins)."""
+
+    return psi_against(drift_reference(development, bins), recent)
 
 
 def input_drift(frames: Mapping[str, pd.DataFrame], development_end: pd.Timestamp) -> list[dict]:

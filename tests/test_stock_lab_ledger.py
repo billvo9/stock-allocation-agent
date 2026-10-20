@@ -279,6 +279,49 @@ def test_psi_is_near_zero_for_one_distribution_and_large_for_a_shift():
     assert monitoring.psi(development[:50], development[:30]) is None
 
 
+def _psi_before_the_split(development, recent, bins=10):
+    """The PSI as it was computed before drift_reference and psi_against existed."""
+
+    development = development[np.isfinite(development)]
+    recent = recent[np.isfinite(recent)]
+    if len(development) < 100 or len(recent) < 20:
+        return None
+    edges = np.unique(np.quantile(development, np.linspace(0, 1, bins + 1)))
+    if len(edges) < 3:
+        return None
+    inner = edges[1:-1]
+    expected = np.bincount(np.searchsorted(inner, development, side="right"),
+                           minlength=len(edges) - 1)  # fmt: skip
+    actual = np.bincount(np.searchsorted(inner, recent, side="right"), minlength=len(edges) - 1)
+    e = np.maximum(expected / expected.sum(), monitoring.PSI_FLOOR)
+    a = np.maximum(actual / actual.sum(), monitoring.PSI_FLOOR)
+    return float(((a - e) * np.log(a / e)).sum())
+
+
+@pytest.mark.parametrize(
+    "case", ["same", "shifted", "with gaps", "short recent", "constant", "few distinct"]
+)
+def test_psi_through_a_stored_reference_equals_the_earlier_computation(case):
+    rng = np.random.RandomState(7)
+    development, recent = rng.normal(size=3000), rng.normal(0.3, 1.2, size=63)
+    if case == "same":
+        recent = rng.normal(size=63)
+    elif case == "with gaps":
+        development[::7], recent[::5] = np.nan, np.nan
+    elif case == "short recent":
+        recent = recent[:19]
+    elif case == "constant":
+        development = np.full(3000, 0.02)
+    elif case == "few distinct":
+        development = rng.choice([0.0, 1.0], size=3000)
+    expected = _psi_before_the_split(development, recent)
+    assert monitoring.psi(development, recent) == expected
+    reference = json.loads(json.dumps(monitoring.drift_reference(development)))
+    assert monitoring.psi_against(reference, recent) == expected
+    if case in ("short recent", "constant"):
+        assert expected is None
+
+
 def test_each_replay_day_writes_one_valid_health_input(replayed):
     _, inputs = replayed
     files = sorted((inputs / ARTIFACT).glob("*.json"))

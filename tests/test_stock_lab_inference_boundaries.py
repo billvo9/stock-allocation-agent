@@ -72,6 +72,7 @@ RESEARCH_ENTRY_POINTS = (
     "stock_agent.stock_lab.estimators",
     "stock_agent.stock_lab.logistic",
     "stock_agent.stock_lab.predict",
+    "stock_agent.stock_lab.registry",
     "stock_agent.stock_lab.replay",
     "stock_agent.stock_lab.scoring",
     "stock_agent.stock_lab.job",
