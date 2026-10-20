@@ -194,7 +194,12 @@ def forecast_watchlist(
             results[ticker] = TickerResult(ticker, SKIPPED, "not_in_model",
                                            f"{ticker} is not in the frozen model", last_session=last)  # fmt: skip
             continue
-        recorded_already = store.live_forecast(ticker, day) is not None
+        try:
+            recorded_already = store.live_forecast(ticker, day) is not None
+        except (ForecastRefused, StoreRefused) as error:  # a stored record failed its check
+            results[ticker] = TickerResult(ticker, REFUSED, "record_check_failed", str(error),
+                                           last_session=last)  # fmt: skip
+            continue
         if recorded_already:
             results[ticker] = TickerResult(ticker, SKIPPED, "already_recorded",
                                            f"{ticker} already has a forecast as of {day}", last_session=last)  # fmt: skip
@@ -287,7 +292,14 @@ def score_real(
     for symbol in symbols:
         done = store.scored_keys(symbol)
         recorded = store.forecast_recorded_at(symbol)
-        for record in store.forecasts(symbol):
+        try:
+            stored = store.forecasts(symbol)
+        except (ForecastRefused, StoreRefused):  # a stored record failed its check: none scored
+            summary.refused.append(
+                {"ticker": symbol, "forecast_id": None, "reason": "record_check_failed"}
+            )
+            continue
+        for record in stored:
             if record["data_class"] != "real" or record["refusal"] is not None:
                 continue
             targets = [str(h) for h in range(1, 6)] + (["cum"] if record["cumulative"] else [])

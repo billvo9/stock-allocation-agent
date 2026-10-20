@@ -188,8 +188,23 @@ def _real(args, *, store, clock, started, out, inference_path, calendar, calenda
         return 2
     path = inference_path or evening.inference_path()
     tickers = store.watched()
-    symbols = sorted(set(tickers) | set(store.forecast_symbols(DataClass.REAL)))
     write = bool(args.record_real)
+    _, problem = store.verify_ledger()
+    if problem is not None:  # a record changed outside the store: nothing more is written
+        print(f"refused: the ledger does not verify ({problem})", file=out)
+        if write:
+            finished = clock()
+            record_run(
+                store, run_id=f"job-{started.strftime('%Y%m%dT%H%M%S%fZ')}", started=started,
+                finished=finished, status="failed", reason=f"ledger: {problem}",
+                expected=expected, tickers=tickers, data_class=DataClass.REAL,
+                health_inputs=args.health_inputs,
+                sessions=lambda first, last: calendar(first.date(), last.date()),
+                calendar_id=calendar_id, code_sha=code_sha(),
+                next_expected_at=next_expected(finished, calendar), kept_head=kept_head,
+            )  # fmt: skip
+        return 1
+    symbols = sorted(set(tickers) | set(store.forecast_symbols(DataClass.REAL)))
     outcomes = evening.score_real(
         store, symbols=symbols, now=started, expected=expected, sessions=calendar,
         calendar_id=calendar_id, path=path, write=write, model_id=model.model_id,

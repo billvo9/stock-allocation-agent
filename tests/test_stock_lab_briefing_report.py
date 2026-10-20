@@ -11,6 +11,7 @@ import hashlib
 import json
 import sqlite3
 
+import numpy as np
 import pandas as pd
 import pytest
 from stock_lab_briefing_helpers import REAL_TEST_TICKER, Lab, build, next_sessions, ny
@@ -184,15 +185,18 @@ def test_synthetic_context_is_computed_from_stored_prices_through_the_as_of_clos
     assert "unresolved" in stock.bull_trap.words
 
 
-def test_real_data_gets_no_context_from_recent_prices_and_no_trap_flag_before_f(lab):
+def test_real_data_never_computes_context_from_recent_prices_and_no_trap_flag_before_f(lab):
+    # Research-store prices of the protected period are never read for a real stock: no
+    # close or context is computed from them (decision A6); see the observed-close tests.
     sessions = pd.bdate_range(end=FRIDAY, periods=30, tz="UTC")
     bars = synthetic.demo_bars("DEMO_CALM").tail(30).assign(session=sessions.as_unit("us"))
     lab.prices(REAL_TEST_TICKER, bars.reset_index(drop=True), at=ny(FRIDAY, "21:00"))
     lab.forecast(REAL_TEST_TICKER, FRIDAY, signals=SIGNALS)
     (stock,) = build(lab, MONDAY, data_class="real", tickers=[REAL_TEST_TICKER]).stocks
-    assert stock.status == FRESH and stock.close.available
-    assert not stock.context.available and stock.context.reason == "recent_prices_not_read"
-    assert "decision A6" in stock.context.words
+    assert stock.status == FRESH
+    assert not stock.close.available and stock.close.reason == "recent_not_read"
+    assert not stock.context.available and stock.context.reason == "not_recorded"
+    assert "frozen forecast job records" in stock.context.words
     for trap in (stock.bull_trap, stock.bear_trap):
         assert not trap.available and trap.reason == "trap_margin_unconfirmed"
         assert trap.setup_now is None and trap.historical_failure_rate is None
@@ -247,7 +251,7 @@ def test_synthetic_records_never_appear_in_a_real_briefing(lab):
     assert found.reliability.prospective.scored_targets == 0
 
 
-def _scored_history(lab, symbols, days, *, estimator="B1", run_id=None):
+def _scored_history(lab, symbols, days, *, estimator="B1", run_id=None, **forecast):
     sessions = [d.strftime("%Y-%m-%d") for d in pd.bdate_range(end=FRIDAY, periods=days)]
     previous = {}
     for index, session in enumerate(sessions):
@@ -263,6 +267,7 @@ def _scored_history(lab, symbols, days, *, estimator="B1", run_id=None):
                 p=(0.2, 0.15, 0.65),
                 estimator=estimator,
                 evaluation_run_id=run_id,
+                **forecast,
             )
 
 
@@ -339,7 +344,7 @@ def test_reliability_keeps_development_and_prospective_evidence_apart(lab):
 
 def test_a_challenger_without_b1_records_beside_it_cannot_be_compared(lab):
     lab.store.record_evaluation(_evaluation("S-dev3", "B3"))
-    _scored_history(lab, ["DEMO_CALM"], 4, estimator="B3", run_id="S-dev3")
+    _scored_history(lab, ["DEMO_CALM"], 4, estimator="B3", run_id="S-dev3", legacy=True)
     prospective = build(lab, MONDAY, tickers=["DEMO_CALM"]).reliability.prospective
     assert prospective.comparison is None
     assert "not recorded beside" in prospective.comparison_words
@@ -594,3 +599,178 @@ def test_an_evaluation_recorded_after_the_briefing_was_prepared_is_not_read(lab)
     early = build(lab, ny(FRIDAY, "21:30"), tickers=["DEMO_CALM"])
     assert early.reliability.development is None and early.stocks[0].track == ()
     assert build(lab, MONDAY, tickers=["DEMO_CALM"]).reliability.development.run_id == "S-future"
+
+
+# --- the real briefing: observed close, recorded state, B1 beside each forecast ---
+
+MARKET_STATE = {
+    "ret_5": 0.031,
+    "ret_20": -0.044,
+    "vol_20": 0.027,
+    "ewma_vol": 0.025,
+    "regime": "volatile",
+    "basis": "the inference window the forecast read, through its as-of close",
+}
+
+
+class Observed:
+    """A stand-in for the descriptive reader: what it was asked, and one fixed answer."""
+
+    def __init__(self, state="observed", session=FRIDAY, close=131.25):
+        self.calls = []
+        self.state, self.session, self.close = state, session, close
+
+    def __call__(self, symbol, *, retrieved_by):
+        self.calls.append((symbol, retrieved_by))
+        observed = self.state == "observed"
+        rows = (
+            [type("Row", (), {"session": self.session, "close": self.close})()] if observed else []
+        )
+        return type("Recent", (), {
+            "state": self.state, "reason": None if observed else "x",
+            "last_session": self.session if observed else None,
+            "last_close": self.close if observed else None, "sessions": tuple(rows),
+            "retrieved_at": "2026-10-17T00:30:00.000000Z",
+        })()  # fmt: skip
+
+
+def test_a_real_forecast_shows_the_observed_close_and_the_recorded_state(lab):
+    lab.forecast(REAL_TEST_TICKER, FRIDAY, signals={**SIGNALS, "market_state": MARKET_STATE})
+    reader = Observed()
+    briefing = build(lab, MONDAY, data_class="real", tickers=[REAL_TEST_TICKER], recent=reader)
+    (stock,) = briefing.stocks
+    assert reader.calls == [(REAL_TEST_TICKER, pd.Timestamp(briefing.generated_at))]
+    assert stock.close.available and stock.close.source == "observed"
+    assert (stock.close.session, stock.close.value) == (FRIDAY, 131.25)
+    assert stock.close.retrieved_at == "2026-10-17T00:30:00.000000Z"
+    assert "not research evidence" in stock.close.words
+    context = stock.context
+    assert context.available and context.regime_basis == "window" and context.regime == "volatile"
+    assert (context.ret_5, context.ret_20, context.vol_20) == (0.031, -0.044, 0.027)
+    text = render_text(briefing)
+    flat = " ".join(text.split())  # the renderer wraps lines
+    assert "131.25 at the close of" in flat and "own inference window" in flat
+    assert "Recorded with the forecast" in flat and "Not comparable with the development" in flat
+    assert any("overnight news or premarket move" in line for line in briefing.limitations)
+
+
+@pytest.mark.parametrize(("state", "words"), [("no_store", "has not stored"),
+                                              ("no_data", "No recent prices")])  # fmt: skip
+def test_without_observed_prices_the_close_says_why(lab, state, words):
+    lab.forecast(REAL_TEST_TICKER, FRIDAY, signals=SIGNALS)
+    (stock,) = build(
+        lab, MONDAY, data_class="real", tickers=[REAL_TEST_TICKER], recent=Observed(state)
+    ).stocks
+    assert not stock.close.available and stock.close.reason == state and words in stock.close.words
+
+
+def test_a_newer_observed_close_than_the_forecast_is_named_as_such(lab):
+    lab.forecast(REAL_TEST_TICKER, THURSDAY, signals=SIGNALS)
+    (stock,) = build(lab, MONDAY, data_class="real", tickers=[REAL_TEST_TICKER],
+                     recent=Observed(session=FRIDAY)).stocks  # fmt: skip
+    assert stock.status == "stale" and stock.close.session == FRIDAY
+    assert f"The newest forecast is as of the close of {THURSDAY}" in stock.close.words
+
+
+def test_frozen_reversal_statistics_name_development_history(lab):
+    frozen = {**SIGNALS["after_this_streak"], "source": "development history through 2024-12-31",
+              "run_length": 9, "table_length": 7}  # fmt: skip
+    lab.forecast("DEMO_CALM", FRIDAY, signals={**SIGNALS, "after_this_streak": frozen})
+    (stock,) = build(lab, MONDAY, tickers=["DEMO_CALM"]).stocks
+    assert "past cases in development history through 2024-12-31" in stock.reversal.words
+    assert "the current run is 9 sessions, so the 7-session figures" in stock.reversal.words
+
+
+def test_b1_beside_a_challenger_gives_a_matched_comparison(lab):
+    from stock_agent.stock_lab.scores import rps
+
+    lab.store.record_evaluation(_evaluation("S-dev3", "B3"))
+    b1 = ((0.3, 0.4, 0.3), (0.3, 0.4, 0.3))
+    _scored_history(lab, ["DEMO_CALM", "DEMO_SWING"], 106, estimator="B3", run_id="S-dev3", b1=b1)
+    prospective = build(lab, MONDAY, tickers=["DEMO_CALM", "DEMO_SWING"]).reliability.prospective
+    found = prospective.comparison
+    assert found is not None and found.status == "ok" and found.dates >= 100
+    assert (found.candidate_estimator, found.baseline_estimator) == ("B3", "B1")
+    observations = [
+        (o.outcome, o.as_of_session)
+        for o in report.rel.observations(
+            [f for s in ("DEMO_CALM", "DEMO_SWING") for f in lab.store.forecasts(s)],
+            [x for s in ("DEMO_CALM", "DEMO_SWING") for x in lab.store.scores(s)],
+        )
+        if o.target == "1"
+    ]
+    by_date = {}
+    for outcome, day in observations:
+        y = np.array([outcome])
+        gap = rps(np.array([[0.2, 0.15, 0.65]]), y)[0] - rps(np.array([[0.3, 0.4, 0.3]]), y)[0]
+        by_date.setdefault(day, []).append(gap)
+    expected = float(np.mean([np.mean(v) for v in by_date.values()]))
+    (rps_row,) = [d for d in found.differences if d.score == "rps"]
+    assert rps_row.difference == pytest.approx(expected, abs=1e-12)
+    assert "matched forecasts" in prospective.comparison_words
+    assert "it never promotes a model" in prospective.comparison_words
+    assert "negative means B3 scored better" in prospective.comparison_words
+
+
+def test_too_few_matched_dates_say_insufficient(lab):
+    lab.store.record_evaluation(_evaluation("S-dev3", "B3"))
+    b1 = ((0.3, 0.4, 0.3), (0.3, 0.4, 0.3))
+    _scored_history(lab, ["DEMO_CALM"], 12, estimator="B3", run_id="S-dev3", b1=b1)
+    prospective = build(lab, MONDAY, tickers=["DEMO_CALM"]).reliability.prospective
+    assert prospective.comparison.status == "insufficient"
+    assert "at least 100 matched dates" in prospective.comparison_words
+
+
+def test_a_newest_session_served_without_a_close_shows_the_last_served_close(lab):
+    lab.forecast(REAL_TEST_TICKER, FRIDAY, signals=SIGNALS)
+    reader = Observed(session="2026-10-19", close=None)
+    served = type("Row", (), {"session": FRIDAY, "close": 130.5})()
+    gap = type("Row", (), {"session": "2026-10-19", "close": None})()
+
+    def recent(symbol, *, retrieved_by):
+        found = reader(symbol, retrieved_by=retrieved_by)
+        found.sessions, found.last_close = (served, gap), None
+        return found
+
+    briefing = build(lab, MONDAY, data_class="real", tickers=[REAL_TEST_TICKER], recent=recent)
+    (stock,) = briefing.stocks
+    assert stock.close.available and (stock.close.session, stock.close.value) == (FRIDAY, 130.5)
+    assert "2026-10-19, was served without a close" in stock.close.words
+    assert "130.50 at the close of" in " ".join(render_text(briefing).split())
+
+
+def test_b1_observations_come_from_the_comparator_on_the_stored_outcome(lab):
+    from stock_agent.stock_lab.scores import brier, log_loss, rps
+
+    b1 = ((0.6, 0.3, 0.1), (0.5, 0.3, 0.2))  # asymmetric: a reversed order would show
+    kept = lab.forecast("DEMO_CALM", THURSDAY, estimator="B3", b1=b1, model_version="model-a")
+    other = lab.forecast("DEMO_SWING", THURSDAY, estimator="B3", b1=b1, model_version="model-b")
+    refused = lab.forecast("DEMO_TREND", THURSDAY, refusal={"reason": "x", "detail": "y"})
+    lab.score(kept, "1", 2, at=ny(FRIDAY, "20:05"))
+    lab.score(kept, "cum", 0, at=ny(FRIDAY, "20:06"))
+    lab.score(other, "1", 1, at=ny(FRIDAY, "20:07"))
+    own = lab.forecast("DEMO_TREND", FRIDAY, estimator="B1")
+    lab.score(own, "1", 1, at=ny("2026-10-19", "20:05"))
+    forecasts = [*lab.store.forecasts("DEMO_CALM"), *lab.store.forecasts("DEMO_SWING"),
+                 *lab.store.forecasts("DEMO_TREND")]  # fmt: skip
+    scores = [*lab.store.scores("DEMO_CALM"), *lab.store.scores("DEMO_SWING"),
+              *lab.store.scores("DEMO_TREND")]  # fmt: skip
+    found = report.rel.comparator_observations(forecasts, scores)
+    assert [(o.symbol, o.target, o.model_version) for o in found] == [
+        ("DEMO_CALM", "1", "model-a"), ("DEMO_SWING", "1", "model-b"), ("DEMO_CALM", "cum", "model-a")
+    ]  # B1's own forecasts and refusals add nothing  # fmt: skip
+    assert refused["refusal"] is not None
+    first = found[0]
+    p, y = np.array([[0.6, 0.3, 0.1]]), np.array([2])
+    assert (first.p_decrease, first.p_stable, first.p_increase) == (0.6, 0.3, 0.1)
+    assert first.outcome == 2 and first.estimator == "B1"
+    assert first.rps == rps(p, y)[0] and first.brier == brier(p, y)[0]
+    assert first.log_loss == log_loss(p, y)[0]
+    total = found[2]
+    assert (total.p_decrease, total.p_increase, total.outcome) == (0.5, 0.2, 0)
+    assert (
+        report.rel.comparator_observations(forecasts, scores, superseded={kept["forecast_id"]})[
+            0
+        ].symbol
+        == "DEMO_SWING"
+    )

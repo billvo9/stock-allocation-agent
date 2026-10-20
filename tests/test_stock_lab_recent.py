@@ -177,3 +177,34 @@ def test_a_damaged_store_is_unreadable_never_a_crash(stored, statements, reason)
     _tamper(stored[0], *statements)
     recent = read_recent("NVDA", path=stored[0].path)
     assert recent.state == "unreadable" and recent.reason == reason
+
+
+def test_as_known_at_a_time_it_reads_only_batches_stored_by_then(stored):
+    store, clock, first = stored
+    later_day = next_day(AS_OF)
+    later = record(store, clock, FIRST, later_day, retrieved_at=ny(later_day, "20:30"))
+    morning = ny(later_day, "08:30")  # a briefing prepared before the later batch existed
+    before = read_recent("NVDA", path=store.path, retrieved_by=morning)
+    assert before.last_session == AS_OF and before.batch_ids == (first.batch_id,)
+    after = read_recent("NVDA", path=store.path, retrieved_by=ny(later_day, "20:40"))
+    assert after.last_session == later_day and later.batch_id in after.batch_ids
+    assert read_recent("NVDA", path=store.path).last_session == later_day  # no cut-off
+    nothing = read_recent("NVDA", path=store.path, retrieved_by=ny(AS_OF, "20:00"))
+    assert nothing.state == "no_data"
+    recorded_late = ny(later_day, "20:30") + pd.Timedelta(seconds=30)  # retrieved, not recorded
+    assert read_recent("NVDA", path=store.path, retrieved_by=recorded_late).last_session == AS_OF
+    with pytest.raises(Exception, match="timezone"):
+        read_recent("NVDA", path=store.path, retrieved_by=pd.Timestamp("2026-10-16 08:30"))
+
+
+def test_a_stored_time_that_is_not_a_time_is_unreadable_never_a_crash(stored):
+    import sqlite3
+
+    store, _, _ = stored
+    connection = sqlite3.connect(store.path)
+    connection.execute("DROP TRIGGER batches_no_update")
+    connection.execute("UPDATE batches SET recorded_at = 'not a time'")
+    connection.commit()
+    connection.close()
+    found = read_recent("NVDA", path=store.path, retrieved_by=ny(next_day(AS_OF), "08:30"))
+    assert found.state == "unreadable" and found.reason == "integrity"

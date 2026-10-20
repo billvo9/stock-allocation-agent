@@ -32,6 +32,11 @@ Current forecasts and completed outcomes
     outcome, scored only in the forecast history, never here. Later sessions
     are not marked: no forecast covers them.
 
+As known at a time
+    With `retrieved_by`, only batches retrieved AND recorded by then are read,
+    so a briefing prepared at a given time shows what was stored by then (a
+    preview prepared for an earlier morning never shows a later close).
+
 Which rows
     The vintage rule (`schema`): per session, the latest retrieval that covers
     it. Only the latest contiguous stretch is shown: two neighbouring sessions
@@ -53,6 +58,7 @@ from stock_agent.stock_lab.inference.schema import (
     INFERENCE_SESSIONS,
     InferenceBatch,
     InferenceRefused,
+    Refusal,
     bars_of,
     batches,
     data_class_of,
@@ -60,6 +66,7 @@ from stock_agent.stock_lab.inference.schema import (
     read_only,
     select_vintage,
     session_day,
+    utc_time,
 )
 from stock_agent.stock_lab.prices import session_returns
 
@@ -154,17 +161,31 @@ def read_recent(
     count: int = RECENT_SESSIONS,
     forecast_as_of: str | None = None,
     forecast_targets: Sequence[str] = (),
+    retrieved_by: pd.Timestamp | None = None,
 ) -> RecentPrices:
     """The stock's recent observed prices; see the module docstring."""
 
     if type(count) is not int or not 1 <= count <= INFERENCE_SESSIONS:
         raise ValueError(f"count must be an int from 1 to {INFERENCE_SESSIONS}")
     as_of, targets = _forecast(forecast_as_of, forecast_targets)
+    cutoff = None if retrieved_by is None else utc_time(retrieved_by, "retrieved_by")
     try:
         with read_only(path or default_path()) as connection:
             if connection is None:
                 return _empty(ticker, NO_STORE)
             stored = batches(connection, ticker)
+            if cutoff is not None:
+                try:
+                    stored = tuple(
+                        batch
+                        for batch in stored
+                        if pd.Timestamp(batch.retrieved_at) <= cutoff
+                        and pd.Timestamp(batch.recorded_at) <= cutoff
+                    )
+                except (TypeError, ValueError):  # a stored time that is not a time
+                    raise InferenceRefused(
+                        Refusal.INTEGRITY, "a batch's retrieval or record time is not a time"
+                    ) from None
             if not stored:
                 return _empty(ticker, NO_DATA)
             frame = bars_of(connection, stored)

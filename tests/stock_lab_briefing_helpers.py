@@ -86,6 +86,7 @@ class Lab:
         evaluation_run_id: str | None = None,
         model_version: str = "fixture-model",
         b1=None,  # the B1 comparator's (daily, cumulative); default: the forecast's own
+        legacy: bool = False,  # a schema 1.0 record, as stored before the comparator existed
     ) -> dict:
         created_at = created_at if created_at is not None else ny(as_of, "21:05")
         targets = targets or next_sessions(as_of)
@@ -121,6 +122,11 @@ class Lab:
             supersedes=supersedes,
             comparator=comparator,
         )
+        if legacy:
+            record = {k: v for k, v in record.items() if k != "comparator"}
+            record["schema_version"] = "1.0"
+            record["forecast_id"] = artifact.forecast_id(record)
+            artifact.check(record)
         self.at(recorded_at if recorded_at is not None else created_at)
         self.store.record_forecast(record, real_authorized=kind == "real")
         return record
