@@ -20,10 +20,12 @@ from stock_agent.stock_lab.briefing.reliability import (
     OUTCOME_MISMATCH,
     MixedTargets,
     Observation,
+    block_t_interval,
     calibration_buckets,
     calibration_group,
     cluster_ids,
     clustered_proportion,
+    comparison_blocks,
     development_evidence,
     matched_comparison,
     observations,
@@ -372,6 +374,85 @@ def test_the_difference_is_the_mean_of_per_date_differences_on_matched_rows_only
     assert rps.candidate - rps.baseline == pytest.approx(rps.difference)
     assert rps.low < rps.difference < rps.high
     assert rps.high - rps.difference == pytest.approx(t_quantile(0.9, 5) * rps.se)
+
+
+def test_a_short_last_block_is_merged_into_the_previous_block():
+    def sizes(dates):
+        return np.bincount(comparison_blocks(dates)).tolist()
+
+    assert sizes(100) == [20] * 5
+    assert sizes(101) == [20] * 4 + [21]  # one date past a whole block is no block of its own
+    assert sizes(119) == [20] * 4 + [39]
+    assert sizes(120) == [20] * 6
+    assert comparison_blocks(101)[:100].tolist() == comparison_blocks(100).tolist()
+    with pytest.raises(ValueError):
+        comparison_blocks(19)
+
+
+def test_one_date_past_whole_blocks_no_longer_counts_as_a_whole_block():
+    # 100 dates at 0 and one at 1. Counted as a sixth block, that one date gave block
+    # means (0, 0, 0, 0, 0, 1) and an SE of 0.408 / sqrt(6) = 0.17. Merged, the blocks
+    # hold 20, 20, 20, 20 and 21 dates; with d = 1/101 the size-weighted deviations
+    # n_k (m_k - d) are -20/101 four times and 80/101, so
+    # SE^2 = 5/4 * (4 * 400 + 6400) / 101^2 / 101^2 and SE = 100 / 101^2.
+    values = np.zeros(101)
+    values[-1] = 1.0
+    found = block_t_interval(values)
+    assert found.blocks == 5
+    assert float(found.estimate) == pytest.approx(1 / 101)
+    assert float(found.se) == pytest.approx(100 / 101**2)
+    assert float(found.high - found.estimate) == pytest.approx(t_quantile(0.9, 4) * 100 / 101**2)
+
+
+def test_with_whole_blocks_the_error_is_the_spread_of_the_block_means():
+    values = np.random.default_rng(13).normal(size=120)
+    found = block_t_interval(values)
+    means = values.reshape(6, 20).mean(axis=1)
+    assert found.blocks == 6
+    assert float(found.se) == pytest.approx(means.std(ddof=1) / math.sqrt(6))
+
+
+def test_the_interval_runs_row_by_row_on_a_matrix():
+    values = np.random.default_rng(14).normal(size=(3, 137))
+    together = block_t_interval(values)
+    for row, series in enumerate(values):
+        alone = block_t_interval(series)
+        assert alone.blocks == together.blocks == 6
+        assert float(alone.se) == pytest.approx(together.se[row])
+        assert float(alone.low) == pytest.approx(together.low[row])
+    with pytest.raises(ValueError):
+        block_t_interval(np.zeros(39))  # one block: no spread
+
+
+def test_a_comparison_uses_the_block_interval_of_its_per_date_differences():
+    rng = np.random.default_rng(15)
+    candidate, baseline = _paired(rng, 101, 3, 0.01, noise=0.01)
+    result = matched_comparison(candidate, baseline)
+    assert (result.dates, result.blocks, result.status) == (101, 5, "ok")
+    per_date = np.array(
+        [
+            np.mean([c.rps - b.rps for c, b in zip(candidate, baseline) if c.as_of_session == day])
+            for day in DATES[:101]
+        ]
+    )
+    expected = block_t_interval(per_date)
+    rps = next(d for d in result.differences if d.score == "rps")
+    assert rps.difference == pytest.approx(float(expected.estimate))
+    assert (rps.se, rps.low, rps.high) == pytest.approx(
+        (float(expected.se), float(expected.low), float(expected.high))
+    )
+
+
+def test_a_comparison_needs_two_whole_blocks_whatever_its_minimum():
+    rng = np.random.default_rng(16)
+    candidate, baseline = _paired(rng, 39, 2, 0.0)
+    result = matched_comparison(candidate, baseline, min_blocks=1)
+    assert (result.blocks, result.status) == (1, INSUFFICIENT)
+    candidate, baseline = _paired(rng, 40, 2, 0.01, noise=0.01)
+    result = matched_comparison(candidate, baseline, min_blocks=1)
+    assert (result.blocks, result.status) == (2, "ok")
+    rps = next(d for d in result.differences if d.score == "rps")
+    assert rps.high - rps.difference == pytest.approx(t_quantile(0.9, 1) * rps.se)
 
 
 def test_a_comparison_refuses_to_mix_definitions_or_to_compare_without_b1():
