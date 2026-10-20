@@ -70,6 +70,12 @@ REGIME_WORDS = {
     "middle": "middle third of its own history",
     "volatile": "volatile (highest third of its own history)",
 }
+REGIME_WINDOW_WORDS = {
+    "calm": "calm (lowest third of the forecast's own inference window)",
+    "middle": "middle third of the forecast's own inference window",
+    "volatile": "volatile (highest third of the forecast's own inference window)",
+}
+WINDOW_REGIME_CAVEAT = " Not comparable with the development tables' regimes."
 DEVELOPMENT_METHOD = "Jeffreys, with the distinct dates as the count"
 PROSPECTIVE_METHOD = "Jeffreys at the date-clustered effective count"
 
@@ -200,6 +206,11 @@ def _close(stock: StockBriefing) -> str:
     close = stock.close
     if not close.available:
         return f"Unavailable. {close.words}"
+    if close.source == "observed":
+        return (
+            f"{close.value:,.2f} at the close of {close.session} (retrieved "
+            f"{when(close.retrieved_at)}). {close.words}"
+        )
     return (
         f"{close.session}: {close.value:,.2f} (stored batch retrieved {when(close.retrieved_at)})"
     )
@@ -209,9 +220,10 @@ def _momentum(stock: StockBriefing) -> str:
     context = stock.context
     if not context.available:
         return f"Unavailable. {context.words}"
+    recorded = " Recorded with the forecast." if context.regime_basis == "window" else ""
     return (
         f"{pct(context.ret_5, 1, signed=True)} over 5 sessions · "
-        f"{pct(context.ret_20, 1, signed=True)} over 20 sessions (price returns)"
+        f"{pct(context.ret_20, 1, signed=True)} over 20 sessions (price returns).{recorded}"
     )
 
 
@@ -219,10 +231,16 @@ def _volatility(stock: StockBriefing) -> str:
     context = stock.context
     if not context.available:
         return "Unavailable (see momentum)."
-    regime = REGIME_WORDS.get(context.regime or "", "not enough history for a regime")
+    words = REGIME_WINDOW_WORDS if context.regime_basis == "window" else REGIME_WORDS
+    regime = words.get(context.regime or "", "not enough history for a regime")
+    source = (
+        WINDOW_REGIME_CAVEAT + " Recorded with the forecast."
+        if context.regime_basis == "window"
+        else ""
+    )
     return (
         f"{pct(context.vol_20, 1)} a day over 20 sessions (EWMA {pct(context.ewma_vol, 1)}); "
-        f"regime: {regime}. Descriptive only."
+        f"regime: {regime}. Descriptive only.{source}"
     )
 
 
@@ -267,12 +285,13 @@ def _detail_rows(stock: StockBriefing) -> list[tuple[str, str]]:
 
     rows = []
     if stock.status != FRESH and stock.described_as_of is not None:
+        lead = "Apart from the observed close, the" if stock.close.source == "observed" else "The"
         rows.append(
             (
                 "Note",
                 (
-                    f"The notes below describe the close of {stock.described_as_of}, the newest "
-                    "forecast's, not the latest session."
+                    f"{lead} notes below describe the close of {stock.described_as_of}, the "
+                    "newest forecast's, not the latest session."
                 ),
             )
         )
@@ -482,7 +501,7 @@ def render_text(briefing: Briefing) -> str:
             if stock.cumulative is not None:
                 out += _wrap(f"Five-session total: {_total(stock)}", "  ")
         for label, text in _detail_rows(stock):
-            out += _wrap(f"{label}: {text}", "  ")
+            out += _wrap(f"{label}: {text}", "  ", hang="    ")
     out += ["", "RELIABILITY", "Development evidence"]
     for line in _development_lines(briefing):
         out += _wrap(line, "  ")

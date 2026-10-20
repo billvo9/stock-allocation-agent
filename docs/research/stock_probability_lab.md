@@ -1062,15 +1062,27 @@ locally. It sends nothing, schedules nothing and reads no credential.
   - the change since the prior forecast, only at the same band;
   - the current run, the reversal statistics with counts and 90% Jeffreys
     intervals, and the bull-trap signal, all from the forecast record;
-  - the stored close and lineage.
+  - the close and lineage.
 - **Point-in-time limits.**
   - Momentum, volatility and the volatility regime (descriptive) and the
     bear-trap check are computed from stored prices through the as-of
     close. This happens only for synthetic stocks or sessions through
     2024-12-31.
   - For a real stock after that, decision A6 forbids features on protected
-    prices outside the frozen forecast job, so these show as unavailable
-    until that job records them with each forecast.
+    prices outside the frozen forecast job. The briefing therefore shows:
+    - the state that job recorded with the forecast (momentum, volatility,
+      and the regime against the forecast's own 252-session window), never
+      recomputed;
+    - the latest observed close, its session and its retrieval time, from
+      the inference store's isolated descriptive reader. Only batches
+      retrieved and recorded by the preparation time are read, so a preview
+      for an earlier morning never shows a later close. The owner-run script
+      passes the reader in; the report module never reads that store.
+  - Research-store prices of 2025 or later are never shown as a real
+    stock's current close.
+  - Every briefing states that a forecast is made after the prior close
+    from end-of-day prices, and reflects no overnight news and no premarket
+    move.
   - Trap flags on real data are withheld until the failure margin f is
     confirmed (A5).
 
@@ -1136,11 +1148,18 @@ stable bands, estimators or model versions.
     dates, with a t interval on (blocks − 1) degrees of freedom.
   - Fewer than 100 matched dates give no difference. Rows that differ in
     outcome are reported, not compared.
-  - Today the ledger holds only the selected estimator's forecast, so no
-    prospective comparison exists. Recording B1 beside each forecast is an
-    additive store change for the owner to approve.
-  - A comparison is reported, never a decision. A7 must be resolved and
-    registered before any challenger is promoted on real data.
+  - **B1's side.** Each forecast of schema 1.1 records B1 beside it (the
+    owner's choice of 2026-10-19). B1's side of a scored target is that
+    comparator's probabilities on the target's stored outcome, scored with
+    the scorer's own functions (`reliability.comparator_observations`).
+    It is matched only with the model it was recorded beside.
+  - **What is shown.** The next session's comparison, for the current model:
+    matched forecasts and dates, then RPS, Brier score and log loss
+    differences with 90% intervals once 100 dates are matched.
+    "Insufficient evidence" is shown until then, and records from before
+    schema 1.1 have no B1 side.
+  - A comparison is reported, never a decision. Whether a challenger beats
+    B1 is decided on development data only (A7).
 
 **Rendering and delivery** (`render`, `delivery`):
 
@@ -1188,11 +1207,10 @@ stable bands, estimators or model versions.
      data licence.
    - A Model Health "missed delivery" check is coordinated with the health
      owner.
-2. **Reliability.** Record B1 beside each forecast, then compare on
-   matched records. Add forecast-change monitoring.
-3. **Market regime.** Descriptive diagnostics (5/20/63/252 sessions). For
-   real stocks this needs the A4 job to record the context.
-4. **Shadow models.** Research only after real prospective data exists.
-   Updating B1's running state from recent observations probably fits A2
-   (frozen parameters, state as a function of the inputs). Section 7, item 4
-   still leaves that choice to the owner.
+2. **Reliability.** B1 is recorded beside each forecast and compared on
+   matched records (done). Forecast-change monitoring remains.
+3. **Market regime.** The frozen job records momentum, volatility and the
+   regime with each real forecast (done). Longer-horizon diagnostics
+   (63/252 sessions) remain.
+4. **Shadow models.** Research only after real prospective data exists. The
+   running state is the owner's `frozen_long_run` rule (2026-10-19).

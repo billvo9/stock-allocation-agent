@@ -71,7 +71,7 @@ import numpy as np
 
 from stock_agent.stock_lab.contracts import CATEGORY_CODES, Category
 from stock_agent.stock_lab.reversal import INSUFFICIENT, LOW, LOW_SAMPLE, MIN_EFFECTIVE, OK
-from stock_agent.stock_lab.scores import beta_ppf, jeffreys
+from stock_agent.stock_lab.scores import beta_ppf, brier, jeffreys, log_loss, rps
 
 LEVEL = 0.9
 BINS = 10
@@ -303,6 +303,64 @@ def observations(
                 rps=float(score["rps"]),
                 brier=float(score["brier"]),
                 log_loss=float(score["log_loss"]),
+                session=score["session"],
+            )
+        )
+    return sorted(out, key=lambda o: (o.target, o.as_of_session, o.symbol))
+
+
+def comparator_observations(
+    forecasts: Sequence[Mapping],
+    scores: Sequence[Mapping],
+    *,
+    superseded: Collection[str] = frozenset(),
+) -> list[Observation]:
+    """
+    B1's side of each scored target: the B1 comparator recorded inside the same forecast
+    (schema 1.1), on the outcome stored for that target, with B1's Brier score, log loss and
+    RPS computed from those stored probabilities by the scorer's functions. The model version
+    is the forecast's, so B1 is matched only with the model it was recorded beside. Forecasts
+    of B1 itself, records without a comparator (schema 1.0) and refusals add nothing.
+    """
+
+    live = {
+        record["forecast_id"]: record
+        for record in forecasts
+        if record["forecast_id"] not in superseded
+        and record["refusal"] is None
+        and record.get("comparator") is not None
+        and record["estimator"] != REFERENCE
+    }
+    out = []
+    for score in scores:
+        record = live.get(score["forecast_id"])
+        if record is None or score["status"] != "scored":
+            continue
+        target = str(score["target"])
+        comparator = record["comparator"]
+        if target == "cum":
+            row, band = comparator["cumulative"], record["cumulative_band"]
+        else:
+            row, band = comparator["daily"][int(target) - 1], record["band"]
+        if row is None:
+            continue
+        p = np.array([[row["p_decrease"], row["p_stable"], row["p_increase"]]], dtype="float64")
+        y = np.array([int(score["outcome"])])
+        out.append(
+            Observation(
+                symbol=record["symbol"],
+                as_of_session=record["as_of_session"],
+                target=target,
+                band=float(band),
+                estimator=REFERENCE,
+                model_version=record["model_version"],
+                p_decrease=float(row["p_decrease"]),
+                p_stable=float(row["p_stable"]),
+                p_increase=float(row["p_increase"]),
+                outcome=int(score["outcome"]),
+                rps=float(rps(p, y)[0]),
+                brier=float(brier(p, y)[0]),
+                log_loss=float(log_loss(p, y)[0]),
                 session=score["session"],
             )
         )

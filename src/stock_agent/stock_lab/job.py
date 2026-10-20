@@ -62,7 +62,8 @@ from stock_agent.stock_lab.contracts import (
     SymbolStatus,
 )
 from stock_agent.stock_lab.features import build_features
-from stock_agent.stock_lab.store import GENESIS, StockLabStore, stamp
+from stock_agent.stock_lab.forecast import ForecastRefused
+from stock_agent.stock_lab.store import GENESIS, StockLabStore, StoreRefused, stamp
 from stock_agent.stock_lab.traps import CONFIRMED, UNRESOLVED, trap_events
 
 Sessions = Callable[[pd.Timestamp, pd.Timestamp], pd.DatetimeIndex]
@@ -232,7 +233,10 @@ def record_run(
 
     all_scores = [score for ticker in tickers for score in store.scores(ticker)]
     summary = scoring.rolling_summary(all_scores, superseded=store.superseded_ids())
-    forecasts = [store.forecasts(ticker) for ticker in tickers]
+    try:
+        forecasts = [store.forecasts(ticker) for ticker in tickers]
+    except (ForecastRefused, StoreRefused):  # a record changed outside the store: the ledger
+        forecasts = []  # check below reports it; the lineage is left empty, never guessed
     latest = max(
         (history[-1] for history in forecasts if history),
         key=lambda record: record["created_at"],

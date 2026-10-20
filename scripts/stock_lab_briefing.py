@@ -3,7 +3,10 @@ Prepare the Stock Lab's premarket briefing from stored records (owner-run,
 private, local; read-only on the store).
 
 It opens the Stock Lab's store read-only (the watchlist, the recorded
-forecasts, their scores, the evaluations and the daily job's runs), prepares
+forecasts, their scores, the evaluations and the daily job's runs) and, for
+real stocks, each one's latest observed close through the inference store's
+isolated descriptive reader (decision A6; only batches stored by the
+preparation time), prepares
 the briefing for the next NYSE session (the target is 08:30 New York time
 that morning) and prints it as plain text. It never retrains, never runs the
 evening job, never writes to the store, sends nothing anywhere and reads no
@@ -79,6 +82,7 @@ from stock_agent.stock_lab.briefing.timing import (
     scheduled_at,
 )
 from stock_agent.stock_lab.contracts import DataClass
+from stock_agent.stock_lab.inference.recent import read_recent
 from stock_agent.stock_lab.store import DB_NAME, StockLabStore, StoreRefused, utc_now
 from stock_agent.ui import theme
 
@@ -224,12 +228,19 @@ def _demo(args, *, clock: Callable[[], pd.Timestamp], out: TextIO) -> int:
         return _emit(briefing, preview=args.preview, directory=args.directory, out=out)
 
 
+def observed(symbol: str, *, retrieved_by: pd.Timestamp):
+    """A real stock's recent observed prices as stored by `retrieved_by` (decision A6)."""
+
+    return read_recent(symbol, retrieved_by=retrieved_by)
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
     records_factory: Callable[[], ReadOnlyRecords] = ReadOnlyRecords,
     clock: Callable[[], pd.Timestamp] = utc_now,
     out: TextIO = sys.stdout,
+    recent: Callable = observed,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1], allow_abbrev=False)
     parser.add_argument("--preview", action="store_true")
@@ -266,6 +277,7 @@ def main(
             data_class=DataClass.REAL,
             tickers=args.tickers,
             excluded=args.exclude,
+            recent=recent,
         )
     except (StoreRefused, CalendarRefused) as error:
         print(f"failed: {error}", file=out)

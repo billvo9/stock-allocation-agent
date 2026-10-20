@@ -17,6 +17,7 @@ import stat
 import threading
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from stock_lab_briefing_helpers import Lab
 
@@ -405,3 +406,26 @@ def test_the_research_stores_home_is_never_the_briefing_directory(tmp_path, monk
     monkeypatch.setenv("STOCK_AGENT_STOCK_LAB_HOME", str(home))
     with pytest.raises(DeliveryRefused, match="research store"):
         private_directory(home)
+
+
+def test_the_script_reads_each_real_stocks_observed_close_as_of_its_preparation_time(tmp_path):
+    lab = Lab(tmp_path)
+    lab.watch("AMD", "MU")
+    calls = []
+
+    def recent(symbol, *, retrieved_by):
+        calls.append((symbol, retrieved_by))
+        return type("Recent", (), {"state": "no_data", "reason": None, "sessions": ()})()
+
+    out = io.StringIO()
+    code = script.main(
+        ["--at", "2026-10-19T08:30:00-04:00"],
+        records_factory=lambda: ReadOnlyRecords(lab.path),
+        out=out,
+        recent=recent,
+    )
+    assert code == 0
+    prepared = pd.Timestamp("2026-10-19T12:30:00Z")
+    assert sorted(calls) == [("AMD", prepared), ("MU", prepared)]
+    assert "No recent prices are stored" in " ".join(out.getvalue().split())
+    assert script.main.__kwdefaults__["recent"] is script.observed  # the A6 reader by default

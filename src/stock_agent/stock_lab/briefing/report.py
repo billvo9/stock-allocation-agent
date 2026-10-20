@@ -35,7 +35,12 @@ Descriptive context and the point-in-time rules
       only for synthetic stocks or sessions through 2024-12-31. For a real
       stock after that, the prices are protected-period observations: under
       decision A6 nothing computes a feature on them outside the frozen
-      forecast job, so these stay unavailable until that job records them.
+      forecast job, so the briefing shows the state that job recorded with
+      the forecast (momentum, volatility and the regime against its window),
+      and the latest observed close, its session and its retrieval time from
+      the isolated descriptive reader (decision A6; the script passes it in),
+      as stored by the preparation time. Research-store prices of 2025 or
+      later are never shown for a real stock.
     - Trap flags on real data are withheld until the owner confirms the
       failure margin f (decision A5).
 
@@ -195,6 +200,7 @@ class Close:
     retrieved_at: str | None
     reason: str | None
     words: str
+    source: str | None = None  # "research store" or "observed" (decision A6)
 
 
 @dataclass(frozen=True)
@@ -207,6 +213,7 @@ class Context:
     vol_20: float | None = None
     ewma_vol: float | None = None
     regime: str | None = None
+    regime_basis: str | None = None  # "history" (its own history) or "window" (the forecast's)
 
 
 @dataclass(frozen=True)
@@ -537,11 +544,20 @@ def _reversal(record: Mapping | None) -> Reversal:
         else:
             estimate = None
         outcomes.append(ReversalOutcome(name, estimate, low, high, n_eff, status))
+    if found.get("source"):  # a frozen model's statistics: development history, not the window
+        where = f"past cases in {found['source']}"
+        if found.get("table_length") and found.get("run_length", 0) > found["table_length"]:
+            where += (
+                f"; the current run is {found['run_length']} sessions, so the "
+                f"{found['table_length']}-session figures are shown"
+            )
+    else:
+        where = "past cases, through the as-of close"
     return Reversal(
         True,
         None,
-        f"After {found['definition']} ({found['events']:,} past cases, through the as-of "
-        "close; intervals are 90% Jeffreys intervals on the effective count).",
+        f"After {found['definition']} ({found['events']:,} {where}; intervals are 90% "
+        "Jeffreys intervals on the effective count).",
         definition=found["definition"],
         events=int(found["events"]),
         outcomes=tuple(outcomes),
@@ -650,6 +666,7 @@ def _prices(
         retrieved,
         None,
         f"Close of {session}, from a stored batch that passed its count and hash checks.",
+        source="research store",
     )
     allowed = (
         data_class == DataClass.SYNTHETIC.value or date.fromisoformat(session) <= DEVELOPMENT_END
@@ -673,6 +690,7 @@ def _prices(
         vol_20=_finite(last["vol_20"]),
         ewma_vol=_finite(last["ewma_vol"]),
         regime=regime if isinstance(regime, str) else None,
+        regime_basis="history",
     )
     if data_class == DataClass.REAL.value and not margin_confirmed:
         return close, context, _withheld_trap("bear")
@@ -703,6 +721,70 @@ def _prices(
         setups_resolved=n,
     )
     return close, context, trap
+
+
+RECENT_WORDS = {
+    "no_store": "No recent prices are stored yet: the recent-window fetch has not stored any.",
+    "no_data": "No recent prices are stored for this stock by the time the briefing was prepared.",
+}
+
+
+def _observed_close(recent, symbol: str, described: str | None, cutoff: pd.Timestamp) -> Close:
+    """
+    The latest observed close of a real stock, its session and its retrieval time, from the
+    isolated descriptive reader (decision A6), as stored by the preparation time.
+    """
+
+    if recent is None:
+        return Close(False, None, None, None, "recent_not_read",
+                     "Recent observed prices are not read for this briefing.")  # fmt: skip
+    observed = recent(symbol, retrieved_by=cutoff)
+    if observed.state != "observed":
+        words = RECENT_WORDS.get(
+            observed.state, f"The recent prices could not be read ({observed.reason})."
+        )
+        return Close(False, None, None, None, observed.state, words)
+    served = [row for row in observed.sessions if row.close is not None]
+    if not served:
+        return Close(False, None, None, None, "no_close_served",
+                     "No recent session was served with a close.")  # fmt: skip
+    latest = served[-1]
+    words = (
+        "Latest observed close, for reference: recent prices kept apart from the research data, "
+        "not research evidence."
+    )
+    if latest.session != observed.last_session:
+        words += f" The newest stored session, {observed.last_session}, was served without a close."
+    if described is not None and latest.session != described:
+        words += f" The newest forecast is as of the close of {described}."
+    return Close(True, latest.session, latest.close, observed.retrieved_at, None, words,
+                 source="observed")  # fmt: skip
+
+
+def _recorded_context(record: Mapping | None) -> Context:
+    """The state the frozen job recorded with the forecast, from its window (never recomputed)."""
+
+    state = None if record is None else record["signals"].get("market_state")
+    if not state:
+        return Context(
+            False,
+            "not_recorded",
+            "Not recorded with this forecast. The frozen forecast job records momentum, "
+            "volatility and the regime with each real forecast it makes; the briefing never "
+            "computes them itself (decision A6).",
+        )
+    return Context(
+        True,
+        None,
+        "Recorded with the forecast by the frozen job, from its inference window through the "
+        "as-of close.",
+        ret_5=_finite(state.get("ret_5")),
+        ret_20=_finite(state.get("ret_20")),
+        vol_20=_finite(state.get("vol_20")),
+        ewma_vol=_finite(state.get("ewma_vol")),
+        regime=state.get("regime") if isinstance(state.get("regime"), str) else None,
+        regime_basis="window",
+    )
 
 
 def _change(record: Mapping | None, live: Sequence[Mapping]) -> Change:
@@ -777,6 +859,7 @@ def _stock(
     not_activated: bool,
     evaluations: dict[str, Mapping | None],
     margin_confirmed: bool,
+    recent=None,
 ) -> tuple[StockBriefing, _Known]:
     known = _known(records, symbol, cutoff, data_class)
     market = plan.market_date.isoformat()
@@ -841,19 +924,31 @@ def _stock(
         evaluations[run_id] = found if usable else None
     evaluation = None if run_id is None else evaluations.get(run_id)
     described = None if record is None else record["as_of_session"]
-    close, context, bear = _prices(
-        records,
-        symbol,
-        described,
-        data_class=data_class,
-        cutoff=cutoff_ts,
-        margin_confirmed=margin_confirmed,
-    )
     signals_record = record if (record is not None and status != UNAVAILABLE) else None
     if record is not None and record["refusal"] is not None and status == UNAVAILABLE:
         signals_record = record  # a refusal still carries its descriptive signals
     if reason in ("ledger_unverified", "target_mismatch", "as_of_not_prior_session"):
         signals_record = None
+    protected = data_class == DataClass.REAL.value and (
+        described is None or date.fromisoformat(described) > DEVELOPMENT_END
+    )
+    if protected:  # 2025 and later: the observed close and the recorded state (decision A6)
+        close = _observed_close(recent, symbol, described, cutoff_ts)
+        context = _recorded_context(signals_record)
+        bear = (
+            _withheld_trap("bear")
+            if not margin_confirmed
+            else Trap("bear", False, "not_recorded", "Not recorded with the forecast.")
+        )
+    else:
+        close, context, bear = _prices(
+            records,
+            symbol,
+            described,
+            data_class=data_class,
+            cutoff=cutoff_ts,
+            margin_confirmed=margin_confirmed,
+        )
     stock = StockBriefing(
         symbol=symbol,
         data_class=data_class,
@@ -938,7 +1033,7 @@ TARGET_ORDER = {"1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "cum": 6}
 
 
 def _prospective(
-    known: Mapping[str, _Known], data_class: str, estimators: set[str], shown: Collection[str]
+    known: Mapping[str, _Known], data_class: str, shown: Collection[str]
 ) -> ProspectiveEvidence:
     forecasts = [record for k in known.values() for record in k.forecasts]
     scores = [score for k in known.values() for score in k.scores]
@@ -993,19 +1088,10 @@ def _prospective(
             groups.append(rel.calibration_group(members, category))
         if key[0] == "1":
             rolling.append(RollingGroup(key[0], key[1], key[2], key[3], rel.rolling(members)))
-    if not estimators or estimators == {"B1"}:
-        comparison_words = (
-            "The forecasts are B1's own, so there is no challenger to compare with B1."
-            if estimators
-            else "No forecast is recorded, so there is nothing to compare with B1."
-        )
-    else:
-        names = ", ".join(sorted(estimators))
-        comparison_words = (
-            f"B1's forecasts are not recorded beside the {names} forecasts, so no matched "
-            "comparison is possible yet. Recording B1 beside each forecast is a planned change "
-            "that needs the owner's approval; the comparison will be descriptive, not the A7 test."
-        )
+    live = [f for f in forecasts if f["forecast_id"] not in replaced and f["refusal"] is None]
+    current = max(live, key=lambda f: (f["as_of_session"], f["created_at"], f["forecast_id"]),
+                  default=None)  # fmt: skip
+    comparison, comparison_words = _comparison(found, forecasts, scores, replaced, current)
     return ProspectiveEvidence(
         data_class=data_class,
         status=status,
@@ -1016,9 +1102,80 @@ def _prospective(
         former=former,
         groups=tuple(groups),
         rolling=tuple(rolling),
-        comparison=None,
+        comparison=comparison,
         comparison_words=comparison_words,
     )
+
+
+def _signed(value: float) -> str:
+    if round(value, 4) == 0:
+        return "0.0000"
+    return f"{value:+.4f}".replace("-", "\u2212")
+
+
+def _comparison(found, forecasts, scores, replaced, current):
+    """
+    The next session's matched comparison with B1 (reliability.matched_comparison) for the
+    current model, the newest live forecast's (fresh or stale), on the B1 forecasts recorded
+    beside it (forecast schema 1.1). Reported, never a decision: whether a challenger beats B1
+    is decided on development data only (A7).
+    """
+
+    if current is None:
+        return None, "No forecast is recorded, so there is nothing to compare with B1."
+    if current["estimator"] == rel.REFERENCE:
+        return None, "The forecasts are B1's own, so there is no challenger to compare with B1."
+    members = [
+        o
+        for o in found
+        if o.target == "1"
+        and (o.estimator, o.model_version, o.band)
+        == (current["estimator"], current["model_version"], float(current["band"]))
+    ]
+    if not members:
+        return None, (
+            f"No scored next-session forecast of the current model ({current['estimator']}, "
+            f"model {current['model_version']}) yet."
+        )
+    key = rel.definition(members[0])
+    baseline = [
+        o
+        for o in rel.comparator_observations(forecasts, scores, superseded=replaced)
+        if (o.target, o.band, o.model_version) == (key[0], key[1], key[3])
+    ]
+    if not baseline:
+        return None, (
+            f"B1 is not recorded beside these {key[2]} forecasts (records from before forecast "
+            "schema 1.1), so no matched comparison is possible."
+        )
+    found_comparison = rel.matched_comparison(members, baseline)
+    head = (
+        f"Next session, {key[2]} (model {key[3]}) against the B1 recorded beside each forecast: "
+        f"{found_comparison.n:,} matched forecasts over {found_comparison.dates:,} dates."
+    )
+    tail = " Reported only; it never promotes a model (decision A7)."
+    if found_comparison.status == rel.OK:
+        parts = []
+        for difference in found_comparison.differences:
+            label = {"rps": "RPS", "brier": "Brier", "log_loss": "log loss"}[difference.score]
+            parts.append(
+                f"{label} {_signed(difference.difference)} "
+                f"(90% interval {_signed(difference.low)} to {_signed(difference.high)})"
+            )
+        words = (
+            f"{head} {key[2]} minus B1 (negative means {key[2]} scored better, since lower is "
+            f"better; intervals: t on {found_comparison.blocks} blocks of 20 dates): "
+            f"{'; '.join(parts)}."
+        )
+    elif found_comparison.status == rel.OUTCOME_MISMATCH:
+        words = f"{head} The two sides disagree on an outcome, so nothing is compared."
+    else:
+        need = rel.COMPARISON_BLOCK * rel.MIN_COMPARISON_BLOCKS
+        words = (
+            f"{head} Insufficient evidence: this comparison needs at least {need} matched dates "
+            "of its own before a difference is reported."
+        )
+    return found_comparison, words + tail
 
 
 def _development(
@@ -1068,12 +1225,16 @@ def build_briefing(
     tickers: Sequence[str] | None = None,
     excluded: Collection[str] = (),
     trap_margin_confirmed: bool = False,
+    recent=None,
 ) -> Briefing:
     """
     The briefing for `timing`'s market date from `records` (read-only), for
     `tickers` (the store's watchlist when None) minus `excluded`. Only
     records of `data_class` are read: a briefing is wholly real or wholly
-    synthetic.
+    synthetic. `recent(symbol, retrieved_by=...)` is the isolated descriptive
+    reader of recent observed prices (decision A6), for real stocks after
+    2024; the owner-run script passes it in, so this module never reads that
+    store itself.
     """
 
     kind = DataClass(data_class).value
@@ -1100,6 +1261,7 @@ def build_briefing(
             not_activated=not_activated,
             evaluations=evaluations,
             margin_confirmed=trap_margin_confirmed,
+            recent=recent,
         )
         stocks.append(stock)
         known[symbol] = records_known
@@ -1113,9 +1275,8 @@ def build_briefing(
     versions = tuple(
         sorted({f"{s.lineage.estimator} {s.lineage.model_version}" for s in fresh if s.lineage})
     )
-    estimators = {s.lineage.estimator for s in fresh if s.lineage}
     development, development_words = _development(records, evaluations, stocks, kind, cutoff)
-    prospective = _prospective(known, kind, estimators, chosen)
+    prospective = _prospective(known, kind, chosen)
     synthetic = kind == DataClass.SYNTHETIC.value
     prior = timing.prior_session.isoformat()
     market = timing.market_date.isoformat()
@@ -1155,6 +1316,10 @@ def build_briefing(
         (
             "Momentum, volatility, regime, streak and trap notes describe the past; they are not "
             "signals."
+        ),
+        (
+            "Each forecast is made after the prior session's close from end-of-day prices: it "
+            "reflects no after-hours move, overnight news or premarket move."
         ),
         (
             "This briefing describes probabilities and how reliable they have been; it does not "

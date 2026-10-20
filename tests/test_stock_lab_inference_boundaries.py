@@ -62,6 +62,11 @@ SCRIPT_CONSUMERS = {
         f"{INFERENCE}.store": {"InferenceStore"},
         f"{INFERENCE}.window": {"load_inference_window"},
     },
+    # The premarket briefing: a real stock's latest observed close (decision A6), as stored
+    # by the preparation time, passed into the report, which never reads the store itself.
+    "scripts/stock_lab_briefing.py": {
+        f"{INFERENCE}.recent": {"read_recent"},
+    },
 }
 # Text that reaches the store without an import statement: the module path (for
 # importlib), the file and directory names, the environment variable, the header id.
@@ -195,7 +200,10 @@ def test_only_the_inference_fetch_script_imports_the_store():
         relative = script.relative_to(PROJECT).as_posix()
         if relative in SCRIPT_CONSUMERS:
             assert violations(script, SCRIPT_CONSUMERS[relative]) == [], relative
-            assert "importlib" not in _code(script), relative
+            code = _code(script)
+            assert "importlib" not in code and "__import__" not in code, relative
+            if relative != "scripts/stock_lab_fetch_recent.py":  # the writer's own script
+                assert not [needle for needle in FORBIDDEN_TEXT[1:] if needle in code], relative
             continue
         assert not sorted(name for name in _imports(script) if _reaches(name)), relative
         assert not [needle for needle in FORBIDDEN_TEXT if needle in _code(script)], relative

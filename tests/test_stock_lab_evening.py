@@ -318,3 +318,37 @@ def test_a_rerun_still_measures_drift_on_the_windows_it_skips(lab):
     assert {r.reason for r in again.results} == {"already_recorded"}
     rows = evening.input_drift(again.panel, lab[2])
     assert all(r["psi"] is not None and r["stocks"] == 3 and r["values"] > 0 for r in rows)
+
+
+def test_a_tampered_record_is_refused_for_its_stock_and_the_others_continue(lab, tmp_path):
+    import shutil
+    import sqlite3
+
+    _run(lab, record_it=True)
+    copy = tmp_path / "tampered" / DB_NAME
+    copy.parent.mkdir(mode=0o700)
+    shutil.copy2(lab[0].path, copy)
+    connection = sqlite3.connect(copy)
+    connection.execute("DROP TRIGGER forecasts_no_update")
+    connection.execute(
+        "UPDATE forecasts SET record = replace(record, '\"p_stable\":0.', '\"p_stable\":0.9') "
+        "WHERE symbol = 'MU'"
+    )
+    connection.commit()
+    connection.close()
+    tampered = StockLabStore(copy, clock=lab[3])
+    second = next_day(AS_OF)
+    lab[3].now = ny(second, "20:40")
+    _next_batch(lab, second)
+    found = evening.forecast_watchlist(
+        tampered, lab[2], tickers=TICKERS, now=lab[3].now, expected=pd.Timestamp(second, tz="UTC"),
+        sessions=weekdays, calendar_id=CALENDAR_ID, path=lab[1].path, record=False,
+    )  # fmt: skip
+    statuses = {r.ticker: (r.status, r.reason) for r in found.results}
+    assert statuses["MU"] == (evening.REFUSED, "record_check_failed")
+    assert statuses["AMD"][0] == statuses["NVDA"][0] == evening.DRY_RUN
+    scored = evening.score_real(
+        tampered, symbols=TICKERS, now=lab[3].now, expected=pd.Timestamp(second, tz="UTC"),
+        sessions=weekdays, calendar_id=CALENDAR_ID, path=lab[1].path, write=False,
+    )  # fmt: skip
+    assert [r["ticker"] for r in scored.refused] == ["MU"] and scored.scored == 2
