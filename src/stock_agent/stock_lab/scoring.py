@@ -207,6 +207,9 @@ def score_store(
     not scored yet; appends the new scores (write-once). Returns how many.
     `calendar(first, last)` gives the exchange sessions between two sessions
     (the daily script passes the NYSE rules calendar; the replay weekdays).
+
+    Real forecasts are never scored here: their outcomes come only from the
+    inference store (the owner's choice of 2026-10-19; stock_lab.evening.score_real).
     """
 
     added = 0
@@ -224,6 +227,8 @@ def score_store(
         done = store.scored_keys(symbol)
         recorded = store.forecast_recorded_at(symbol)
         for record in store.forecasts(symbol):
+            if record["data_class"] == "real":
+                continue  # scored only from the inference store (docstring)
             if all((record["forecast_id"], t) in done for t in TARGETS):
                 continue
             if record["forecast_id"] not in recorded:

@@ -894,6 +894,19 @@ the owner's answers and messages in session:
   - An evaluation without the rule (schema 1.2 or earlier, Newey-West at 5%)
     never registers a challenger.
   - It approves no real evaluation run, freeze or activation.
+- 2026-10-19, the Stock Lab's prospective evidence design (owner, by
+  choosing these options in the Stock Lab real-path session; the quoted text
+  is each option chosen):
+  - "Embed B1 comparator": forecast schema 1.1 records B1's probabilities
+    inside each forecast record (same inputs, sessions and band; same hash and
+    ledger entry), never as a live forecast row and never double-counted;
+    schema 1.0 records stay valid.
+  - "Score from inference store": outcomes come from the A2 inference store
+    through a reader limited to each forecast's own sessions; a target is
+    scored only when its sessions were absent when the forecast was made;
+    scores stay in the existing write-once ledger (the A4 protocol).
+  - They approve the design only: no fetch, storage, freeze or activation
+    (A4).
 - Pending:
   - Stock Lab, in order (open item 10):
     1. authorization of the A1 read-only audit, after the token is

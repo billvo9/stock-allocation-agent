@@ -85,18 +85,27 @@ class Lab:
         supersedes: str | None = None,
         evaluation_run_id: str | None = None,
         model_version: str = "fixture-model",
+        b1=None,  # the B1 comparator's (daily, cumulative); default: the forecast's own
     ) -> dict:
         created_at = created_at if created_at is not None else ny(as_of, "21:05")
         targets = targets or next_sessions(as_of)
         kind = "synthetic" if "_" in symbol else "real"
+        daily = None if refusal else ([list(p)] * 5 if len(p) == 3 else [list(row) for row in p])
+        total = None if refusal else list(cumulative)
+        comparator = None
+        if not refusal:
+            b1_daily, b1_total = (daily, total) if b1 is None else b1
+            if len(b1_daily) == 3 and not isinstance(b1_daily[0], list | tuple):
+                b1_daily = [list(b1_daily)] * 5
+            comparator = {"half_life": 63.0, "daily": b1_daily, "cumulative": b1_total}
         record = artifact.build(
             symbol=symbol,
             data_class=kind,
             as_of_session=as_of,
             created_at=stamp(created_at),
             target_sessions=targets,
-            daily=None if refusal else ([list(p)] * 5 if len(p) == 3 else [list(row) for row in p]),
-            cumulative=None if refusal else list(cumulative),
+            daily=daily,
+            cumulative=total,
             band=band,
             cumulative_band=band * 5**0.5,
             estimator=estimator,
@@ -110,6 +119,7 @@ class Lab:
             limitations=["Synthetic fixture."] if kind == "synthetic" else ["Test fixture."],
             refusal=refusal,
             supersedes=supersedes,
+            comparator=comparator,
         )
         self.at(recorded_at if recorded_at is not None else created_at)
         self.store.record_forecast(record, real_authorized=kind == "real")

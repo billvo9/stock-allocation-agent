@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import pandas as pd
@@ -187,15 +187,29 @@ def record_run(
     skipped: Sequence[str] = (),
     activation: str | None = None,
     kept_head: Path | None = None,
+    measured_freshness: Sequence[Mapping] | None = None,
+    measured_drift: Sequence[Mapping] | None = None,
+    results: Sequence[Mapping] = (),
+    outcomes: Mapping | None = None,
 ) -> Path:
     """
     Record the run, its ledger entry and its health input; returns the input's
     path. `activation` is NOT_AUTHORIZED for a run skipped because the owner's
     decisions are not recorded yet; `kept_head` is the private kept-head file.
+
+    The real evening job (stock_lab.evening) measures what the research store
+    cannot: each stock's newest close in the inference store
+    (`measured_freshness`), input drift of its windows against the frozen
+    reference (`measured_drift`), the per-stock `results` and the scoring
+    `outcomes`. Without them, freshness and drift come from the research store.
     """
 
     existed = store.exists
-    fresh = freshness(store, tickers, expected, sessions)
+    fresh = (
+        [dict(row) for row in measured_freshness]
+        if measured_freshness is not None
+        else freshness(store, tickers, expected, sessions)
+    )
     job = {
         "run_id": run_id,
         "started_at": stamp(started),
@@ -209,6 +223,8 @@ def record_run(
         "calendar": calendar_id,
         "freshness": fresh,
         "activation": activation,
+        "results": [dict(row) for row in results],
+        "outcomes": None if outcomes is None else dict(outcomes),
     }
     store.record_job_run(job)
     entries, problem = store.verify_ledger()
@@ -257,11 +273,14 @@ def record_run(
                 "failed",
                 "skipped",
                 "activation",
+                "results",
             )
         },
         freshness=fresh,
         scores={**summary, "baseline_rps": baseline},
-        inputs_drift=monitoring.input_drift(frames, development_end) if frames else [],
+        inputs_drift=[dict(row) for row in measured_drift]
+        if measured_drift is not None
+        else (monitoring.input_drift(frames, development_end) if frames else []),
         traps=trap_outcomes(frames, first),
         ledger={
             "entries": entries,
@@ -283,5 +302,6 @@ def record_run(
             "next_expected_at": next_expected_at,
         },
         symbols=symbol_status(store, tickers),
+        outcomes=outcomes,
     )
     return monitoring.write_monitor(health_inputs, document)

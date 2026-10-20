@@ -558,8 +558,8 @@ are never recomputed here.
 <a id="forecast-stock-lab-scores"></a>
 ### Stock Lab rolling forecast scores (`forecast.stock_lab_scores`)
 
-- **What it means.** The rolling ranked probability score of scored daily targets beside the recent-weighted baseline's development-test score. Insufficient evidence below 250 scored targets; degraded (`worse_than_baseline`) when worse than the baseline. This is tracking, never evidence of skill: the forecaster is experimental and unvalidated.
-- **Likely causes.** Too few sessions since forecasting began; a regime the development data did not contain; drifted inputs.
+- **What it means.** The rolling ranked probability score of scored daily targets beside the recent-weighted baseline's development-test score. Insufficient evidence below 250 scored targets; degraded (`worse_than_baseline`) when worse than the baseline. This is tracking, never evidence of skill: the forecaster is experimental and unvalidated. Also degraded when the real evening job reports a target whose session has closed but whose outcome is not in the inference store yet (`missing_outcomes`), or outcomes it could not read (`outcomes_refused`, with the reader's reasons).
+- **Likely causes.** Too few sessions since forecasting began; a regime the development data did not contain; drifted inputs. For missing outcomes: the evening price update (`scripts/stock_lab_fetch_recent.py --authorized --store`) did not run, or held a ticker for review. For refused outcomes: a changed or damaged inference batch, or a batch on another calendar.
 - **Diagnose.** Compare with `forecast.stock_lab_drift`; the Model diagnostics tab shows the development tests.
 - **Safe retry.** Re-run the job; scores accrue as sessions close.
 - **Fallback.** Read the baseline's probabilities instead; the model is never promoted on these scores.

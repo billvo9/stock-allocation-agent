@@ -134,6 +134,11 @@ def _forecast(created_at, *, as_of=AS_OF, cumulative=(0.2, 0.6, 0.2), supersedes
         signals={},
         limitations=[],
         supersedes=supersedes,
+        comparator={
+            "half_life": 63.0,
+            "daily": [[0.2, 0.6, 0.2]] * 5,
+            "cumulative": list(cumulative),
+        },
     )
 
 
@@ -425,6 +430,28 @@ def test_each_replay_day_writes_one_valid_health_input(replayed):
             "unavailable",
             "unrecognized_format",
         ),
+        (
+            lambda d: d.update(
+                outcomes={"scored": 3, "unscorable": 0, "pending": 12, "missing": 2, "refused": []}
+            ),
+            "forecast.stock_lab_scores",
+            "degraded",
+            "missing_outcomes",
+        ),
+        (
+            lambda d: d.update(
+                outcomes={
+                    "scored": 0,
+                    "unscorable": 0,
+                    "pending": 0,
+                    "missing": 0,
+                    "refused": [{"ticker": "AMD", "forecast_id": "f", "reason": "integrity"}],
+                }
+            ),
+            "forecast.stock_lab_scores",
+            "degraded",
+            "outcomes_refused",
+        ),
     ],
 )
 def test_the_health_checks_judge_what_the_job_recorded(tmp_path, change, check_id, state, reason):
@@ -465,15 +492,24 @@ def test_the_real_job_scores_records_itself_skipped_and_never_forecasts(tmp_path
     assert store.verify_ledger() == (1, None)
 
 
-@pytest.mark.parametrize("flag", ["--authorized", "--inference-window", "--record-real"])
-def test_the_real_update_flags_are_refused_until_the_owners_decisions(tmp_path, flag):
+@pytest.mark.parametrize(
+    ("flags", "words"),
+    [
+        (["--authorized"], "stock_lab_fetch_recent.py --authorized --store"),
+        (["--inference-window"], "stock_lab_fetch_recent.py --authorized --store"),
+        (["--record-real"], "--model must name one registered real frozen model"),
+        (["--dry-run"], "--model must name one registered real frozen model"),
+        (["--record-real", "--model", "0" * 16], "--model must name one registered"),
+        (["--model", "0" * 16], "--model is for --dry-run or --record-real"),
+    ],
+)
+def test_the_real_update_flags_are_refused_without_a_registered_model(tmp_path, flags, words):
     store = StockLabStore(tmp_path / DB_NAME)
     out = io.StringIO()
-    assert (
-        daily.main([flag, "--health-inputs", str(tmp_path)], store_factory=lambda: store, out=out)
-        == 2
-    )
-    assert "A1, A2 and A4" in out.getvalue() and store.latest_job_run() is None
+    argv = [*flags, "--health-inputs", str(tmp_path)]
+    assert daily.main(argv, store_factory=lambda: store, out=out) == 2
+    assert words in out.getvalue() and store.latest_job_run() is None
+    assert not list(tmp_path.glob("**/*.json"))  # no health input either
 
 
 @pytest.mark.parametrize("sessions", ["0", "61"])
@@ -583,7 +619,7 @@ def test_the_next_expected_update_is_tonight_before_the_close_is_due(now, due):
 def test_a_calendar_refusal_is_recorded_as_a_failed_run(tmp_path, monkeypatch):
     from stock_agent.calendars.nyse import CalendarRefused
 
-    def refuse(now):
+    def refuse(now, calendar=None):
         raise CalendarRefused("outside_coverage", "past 2027")
 
     monkeypatch.setattr(daily, "expected_session", refuse)
@@ -620,3 +656,57 @@ def test_a_monitor_file_without_symbols_is_still_a_valid_v1_0_file(tmp_path):
     assert without.pop(tickers) == (HealthState.INSUFFICIENT_EVIDENCE, "not_recorded")
     assert with_symbols.pop(tickers) == (HealthState.HEALTHY, None)
     assert without == with_symbols
+
+
+def test_outcomes_with_nothing_missing_change_no_check(tmp_path):
+    plain = health_fixtures.stock_lab_monitor()
+    counted = {**plain, "outcomes": {"scored": 4, "unscorable": 1, "pending": 10, "missing": 0,
+                                     "refused": []}}  # fmt: skip
+    found = []
+    for name, document in (("plain", plain), ("counted", counted)):
+        written = health_fixtures.write_input(tmp_path / name, document).parent
+        checks = stock_lab_checks(written, allow_synthetic=True)
+        found.append({c.check_id: (c.state, c.reason) for c in checks})
+    assert found[0] == found[1]
+
+
+@pytest.mark.parametrize(
+    "outcomes",
+    [
+        {"scored": 1, "unscorable": 0, "pending": 0, "missing": -1, "refused": []},
+        {"scored": 1, "unscorable": 0, "pending": 0, "missing": 0, "refused": ["x"]},
+        {"scored": 1, "unscorable": 0, "pending": 0, "missing": 0},
+        "many",
+    ],
+)
+def test_malformed_outcomes_are_an_unrecognized_format(tmp_path, outcomes):
+    document = {**health_fixtures.stock_lab_monitor(), "outcomes": outcomes}
+    written = health_fixtures.write_input(tmp_path, document).parent
+    checks = stock_lab_checks(written, allow_synthetic=True)
+    assert {c.reason for c in checks} == {"unrecognized_format"}
+
+
+def test_the_research_scorer_never_scores_a_real_forecast(tmp_path):
+    # Real outcomes come only from the inference store (stock_lab.evening.score_real).
+    from stock_agent.stock_lab import scoring as research_scoring
+
+    clock = SimulatedClock(T0)
+    store = StockLabStore(tmp_path / DB_NAME, clock=clock)
+    real = artifact.build(
+        symbol="AMD", data_class="real", as_of_session=SESSIONS.iloc[AS_OF].strftime("%Y-%m-%d"),
+        created_at=stamp(MADE),
+        target_sessions=[d.strftime("%Y-%m-%d") for d in SESSIONS.iloc[AS_OF + 1 : AS_OF + 6]],
+        daily=[[0.2, 0.6, 0.2]] * 5, cumulative=[0.2, 0.6, 0.2], band=0.005,
+        cumulative_band=0.005 * 5**0.5, estimator="B1", model_version="test",
+        feature_version="stock_lab_features_v1", evaluation_run_id=None, data={},
+        evidence_status="experimental_unvalidated", calibration_status="test", signals={},
+        limitations=[], comparator={"half_life": 63.0, "daily": [[0.2, 0.6, 0.2]] * 5,
+                                    "cumulative": [0.2, 0.6, 0.2]},
+    )  # fmt: skip
+    clock.advance(MADE)
+    store.record_forecast(real, real_authorized=True)
+    bars = synthetic.demo_bars("DEMO_CALM").iloc[: AS_OF + 7].copy()
+    clock.advance(T1)
+    store.record_prices("AMD", bars, source="f", retrieved_at=T1, data_class=DataClass.REAL,
+                        vintage_note="v")  # fmt: skip
+    assert research_scoring.score_store(store, ["AMD"]) == 0 and store.scores("AMD") == ()

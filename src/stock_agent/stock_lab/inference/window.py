@@ -91,6 +91,7 @@ from stock_agent.stock_lab.inference.schema import (
     calendar,
     close_available_at,
     data_class_of,
+    eligible_batches,
     opens_at,
     read_only,
     select_vintage,
@@ -135,37 +136,6 @@ def _next_session(sessions: Sessions, as_of: pd.Timestamp) -> pd.Timestamp:
     if len(upcoming) == 0:
         raise InferenceRefused(Refusal.INVALID_REQUEST, "the calendar has no next session")
     return upcoming[0]
-
-
-def _eligible(
-    stored: tuple[InferenceBatch, ...], decision: pd.Timestamp, calendar_id: str
-) -> list[InferenceBatch]:
-    """Batches retrieved and recorded by the decision time, each re-checked."""
-
-    eligible = []
-    for batch in stored:
-        if (
-            pd.Timestamp(batch.recorded_at) > decision
-            or pd.Timestamp(batch.retrieved_at) > decision
-        ):
-            continue
-        if batch.calendar_id != calendar_id:
-            raise InferenceRefused(
-                Refusal.CALENDAR_MISMATCH,
-                f"batch {batch.batch_id} follows {batch.calendar_id}, not {calendar_id}",
-            )
-        end = session_day(batch.request_end, "request_end")
-        if pd.Timestamp(batch.retrieved_at) < close_available_at(end):
-            raise InferenceRefused(
-                Refusal.INTEGRITY,
-                f"batch {batch.batch_id} claims a retrieval before its last close was available",
-            )
-        if pd.Timestamp(batch.retrieved_at) > pd.Timestamp(batch.recorded_at):
-            raise InferenceRefused(
-                Refusal.INTEGRITY, f"batch {batch.batch_id} was recorded before it was retrieved"
-            )
-        eligible.append(batch)
-    return eligible
 
 
 def load_inference_window(
@@ -216,7 +186,7 @@ def load_inference_window(
     with read_only(Path(store_path)) as connection:
         if connection is None:
             raise InferenceRefused(Refusal.NO_STORE, "no inference store exists yet")
-        eligible = _eligible(batches(connection, ticker), decision, calendar_id)
+        eligible = eligible_batches(batches(connection, ticker), decision, calendar_id)
         overlapping = [
             batch
             for batch in eligible

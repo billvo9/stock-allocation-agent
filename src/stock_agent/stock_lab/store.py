@@ -998,8 +998,8 @@ class StockLabStore:
         """
         Store one checked forecast (write-once); returns its id. A real-data
         forecast is refused unless the caller says the owner's decisions A2
-        and A4 are recorded (`real_authorized`; only the owner-run daily
-        script passes it, from an explicit flag).
+        and A4 are recorded (`real_authorized`; only the real evening job,
+        stock_lab.evening, passes it, for a model the owner activated).
 
         Timing: a forecast is recorded when it is made, so `created_at` must be
         within CLOCK_SKEW of the store's clock (no backdating, no future). It
@@ -1082,6 +1082,18 @@ class StockLabStore:
                 (symbol,),
             ).fetchall()
         return tuple(dict(forecast_artifact.check(json.loads(row[0]))) for row in rows)
+
+    def forecast_symbols(self, data_class: DataClass) -> tuple[str, ...]:
+        """Every symbol with a stored forecast of `data_class`, watched or not (for scoring)."""
+
+        with self._read() as connection:
+            if connection is None:
+                return ()
+            rows = connection.execute(
+                "SELECT DISTINCT symbol FROM forecasts WHERE data_class = ? ORDER BY symbol",
+                (DataClass(data_class).value,),
+            ).fetchall()
+        return tuple(row[0] for row in rows)
 
     def latest_forecast(self, symbol: str) -> dict | None:
         """The live forecast (not superseded) of `symbol`'s latest as-of session, or None."""
