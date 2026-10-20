@@ -9,6 +9,8 @@ Status: experimental.
   modelled views.
 - Briefing PR 1 adds the read-only daily premarket briefing and its
   reliability foundations (section 9).
+- The Portfolio Lab's read-only Premarket Briefing page and a printed
+  08:30 delivery option (section 9); nothing is installed or sent.
 
 Probabilities exist only for the synthetic demo stocks. No live request has
 been made. Owner brief: 2026-10-16.
@@ -564,6 +566,8 @@ How the ledger works:
 
 - It prints a launchd agent for 20:30 New York time on weekdays; the owner
   installs it.
+- With `--briefing` it prints the 08:30 premarket-briefing agent, and with
+  `--email-dry-run` a description of an email adapter (section 9).
 - The job itself skips holidays through the calendar.
 
 **The page:**
@@ -1233,17 +1237,185 @@ stable bands, estimators or model versions.
 | `... --preview` | also writes the real briefing's files, once per market date |
 | `... --at 2026-10-19T08:30-04:00 --include-closed-days` | prepares as of a time, including a closed day |
 
+**The Lab's Premarket Briefing page** (`app/briefing.py`, read-only):
+
+- **What it shows.** The latest briefing the script wrote on this computer,
+  in the Lab's design, light and dark:
+  - the notices;
+  - every stock at a glance;
+  - the header facts;
+  - each stock in full;
+  - reliability and the limitations.
+- **Same words as the email.** The words are the renderer's own (`render`
+  exposes them), and every category is written beside its marker
+  ("▲ Increase").
+- **One kind at a time.** The page shows real or synthetic demo briefings,
+  never both. Real comes first when one exists, and a synthetic demo carries
+  its badge and banner.
+- **What it reads.** The written JSON copies and the duplicate-send log,
+  through `briefing.stored`.
+  - It never loads `delivery`, the writers (tested).
+  - It prepares no briefing, runs no job, writes or creates no file and
+    sends nothing (tested: the folder's bytes, modes and modification times
+    are unchanged).
+- **Why the written copy.** It shows exactly what was delivered at 08:30.
+  Preparing a briefing again would need the NYSE calendar module, which
+  loads model-validation code the Lab may not load.
+- **Which briefing is the latest.** The newest market date first; among one
+  date's briefings, the one prepared last. Earlier ones stay selectable.
+  - Whole market dates are read, newest first, until at least 30 files of a
+    kind are read; files of older dates are counted, never opened.
+  - A file that cannot be read is named with a short reason, never skipped
+    in silence. When it is newer than the one shown, a warning says so
+    above the briefing.
+  - A real briefing for an earlier day than today (New York) says so, so
+    Monday's briefing is never read as Tuesday's.
+- **What a readable file is.**
+  - a regular file (never a link or a named pipe, opened without waiting),
+    owned by this user, that no other user can open, at most 2 MB;
+  - in a private folder outside any Git working tree;
+  - strict JSON of this briefing schema and version, read back field by
+    field and type by type (a null where a number is required is refused);
+  - with a name that agrees with its contents (market date, data class and
+    state), and contents the renderer can write.
+  - Text from the file is shown literally: no markdown in it is rendered.
+  - These rules guard against other users. Another program running as the
+    owner could still swap a file between the checks and the read.
+- **The delivery log.** It is opened with SQLite `mode=ro` (a missing log is
+  not created), and only in rollback-journal mode, which the writer uses
+  (tested): a read-only reader of a write-ahead-log database would create
+  its `-wal` and `-shm` files, so such a log is refused.
+  - An entry the writer never writes (a bad time, status or attempt) makes
+    the log unreadable on the page, never half-read.
+  - The page reports in words what the log recorded for the briefing's
+    market date: delivered, failed (the error's type only), not finished,
+    not recorded, or, for a preview, that date's delivery state.
+
+**The 08:30 delivery option (printed, not installed):**
+
+- **The agent.** `.venv/bin/python scripts/stock_lab_schedule.py --briefing`
+  prints a launchd agent, `local.stock-lab.briefing`.
+  - It runs `scripts/stock_lab_briefing.py --preview` at 08:30 New York on
+    weekdays. That is the local preview channel, once per market date
+    through the duplicate-send log.
+  - Its log goes to `~/stock-agent-private/stock_lab/logs/briefing.*.log`,
+    written with a private umask (files 0600).
+  - It never runs on load. The script itself skips weekends and holidays.
+  - It runs the code of the checkout it was printed from, so print it from
+    a clean checkout of main.
+- **The time zone.** launchd takes the Mac's local time with no time zone,
+  so the printer converts 08:30 New York to the zone given.
+  - It refuses a zone whose clock changes on other dates than New York's, or
+    never (Europe/London, Asia/Tokyo, America/Phoenix, UTC). There, a fixed
+    local time would run at 09:30 New York for part of the year, after the
+    open.
+  - US and Canadian zones that follow New York's changes are accepted and
+    tested on both sides of each change.
+- **The optional wake.** It is printed as a note on standard error, never
+  run and never part of the agent file.
+- **The email dry run.** `.venv/bin/python scripts/stock_lab_schedule.py
+  --email-dry-run` describes an email adapter. No email code exists.
+  - **What it would send.** The rendered briefing, text and HTML in one
+    message, to one address, the owner's own, kept outside Git.
+  - **Real only.** It sends real briefings only, never a synthetic demo.
+  - **When.** Only a premarket briefing, at most once per market date, on
+    its own "email" channel of the existing log. The wall clock (never
+    `--at`) is checked again just before connecting: at or after 09:30 New
+    York nothing is sent, and the attempt is recorded as late.
+  - **The credential.** It would be read from the macOS Keychain at send
+    time (`security find-generic-password`, run without a shell, under a
+    generic account label, never the address). It would never be in Git,
+    an environment variable, a command-line argument, a log, the delivery
+    log, a preview file or an error message.
+  - **Adding it.** The owner adds it once, typed at a prompt.
+  - **Who else could read it.** An item the `security` tool adds can be read
+    again by that tool without a prompt, so any program running as the
+    owner, an agent's shell included, could read it. How to narrow that (a
+    keychain of its own, or a command guard refusing
+    `security find-generic-password` to agents) is an owner decision; a
+    guard is a guardrail change.
+  - **Public CI.** It holds no secret, because the repository is public.
+  - **Tests first.** The adapter needs its offline tests before any send: a
+    fake transport, the secret scan, the 09:30 refusal and the
+    duplicate-send log.
+- **Owner approvals, each separate and none given.**
+  - the provider;
+  - the address;
+  - the Keychain item;
+  - installing the agent;
+  - the wake setting;
+  - the data-licence check below.
+
+**When the Mac is asleep (the local option's limits):**
+
+- **Sleep.** launchd does not fire while the Mac is asleep. A job whose time
+  passed during sleep runs once when the Mac next wakes (missed times are
+  combined into one run, launchd.plist(5)). Its manual promises nothing
+  after a shutdown, so do not count on a run then.
+- **What a late run does.**
+  - Before 09:30 New York, it is still the day's premarket delivery, late.
+  - At or after 09:30, the briefing is `after_open`: the script writes a
+    labelled late preview and never sends or records the day's delivery.
+  - A Mac asleep for several days gets one run, at wake, for the session
+    due then.
+- **The evening job sleeps too.** The daily job at 20:30 has the same
+  limit. A forecast decided after the next 09:30 open is refused
+  (`after_next_open`), so the morning briefing then shows each stock as
+  unavailable or stale, with the reason.
+- **A local wake.**
+  - **The command.** `sudo pmset repeat wakeorpoweron MTWRF 08:25:00` (in
+    the Mac's local time; the printer gives the time for the zone).
+  - **Who.** It is an administrator setting, so the owner sets it.
+  - **One repeat only.** pmset keeps a single repeating pair (a power-on
+    and a power-off event), so this may replace a repeating schedule
+    already set.
+  - **Checking it.** Check it with `pmset -g sched`, before and after. Then confirm in the
+    briefing log that the 08:30 run happened: a Mac can fall asleep again
+    before 08:30 under its idle settings. A laptop with its lid closed or on
+    battery may not wake at all; check on this Mac.
+- **Seeing a missed delivery.** The Lab page shows "No delivery is recorded"
+  for a premarket briefing without a delivery, and a late preview as a
+  preview. A Model Health "missed delivery" check is a separate change,
+  coordinated with the health owner.
+
+**Recommended reliable deployment (pending approvals):**
+
+- **The host.** A small private host that is always on, set to New York
+  time or a zone that follows its clock changes.
+  - **20:30 New York.** It runs the evening job: the recent-window fetch,
+    then the daily job, once a model is activated (A4).
+  - **Just after, the advance preview.** A dress rehearsal: a failure shows
+    about 12 hours before the briefing is due, not at 08:30.
+  - **08:30.** It prepares the premarket briefing (the same end-of-day data,
+    as known then) and delivers it once, refusing at or after 09:30.
+- **Why it is more dependable.** Nothing sleeps, the evening job and the
+  briefing run on one machine, and the duplicate-send log keeps one
+  delivery a day.
+- **Before it can be used.**
+  - **The vendor data licence.** Storing vendor prices on a hosted machine,
+    and emailing derived numbers to oneself, must be checked against the
+    terms for private use. Nothing is ever redistributed.
+  - **Secrets.** The host needs its own secret store; nothing goes in
+    environment files or in public CI.
+  - **Approvals.** The host, its cost and the installation are owner
+    approvals.
+- **Not an option.** Public CI (this public repository's workflows): its
+  logs are public, and it would need the vendor key.
+- **Alternatives, from least to most dependable.**
+  - **A Mac kept awake.** A desktop Mac, plugged in, with the wake above.
+    It costs nothing and misses mornings when it sleeps or is shut down.
+  - **An always-on machine at home.** A small machine running the same
+    jobs.
+  - **A private cloud host.** As recommended above.
+
 **Next steps, each needing the owner's approval:**
 
-1. **Delivery.** An 08:30 schedule, extending the existing schedule
-   printer, and an email adapter. Credentials would come from the macOS
-   Keychain at send time, never from Git, logs or artifacts. The repository
-   is public, so public CI holds no secret.
-   - When the Mac is asleep, `pmset repeat wakeorpoweron` at 08:25 on
-     weekdays is a local option, and a late run must not send after 09:30.
-   - A private hosted sender is a separate approval: render the evening
-     before, after the job, and deliver at 08:30. It needs a check of the
-     data licence.
+1. **Delivery.** The 08:30 agent and the email dry run are printed (above);
+   nothing is installed, connected or sent.
+   - Still to do: the email adapter, after the provider, the address, the
+     Keychain item and the installation are approved.
+   - A private hosted sender is a separate approval, after the data-licence
+     check.
    - A Model Health "missed delivery" check is coordinated with the health
      owner.
 2. **Reliability.** B1 is recorded beside each forecast and compared on

@@ -1,6 +1,6 @@
 """
 The Portfolio Lab's navigation shell and its destinations under AppTest:
-the seven pages in order with Overview as the landing page, every destination
+the eight pages in order with Overview as the landing page, every destination
 rendered through the running app (run.py) with the advice-wording scan over
 all rendered text, and the Overview, Experiments, Model Health and Evidence
 pages' states. The Explore page has its own tests (test_app_explore.py) and
@@ -138,12 +138,13 @@ def running(key: str = navigation.DEFAULT) -> AppTest:
 # --- the shell ---
 
 
-def test_the_seven_destinations_are_registered_in_order_with_overview_first():
+def test_the_eight_destinations_are_registered_in_order_with_overview_first():
     assert [title for title, _ in wording.NAV.values()] == [
         "Overview",
         "Explore",
         "Portfolio Builder",
         "Stock Probability",
+        "Premarket Briefing",
         "Experiments",
         "Model Health",
         "Evidence",

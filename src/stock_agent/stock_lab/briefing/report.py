@@ -53,7 +53,11 @@ Change since the prior forecast
 
 from __future__ import annotations
 
+import dataclasses
+import functools
 import math
+import types
+import typing
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
@@ -88,6 +92,7 @@ UNAVAILABLE = "unavailable"
 CATEGORIES = ("increase", "stable", "decrease")
 SETUP_RECENT_DAYS = 21  # a setup counts as current for this many calendar days (as predict.py)
 LEVEL = 0.9
+LEDGER_FAILED = "The ledger check failed"  # the notice that withholds every probability
 
 
 # --- the read-only view of the store ---
@@ -383,6 +388,72 @@ def briefing_document(briefing: Briefing) -> dict:
         return value
 
     return clean(asdict(briefing))
+
+
+@functools.cache
+def _hints(kind: type) -> dict[str, object]:
+    return typing.get_type_hints(kind)
+
+
+def _some(values) -> str:
+    """At most three values, each cut short, for an error message."""
+
+    shown = sorted(repr(value)[:30] for value in values)
+    return ", ".join(shown[:3]) + (f" and {len(shown) - 3} more" if len(shown) > 3 else "")
+
+
+def _load(kind, value, where: str):
+    """`value` (parsed JSON) as `kind`, refusing anything that does not fit exactly."""
+
+    origin, args = typing.get_origin(kind), typing.get_args(kind)
+    if origin in (types.UnionType, typing.Union):
+        if value is None and type(None) in args:
+            return None
+        (other,) = (arg for arg in args if arg is not type(None))
+        return _load(other, value, where)
+    if dataclasses.is_dataclass(kind):
+        if not isinstance(value, dict):
+            raise TypeError(f"{where} is not an object")
+        names = [field.name for field in dataclasses.fields(kind)]
+        if set(value) != set(names):
+            raise ValueError(f"{where} has other fields: {_some(set(value) ^ set(names))}")
+        hints = _hints(kind)
+        return kind(**{name: _load(hints[name], value[name], f"{where}.{name}") for name in names})
+    if origin is tuple and len(args) == 2 and args[1] is Ellipsis:
+        if not isinstance(value, list):
+            raise TypeError(f"{where} is not a list")
+        return tuple(_load(args[0], item, f"{where}[{i}]") for i, item in enumerate(value))
+    if origin in (Mapping, dict) and args and args[0] is str:
+        if not isinstance(value, dict):
+            raise TypeError(f"{where} is not an object")
+        return {key: _load(args[1], item, f"{where}.{key}") for key, item in value.items()}
+    if kind is float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise TypeError(f"{where} is not a number")
+        return float(value)
+    if kind in (str, int, bool):
+        if type(value) is not kind:
+            raise TypeError(f"{where} is not a {kind.__name__}")
+        return value
+    raise TypeError(f"{where} has a type a briefing never holds: {kind!r}")
+
+
+def briefing_from_document(document: Mapping) -> Briefing:
+    """
+    The briefing read back from its JSON copy (`briefing_document`), field by
+    field and type by type: a missing or extra field, or a value of the wrong
+    type, is refused (ValueError or TypeError), and so is another schema or version.
+    A null where a number is required is refused too: `briefing_document` writes
+    a non-finite number as null, and no briefing a page can show holds one there.
+    Error messages name fields, never repeat the document's values at length.
+    """
+
+    if not isinstance(document, dict):
+        raise TypeError("the briefing is not an object")
+    if (document.get("schema"), document.get("schema_version")) != (SCHEMA, SCHEMA_VERSION):
+        written = _some([document.get("schema"), document.get("schema_version")])
+        raise ValueError(f"written as {written}, not {SCHEMA} {SCHEMA_VERSION}")
+    return _load(Briefing, document, "briefing")
 
 
 # --- helpers ---
@@ -1287,9 +1358,7 @@ def build_briefing(
     if timing.state != PREMARKET:
         warnings.append(STATE_WORDS[timing.state] + ".")
     if problem is not None:
-        warnings.append(
-            f"The ledger check failed ({problem}): every stored probability is withheld."
-        )
+        warnings.append(f"{LEDGER_FAILED} ({problem}): every stored probability is withheld.")
     if not synthetic and not_activated:
         warnings.append(
             "Real forecasts are not activated yet (decision A4), so no real stock has a "
@@ -1384,6 +1453,7 @@ __all__ = [
     "ReadOnlyRecords",
     "StockBriefing",
     "briefing_document",
+    "briefing_from_document",
     "build_briefing",
     "subject",
 ]

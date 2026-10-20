@@ -24,6 +24,7 @@ NAV = {
     "explore": ("Explore", "explore"),
     "builder": ("Portfolio Builder", "builder"),
     "stock_lab": ("Stock Probability", "stock-probability"),
+    "briefing": ("Premarket Briefing", "premarket-briefing"),
     "experiments": ("Experiments", "experiments"),
     "health": ("Model Health", "model-health"),
     "evidence": ("Evidence", "evidence"),

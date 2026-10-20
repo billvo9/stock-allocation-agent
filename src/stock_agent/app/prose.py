@@ -6,6 +6,8 @@ Streamlit would otherwise read in pairs as LaTeX.
 
 from __future__ import annotations
 
+import re
+
 import streamlit as st
 
 from stock_agent.ui import components as ui
@@ -13,6 +15,19 @@ from stock_agent.ui import components as ui
 
 def escape(text: str) -> str:
     return text.replace("$", "\\$")
+
+
+# Markdown's punctuation, escaped with a backslash (CommonMark), except "$", which `escape` takes.
+_MARKDOWN = re.compile(r"([\\`*_{}\[\]()#+\-.!|<>~])")
+
+
+def literal(text: str) -> str:
+    """
+    Text read from a file, shown exactly as written: no markdown in it is
+    rendered (no link, image or emphasis), for `say`, captions and labels.
+    """
+
+    return _MARKDOWN.sub(r"\\\1", text)
 
 
 def say(text: str, as_: str = "markdown", where=None) -> None:

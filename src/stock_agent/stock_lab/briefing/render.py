@@ -16,6 +16,12 @@ its marker, never carried by colour alone (bars and markers are hidden from
 screen readers, which read the words and numbers). No link to a local
 dashboard is included: a recipient may not be able to reach it.
 
+The words of each part (`facts`, `glance`, `detail_rows`, `change_text`,
+`track_text`, `total_words`, `bucket_rows`, `development_lines`,
+`group_label`, `rolling_text`) and the notice rule (`blocking`) are public,
+so the Portfolio Lab's Premarket Briefing page shows a written briefing in
+the same words as the email.
+
 The theme mapping (`Theme`) holds, per scheme ("light", "dark"): the Lab's
 colours (canvas, surface, surface_muted, border, border_strong, text,
 text_muted, text_subtle, accent, accent_soft), the status treatments (fg,
@@ -33,6 +39,7 @@ from datetime import date
 
 from stock_agent.stock_lab.briefing.report import (
     FRESH,
+    LEDGER_FAILED,
     STALE,
     Briefing,
     Probabilities,
@@ -118,17 +125,17 @@ def _target_words(target: str) -> str:
     return TARGET_WORDS.get(target, f"Session {target} ahead")
 
 
-def _range(low: float, high: float) -> str:
+def span(low: float, high: float) -> str:
     return f"{low * 100:.0f}–{high * 100:.0f}%"
 
 
-def _prepared(briefing: Briefing) -> str:
+def prepared(briefing: Briefing) -> str:
     local = generated_local(briefing)
     utc = briefing.generated_at[11:16]
     return f"{local:%H:%M} New York ({utc} UTC), {long_date(local.date())}"
 
 
-def _market(briefing: Briefing) -> str:
+def market(briefing: Briefing) -> str:
     return long_date(date.fromisoformat(briefing.market_date))
 
 
@@ -169,7 +176,7 @@ def _unchanged(p: Probabilities | None) -> bool:
     return p is not None and all(round(getattr(p, c) * 100) == 0 for c in CATEGORIES)
 
 
-def _change_text(stock: StockBriefing) -> str:
+def change_text(stock: StockBriefing) -> str:
     change = stock.change
     if not change.comparable:
         return change.words
@@ -187,18 +194,18 @@ def _change_text(stock: StockBriefing) -> str:
     return text
 
 
-def _track_text(stock: StockBriefing, category: str) -> str | None:
+def track_text(stock: StockBriefing, category: str) -> str | None:
     found = next((t for t in stock.track if t.category == category), None)
     if found is None:
         return None
     if found.status == "insufficient":
         return (
-            f"development tests: too few forecasts of {_range(found.bin_low, found.bin_high)} "
+            f"development tests: too few forecasts of {span(found.bin_low, found.bin_high)} "
             f"to say ({found.n:,} on {found.dates:,} dates)"
         )
     return (
-        f"development tests: forecasts of {_range(found.bin_low, found.bin_high)} came true "
-        f"{_range(found.low, found.high)} of the time ({found.n:,} cases on {found.dates:,} dates)"
+        f"development tests: forecasts of {span(found.bin_low, found.bin_high)} came true "
+        f"{span(found.low, found.high)} of the time ({found.n:,} cases on {found.dates:,} dates)"
     )
 
 
@@ -254,7 +261,7 @@ def _reversal(stock: StockBriefing) -> str:
         if outcome.estimate is None:
             parts.append(f"{verb}: insufficient observations")
         else:
-            parts.append(f"{verb} {pct(outcome.estimate)} ({_range(outcome.low, outcome.high)})")
+            parts.append(f"{verb} {pct(outcome.estimate)} ({span(outcome.low, outcome.high)})")
     return f"{reversal.words} Next session: " + "; ".join(parts) + "."
 
 
@@ -273,14 +280,14 @@ def _lineage(stock: StockBriefing) -> str:
     )
 
 
-def _total(stock: StockBriefing) -> str:
+def total_words(stock: StockBriefing) -> str:
     return (
         f"close of {stock.lineage.as_of_session} to {stock.cumulative_end}, band "
         f"{band(stock.lineage.cumulative_band)}: {_three(stock.cumulative)}"
     )
 
 
-def _detail_rows(stock: StockBriefing) -> list[tuple[str, str]]:
+def detail_rows(stock: StockBriefing) -> list[tuple[str, str]]:
     """The stock's labelled lines after its probabilities (shared by both renderings)."""
 
     rows = []
@@ -308,13 +315,13 @@ def _detail_rows(stock: StockBriefing) -> list[tuple[str, str]]:
     return rows
 
 
-def _glance(stock: StockBriefing) -> tuple[str, ...] | str:
+def glance(stock: StockBriefing) -> tuple[str, ...] | str:
     """At a glance: (increase, stable, decrease, change) for a fresh stock, else words."""
 
     if stock.status != FRESH or stock.next_session is None:
         reason = REASON_SHORT.get(stock.reason or "", stock.reason or "")
         if stock.status == STALE and stock.lineage is not None:
-            reason = f"stale: newest forecast as of {stock.lineage.as_of_session}"
+            reason = f"newest forecast as of {stock.lineage.as_of_session}"
         return f"{STATUS_WORDS[stock.status]}: {reason}"
     p = stock.next_session.probabilities
     change = stock.change
@@ -326,7 +333,7 @@ def _glance(stock: StockBriefing) -> tuple[str, ...] | str:
     return (pct(p.increase), pct(p.stable), pct(p.decrease), moved)
 
 
-def _development_lines(briefing: Briefing) -> list[str]:
+def development_lines(briefing: Briefing) -> list[str]:
     section = briefing.reliability
     found = section.development
     if found is None:
@@ -373,19 +380,19 @@ def _p(value: float | None) -> str:
 
 
 def _bucket_line(bucket, *, development: bool) -> str:
-    span = _range(bucket.low, bucket.high)
+    shown = span(bucket.low, bucket.high)
     dates = "unknown" if bucket.dates is None else f"{bucket.dates:,}"
     count = f"{bucket.n:,} forecasts on {dates} dates"
     if bucket.status == "insufficient":
-        return f"{span}: predicted {pct(bucket.mean_predicted)}; insufficient evidence ({count})"
+        return f"{shown}: predicted {pct(bucket.mean_predicted)}; insufficient evidence ({count})"
     note = ", low sample" if bucket.status == "low_sample" else ""
     return (
-        f"{span}: predicted {pct(bucket.mean_predicted)}, happened {pct(bucket.observed)} "
-        f"(90% interval {_range(bucket.ci_low, bucket.ci_high)}; {count}{note})"
+        f"{shown}: predicted {pct(bucket.mean_predicted)}, happened {pct(bucket.observed)} "
+        f"(90% interval {span(bucket.ci_low, bucket.ci_high)}; {count}{note})"
     )
 
 
-def _group_label(group) -> str:
+def group_label(group) -> str:
     return (
         f"{_target_words(group.target)}, {WORDS[group.category]}: {group.estimator} "
         f"(model {group.model_version}), band {band(group.band)}, {group.n:,} forecasts on "
@@ -393,7 +400,7 @@ def _group_label(group) -> str:
     )
 
 
-def _rolling_text(entry) -> str:
+def rolling_text(entry) -> str:
     rolling = entry.rolling
     if rolling.means is None:
         text = (
@@ -442,8 +449,8 @@ def render_text(briefing: Briefing) -> str:
         "PREMARKET BRIEFING (experimental, Stock Probability Lab)"
         if briefing.state == "premarket"
         else "BRIEFING PREVIEW (experimental, Stock Probability Lab)",
-        f"For {_market(briefing)} · target 08:30 New York time",
-        f"Prepared {_prepared(briefing)} · {briefing.state_words}",
+        f"For {market(briefing)} · target 08:30 New York time",
+        f"Prepared {prepared(briefing)} · {briefing.state_words}",
         f"Data: {_data_words(briefing)}",
         "",
     ]
@@ -456,7 +463,7 @@ def render_text(briefing: Briefing) -> str:
         out += ["AT A GLANCE (next session; change since the prior forecast, in points)"]
         out.append(f"  {'Stock':<12}{'▲ Incr.':>8}{'● Stab.':>8}{'▼ Decr.':>8}   Change")
         for stock in briefing.stocks:
-            cells = _glance(stock)
+            cells = glance(stock)
             if isinstance(cells, str):
                 out += _wrap(f"  {stock.symbol:<12}{cells}", hang=" " * 14)
             else:
@@ -486,9 +493,9 @@ def render_text(briefing: Briefing) -> str:
             for category in CATEGORIES:
                 value = pct(getattr(session.probabilities, category))
                 line = f"  {MARKERS[category]} {WORDS[category]:<9}{value:>5}"
-                track = _track_text(stock, category)
+                track = track_text(stock, category)
                 out += _wrap(line + (f"  [{track}]" if track else ""), hang=" " * 20)
-            out += _wrap(f"Change: {_change_text(stock)}", "  ")
+            out += _wrap(f"Change: {change_text(stock)}", "  ")
             out.append(
                 f"  Five sessions (each session's own move, band {band(stock.lineage.band)}):"
             )
@@ -499,11 +506,11 @@ def render_text(briefing: Briefing) -> str:
                 )
                 out.append(f"    {s.session}  {cells}")
             if stock.cumulative is not None:
-                out += _wrap(f"Five-session total: {_total(stock)}", "  ")
-        for label, text in _detail_rows(stock):
+                out += _wrap(f"Five-session total: {total_words(stock)}", "  ")
+        for label, text in detail_rows(stock):
             out += _wrap(f"{label}: {text}", "  ", hang="    ")
     out += ["", "RELIABILITY", "Development evidence"]
-    for line in _development_lines(briefing):
+    for line in development_lines(briefing):
         out += _wrap(line, "  ")
     found = briefing.reliability.development
     if found is not None and found.buckets:
@@ -519,11 +526,11 @@ def render_text(briefing: Briefing) -> str:
     for group in prospective.groups:
         if group.target != "1":
             continue
-        out += _wrap(f"{_group_label(group)} (intervals: {PROSPECTIVE_METHOD}):", "  ")
+        out += _wrap(f"{group_label(group)} (intervals: {PROSPECTIVE_METHOD}):", "  ")
         for bucket in group.buckets:
             out += _wrap(_bucket_line(bucket, development=False), "    ")
     for entry in prospective.rolling:
-        out += _wrap(_rolling_text(entry), "  ")
+        out += _wrap(rolling_text(entry), "  ")
     out += _wrap(f"Compared with B1: {prospective.comparison_words}", "  ")
     for note in (*briefing.reliability.notes, INTERVAL_NOTE):
         out += _wrap(note, "  ")
@@ -661,7 +668,7 @@ def _marked(category: str) -> str:
 def _glance_html(briefing: Briefing) -> str:
     rows = []
     for stock in briefing.stocks:
-        cells = _glance(stock)
+        cells = glance(stock)
         head = f'<th scope="row">{_e(stock.symbol)}</th>'
         if isinstance(cells, str):
             tone = STATUS_TONE[stock.status]
@@ -682,7 +689,7 @@ def _probability_rows(stock: StockBriefing) -> str:
     rows = []
     for category in CATEGORIES:
         value = getattr(session.probabilities, category)
-        track = _track_text(stock, category)
+        track = track_text(stock, category)
         rows.append(
             f'<div class="prob"><span class="label">{_marked(category)}</span>'
             f'<span class="value">{_e(pct(value))}</span>'
@@ -718,17 +725,17 @@ def _stock_html(stock: StockBriefing) -> str:
         ),
         f'<p class="{words_class}">{_e(stock.words)}</p>',
     ]
-    rows = _detail_rows(stock)
+    rows = detail_rows(stock)
     if stock.next_session is not None and stock.lineage is not None:
         parts.append(
             f'<p class="subtle">Next session {_e(stock.next_session.session)}, band '
             f"{_e(band(stock.lineage.band))}; that day's own move</p>"
             f'<div class="probs">{_probability_rows(stock)}</div>'
-            f'<p class="change"><strong>Change.</strong> {_e(_change_text(stock))}</p>'
+            f'<p class="change"><strong>Change.</strong> {_e(change_text(stock))}</p>'
             f"{_five_table(stock)}"
         )
         if stock.cumulative is not None:
-            rows.insert(0, ("Five-session total", _total(stock)))
+            rows.insert(0, ("Five-session total", total_words(stock)))
     parts.append(
         '<dl class="rows">'
         + "".join(f"<dt>{_e(label)}</dt><dd>{_e(text)}</dd>" for label, text in rows)
@@ -737,35 +744,54 @@ def _stock_html(stock: StockBriefing) -> str:
     return "".join(parts)
 
 
-def _bucket_table(caption: str, buckets: Iterable, method: str) -> str:
+BUCKET_COLUMNS = (
+    "Predicted range",
+    "Mean predicted",
+    "Happened",
+    "90% interval",
+    "Forecasts",
+    "Dates",
+)
+
+
+def bucket_rows(buckets: Iterable) -> list[tuple[str, ...]]:
+    """One row of words per reliability bucket, in BUCKET_COLUMNS order (both pages')."""
+
     rows = []
     for bucket in buckets:
         if bucket.status == "insufficient":
             happened, interval = "Insufficient evidence", DASH
         else:
-            happened, interval = pct(bucket.observed), _range(bucket.ci_low, bucket.ci_high)
+            happened, interval = pct(bucket.observed), span(bucket.ci_low, bucket.ci_high)
         dates = DASH if bucket.dates is None else f"{bucket.dates:,}"
         rows.append(
-            f'<tr><th scope="row">{_range(bucket.low, bucket.high)}</th>'
-            f'<td class="num">{_e(pct(bucket.mean_predicted))}</td>'
-            f'<td class="num">{_e(happened)}</td><td class="num">{_e(interval)}</td>'
-            f'<td class="num">{bucket.n:,}</td><td class="num">{dates}</td></tr>'
+            (
+                span(bucket.low, bucket.high),
+                pct(bucket.mean_predicted),
+                happened,
+                interval,
+                f"{bucket.n:,}",
+                dates,
+            )
         )
-    head = [
-        ("Predicted range", False),
-        ("Mean predicted", True),
-        ("Happened", True),
-        ("90% interval", True),
-        ("Forecasts", True),
-        ("Dates", True),
+    return rows
+
+
+def _bucket_table(caption: str, buckets: Iterable, method: str) -> str:
+    rows = [
+        f'<tr><th scope="row">{_e(row[0])}</th>'
+        + "".join(f'<td class="num">{_e(cell)}</td>' for cell in row[1:])
+        + "</tr>"
+        for row in bucket_rows(buckets)
     ]
+    head = [(BUCKET_COLUMNS[0], False), *((name, True) for name in BUCKET_COLUMNS[1:])]
     return _table(f"{caption} Interval: {method}.", head, rows)
 
 
 def _reliability_html(briefing: Briefing) -> str:
     section = briefing.reliability
     parts = ["<h2>Reliability</h2>", "<h3>Development evidence</h3>"]
-    parts += [f"<p>{_e(line)}</p>" for line in _development_lines(briefing)]
+    parts += [f"<p>{_e(line)}</p>" for line in development_lines(briefing)]
     found = section.development
     if found is not None and found.buckets:
         parts.append(
@@ -780,40 +806,49 @@ def _reliability_html(briefing: Briefing) -> str:
     parts += ["<h3>Prospective record</h3>", f"<p>{_e(prospective.words)}</p>"]
     for group in prospective.groups:
         if group.target == "1":
-            parts.append(
-                _bucket_table(f"{_group_label(group)}.", group.buckets, PROSPECTIVE_METHOD)
-            )
+            parts.append(_bucket_table(f"{group_label(group)}.", group.buckets, PROSPECTIVE_METHOD))
     for entry in prospective.rolling:
-        parts.append(f"<p>{_e(_rolling_text(entry))}</p>")
+        parts.append(f"<p>{_e(rolling_text(entry))}</p>")
     parts.append(f"<p><strong>Compared with B1.</strong> {_e(prospective.comparison_words)}</p>")
     parts += [f'<p class="subtle">{_e(note)}</p>' for note in (*section.notes, INTERVAL_NOTE)]
     return "".join(parts)
 
 
-def _facts(briefing: Briefing) -> str:
+def facts(briefing: Briefing) -> list[tuple[str, str]]:
+    """The briefing's header facts as (label, text): the HTML page's, and the Lab page's."""
+
     rows: list[tuple[str, str]] = [
         ("Data", _data_words(briefing)),
         ("Freshness", _freshness(briefing)),
         ("Model", ", ".join(briefing.model_versions) or DASH),
         ("Updates", briefing.latest_update.words),
         ("Ledger", _ledger(briefing)),
-        ("Prepared", f"{_prepared(briefing)}. {briefing.state_words}."),
+        ("Prepared", f"{prepared(briefing)}. {briefing.state_words}."),
         ("Calendar", briefing.calendar_id),
     ]
     if briefing.excluded:
         rows.append(("Excluded", f"By the owner's choice: {', '.join(briefing.excluded)}"))
+    return rows
+
+
+def _facts(briefing: Briefing) -> str:
     return (
         '<dl class="facts">'
-        + "".join(f"<dt>{_e(k)}</dt><dd>{_e(v)}</dd>" for k, v in rows)
+        + "".join(f"<dt>{_e(k)}</dt><dd>{_e(v)}</dd>" for k, v in facts(briefing))
         + "</dl>"
     )
+
+
+def blocking(briefing: Briefing, warning: str) -> bool:
+    """Whether a notice is the failed ledger check, which withholds every probability."""
+
+    return not briefing.ledger.verified and warning.startswith(LEDGER_FAILED)
 
 
 def _notices(briefing: Briefing) -> str:
     items = []
     for warning in briefing.warnings:
-        severe = not briefing.ledger.verified and warning.startswith("The ledger check failed")
-        tone = "invalid-blocked" if severe else "notice"
+        tone = "invalid-blocked" if blocking(briefing, warning) else "notice"
         items.append(f'<li class="tone-{tone}">{_e(warning)}</li>')
     return f'<ul class="notices">{"".join(items)}</ul>' if items else ""
 
@@ -828,7 +863,7 @@ def render_html(briefing: Briefing, theme: Theme) -> str:
         else ""
     )
     heading = "Premarket briefing" if briefing.state == "premarket" else "Briefing preview"
-    glance = (
+    at_a_glance = (
         f"<h2>At a glance</h2>{_glance_html(briefing)}"
         if briefing.stocks
         else '<p class="muted">The watchlist is empty: there is nothing to brief.</p>'
@@ -852,12 +887,12 @@ def render_html(briefing: Briefing, theme: Theme) -> str:
 <header>
 <p class="eyebrow">Stock Probability Lab · Experimental</p>
 <h1>{heading}</h1>
-<p class="dateline">For <strong>{_e(_market(briefing))}</strong> · target 08:30 New York time ·
+<p class="dateline">For <strong>{_e(market(briefing))}</strong> · target 08:30 New York time ·
 prepared {local:%H:%M}</p>
 {banner}
 </header>
 {_notices(briefing)}
-{glance}
+{at_a_glance}
 {_facts(briefing)}
 {"<h2>Stocks</h2>" + stocks if stocks else ""}
 {_reliability_html(briefing)}
