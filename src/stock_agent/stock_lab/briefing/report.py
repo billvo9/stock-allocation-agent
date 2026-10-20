@@ -81,7 +81,7 @@ from stock_agent.stock_lab.traps import UNRESOLVED, TrapRule, evaluate_traps, tr
 from stock_agent.stock_lab.view import run_words
 
 SCHEMA = "stock_lab_premarket_briefing"
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"  # 1.1 adds the comparison's persistence check and its caveat
 FRESH = "fresh"
 STALE = "stale"
 UNAVAILABLE = "unavailable"
@@ -334,6 +334,7 @@ class ProspectiveEvidence:
     rolling: tuple[RollingGroup, ...]
     comparison: rel.MatchedComparison | None
     comparison_words: str
+    comparison_caveat: str | None  # the persistence caveat, only when the flag is on
 
 
 @dataclass(frozen=True)
@@ -1092,6 +1093,7 @@ def _prospective(
     current = max(live, key=lambda f: (f["as_of_session"], f["created_at"], f["forecast_id"]),
                   default=None)  # fmt: skip
     comparison, comparison_words = _comparison(found, forecasts, scores, replaced, current)
+    caveat = None if comparison is None else _persistence_caveat(comparison)
     return ProspectiveEvidence(
         data_class=data_class,
         status=status,
@@ -1104,6 +1106,7 @@ def _prospective(
         rolling=tuple(rolling),
         comparison=comparison,
         comparison_words=comparison_words,
+        comparison_caveat=caveat,
     )
 
 
@@ -1164,7 +1167,7 @@ def _comparison(found, forecasts, scores, replaced, current):
             )
         words = (
             f"{head} {key[2]} minus B1 (negative means {key[2]} scored better, since lower is "
-            f"better; intervals: t on {found_comparison.blocks} blocks of 20 dates): "
+            f"better; intervals: t on {found_comparison.blocks} blocks of 20 or more dates): "
             f"{'; '.join(parts)}."
         )
     elif found_comparison.status == rel.OUTCOME_MISMATCH:
@@ -1176,6 +1179,26 @@ def _comparison(found, forecasts, scores, replaced, current):
             "of its own before a difference is reported."
         )
     return found_comparison, words + tail
+
+
+def _persistence_caveat(comparison: rel.MatchedComparison) -> str | None:
+    """
+    The caveat line when the comparison's persistence flag is on (the owner's
+    wording, 2026-10-20). It is a reading aid only: no number, interval or
+    decision depends on it.
+    """
+
+    if not comparison.persistence_suspected:
+        return None
+    (ratio,) = (d.se_ratio for d in comparison.differences if d.score == rel.PERSISTENCE_SCORE)
+    return (
+        "Caveat (reported only): for RPS, the standard error from blocks of "
+        f"{rel.PERSISTENCE_BLOCK} dates is {ratio:.2f} times the one from blocks of "
+        f"{rel.COMPARISON_BLOCK}. The differences may stay alike for longer than "
+        f"{rel.COMPARISON_BLOCK} dates, or may have shifted during the record, so the "
+        f"{rel.LEVEL:.0%} intervals may be too narrow. This changes no number above and no "
+        "decision."
+    )
 
 
 def _development(

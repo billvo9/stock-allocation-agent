@@ -251,7 +251,9 @@ def test_synthetic_records_never_appear_in_a_real_briefing(lab):
     assert found.reliability.prospective.scored_targets == 0
 
 
-def _scored_history(lab, symbols, days, *, estimator="B1", run_id=None, **forecast):
+def _scored_history(lab, symbols, days, *, estimator="B1", run_id=None, later=None, **forecast):
+    """`later`: forecast fields that replace `forecast`'s from the middle session on."""
+
     sessions = [d.strftime("%Y-%m-%d") for d in pd.bdate_range(end=FRIDAY, periods=days)]
     previous = {}
     for index, session in enumerate(sessions):
@@ -259,6 +261,7 @@ def _scored_history(lab, symbols, days, *, estimator="B1", run_id=None, **foreca
             if symbol in previous:
                 outcome = (index + len(symbol)) % 3
                 lab.score(previous[symbol], "1", outcome, at=ny(session, "20:05"))
+        fields = {**forecast, **(later or {})} if index >= days // 2 else forecast
         for symbol in symbols:
             previous[symbol] = lab.forecast(
                 symbol,
@@ -267,7 +270,7 @@ def _scored_history(lab, symbols, days, *, estimator="B1", run_id=None, **foreca
                 p=(0.2, 0.15, 0.65),
                 estimator=estimator,
                 evaluation_run_id=run_id,
-                **forecast,
+                **fields,
             )
 
 
@@ -710,6 +713,60 @@ def test_b1_beside_a_challenger_gives_a_matched_comparison(lab):
     assert "matched forecasts" in prospective.comparison_words
     assert "it never promotes a model" in prospective.comparison_words
     assert "negative means B3 scored better" in prospective.comparison_words
+    # A remainder joins the last whole block, so a block may hold up to 39 dates.
+    assert f"t on {found.blocks} blocks of 20 or more dates" in prospective.comparison_words
+    assert found.long_blocks == 2 and found.persistence_suspected is None
+    assert prospective.comparison_caveat is None
+
+
+B1_BEFORE = ((0.3, 0.4, 0.3), (0.3, 0.4, 0.3))
+B1_AFTER = ((0.2, 0.15, 0.65), (0.3, 0.4, 0.3))  # from the middle on, B1 forecasts as B3 does
+
+
+def _shifted(lab):
+    lab.store.record_evaluation(_evaluation("S-dev3", "B3"))
+    _scored_history(lab, ["DEMO_CALM", "DEMO_SWING"], 170, estimator="B3", run_id="S-dev3",
+                    b1=B1_BEFORE, later={"b1": B1_AFTER})  # fmt: skip
+    return build(lab, MONDAY, tickers=["DEMO_CALM", "DEMO_SWING"])
+
+
+def test_a_difference_that_shifts_mid_record_carries_the_persistence_caveat(lab):
+    briefing = _shifted(lab)
+    prospective = briefing.reliability.prospective
+    found = prospective.comparison
+    assert found.status == "ok" and found.dates >= 160 and found.long_blocks >= 4
+    (rps_row,) = [d for d in found.differences if d.score == "rps"]
+    assert rps_row.se_ratio > report.rel.PERSISTENCE_THRESHOLD and found.persistence_suspected
+    assert prospective.comparison_caveat == (
+        "Caveat (reported only): for RPS, the standard error from blocks of 40 dates is "
+        f"{rps_row.se_ratio:.2f} times the one from blocks of 20. The differences may stay alike "
+        "for longer than 20 dates, or may have shifted during the record, so the 90% intervals "
+        "may be too narrow. This changes no number above and no decision."
+    )
+    flat = " ".join(render_text(briefing).split())  # the renderer wraps lines
+    assert prospective.comparison_caveat in flat
+    assert flat.index("Compared with B1:") < flat.index("Caveat (reported only)")
+    document = briefing_document(briefing)["reliability"]["prospective"]
+    assert document["comparison"]["persistence_suspected"] is True
+    assert document["comparison_caveat"] == prospective.comparison_caveat
+
+
+def test_the_persistence_caveat_never_changes_a_number_or_the_words(lab, monkeypatch):
+    import functools
+
+    flagged = _shifted(lab).reliability.prospective
+    monkeypatch.setattr(
+        report.rel,
+        "matched_comparison",
+        functools.partial(report.rel.matched_comparison, threshold=float("inf")),
+    )
+    plain = build(lab, MONDAY, tickers=["DEMO_CALM", "DEMO_SWING"]).reliability.prospective
+    assert (
+        flagged.comparison.persistence_suspected and plain.comparison.persistence_suspected is False
+    )
+    assert plain.comparison_caveat is None
+    assert flagged.comparison.differences == plain.comparison.differences
+    assert flagged.comparison_words == plain.comparison_words
 
 
 def test_too_few_matched_dates_say_insufficient(lab):

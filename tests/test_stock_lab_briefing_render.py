@@ -8,6 +8,7 @@ state. Synthetic fixtures.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import re
 from pathlib import Path
@@ -202,3 +203,24 @@ def test_the_page_scrolls_wide_tables_and_scopes_every_header(states):
     assert tables >= 2 and page.count('<div class="scroll"><table><caption>') == tables
     assert '<th scope="col"' in page and '<th scope="row">' in page and "<th>" not in page
     assert 'class="bar" aria-hidden="true"' in page and 'role="img"' not in page
+
+
+def test_a_comparison_caveat_follows_the_comparison_in_both_renderings(states):
+    briefing = states["synthetic"]
+    section = briefing.reliability
+    caveat = "Caveat (reported only): for RPS, <blocks> of 40 & 20."
+    flagged = dataclasses.replace(
+        briefing,
+        reliability=dataclasses.replace(
+            section,
+            prospective=dataclasses.replace(section.prospective, comparison_caveat=caveat),
+        ),
+    )
+    text = " ".join(render_text(flagged).split())
+    assert text.index("Compared with B1:") < text.index(caveat)
+    page = render_html(flagged, THEME)
+    escaped = "Caveat (reported only): for RPS, &lt;blocks&gt; of 40 &amp; 20."
+    assert page.index("Compared with B1.") < page.index(escaped)
+    assert section.prospective.comparison_caveat is None
+    assert "Caveat (reported only)" not in render_text(briefing)
+    assert "Caveat (reported only)" not in render_html(briefing, THEME)
