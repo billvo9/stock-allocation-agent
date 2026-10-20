@@ -769,6 +769,50 @@ def test_the_persistence_caveat_never_changes_a_number_or_the_words(lab, monkeyp
     assert flagged.comparison_words == plain.comparison_words
 
 
+@pytest.mark.parametrize("flag", [True, False, None])
+def test_a_schema_1_1_comparison_reads_back_with_its_persistence_check(lab, monkeypatch, flag):
+    import functools
+
+    if flag is None:  # 106 dates make two blocks of 40: the check is not computed
+        lab.store.record_evaluation(_evaluation("S-dev3", "B3"))
+        _scored_history(lab, ["DEMO_CALM", "DEMO_SWING"], 106, estimator="B3", run_id="S-dev3",
+                        b1=B1_BEFORE)  # fmt: skip
+        briefing = build(lab, MONDAY, tickers=["DEMO_CALM", "DEMO_SWING"])
+    else:
+        if flag is False:
+            monkeypatch.setattr(
+                report.rel,
+                "matched_comparison",
+                functools.partial(report.rel.matched_comparison, threshold=float("inf")),
+            )
+        briefing = _shifted(lab)
+    prospective = briefing.reliability.prospective
+    found = prospective.comparison
+    assert briefing.schema_version == "1.1" and found.status == "ok"
+    assert found.persistence_suspected is flag
+    assert (found.long_blocks >= report.rel.MIN_PERSISTENCE_BLOCKS) is (flag is not None)
+    assert all((d.se_long is None) is (flag is None) for d in found.differences)
+    assert all((d.se_ratio is None) is (flag is None) for d in found.differences)
+    assert (prospective.comparison_caveat is None) is (flag is not True)
+    document = json.loads(json.dumps(briefing_document(briefing), allow_nan=False))
+    assert report.briefing_from_document(document) == briefing
+
+
+def test_a_copy_written_as_schema_1_0_is_refused(lab):
+    document = briefing_document(_shifted(lab))
+    prospective = document["reliability"]["prospective"]
+    del prospective["comparison_caveat"]  # a 1.0 copy has none of the 1.1 fields
+    for field in ("long_blocks", "persistence_suspected"):
+        del prospective["comparison"][field]
+    for difference in prospective["comparison"]["differences"]:
+        del difference["se_long"], difference["se_ratio"]
+    with pytest.raises(ValueError, match="other fields"):  # labelled 1.1, laid out as 1.0
+        report.briefing_from_document(document)
+    document["schema_version"] = "1.0"
+    with pytest.raises(ValueError, match="not stock_lab_premarket_briefing 1.1"):
+        report.briefing_from_document(document)
+
+
 def test_too_few_matched_dates_say_insufficient(lab):
     lab.store.record_evaluation(_evaluation("S-dev3", "B3"))
     b1 = ((0.3, 0.4, 0.3), (0.3, 0.4, 0.3))

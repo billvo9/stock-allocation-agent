@@ -1331,7 +1331,8 @@ stable bands, estimators or model versions.
   - every stock at a glance;
   - the header facts;
   - each stock in full;
-  - reliability and the limitations.
+  - reliability, with the persistence caveat after the comparison with B1
+    when its flag is on, and the limitations.
 - **Same words as the email.** The words are the renderer's own (`render`
   exposes them), and every category is written beside its marker
   ("▲ Increase").
