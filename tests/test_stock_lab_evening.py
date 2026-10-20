@@ -78,10 +78,14 @@ def _run(lab, *, record_it, now=None, tickers=TICKERS):
     )  # fmt: skip
 
 
-def test_nothing_is_activated():
-    assert evening.ACTIVATED_MODELS == frozenset()
-    with pytest.raises(evening.NotActivated):
-        evening.check_activated("0" * 64)
+def test_only_the_owner_activated_model_is_activated():
+    # Decision A4 (2026-10-20): exactly this frozen model, nothing else.
+    activated = "2b6cd0c1a52f5ecfc16d6c8e221956d6fd23093826618e895949ac62e7fa65e7"
+    assert evening.ACTIVATED_MODELS == frozenset({activated})
+    evening.check_activated(activated)
+    for other in ("0" * 64, activated[:-1] + "0", activated[:16]):
+        with pytest.raises(evening.NotActivated):
+            evening.check_activated(other)
 
 
 def test_recording_or_writing_scores_is_refused_for_a_model_not_activated(lab, monkeypatch):

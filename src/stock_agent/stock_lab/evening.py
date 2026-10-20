@@ -8,11 +8,13 @@ scores. The owner-run daily script calls it only on its real path.
 
 Activation (decision A4)
     A real forecast is recorded only for a registered frozen model whose id
-    is in ACTIVATED_MODELS. It is empty: the owner's explicit go, after
-    validated data, the frozen registered model, verified decision timestamps
-    and a successful dry run, is recorded (with the owner's words in
-    docs/PROJECT_STATE.md) in the reviewed change that adds the id. A dry run
-    computes everything and records nothing.
+    is in ACTIVATED_MODELS. Each id is added by a reviewed change that records
+    the owner's explicit go, after validated data, the frozen registered
+    model, verified decision timestamps and a successful dry run, with the
+    owner's words in docs/PROJECT_STATE.md. The owner activated model
+    2b6cd0c1a52f5ecf (B1, half-life 252, frozen_long_run) for AMD, MRVL, MU
+    and NVDA on 2026-10-20. A dry run computes everything and records
+    nothing.
 
 One evening, for each watched stock (`forecast_watchlist`)
     1. the expected session: the caller's (the last session whose close is at
@@ -67,8 +69,11 @@ from stock_agent.stock_lab.store import StockLabStore, StoreRefused, stamp
 
 Sessions = Callable[[pd.Timestamp, pd.Timestamp], pd.DatetimeIndex]
 
-# Decision A4: the registered frozen models the owner has activated (empty: none).
-ACTIVATED_MODELS: frozenset[str] = frozenset()
+# Decision A4: the registered frozen models the owner has activated (2026-10-20, recorded in
+# docs/PROJECT_STATE.md). Only these ids may record real forecasts.
+ACTIVATED_MODELS: frozenset[str] = frozenset(
+    {"2b6cd0c1a52f5ecfc16d6c8e221956d6fd23093826618e895949ac62e7fa65e7"}
+)
 
 RECORDED = "recorded"
 DRY_RUN = "dry_run"

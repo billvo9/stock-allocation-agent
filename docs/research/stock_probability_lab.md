@@ -532,7 +532,7 @@ How the ledger works:
   `scripts/stock_lab_fetch_recent.py --authorized --store` (decisions A1 and
   A2), run first each evening. The daily job refuses `--authorized` and
   `--inference-window`.
-- **The real path** (`stock_lab.evening`, built; activation pending, A4) is
+- **The real path** (`stock_lab.evening`, built; one model activated 2026-10-20, A4) is
   described in "The real evening job" (section 7).
 
 **The synthetic replay** (`replay`, `--demo-replay N`):
@@ -615,7 +615,7 @@ by the simulated size checks (section 5) and was confirmed on 2026-10-19.
 | A1 | Tiingo Starter and the private watchlist store: approved | **Staged:** inspection and persistence are separate. The first live operation is the read-only command below, run only after the owner confirms the token is configured and authorizes that exact command. The 30-ticker cap holds. No vendor-adjusted fields, no unauthorized history, no redistribution. After a successful coverage and corporate-action audit, storage (`--store`) is a separate approval. | awaiting the token and authorization of the read-only command |
 | A2 | Trailing 252-session inference window: approved in principle | Fit, tune, select and calibrate only on eligible pre-2025 data. Recent observations from the protected period serve only as inputs to a previously frozen model, kept in a separately controlled prospective/inference store. Protected outcomes are never used for retrospective selection, training or backtest claims. The sealed ETF period and its protections are unchanged. Strict as-of and retrieval-time records. A scoped authorization, not an unlocking of the 2025+ holdout. | built on fixtures: the inference store, the frozen-model reader and the recent-window fetch (below); nothing fetched or stored |
 | A3 | Exploratory walk-forward evaluation of the saved watchlist on pre-2025 history: approved | Marked hindsight-selected and non-confirmatory. Every challenger is compared with B0/B1, with proper scores, calibration, stock-level coverage, uncertainty and multiple-comparison treatment. No claim of profitable trading or reliable direction. | runnable after storage (`scripts/stock_lab_evaluate.py --real --authorized-evaluation`); `--freeze` also registers the frozen model (below) |
-| A4 | The write-once forecast and scoring protocol: approved | Activation needs successful data validation, a frozen registered model, verified decision timestamps and a successful end-to-end dry run. No backdating, rewriting of probabilities, or scoring of outcomes that existed before a forecast. Daily updates record skipped tickers, stale observations, model failures and missing outcomes in Model Health. Separate from ETF OD16 and PPO promotion. | protocol built; activation pending |
+| A4 | The write-once forecast and scoring protocol: approved | Activation needs successful data validation, a frozen registered model, verified decision timestamps and a successful end-to-end dry run. No backdating, rewriting of probabilities, or scoring of outcomes that existed before a forecast. Daily updates record skipped tickers, stale observations, model failures and missing outcomes in Model Health. Separate from ETF OD16 and PPO promotion. | protocol built; model `2b6cd0c1a52f5ecf` activated 2026-10-20 |
 | A5 | Version-1 definitions: approved | Daily band ±0.5%. Five-session band ±0.5% × √5 ≈ ±1.12%, shown as different. A Stable session ends a streak by default, and the pause rule is identified whenever used. The bull-trap setup (10% drawdown, 5% rebound, prior 20-session high, 10-session window) may be used for research. **The failure margin f awaits confirmation** (formula and example in section 5) before real-data risk flags. Price returns stay distinct from total returns, and ex-dividend moves are identified. | f to confirm |
 | A6 | Recent observed prices on the private dashboard: supported | Only after the retrieval and storage permissions. An isolated descriptive reader that cannot expose protected outcomes to development, training, tuning or backtesting. Recent observed history is kept distinct from research evidence, and current forecasts from completed outcomes. The holdout policies are not modified. | built on fixtures: the descriptive reader and the Recent prices tab (below), which shows an empty state until something is stored |
 | A7 | Which test decides "beats B1": the fold-block t at a one-sided 2.5% family level, confirmed 2026-10-19 | t(folds − 1) on the yearly fold means; Holm across B0, B2, B3 and M1 at 2.5%; simplest-first steps (B0, B3, B2, M1) at 2.5%; B1 stays the default. Newey-West (lag 10) and the block bootstrap are reported only | implemented (`evaluation.DECISION_RULE`, evaluation schema 1.3); the evidence is in `docs/research/stock_lab_a7_decision.md` |
@@ -905,10 +905,13 @@ frozen model's running state is a function of the frozen parameters and one fore
   (`state_rule_not_approved`).
 
 
-### The real evening job (built; activation pending, A4)
+### The real evening job (built; one model activated 2026-10-20, A4)
 
-Built on fixtures. Nothing is fetched, stored or activated, and no real
-forecast exists. The owner's choices of 2026-10-19 (below and in
+Built on fixtures. On 2026-10-20 the owner activated one frozen model,
+`2b6cd0c1a52f5ecf` (B1, half-life 252, `frozen_long_run`), for AMD, MRVL, MU and
+NVDA, after storing the audited history and recent window and freezing that
+model (`docs/PROJECT_STATE.md`). Its first real forecast follows the first
+successful dry run after 20:00 New York. The owner's choices of 2026-10-19 (below and in
 `docs/PROJECT_STATE.md`): B1 is recorded beside every forecast, and outcomes
 are read from the inference store.
 
