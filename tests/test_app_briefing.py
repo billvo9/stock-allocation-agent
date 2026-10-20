@@ -3,7 +3,8 @@ The Lab's Premarket Briefing page under AppTest: the latest written briefing
 is shown as written, real or synthetic demo and never both, labelled; every
 category is written in words beside its marker; previews, unreadable files,
 refused folders, a briefing that is not today's and the delivery log's states
-are said in words; text from a file is shown literally; the page writes and
+are said in words; the comparison with B1 carries its persistence caveat only
+when its flag is on; text from a file is shown literally; the page writes and
 creates nothing; and every state passes the advice scan (with the trading
 words of the briefing's own renderer tests). Synthetic fixtures and the
 made-up ticker SYNTH; nothing leaves the machine.
@@ -12,6 +13,7 @@ made-up ticker SYNTH; nothing leaves the machine.
 from __future__ import annotations
 
 import ast
+import functools
 import io
 import json
 import re
@@ -19,16 +21,18 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from stock_lab_briefing_helpers import REAL_TEST_TICKER, build, ny
+from stock_lab_briefing_helpers import REAL_TEST_TICKER, Lab, build, ny
 from streamlit.testing.v1 import AppTest
 from test_app_destinations import text_of
 from test_stock_lab_briefing_render import ADVICE_PATTERNS
+from test_stock_lab_briefing_report import _shifted
 from test_stock_lab_briefing_stored import private, put, real_lab, script, snapshot, write_real
 
 from stock_agent.app import briefing as page_module
 from stock_agent.app import briefing_wording as words
 from stock_agent.app import navigation, wording
-from stock_agent.stock_lab.briefing import render, stored
+from stock_agent.app.prose import literal
+from stock_agent.stock_lab.briefing import render, report, stored
 from stock_agent.stock_lab.briefing.delivery import DeliveryLog, deliver_once
 from stock_agent.stock_lab.briefing.delivery import RenderedBriefing as Rendered
 from stock_agent.stock_lab.briefing.report import briefing_document
@@ -48,6 +52,25 @@ def demo_files(tmp_path_factory) -> Path:
     assert script.main(["--demo", "4", "--preview", "--directory", str(directory)],
                        out=io.StringIO()) == 0  # fmt: skip
     return directory
+
+
+@pytest.fixture(scope="module")
+def compared(tmp_path_factory) -> dict:
+    """
+    One synthetic matched comparison with B1 whose difference shifts mid-record,
+    built with its persistence flag on (as it is) and forced off (an infinite
+    threshold), by flag.
+    """
+
+    flagged = _shifted(Lab(tmp_path_factory.mktemp("flagged")))
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(
+            report.rel,
+            "matched_comparison",
+            functools.partial(report.rel.matched_comparison, threshold=float("inf")),
+        )
+        plain = _shifted(Lab(tmp_path_factory.mktemp("plain")))
+    return {True: flagged, False: plain}
 
 
 @pytest.fixture
@@ -316,6 +339,36 @@ def test_an_empty_watchlist_says_so(home, tmp_path):
     write_document(home, briefing)
     app = page()
     assert words.EMPTY_WATCHLIST in read(app) and not app.expander
+
+
+def _texts(app: AppTest) -> list[tuple[str, str]]:
+    """The page's markdown and captions as (type, source), in the order shown."""
+
+    return [(node.type, node.value) for node in app.main if node.type in ("markdown", "caption")]
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_the_persistence_caveat_follows_the_comparison_only_when_flagged(home, compared, flag):
+    briefing = compared[flag]
+    prospective = briefing.reliability.prospective
+    assert prospective.comparison.persistence_suspected is flag
+    assert (prospective.comparison_caveat is not None) is flag
+    write_document(home, briefing)
+    app = page()
+    text = read(app)  # the advice scan
+    assert prospective.comparison_words in text
+    shown = _texts(app)
+    at = shown.index(("markdown", f"**{words.COMPARED}** {literal(prospective.comparison_words)}"))
+    first_note = ("caption", literal((*briefing.reliability.notes, render.INTERVAL_NOTE)[0]))
+    if flag:
+        assert shown[at + 1 : at + 3] == [
+            ("markdown", literal(prospective.comparison_caveat)),
+            first_note,
+        ]
+        assert text.count(prospective.comparison_caveat) == 1  # as stored, never reworded
+    else:
+        assert shown[at + 1] == first_note
+        assert "Caveat (reported only)" not in text
 
 
 def test_text_from_a_file_is_shown_literally(home, tmp_path):

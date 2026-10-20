@@ -276,6 +276,8 @@ def _reliability(briefing: Briefing) -> None:
     for entry in prospective.rolling:
         say(literal(rendering.rolling_text(entry)))
     say(f"**{words.COMPARED}** {literal(prospective.comparison_words)}")
+    if prospective.comparison_caveat:  # only when the persistence flag is on, as written
+        say(literal(prospective.comparison_caveat))
     for note in (*part.notes, rendering.INTERVAL_NOTE):
         say(literal(note), "caption")
 
