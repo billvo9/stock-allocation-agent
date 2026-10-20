@@ -59,6 +59,22 @@ def make_bars(first: str, last: str, *, stock: str = "DEMO_CALM", shift: float =
     return frame
 
 
+STEADY_FROM = "2025-01-01"
+
+
+def steady_bars(first: str, last: str, *, stock: str = "DEMO_CALM"):
+    """
+    Bars for every weekday in [first, last] from one fixed series that starts on STEADY_FROM, so
+    two batches agree on every session they share (a later retrieval only appends), unlike
+    make_bars, which renumbers the demo series for each request.
+    """
+
+    days = weekdays(STEADY_FROM, last)
+    source = synthetic.demo_bars(stock).iloc[: len(days)].copy().reset_index(drop=True)
+    source["session"] = days
+    return source[source["session"] >= pd.Timestamp(first, tz="UTC")].reset_index(drop=True)
+
+
 class Clock:
     def __init__(self, now: pd.Timestamp) -> None:
         self.now = now

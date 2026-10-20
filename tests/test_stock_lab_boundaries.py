@@ -38,6 +38,8 @@ RESEARCH_SIDE = (
     "logistic",
     "predict",
     "registry",
+    "frozen_forecast",
+    "evening",
     "replay",
     "size_simulation",
     "decision_tests",

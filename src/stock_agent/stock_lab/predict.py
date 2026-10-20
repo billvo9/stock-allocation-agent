@@ -193,16 +193,28 @@ def forecast_stock(
     if data_class == "synthetic":
         limitations.insert(0, "Synthetic demo stock: not a real company.")
     refusal = None
-    daily = cumulative = usual = None
+    daily = cumulative = usual = comparator = None
     if not np.isfinite(last["ewma_vol"]):
         refusal = {"reason": "insufficient_history", "detail": "Too little history for volatility."}
     else:
-        daily, cumulative, usual = _probabilities(panel, row, model, selected)
+        frequencies = _frequencies(panel, row, model)
+        daily, cumulative, usual = _probabilities(panel, row, model, selected, frequencies)
         daily = daily / daily.sum(axis=1, keepdims=True)
         cumulative = cumulative / cumulative.sum()
-        if not (np.isfinite(daily).all() and np.isfinite(cumulative).all()):
+        # B1 on the same inputs, sessions and bands: the comparator recorded beside it.
+        b1_daily, b1_cumulative, _ = _probabilities(panel, row, model, "B1", frequencies)
+        b1_daily = b1_daily / b1_daily.sum(axis=1, keepdims=True)
+        b1_cumulative = b1_cumulative / b1_cumulative.sum()
+        values = (daily, cumulative, b1_daily, b1_cumulative)
+        if not all(np.isfinite(v).all() for v in values):
             refusal = {"reason": "estimator_unavailable", "detail": "An input was missing."}
             daily = cumulative = None
+        else:
+            comparator = {
+                "half_life": model.half_life,
+                "daily": b1_daily.tolist(),
+                "cumulative": b1_cumulative.tolist(),
+            }
     direction = last["run_direction"]
     signals = {
         "current_run": {
@@ -274,6 +286,7 @@ def forecast_stock(
         limitations=limitations,
         refusal=refusal,
         supersedes=supersedes,
+        comparator=comparator,
     )
 
 

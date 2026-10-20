@@ -33,12 +33,20 @@ INFERENCE = "stock_agent.stock_lab.inference"
 STORE_SIDE = "stock_lab/inference/"
 # Modules (relative to src/stock_agent) that may import the inference package, and
 # the only names each may import, with `from <module> import <name>`. The Lab page
-# reads recent observed prices; nothing else in the project reads the store. The
-# frozen-model reader's consumer (the forecast job) is added here, after review, in
-# the change that activates real forecasts (decision A4).
+# reads recent observed prices. The real evening job (stock_lab.evening) reads a
+# forecast's window and its outcomes: the owner chose on 2026-10-19 to score from the
+# inference store; recording stays refused until the owner activates a model (A4).
 MODULE_CONSUMERS = {
     "app/stock_lab.py": {
         f"{INFERENCE}.recent": {"RecentPrices", "read_recent"},
+    },
+    # The real evening job's frozen-model side (decision A4; reviewed 2026-10-19): a
+    # forecast's inputs through the frozen-model reader, its outcomes and each stock's
+    # newest close through the outcome reader. It never imports the writer.
+    "stock_lab/evening.py": {
+        f"{INFERENCE}.window": {"load_inference_window"},
+        f"{INFERENCE}.outcomes": {"latest_close", "read_outcomes"},
+        f"{INFERENCE}.schema": {"InferenceRefused", "default_path"},
     },
 }
 # Owner-run scripts (relative to the repository root) and their named imports.
@@ -73,6 +81,7 @@ RESEARCH_ENTRY_POINTS = (
     "stock_agent.stock_lab.logistic",
     "stock_agent.stock_lab.predict",
     "stock_agent.stock_lab.registry",
+    "stock_agent.stock_lab.frozen_forecast",
     "stock_agent.stock_lab.replay",
     "stock_agent.stock_lab.scoring",
     "stock_agent.stock_lab.job",
@@ -223,11 +232,12 @@ def test_relative_imports_are_resolved():
 
 def test_the_readers_never_import_the_writer_and_only_the_writer_writes():
     directory = PACKAGE / "stock_lab" / "inference"
-    for name in ("window.py", "recent.py", "schema.py"):
+    for name in ("window.py", "recent.py", "schema.py", "outcomes.py"):
         imported = _imports(directory / name)
         assert not [n for n in imported if n.startswith(f"{INFERENCE}.store")], name
-    recent = _imports(directory / "recent.py")
-    assert not [n for n in recent if n.startswith(f"{INFERENCE}.window")]
+    for name in ("recent.py", "outcomes.py"):
+        imported = _imports(directory / name)
+        assert not [n for n in imported if n.startswith(f"{INFERENCE}.window")], name
     writers = sorted(
         path.name
         for path in directory.glob("*.py")
@@ -244,7 +254,14 @@ def test_the_readers_never_import_the_writer_and_only_the_writer_writes():
 def test_the_package_holds_only_its_reviewed_modules():
     # A new module here would be exempt from every check above: add it deliberately.
     names = {path.name for path in (PACKAGE / "stock_lab" / "inference").glob("*.py")}
-    assert names == {"__init__.py", "schema.py", "store.py", "window.py", "recent.py"}
+    assert names == {
+        "__init__.py",
+        "schema.py",
+        "store.py",
+        "window.py",
+        "recent.py",
+        "outcomes.py",
+    }
     assert not [
         p
         for p in (PACKAGE / "stock_lab" / "inference").iterdir()
@@ -293,3 +310,68 @@ def test_the_descriptive_reader_loads_neither_the_writer_nor_the_frozen_model_re
     assert f"{INFERENCE}.store" not in loaded
     for forbidden in ("urllib.request", "http.client", "sklearn", "stock_agent.data"):
         assert not [m for m in loaded if m == forbidden or m.startswith(forbidden + ".")]
+
+
+def test_the_daily_job_reaches_the_store_only_through_the_evening_module_on_its_real_path():
+    # The owner-run daily script stays a research script when loaded (above): only its real
+    # path (--dry-run / --record-real, decision A4) imports stock_lab.evening, the reviewed
+    # consumer, and the script itself names nothing of the store.
+    script = PROJECT / "scripts" / "stock_lab_daily.py"
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    evening_imports = []
+    for function in ast.walk(tree):
+        if not isinstance(function, ast.FunctionDef):
+            continue
+        for node in ast.walk(function):
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "stock_agent.stock_lab"
+                and any(alias.name == "evening" for alias in node.names)
+            ):
+                evening_imports.append(function.name)
+    assert evening_imports == ["_real"]
+    whole = [
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name.startswith("stock_agent.stock_lab.evening")
+    ]
+    assert whole == []  # never `import stock_agent.stock_lab.evening` either
+    top_level = [n for n in tree.body if isinstance(n, ast.Import | ast.ImportFrom)]
+    assert not [
+        n for n in top_level if isinstance(n, ast.ImportFrom) and "evening" in (n.module or "")
+    ]
+    assert not [
+        alias.name for n in top_level if isinstance(n, ast.ImportFrom) for alias in n.names
+        if alias.name == "evening"
+    ]  # fmt: skip
+    assert "scripts/stock_lab_daily.py" in RESEARCH_SCRIPTS
+    loaded = _loaded("import stock_agent.stock_lab.evening")
+    assert f"{INFERENCE}.store" not in loaded  # the evening module never loads the writer
+
+
+RESEARCH_MODULES = (
+    "evaluation",
+    "estimators",
+    "logistic",
+    "predict",
+    "registry",
+    "frozen_forecast",
+    "size_simulation",
+    "decision_tests",
+    "planned_simulation",
+    "features",
+    "targets",
+)
+
+
+@pytest.mark.parametrize("name", RESEARCH_MODULES)
+def test_research_code_never_reads_recorded_forecasts_or_their_scores(name):
+    # Real forecasts carry state computed from protected prices, and their scores carry
+    # protected-period outcomes; both live in the research store's ledger. Fitting, tuning,
+    # selection and evaluation code must never read them (decision A2).
+    code = _code(PACKAGE / "stock_lab" / f"{name}.py")
+    calls = (".forecasts(", ".scores(", ".forecast_symbols(", ".live_forecast(",
+             ".latest_forecast(", ".scored_keys(")  # fmt: skip
+    assert not [call for call in calls if call in code], name

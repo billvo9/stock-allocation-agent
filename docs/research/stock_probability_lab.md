@@ -520,14 +520,18 @@ How the ledger works:
 - **Freshness:** a stock whose newest close is not the expected session
   keeps its last valid forecast, labelled stale on the page. Nothing is
   invented.
-- **Until decisions A1, A2 and A4:**
+- **Without `--record-real`:**
   - the real job scores whatever is stored;
   - it records itself as `skipped` and not yet authorized, with the reason,
     and writes its Model Health input. Health reads that as not activated
     (insufficient evidence), never as a degraded job. A job that stops
-    running still fails as overdue;
-  - it refuses the real-update flags.
-- **The price update and real forecasts** are built after those approvals.
+    running still fails as overdue.
+- **The price update** is the separate, owner-run
+  `scripts/stock_lab_fetch_recent.py --authorized --store` (decisions A1 and
+  A2), run first each evening. The daily job refuses `--authorized` and
+  `--inference-window`.
+- **The real path** (`stock_lab.evening`, built; activation pending, A4) is
+  described in "The real evening job" (section 7).
 
 **The synthetic replay** (`replay`, `--demo-replay N`):
 
@@ -548,7 +552,9 @@ How the ledger works:
   - `data.stock_lab_freshness`;
   - `forecast.stock_lab_job`;
   - `forecast.stock_lab_scores` (insufficient evidence below 250 scored
-    targets; degraded when worse than the baseline; tracking only);
+    targets; degraded when worse than the baseline; tracking only; degraded
+    too when the real job reports a matured target without a stored outcome,
+    `missing_outcomes`, or an outcome it could not read, `outcomes_refused`);
   - `forecast.stock_lab_drift` (PSI, degraded above 0.25);
   - `forecast.stock_lab_ledger`.
 - Their runbook entries are in `docs/operations/runbook.md`. Public CI
@@ -767,13 +773,13 @@ default, never run.
    - batches are recorded within an hour of retrieval.
 4. Decide how a frozen model's state uses the window. Decided on 2026-10-19:
    `frozen_long_run` (below, "The frozen, registered model").
-5. Decide where scoring reads its outcomes. Scoring reads the research
-   store, which the research fetch fills only through 2024; A4 needs a
-   reader that returns only the sessions after each forecast.
-6. Approve A7 and A4: the test that decides "beats B1", the frozen
-   registered model, the verified decision timestamps and the end-to-end
-   dry run. Only A4 activates real forecasts. The daily job still refuses
-   `--inference-window` and `--record-real`.
+5. Decide where scoring reads its outcomes. Decided on 2026-10-19: the
+   inference store, through the outcome reader (below, "The real evening
+   job"); scores stay in the existing write-once ledger.
+6. Approve A4 (A7 was confirmed on 2026-10-19): the frozen registered model,
+   the verified decision timestamps and the end-to-end dry run. Only A4
+   activates real forecasts: `--record-real` refuses a model the owner has
+   not activated.
 7. Keep A3 and A7 choices independent of the recent prices. The Recent
    prices tab shows protected-period outcomes to the owner, and no code can
    stop what is seen from shaping a choice made afterwards. Settle the
@@ -866,6 +872,76 @@ frozen model's running state is a function of the frozen parameters and one fore
   read more than the 252-session window, which is outside A2.
 - The rule is recorded with the model. A real model under another rule is refused
   (`state_rule_not_approved`).
+
+
+### The real evening job (built; activation pending, A4)
+
+Built on fixtures. Nothing is fetched, stored or activated, and no real
+forecast exists. The owner's choices of 2026-10-19 (below and in
+`docs/PROJECT_STATE.md`): B1 is recorded beside every forecast, and outcomes
+are read from the inference store.
+
+**One evening** (`scripts/stock_lab_daily.py --record-real --model ID`, after
+`scripts/stock_lab_fetch_recent.py --authorized --store`):
+
+1. **Activation.** The registered frozen model must be activated by the
+   owner (`stock_lab.evening.ACTIVATED_MODELS`, empty: the owner's explicit
+   go, recorded with their words in a reviewed change). It is loaded and
+   verified (`registry.load`). `--dry-run` does everything below and records
+   nothing; activation needs one successful dry run.
+2. **Scoring first.** Every real forecast not yet fully scored is scored on
+   outcomes from the inference store (`inference.outcomes.read_outcomes`):
+   - only the as-of session and the five target sessions are read, from
+     batches retrieved and recorded by the job's clock;
+   - a target needing a session that any batch had already covered when the
+     forecast was known is never scored (`scoring.score_forecast`);
+   - a target whose session has closed by the expected session but has no
+     stored outcome yet is counted as missing, for Model Health.
+3. **Forecasts, per watched stock:**
+   - skipped when the stock is not in the frozen model, or already has a
+     forecast for the expected session (a second run never recalculates);
+   - stale when its newest stored close is older than the expected session:
+     its last forecast stays, labelled stale, and nothing is invented or
+     backfilled;
+   - refused, with the reader's reason, when its 252-session window cannot be
+     read as of the job's clock (for example after the next 09:30 open, so a
+     missed evening is never filled in later);
+   - otherwise the frozen model's forecast from that window alone
+     (`frozen_forecast.forecast_record`), recorded write-once.
+4. **The job run and Model Health:** per-stock results, each stock's newest
+   stored close (freshness), drift of the windows' inputs against the frozen
+   development reference, and the scoring counts.
+
+**What each real forecast records** (forecast schema 1.1):
+
+- the frozen estimator's five daily distributions and the separate
+  five-session total, at the model's bands;
+- the **B1 comparator**: B1's forecast on the same window, sessions and
+  bands, inside the same write-once record and ledger entry. It is never a
+  forecast of its own, never live, never in a rolling score or calibration
+  bucket, and never changes model-selection evidence; it exists only so that
+  the forecast can be compared with B1 on exactly matched outcomes;
+- the **state it was made in**: the run, momentum over 5 and 20 sessions,
+  volatility over 20 sessions and its EWMA, and the volatility regime against
+  the window's own terciles (descriptive, from the window through the as-of
+  close);
+- what followed the current run in development history (frozen with the
+  model); no trap signal while the failure margin f awaits the owner (A5);
+- the model version, the batches, the decision time and the window's gaps
+  and revisions, and the limitation that an end-of-day forecast reflects no
+  overnight news and no premarket move.
+
+**Isolation.** `stock_lab.evening` is the one reviewed module that reads the
+inference store for forecasts and scores, with named imports only
+(`tests/test_stock_lab_inference_boundaries.py`). The daily script imports it
+only on its real path, so loading the script still loads nothing from the
+store.
+
+**Still needs the owner:** the A4 go (after the data steps, the freeze and a
+dry run), and a scheduled real evening. The printed launchd job runs only the
+daily job; a real evening also needs the recent-window fetch, which needs the
+Tiingo key at run time (for example from the macOS Keychain): a credentials
+and installation decision.
 
 
 ## 8. Learning notes

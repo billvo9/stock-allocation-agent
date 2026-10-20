@@ -23,11 +23,29 @@ Modes
            the kept ledger head check (stock_lab.job): the head hash is kept
            in --ledger-head-backup, by default stock_lab_ledger_head beside
            the store (a copy kept elsewhere is stronger).
-       Until the owner records A1, A2 and A4, steps 2 and 4 are not built: the
-       job does steps 1, 3 and 5, records itself as skipped and not yet
-       authorized (Model Health reads that as not activated, never as a
-       degraded job; a run that stops still shows as overdue), and refuses
-       the flags --authorized, --inference-window and --record-real.
+       Without --record-real the job does steps 1, 3 and 5, records itself as
+       skipped and not yet authorized (Model Health reads that as not
+       activated, never as a degraded job; a run that stops still shows as
+       overdue). The price update of step 2 is the separate, owner-run
+       scripts/stock_lab_fetch_recent.py --authorized --store, run first; this
+       job refuses --authorized and --inference-window.
+    --dry-run --model ID
+                      the real path, recording nothing: it loads and verifies
+                      the registered frozen model ID (its id or an unambiguous
+                      prefix of at least 16 characters), reads each watched
+                      stock's 252-session inference window as of the expected
+                      session at this moment (only between that close's 20:00
+                      and the next 09:30 New York), computes the forecasts with
+                      B1 beside them and what scoring would write, and prints
+                      them. The end-to-end dry run that activation needs.
+    --record-real --model ID
+                      the same, recorded: the scores (outcomes from the
+                      inference store, stock_lab.evening), the forecasts
+                      (write-once; a stale stock keeps its last forecast and
+                      none is backfilled), the job run and its Model Health
+                      input. Refused unless the owner activated that model
+                      (decision A4: evening.ACTIVATED_MODELS, empty until the
+                      owner's explicit go).
 
 Scheduling: run it once a day after the availability time, for example with
 the launchd agent printed by `scripts/stock_lab_schedule.py` (the owner
@@ -36,11 +54,14 @@ installs it; nothing here installs anything).
 Usage:
     .venv/bin/python scripts/stock_lab_daily.py --demo-replay 20
     .venv/bin/python scripts/stock_lab_daily.py
+    .venv/bin/python scripts/stock_lab_daily.py --dry-run --model ID
+    .venv/bin/python scripts/stock_lab_daily.py --record-real --model ID   # after A4
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -66,13 +87,13 @@ DEFAULT_HEALTH_INPUTS = PROJECT / "reports" / "health_inputs"
 AVAILABILITY = "20:00"  # America/New_York: the job's earliest run time for a session's close
 
 
-def expected_session(now: pd.Timestamp) -> pd.Timestamp:
+def expected_session(now: pd.Timestamp, calendar=sessions) -> pd.Timestamp:
     """The last session whose close is at least AVAILABILITY old in New York at `now`."""
 
     local = now.tz_convert("America/New_York")
     hour, minute = (int(part) for part in AVAILABILITY.split(":"))
     today = pd.Timestamp(local.date())
-    candidates = sessions(today - pd.Timedelta(days=10), today)
+    candidates = calendar(today - pd.Timedelta(days=10), today)
     if len(candidates) and candidates[-1].date() == local.date():
         cutoff = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if local < cutoff:
@@ -80,14 +101,14 @@ def expected_session(now: pd.Timestamp) -> pd.Timestamp:
     return candidates[-1]
 
 
-def next_expected(now: pd.Timestamp) -> str:
+def next_expected(now: pd.Timestamp, calendar=sessions) -> str:
     """The next time a new close should be available: today's AVAILABILITY on a session
     day before it, else the next session's."""
 
     local = now.tz_convert("America/New_York")
     hour, minute = (int(part) for part in AVAILABILITY.split(":"))
     today = pd.Timestamp(local.date())
-    upcoming = sessions(today, today + pd.Timedelta(days=10))
+    upcoming = calendar(today, today + pd.Timedelta(days=10))
     for day in upcoming:
         due = pd.Timestamp(day.date(), tz="America/New_York").replace(hour=hour, minute=minute)
         if due > local:
@@ -117,18 +138,143 @@ def code_sha() -> str | None:
     return text if out.returncode == 0 and len(text) == 40 else None
 
 
+MODEL_ID = re.compile(r"[0-9a-f]{16,64}")
+
+
+def _resolve_model(store: StockLabStore, text: str | None) -> dict | None:
+    """The one registered real frozen model whose id starts with `text` (>= 16 hex)."""
+
+    if text is None or not MODEL_ID.fullmatch(text):
+        return None
+    found = [m for m in store.frozen_models(DataClass.REAL) if m["model_id"].startswith(text)]
+    return found[0] if len(found) == 1 else None
+
+
+def _percent(row: dict) -> str:
+    return " ".join(
+        f"{label} {row[key]:.0%}"
+        for label, key in (("Incr.", "p_increase"), ("Stab.", "p_stable"), ("Decr.", "p_decrease"))
+    )
+
+
+def _real(args, *, store, clock, started, out, inference_path, calendar, calendar_id, kept_head):
+    """--dry-run and --record-real (module docstring)."""
+
+    from stock_agent.stock_lab import evening, registry  # the reviewed real path (decision A4)
+
+    record = _resolve_model(store, args.model)
+    if record is None:
+        print(
+            "refused: --model must name one registered real frozen model (its id, or an "
+            "unambiguous prefix of at least 16 characters)",
+            file=out,
+        )
+        return 2
+    if args.record_real:
+        try:
+            evening.check_activated(record["model_id"])
+        except evening.NotActivated as error:
+            print(f"refused: {error}", file=out)
+            return 2
+    try:
+        model = registry.load(record)
+    except registry.RegistryRefused as error:
+        print(f"refused: the frozen model does not load ({error.reason}: {error.detail})", file=out)
+        return 2
+    try:
+        expected = expected_session(started, calendar)
+    except CalendarRefused as error:
+        print(f"refused: the NYSE calendar refused ({error})", file=out)
+        return 2
+    path = inference_path or evening.inference_path()
+    tickers = store.watched()
+    symbols = sorted(set(tickers) | set(store.forecast_symbols(DataClass.REAL)))
+    write = bool(args.record_real)
+    outcomes = evening.score_real(
+        store, symbols=symbols, now=started, expected=expected, sessions=calendar,
+        calendar_id=calendar_id, path=path, write=write, model_id=model.model_id,
+        watched=tickers,
+    )  # fmt: skip
+    found = evening.forecast_watchlist(
+        store, model, tickers=tickers, now=clock(), expected=expected, sessions=calendar,
+        calendar_id=calendar_id, path=path, record=write,
+    )  # fmt: skip
+    mode = "recorded" if write else "dry run: nothing recorded"
+    print(
+        f"model {model.version} ({model.estimator}, B1 beside it); expected session "
+        f"{expected.date()}; {mode}",
+        file=out,
+    )
+    print(
+        f"scores: {outcomes.scored} scored, {outcomes.unscorable} unscorable, {outcomes.pending} "
+        f"pending ({outcomes.missing} past their session), {len(outcomes.refused)} refused",
+        file=out,
+    )
+    for result in found.results:
+        line = f"  {result.ticker}: {result.status}"
+        if result.reason:
+            line += f" ({result.reason}: {result.detail})"
+        if result.forecast is not None and result.forecast["daily"]:
+            first = result.forecast["daily"][0]
+            b1 = result.forecast["comparator"]["daily"][0]
+            line += f"; next session {first['session']}: {_percent(first)}; B1 {_percent(b1)}"
+        print(line, file=out)
+    if not write:
+        return 0
+    done = [
+        r for r in found.results if r.status == evening.RECORDED or r.reason == "already_recorded"
+    ]
+    trouble = [r for r in found.results if r not in done]
+    refused = [r.ticker for r in trouble if r.status == evening.REFUSED]
+    status = "ok"
+    if trouble:
+        status = "failed" if not done and refused else "partial"
+    finished = clock()
+    path_written = record_run(
+        store,
+        run_id=f"job-{started.strftime('%Y%m%dT%H%M%S%fZ')}",
+        started=started,
+        finished=finished,
+        status=status,
+        reason="; ".join(f"{r.ticker}: {r.reason}" for r in trouble) or None,
+        expected=expected,
+        tickers=tickers,
+        data_class=DataClass.REAL,
+        health_inputs=args.health_inputs,
+        sessions=lambda first, last: calendar(first.date(), last.date()),
+        calendar_id=calendar_id,
+        code_sha=code_sha(),
+        next_expected_at=next_expected(finished, calendar),
+        failed=refused,
+        skipped=[r.ticker for r in trouble if r.status != evening.REFUSED],
+        kept_head=kept_head,
+        measured_freshness=found.freshness,
+        measured_drift=evening.input_drift(found.panel, model),
+        results=[r.row() for r in found.results],
+        outcomes=outcomes.as_dict(),
+    )
+    print(f"{status}; health input: {path_written}", file=out)
+    return 0 if status != "failed" else 1
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
     store_factory: Callable[[], StockLabStore] = StockLabStore,
     clock: Callable[[], pd.Timestamp] = utc_now,
     out: TextIO = sys.stdout,
+    inference_path: Path | None = None,
+    calendar=sessions,
+    calendar_id: str = CALENDAR_ID,
 ) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[1], allow_abbrev=False)
     parser.add_argument("--demo-replay", type=int, metavar="N")
     parser.add_argument("--authorized", action="store_true")
     parser.add_argument("--inference-window", action="store_true")
-    parser.add_argument("--record-real", action="store_true")
+    real = parser.add_mutually_exclusive_group()
+    real.add_argument("--record-real", action="store_true")
+    real.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--model", metavar="ID")
     parser.add_argument("--health-inputs", type=Path, default=DEFAULT_HEALTH_INPUTS)
     parser.add_argument("--ledger-head-backup", type=Path, default=None)
     args = parser.parse_args(argv)
@@ -172,16 +318,26 @@ def main(
         print(f"synthetic replay: {len(days)} sessions, {scored} targets scored", file=out)
         return 0
 
-    if args.authorized or args.inference_window or args.record_real:
+    if args.authorized or args.inference_window:
         print(
-            "refused: the real price update and forecasts are built after the owner records "
-            "decisions A1, A2 and A4 (docs/research/stock_probability_lab.md, section 7)",
+            "refused: the recent-window price update is scripts/stock_lab_fetch_recent.py "
+            "--authorized --store (decisions A1 and A2); real forecasts are --dry-run or "
+            "--record-real --model ID (decision A4)",
             file=out,
         )
         return 2
+    if args.dry_run or args.record_real:
+        return _real(
+            args, store=store, clock=clock, started=started, out=out,
+            inference_path=inference_path, calendar=calendar, calendar_id=calendar_id,
+            kept_head=kept_head,
+        )  # fmt: skip
+    if args.model is not None:
+        print("refused: --model is for --dry-run or --record-real", file=out)
+        return 2
     tickers = store.watched()
     try:
-        expected = expected_session(started)
+        expected = expected_session(started, calendar)
     except CalendarRefused as error:  # e.g. past the calendar's coverage: record the failure
         store.record_job_run(
             {
@@ -215,10 +371,10 @@ def main(
         tickers=tickers,
         data_class=DataClass.REAL,
         health_inputs=args.health_inputs,
-        sessions=calendar_sessions,
-        calendar_id=CALENDAR_ID,
+        sessions=lambda first, last: calendar(first.date(), last.date()),
+        calendar_id=calendar_id,
         code_sha=code_sha(),
-        next_expected_at=next_expected(finished),
+        next_expected_at=next_expected(finished, calendar),
         skipped=skipped,
         activation=NOT_AUTHORIZED,
         kept_head=kept_head,

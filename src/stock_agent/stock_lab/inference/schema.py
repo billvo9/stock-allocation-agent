@@ -384,6 +384,41 @@ def select_vintage(chosen: Sequence[InferenceBatch], frame: pd.DataFrame) -> Vin
     )
 
 
+def eligible_batches(
+    stored: Sequence[InferenceBatch], decision: pd.Timestamp, calendar_id: str
+) -> list[InferenceBatch]:
+    """
+    The batches retrieved AND recorded by `decision` (both readers' cut-off), each re-checked:
+    on `calendar_id` (calendar_mismatch otherwise), retrieved no earlier than its last close
+    was available and never after it was recorded (integrity otherwise).
+    """
+
+    eligible = []
+    for batch in stored:
+        if (
+            pd.Timestamp(batch.recorded_at) > decision
+            or pd.Timestamp(batch.retrieved_at) > decision
+        ):
+            continue
+        if batch.calendar_id != calendar_id:
+            raise InferenceRefused(
+                Refusal.CALENDAR_MISMATCH,
+                f"batch {batch.batch_id} follows {batch.calendar_id}, not {calendar_id}",
+            )
+        end = session_day(batch.request_end, "request_end")
+        if pd.Timestamp(batch.retrieved_at) < close_available_at(end):
+            raise InferenceRefused(
+                Refusal.INTEGRITY,
+                f"batch {batch.batch_id} claims a retrieval before its last close was available",
+            )
+        if pd.Timestamp(batch.retrieved_at) > pd.Timestamp(batch.recorded_at):
+            raise InferenceRefused(
+                Refusal.INTEGRITY, f"batch {batch.batch_id} was recorded before it was retrieved"
+            )
+        eligible.append(batch)
+    return eligible
+
+
 def data_class_of(chosen: Sequence[InferenceBatch]) -> str:
     """The one data class of `chosen`; mixing real and synthetic batches is refused."""
 

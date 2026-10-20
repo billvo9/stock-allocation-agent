@@ -23,6 +23,10 @@ Fields besides the envelope (`inputs`):
                   not_in_ledger or ledger_deleted
     lineage      {estimator, model_version, feature_version, evaluation_run_id}
     schedule     {last_success_at, next_expected_at}
+    outcomes     optional and additive (added 2026-10-19; format 1.0): the real
+                  evening job's scoring counts {scored, unscorable, pending,
+                  missing, refused: [{ticker, forecast_id, reason}]}; missing
+                  matured outcomes or refused reads degrade the scores check
     symbols      optional and additive (added 2026-10-17; the format stays 1.0
                   because the envelope ignores extra fields, so earlier files
                   stay valid): {tickers: [{ticker, status, reason}]}, each
@@ -144,6 +148,15 @@ def _parse(artifact: Artifact) -> dict:
         choice(require(ledger, "kept_head", "object"), "state", KEPT_STATES)
     require(document, "lineage", "object")
     require(document, "schedule", "object")
+    if document.get("outcomes") is not None:
+        outcomes = require(document, "outcomes", "object")
+        for key in ("scored", "unscorable", "pending", "missing"):
+            require(outcomes, key, "nonnegative")
+        for row in require(outcomes, "refused", "list"):
+            if not isinstance(row, dict):
+                raise FormatError("outcomes.refused rows must be objects")
+            require(row, "ticker", "text")
+            require(row, "reason", "text")
     if document.get("symbols") is not None:
         symbols = require(document, "symbols", "object")
         for row in require(symbols, "tickers", "list"):
@@ -255,6 +268,39 @@ def _kept_finding(kept: dict | None) -> Finding:
 
     state = "not_configured" if kept is None else kept["state"]
     return Finding(*KEPT_FINDINGS[state])
+
+
+def _outcome_findings(outcomes: dict | None) -> list[Finding]:
+    """
+    The real job's scoring counts (optional, added 2026-10-19): a matured target whose outcome
+    is not stored yet, or an outcome that could not be read, degrades the scores check.
+    """
+
+    if not outcomes:
+        return []
+    found = []
+    missing = outcomes.get("missing") or 0
+    if missing:
+        found.append(
+            Finding(
+                HealthState.DEGRADED,
+                "missing_outcomes",
+                f"{missing} target(s) whose session has closed have no stored outcome yet: the "
+                "evening price update may have missed them. They are scored once it arrives.",
+            )
+        )
+    refused = outcomes.get("refused") or []
+    if refused:
+        reasons = ", ".join(sorted({str(row.get("reason")) for row in refused}))
+        found.append(
+            Finding(
+                HealthState.DEGRADED,
+                "outcomes_refused",
+                f"The outcomes of {len(refused)} forecast(s) could not be read ({reasons}); "
+                "nothing was scored for them.",
+            )
+        )
+    return found
 
 
 def stock_lab_checks(
@@ -466,7 +512,7 @@ def stock_lab_checks(
             f"Rolling RPS {scores.get('rps')} over {n} scored targets, no worse "
             "than the baseline. Tracking only, not evidence of skill.",
         )
-    finding = worst_finding([finding, *common])
+    finding = worst_finding([finding, *_outcome_findings(document.get("outcomes")), *common])
     checks.append(
         _check(
             "forecast.stock_lab_scores",

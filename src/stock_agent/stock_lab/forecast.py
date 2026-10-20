@@ -1,6 +1,7 @@
 """
-The versioned forecast artifact, `StockProbabilityForecast` (schema 1.0),
-and its checks (standard library only, so any reader can use it).
+The versioned forecast artifact, `StockProbabilityForecast` (schema 1.1; 1.0
+records stay valid as stored), and its checks (standard library only, so any
+reader can use it).
 
 A forecast is made after the close of its as-of session, from data
 available then, and is never edited: a recalculation is a new forecast that
@@ -25,6 +26,17 @@ names the one it supersedes. Each carries:
     limitations         plain sentences; refusal: a reason and words when no
                         probability could be given
     supersedes          the forecast id it replaces, or None
+    comparator          (schema 1.1) B1's forecast for the same stock, as-of
+                        session, target sessions, bands and inputs, recorded in
+                        the same write-once record by the frozen forecast job:
+                        {role "benchmark", estimator "B1", half_life, daily,
+                        cumulative}. It is never a forecast of its own: it is
+                        not a row of the ledger, is never live, never counts in
+                        a rolling score or a calibration bucket, and never
+                        changes model-selection evidence. It exists only so the
+                        forecast can be compared with B1 on exactly matched
+                        outcomes. None for a refusal; equal to the forecast
+                        when the frozen estimator is B1 itself.
 
 Checks (`check`): probabilities in [0, 1] that sum to 1 within 1e-9; target
 sessions strictly after the as-of session and increasing; the cumulative
@@ -53,7 +65,8 @@ from datetime import date, datetime, time
 from zoneinfo import ZoneInfo
 
 SCHEMA = "stock_probability_forecast"
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"  # 1.1 adds the B1 comparator
+SCHEMA_VERSIONS = ("1.0", "1.1")
 TOLERANCE = 1e-9
 FIELDS = (
     "schema",
@@ -80,6 +93,9 @@ FIELDS = (
     "refusal",
     "supersedes",
 )
+COMPARATOR_FIELDS = ("role", "estimator", "half_life", "daily", "cumulative")
+COMPARATOR_ROLE = "benchmark"
+COMPARATOR_ESTIMATOR = "B1"
 PROBABILITY_KEYS = ("p_decrease", "p_stable", "p_increase")
 ESTIMATORS = ("B0", "B1", "B2", "B3", "M1")
 NEW_YORK = ZoneInfo("America/New_York")
@@ -135,9 +151,11 @@ def _check_probabilities(row: Mapping[str, object], label: str) -> None:
 def check(record: Mapping[str, object]) -> Mapping[str, object]:
     """The record, after every check in the module docstring (ForecastRefused if not)."""
 
-    if tuple(sorted(record)) != tuple(sorted(FIELDS)):
+    version = record.get("schema_version")
+    fields = FIELDS if version == "1.0" else (*FIELDS, "comparator")
+    if tuple(sorted(record)) != tuple(sorted(fields)):
         raise ForecastRefused("unexpected or missing fields")
-    if record["schema"] != SCHEMA or record["schema_version"] != SCHEMA_VERSION:
+    if record["schema"] != SCHEMA or version not in SCHEMA_VERSIONS:
         raise ForecastRefused("unknown schema")
     if record["forecast_id"] != forecast_id(record):
         raise ForecastRefused("forecast_id does not match the content")
@@ -155,7 +173,7 @@ def check(record: Mapping[str, object]) -> Mapping[str, object]:
     refusal = record["refusal"]
     daily = record["daily"]
     if refusal is not None:
-        if daily or record["cumulative"] is not None:
+        if daily or record["cumulative"] is not None or record.get("comparator") is not None:
             raise ForecastRefused("a refusal carries no probability")
         return record
     if not isinstance(daily, list) or len(daily) != 5:
@@ -171,7 +189,36 @@ def check(record: Mapping[str, object]) -> Mapping[str, object]:
             bound = sum(row[key] for row in daily) - 4.0
             if cumulative[key] < bound - TOLERANCE:
                 raise ForecastRefused("the five-session total contradicts the daily forecasts")
+    if version != "1.0":
+        _check_comparator(record)
     return record
+
+
+def _check_comparator(record: Mapping[str, object]) -> None:
+    """B1's forecast beside it: same sessions, same targets, valid probabilities."""
+
+    comparator = record["comparator"]
+    if not isinstance(comparator, dict) or tuple(sorted(comparator)) != tuple(
+        sorted(COMPARATOR_FIELDS)
+    ):
+        raise ForecastRefused("the comparator needs its role, estimator, half-life and forecast")
+    if comparator["role"] != COMPARATOR_ROLE or comparator["estimator"] != COMPARATOR_ESTIMATOR:
+        raise ForecastRefused("the comparator is B1, recorded as the benchmark")
+    half_life = comparator["half_life"]
+    if not isinstance(half_life, int | float) or isinstance(half_life, bool) or half_life <= 0:
+        raise ForecastRefused("the comparator's half-life must be a positive number")
+    sessions = record["target_sessions"]
+    daily = comparator["daily"]
+    if not isinstance(daily, list) or len(daily) != 5:
+        raise ForecastRefused("the comparator needs five daily forecasts")
+    for horizon, row in enumerate(daily, start=1):
+        if row.get("horizon") != horizon or row.get("session") != sessions[horizon - 1]:
+            raise ForecastRefused("the comparator's sessions must be the forecast's")
+        _check_probabilities(row, f"comparator session {horizon}")
+    if (comparator["cumulative"] is None) != (record["cumulative"] is None):
+        raise ForecastRefused("the comparator covers the forecast's targets, no more and no fewer")
+    if comparator["cumulative"] is not None:
+        _check_probabilities(comparator["cumulative"], "comparator five-session total")
 
 
 def build(
@@ -196,8 +243,13 @@ def build(
     limitations: Sequence[str],
     refusal: Mapping[str, str] | None = None,
     supersedes: str | None = None,
+    comparator: Mapping[str, object] | None = None,
 ) -> dict:
-    """A checked record; `daily` is five (Decrease, Stable, Increase) triples."""
+    """
+    A checked record (schema 1.1); `daily` is five (Decrease, Stable, Increase) triples.
+    `comparator` is B1's forecast on the same inputs: {"half_life", "daily" (five triples),
+    "cumulative" (a triple or None)}; required unless the record is a refusal.
+    """
 
     def triple(values: Sequence[float]) -> dict:
         return {key: float(value) for key, value in zip(PROBABILITY_KEYS, values, strict=True)}
@@ -230,6 +282,20 @@ def build(
         "limitations": list(limitations),
         "refusal": None if refusal is None else dict(refusal),
         "supersedes": supersedes,
+        "comparator": None
+        if comparator is None
+        else {
+            "role": COMPARATOR_ROLE,
+            "estimator": COMPARATOR_ESTIMATOR,
+            "half_life": float(comparator["half_life"]),
+            "daily": [
+                {"horizon": h, "session": target_sessions[h - 1], **triple(values)}
+                for h, values in enumerate(comparator["daily"], start=1)
+            ],
+            "cumulative": None
+            if comparator["cumulative"] is None
+            else triple(comparator["cumulative"]),
+        },
     }
     record["forecast_id"] = forecast_id(record)
     return dict(check(record))
