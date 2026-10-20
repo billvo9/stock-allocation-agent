@@ -24,6 +24,7 @@ from forecast_prospective_helpers import (
     without_close,
 )
 
+from stock_agent.calendars import nyse_rules
 from stock_agent.calendars.nyse import CalendarRefused
 from stock_agent.data.prospective.inference import load_inference_window
 from stock_agent.forecasting.prospective import (
@@ -206,6 +207,7 @@ def test_the_second_medium_needs_the_owners_attestation():
 def test_the_calendar_must_cover_the_24_month_checkpoint():
     item = preflight.calendar_coverage(exchange_calendar, pd.Timestamp("2026-10-15", tz="UTC"))
     assert item.evidence["sessions_needed"] == 524
+    assert item.status == "pass"  # the default rules calendar runs to 2030-12-31
 
     def refusing(start, end):
         raise CalendarRefused("outside_coverage", "the rules calendar ends 2027-12-31")
@@ -366,6 +368,16 @@ def test_the_calendar_check_counts_sessions(count, status):
 
     item = preflight.calendar_coverage(calendar, pd.Timestamp("2026-10-15", tz="UTC"))
     assert item.status == status and item.evidence["sessions_available"] == count
+
+
+@pytest.mark.parametrize(
+    ("calendar_id", "status"),
+    [(nyse_rules.CALENDAR_ID_2027, "fail"), (nyse_rules.CALENDAR_ID_2030, "pass")],
+)
+def test_only_the_2030_rules_calendar_reaches_the_24_month_checkpoint(calendar_id, status):
+    version = nyse_rules.calendar(calendar_id)
+    item = preflight.calendar_coverage(version.sessions, pd.Timestamp("2026-10-15", tz="UTC"))
+    assert item.status == status
 
 
 def test_model_health_exactly_26_hours_old_is_fresh():

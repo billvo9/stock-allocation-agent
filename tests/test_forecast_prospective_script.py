@@ -716,20 +716,27 @@ def test_the_preflight_reports_every_check_with_its_hash(
         "software.record": "pass",
         "software.environment": "pass",
         "monitoring.model_health": "pass",
-        # The rules calendar ends 2027-12-31: C24 is out of reach until it is extended.
-        "monitoring.calendar": "fail",
+        # The 2003-2030 rules calendar (#100) reaches C24 (session 524) from this close.
+        "monitoring.calendar": "pass",
         "backups.head_backup": "pass",
         "backups.second_medium": "owner_attestation_required",
         "operations.forecast_job_schedule": "not_built",
         "analysis.checkpoint_analysis": "not_built",
     }
-    assert code == 1 and document["passed"] is False
-    assert document["subject"] == {
+    # No check fails, so the report passes; not-built lines do not fail a report.
+    assert code == 0 and document["passed"] is True
+    subject = {
         "bundle_id": prospective_frozen.result.bundle.bundle_id,
         "record_sha256": registration_record.record_sha256(
             registration(prospective_frozen.models())
         ),
     }
+    assert document["subject"] == subject
+    # A passing report is not readiness: the registration gate (built for ETF-R1) still
+    # refuses it while the forecast job schedule and the checkpoint analysis are not built.
+    with pytest.raises(forecast.ForecastRefused) as refused:
+        preflight.gate(document, merged_at=pd.Timestamp("2026-10-16T14:00:00Z"), **subject)
+    assert refused.value.reason == "preflight_incomplete"
     printed = capsys.readouterr().out
     assert document["sha256"] in printed and "nothing is registered" in printed
     assert not (tmp_path / "ledger.jsonl").exists()  # read-only
