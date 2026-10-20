@@ -22,26 +22,27 @@ Modes
                      the owner must approve first. No email code exists.
 
 launchd uses the Mac's local time zone, so the printed hour is converted from
-New York to the local zone given (America/New_York by default). For the
-briefing the zone must keep the same local time all year: a zone whose clock
-changes on other dates than New York's (or never) would fire an hour off for
-part of the year, at 09:30 for an 08:30 briefing, and is refused.
+New York to the local zone given (America/New_York by default). The zone must
+keep the same local time all year: a zone whose clock changes on other dates
+than New York's (or never) would fire an hour or more off for part of the
+year, at 09:30 for an 08:30 briefing, and is refused for both agents.
 
 The agent runs the code of the checkout it was printed from: print it from
 a clean checkout of main, never from a working branch or worktree.
 
 To install, after reading the printed file and approving the installation
 (owner, once per agent):
-    mkdir -p -m 700 ~/stock-agent-private/stock_lab/logs
+    mkdir -p -m 700 ~/stock-agent-private ~/stock-agent-private/stock_lab ~/stock-agent-private/stock_lab/logs
     .venv/bin/python scripts/stock_lab_schedule.py > ~/Library/LaunchAgents/local.stock-lab.daily.plist
     launchctl load ~/Library/LaunchAgents/local.stock-lab.daily.plist
     .venv/bin/python scripts/stock_lab_schedule.py --briefing > ~/Library/LaunchAgents/local.stock-lab.briefing.plist
     launchctl load ~/Library/LaunchAgents/local.stock-lab.briefing.plist
 To remove one: launchctl unload the same file, then delete it.
 
-Logs go to ~/stock-agent-private/stock_lab/logs/ (private, outside Git); the
-briefing's log keeps each run's printed text, and its agent writes with a
-private umask (files 0600). When the Mac is asleep at the
+Logs go to ~/stock-agent-private/stock_lab/logs/ (private, outside Git) and
+keep each run's printed text; both agents write with a private umask (files
+0600). An agent installed from an earlier printout keeps its old settings
+until it is printed again, unloaded and loaded. When the Mac is asleep at the
 scheduled time, launchd runs the job when it next wakes, so a sleeping Mac
 delivers late or not at all (docs/research/stock_probability_lab.md, section
 9, has the limits and the recommended hosted option).
@@ -72,26 +73,15 @@ WAKE_TIME = (8, 25)  # an optional wake, five minutes before
 PMSET_DAYS = "MTWRFSU"  # pmset's weekday letters, Monday first
 KEYCHAIN_SERVICE = "stock-agent-briefing-email"
 KEYCHAIN_ACCOUNT = "stock-lab-briefing"  # a generic label, never the address
-PRIVATE_UMASK = 0o077  # the briefing's files and logs: readable by the owner only
-
-
-def local_time(zone: str, new_york_time: tuple[int, int] = NEW_YORK_TIME) -> tuple[int, int, int]:
-    """
-    `new_york_time` in `zone` as (hour, minute, day shift), on a winter
-    weekday (launchd has no time zones): a zone east of New York may reach the
-    next calendar day, so its weekdays shift by one.
-    """
-
-    new_york = datetime(2026, 1, 6, *new_york_time, tzinfo=NEW_YORK)
-    local = new_york.astimezone(ZoneInfo(zone))
-    return local.hour, local.minute, (local.date() - new_york.date()).days
+PRIVATE_UMASK = 0o077  # both agents' files and logs: readable by the owner only
 
 
 def fixed_local_time(zone: str, new_york_time: tuple[int, int]) -> tuple[int, int, int]:
     """
     `new_york_time` in `zone` as (hour, minute, day shift) when it is the same
     on every day of a year; otherwise refused (ValueError), since launchd and
-    pmset take a local time with no time zone.
+    pmset take a local time with no time zone. A zone east of New York may
+    reach the next calendar day, so its weekdays shift by one.
     """
 
     target = ZoneInfo(zone)
@@ -118,7 +108,6 @@ def _plist(
     arguments: list[str],
     log: str,
     home: Path | None,
-    umask: int | None = None,
 ) -> str:
     home = home or Path.home()
     logs = home / "stock-agent-private" / "stock_lab" / "logs"
@@ -136,7 +125,6 @@ def _plist(
     </dict>"""
         for day in range(1, 6)
     )
-    private = "" if umask is None else f"\n  <key>Umask</key><integer>{umask}</integer>"
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -154,7 +142,8 @@ def _plist(
   <array>{days}
   </array>
   <key>StandardOutPath</key><string>{escape(str(logs / f"{log}.out.log"))}</string>
-  <key>StandardErrorPath</key><string>{escape(str(logs / f"{log}.err.log"))}</string>{private}
+  <key>StandardErrorPath</key><string>{escape(str(logs / f"{log}.err.log"))}</string>
+  <key>Umask</key><integer>{PRIVATE_UMASK}</integer>
 </dict>
 </plist>
 """
@@ -164,7 +153,7 @@ def plist(zone: str = "America/New_York", home: Path | None = None) -> str:
     """The daily job's agent: 20:30 New York on weekdays."""
 
     script = PROJECT / "scripts" / "stock_lab_daily.py"
-    return _plist(LABEL, local_time(zone), [str(script)], "daily", home)
+    return _plist(LABEL, fixed_local_time(zone, NEW_YORK_TIME), [str(script)], "daily", home)
 
 
 def briefing_plist(zone: str = "America/New_York", home: Path | None = None) -> str:
@@ -173,7 +162,7 @@ def briefing_plist(zone: str = "America/New_York", home: Path | None = None) -> 
     script = PROJECT / "scripts" / "stock_lab_briefing.py"
     when = fixed_local_time(zone, BRIEFING_TIME)
     arguments = [str(script), "--preview"]
-    return _plist(BRIEFING_LABEL, when, arguments, "briefing", home, umask=PRIVATE_UMASK)
+    return _plist(BRIEFING_LABEL, when, arguments, "briefing", home)
 
 
 def wake_note(zone: str = "America/New_York") -> str:

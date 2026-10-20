@@ -528,10 +528,12 @@ def test_the_schedule_is_printed_never_installed(tmp_path):
     times = plan["StartCalendarInterval"]
     assert [t["Weekday"] for t in times] == [1, 2, 3, 4, 5]
     assert {(t["Hour"], t["Minute"]) for t in times} == {(20, 30)}
-    assert schedule.local_time("America/Los_Angeles") == (17, 30, 0)
-    tokyo = plistlib.loads(schedule.plist("Asia/Tokyo").encode())["StartCalendarInterval"]
-    assert [t["Weekday"] for t in tokyo] == [2, 3, 4, 5, 6]  # Tuesday-Saturday morning there
-    assert {(t["Hour"], t["Minute"]) for t in tokyo} == {(10, 30)}
+    assert schedule.fixed_local_time("America/Los_Angeles", schedule.NEW_YORK_TIME) == (17, 30, 0)
+    # Tokyo keeps one clock all year: a fixed 10:30 there is 20:30 New York in winter only
+    # (21:30 in summer), so it is refused and nothing is printed.
+    tokyo, refusal = io.StringIO(), io.StringIO()
+    assert schedule.main(["--zone", "Asia/Tokyo"], out=tokyo, err=refusal) == 2
+    assert tokyo.getvalue() == "" and refusal.getvalue().startswith("refused:")
     assert "launchctl" not in Path(schedule.__file__).read_text().split('"""', 2)[2]  # never run
 
 
