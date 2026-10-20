@@ -23,6 +23,7 @@
       "truth_below": 0.047
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.9037,
@@ -44,6 +45,7 @@
       "truth_below": 0.0457
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.9548,
@@ -65,6 +67,7 @@
       "truth_below": 0.0483
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.906,
@@ -86,6 +89,7 @@
       "truth_below": 0.0485
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.9039,
@@ -107,6 +111,15 @@
       "truth_below": 0.0477
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2779,
+       "1.3": 0.1842
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9626058934548584,
+      "q90_ratio": 1.3989610391544793
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.9019,
@@ -128,6 +141,15 @@
       "truth_below": 0.0471
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2534,
+       "1.3": 0.1778
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9183975061889311,
+      "q90_ratio": 1.413723053441241
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.9068,
@@ -149,6 +171,15 @@
       "truth_below": 0.0468
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2037,
+       "1.3": 0.0922
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9938875991750655,
+      "q90_ratio": 1.291639338426733
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.9036,
@@ -170,6 +201,15 @@
       "truth_below": 0.0507
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1769,
+       "1.3": 0.0645
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9916245778435133,
+      "q90_ratio": 1.2632508851610502
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.9021,
@@ -191,6 +231,15 @@
       "truth_below": 0.0512
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1529,
+       "1.3": 0.0549
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9849254909709396,
+      "q90_ratio": 1.2437823105478831
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.8944,
@@ -212,6 +261,15 @@
       "truth_below": 0.0512
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.0938,
+       "1.3": 0.0127
+      },
+      "long_blocks": 10,
+      "median_ratio": 0.9968782836656012,
+      "q90_ratio": 1.1959506815215428
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.8962,
@@ -233,6 +291,15 @@
       "truth_below": 0.0489
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.0776,
+       "1.3": 0.0111
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9955243748037044,
+      "q90_ratio": 1.1824173505179134
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.9,
@@ -268,6 +335,7 @@
       "truth_below": 0.0512
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.8949,
@@ -289,6 +357,7 @@
       "truth_below": 0.0507
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.9371,
@@ -310,6 +379,7 @@
       "truth_below": 0.0511
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.901,
@@ -331,6 +401,7 @@
       "truth_below": 0.052
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.897,
@@ -352,6 +423,15 @@
       "truth_below": 0.0493
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2848,
+       "1.3": 0.1891
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9698434373551039,
+      "q90_ratio": 1.4025950671482492
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.8972,
@@ -373,6 +453,15 @@
       "truth_below": 0.0506
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.262,
+       "1.3": 0.1812
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9231268637875482,
+      "q90_ratio": 1.4160180068816601
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.898,
@@ -394,6 +483,15 @@
       "truth_below": 0.0479
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2053,
+       "1.3": 0.0888
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.0010855432304033,
+      "q90_ratio": 1.2874532502226526
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.8966,
@@ -415,6 +513,15 @@
       "truth_below": 0.0459
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1741,
+       "1.3": 0.0606
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9987872180315536,
+      "q90_ratio": 1.2578659709272602
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.902,
@@ -436,6 +543,15 @@
       "truth_below": 0.0506
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1644,
+       "1.3": 0.0599
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9967056517982857,
+      "q90_ratio": 1.2551167692231804
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.8951,
@@ -457,6 +573,15 @@
       "truth_below": 0.0501
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1001,
+       "1.3": 0.0136
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.0040183114556758,
+      "q90_ratio": 1.200150990816618
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.8919,
@@ -478,6 +603,15 @@
       "truth_below": 0.0535
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.0849,
+       "1.3": 0.0126
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9993210337628746,
+      "q90_ratio": 1.1877287695842875
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.8904,
@@ -513,6 +647,7 @@
       "truth_below": 0.0537
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.8958,
@@ -534,6 +669,7 @@
       "truth_below": 0.0543
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.9241,
@@ -555,6 +691,7 @@
       "truth_below": 0.054
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.8946,
@@ -576,6 +713,7 @@
       "truth_below": 0.0554
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.8901,
@@ -597,6 +735,15 @@
       "truth_below": 0.0542
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2897,
+       "1.3": 0.1959
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9821071411710605,
+      "q90_ratio": 1.408803504589032
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.8905,
@@ -618,6 +765,15 @@
       "truth_below": 0.0554
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2618,
+       "1.3": 0.1877
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9321779150324532,
+      "q90_ratio": 1.4259274657695789
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.8934,
@@ -639,6 +795,15 @@
       "truth_below": 0.0556
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2206,
+       "1.3": 0.0988
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.0041557068622775,
+      "q90_ratio": 1.2990959809692428
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.8926,
@@ -660,6 +825,15 @@
       "truth_below": 0.0573
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1896,
+       "1.3": 0.0704
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.0115017770220693,
+      "q90_ratio": 1.2704651381170975
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.8943,
@@ -681,6 +855,15 @@
       "truth_below": 0.0563
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1678,
+       "1.3": 0.0611
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.0010767389837443,
+      "q90_ratio": 1.2573260973388352
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.8913,
@@ -702,6 +885,15 @@
       "truth_below": 0.0562
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1159,
+       "1.3": 0.0175
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.0135854033591,
+      "q90_ratio": 1.210788915660737
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.8898,
@@ -723,6 +915,15 @@
       "truth_below": 0.0557
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.0991,
+       "1.3": 0.0149
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.0140877972685436,
+      "q90_ratio": 1.199386911127373
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.8902,
@@ -758,6 +959,7 @@
       "truth_below": 0.0643
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.8682,
@@ -779,6 +981,7 @@
       "truth_below": 0.0643
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.8762,
@@ -800,6 +1003,7 @@
       "truth_below": 0.0666
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.8647,
@@ -821,6 +1025,7 @@
       "truth_below": 0.0686
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.8652,
@@ -842,6 +1047,15 @@
       "truth_below": 0.0674
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.3211,
+       "1.3": 0.2207
+      },
+      "long_blocks": 3,
+      "median_ratio": 1.016545223243391,
+      "q90_ratio": 1.430000811425507
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.8649,
@@ -863,6 +1077,15 @@
       "truth_below": 0.0676
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.292,
+       "1.3": 0.2121
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.96911682714573,
+      "q90_ratio": 1.4516926018046363
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.8603,
@@ -884,6 +1107,15 @@
       "truth_below": 0.0691
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2556,
+       "1.3": 0.1221
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.0376800188402777,
+      "q90_ratio": 1.318500709321282
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.8598,
@@ -905,6 +1137,15 @@
       "truth_below": 0.0697
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.225,
+       "1.3": 0.0873
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.0394871857820909,
+      "q90_ratio": 1.2896814136762489
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.8611,
@@ -926,6 +1167,15 @@
       "truth_below": 0.0698
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2214,
+       "1.3": 0.0882
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.0392120563077873,
+      "q90_ratio": 1.2881621521597661
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.8611,
@@ -947,6 +1197,15 @@
       "truth_below": 0.0667
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1533,
+       "1.3": 0.0311
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.0482181399415653,
+      "q90_ratio": 1.2336879535856833
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.8632,
@@ -968,6 +1227,15 @@
       "truth_below": 0.0669
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1464,
+       "1.3": 0.0284
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.0458426614231229,
+      "q90_ratio": 1.2280438541431025
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.862,
@@ -1003,6 +1271,7 @@
       "truth_below": 0.1009
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.8012,
@@ -1024,6 +1293,7 @@
       "truth_below": 0.1005
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.7886,
@@ -1045,6 +1315,7 @@
       "truth_below": 0.0963
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.7955,
@@ -1066,6 +1337,7 @@
       "truth_below": 0.0991
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.7972,
@@ -1087,6 +1359,15 @@
       "truth_below": 0.1047
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.4133,
+       "1.3": 0.2975
+      },
+      "long_blocks": 3,
+      "median_ratio": 1.1209389081290038,
+      "q90_ratio": 1.4645377261287784
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.7978,
@@ -1108,6 +1389,15 @@
       "truth_below": 0.097
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.3818,
+       "1.3": 0.2869
+      },
+      "long_blocks": 3,
+      "median_ratio": 1.0708402179349872,
+      "q90_ratio": 1.516734910770425
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.7939,
@@ -1129,6 +1419,15 @@
       "truth_below": 0.1027
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.4033,
+       "1.3": 0.2177
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.1452598267606646,
+      "q90_ratio": 1.3708484333934987
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.7916,
@@ -1150,6 +1449,15 @@
       "truth_below": 0.0992
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.3779,
+       "1.3": 0.1697
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.1401112429656153,
+      "q90_ratio": 1.3412501741211442
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.7897,
@@ -1171,6 +1479,15 @@
       "truth_below": 0.103
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.3925,
+       "1.3": 0.1906
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.1488329943980977,
+      "q90_ratio": 1.358234642881012
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.7956,
@@ -1192,6 +1509,15 @@
       "truth_below": 0.1009
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.3504,
+       "1.3": 0.096
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.1466493243750329,
+      "q90_ratio": 1.2977152696226164
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.794,
@@ -1213,6 +1539,15 @@
       "truth_below": 0.1008
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.3528,
+       "1.3": 0.1007
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.1490392313012605,
+      "q90_ratio": 1.3005601708728807
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.7948,
@@ -1248,6 +1583,7 @@
       "truth_below": 0.0534
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.8979,
@@ -1269,6 +1605,7 @@
       "truth_below": 0.053
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.9495,
@@ -1290,6 +1627,7 @@
       "truth_below": 0.0534
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.9021,
@@ -1311,6 +1649,7 @@
       "truth_below": 0.0551
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.8967,
@@ -1332,6 +1671,15 @@
       "truth_below": 0.0516
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2795,
+       "1.3": 0.1868
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9658701354180225,
+      "q90_ratio": 1.400189991207742
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.8992,
@@ -1353,6 +1701,15 @@
       "truth_below": 0.0511
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2513,
+       "1.3": 0.175
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9171850895709295,
+      "q90_ratio": 1.4154264973342623
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.9079,
@@ -1374,6 +1731,15 @@
       "truth_below": 0.0531
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1984,
+       "1.3": 0.0898
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9857473192584862,
+      "q90_ratio": 1.2884092720690774
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.8963,
@@ -1395,6 +1761,15 @@
       "truth_below": 0.0542
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1703,
+       "1.3": 0.0633
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.98828429094734,
+      "q90_ratio": 1.2580531132902144
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.9003,
@@ -1416,6 +1791,15 @@
       "truth_below": 0.0535
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1549,
+       "1.3": 0.0547
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9859236156035032,
+      "q90_ratio": 1.2503647262170852
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.8961,
@@ -1437,6 +1821,15 @@
       "truth_below": 0.0492
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.0924,
+       "1.3": 0.0154
+      },
+      "long_blocks": 10,
+      "median_ratio": 0.9968802985061664,
+      "q90_ratio": 1.1943674747828232
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.9022,
@@ -1458,6 +1851,15 @@
       "truth_below": 0.0482
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.0768,
+       "1.3": 0.0115
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9976079280895989,
+      "q90_ratio": 1.1819467574296918
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.8997,
@@ -1493,6 +1895,7 @@
       "truth_below": 0.0526
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.8964,
@@ -1514,6 +1917,7 @@
       "truth_below": 0.0517
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.936,
@@ -1535,6 +1939,7 @@
       "truth_below": 0.0541
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.9,
@@ -1556,6 +1961,7 @@
       "truth_below": 0.0556
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.8944,
@@ -1577,6 +1983,15 @@
       "truth_below": 0.0525
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2915,
+       "1.3": 0.1934
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9727104180361523,
+      "q90_ratio": 1.4036220255183571
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.8951,
@@ -1598,6 +2013,15 @@
       "truth_below": 0.0559
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2633,
+       "1.3": 0.1846
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9288468265319265,
+      "q90_ratio": 1.423693097996357
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.8974,
@@ -1619,6 +2043,15 @@
       "truth_below": 0.0593
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2139,
+       "1.3": 0.0963
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.004375426000887,
+      "q90_ratio": 1.2965085139936263
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.8837,
@@ -1640,6 +2073,15 @@
       "truth_below": 0.0571
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1848,
+       "1.3": 0.0676
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.0057980074378943,
+      "q90_ratio": 1.2674208700036138
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.8933,
@@ -1661,6 +2103,15 @@
       "truth_below": 0.0545
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1716,
+       "1.3": 0.0651
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.003585728681637,
+      "q90_ratio": 1.2607273749988535
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.8889,
@@ -1682,6 +2133,15 @@
       "truth_below": 0.0582
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1136,
+       "1.3": 0.0188
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.0111808305536019,
+      "q90_ratio": 1.2090389022487888
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.8875,
@@ -1703,6 +2163,15 @@
       "truth_below": 0.0577
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.0965,
+       "1.3": 0.0158
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.0121372053223832,
+      "q90_ratio": 1.1974022312522505
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.8863,
@@ -1717,6 +2186,630 @@
   },
   {
    "autocorrelation": {
+    "1": 0.05769890691770951,
+    "10": 0.05516992501971776,
+    "2": 0.056631340008945937,
+    "20": 0.05188061840896655,
+    "5": 0.05668723817260442
+   },
+   "delta": 0.5,
+   "reps": 10000,
+   "series": "break",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9792,
+      "mc_se": 0.0014271425997425778,
+      "median_width": 0.6027465502353538,
+      "se_ratio": 1.4396176581432267,
+      "truth_above": 0.0084,
+      "truth_below": 0.0124
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.9792,
+      "mc_se": 0.0014271425997425778,
+      "median_width": 0.6027465502353537,
+      "se_ratio": 1.4396176581432263,
+      "truth_above": 0.0084,
+      "truth_below": 0.0124
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9796,
+      "mc_se": 0.0014136421046361054,
+      "median_width": 0.6016475086570781,
+      "se_ratio": 1.4470870049447344,
+      "truth_above": 0.0085,
+      "truth_below": 0.0119
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9869,
+      "mc_se": 0.0011370307823449636,
+      "median_width": 0.6639977544514224,
+      "se_ratio": 1.8974790400718293,
+      "truth_above": 0.0055,
+      "truth_below": 0.0076
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9826,
+      "mc_se": 0.001307564147565999,
+      "median_width": 0.6135729746138789,
+      "se_ratio": 1.525218981992974,
+      "truth_above": 0.0081,
+      "truth_below": 0.0093
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9775,
+      "mc_se": 0.001483028994996388,
+      "median_width": 0.545740263909079,
+      "se_ratio": 1.4433047802705785,
+      "truth_above": 0.0098,
+      "truth_below": 0.0127
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9874,
+      "mc_se": 0.0011154030661603878,
+      "median_width": 0.635046759274746,
+      "se_ratio": 1.6412515526546925,
+      "truth_above": 0.006,
+      "truth_below": 0.0066
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.983,
+      "mc_se": 0.0012927103310486853,
+      "median_width": 0.5504286249443224,
+      "se_ratio": 1.502238391359172,
+      "truth_above": 0.0083,
+      "truth_below": 0.0087
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.9847,
+      "mc_se": 0.0012274326865453755,
+      "median_width": 0.5558904639652128,
+      "se_ratio": 1.522209587404892,
+      "truth_above": 0.0074,
+      "truth_below": 0.0079
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.4852,
+       "1.3": 0.3392
+      },
+      "long_blocks": 3,
+      "median_ratio": 1.1899532570028533,
+      "q90_ratio": 1.4627205796879128
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9847,
+      "mc_se": 0.0012274326865453755,
+      "median_width": 0.5558904639652129,
+      "se_ratio": 1.5222095874048922,
+      "truth_above": 0.0074,
+      "truth_below": 0.0079
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.9827,
+      "mc_se": 0.0013038677080133545,
+      "median_width": 0.4761947886220356,
+      "se_ratio": 1.5091569904153432,
+      "truth_above": 0.0088,
+      "truth_below": 0.0085
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.8672,
+       "1.3": 0.7963
+      },
+      "long_blocks": 3,
+      "median_ratio": 1.5192408259550119,
+      "q90_ratio": 1.7131323012005841
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.9791,
+      "mc_se": 0.0014304960678030551,
+      "median_width": 0.44621960725883114,
+      "se_ratio": 1.4560770066437938,
+      "truth_above": 0.01,
+      "truth_below": 0.0109
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.9843,
+      "mc_se": 0.0012431214743539765,
+      "median_width": 0.3902107738549424,
+      "se_ratio": 1.5167442450783526,
+      "truth_above": 0.0089,
+      "truth_below": 0.0068
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.5437,
+       "1.3": 0.2951
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.2194793460306292,
+      "q90_ratio": 1.3887275662040894
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.9843,
+      "mc_se": 0.0012431214743539765,
+      "median_width": 0.3902107738549423,
+      "se_ratio": 1.5167442450783526,
+      "truth_above": 0.0089,
+      "truth_below": 0.0068
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.9882,
+      "mc_se": 0.001079849989581888,
+      "median_width": 0.34179374287582376,
+      "se_ratio": 1.529097997990679,
+      "truth_above": 0.0059,
+      "truth_below": 0.0059
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.7783,
+       "1.3": 0.4958
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.2988447448085367,
+      "q90_ratio": 1.4077353860738369
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.9868,
+      "mc_se": 0.0011413045167701734,
+      "median_width": 0.33191318418041305,
+      "se_ratio": 1.4974803501982343,
+      "truth_above": 0.0066,
+      "truth_below": 0.0066
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.9859,
+      "mc_se": 0.0011790330784163777,
+      "median_width": 0.2999134460488916,
+      "se_ratio": 1.5054396489478157,
+      "truth_above": 0.0071,
+      "truth_below": 0.007
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.8156,
+       "1.3": 0.5712
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.3225091164760203,
+      "q90_ratio": 1.4527120640598241
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.9859,
+      "mc_se": 0.0011790330784163777,
+      "median_width": 0.29991344604889153,
+      "se_ratio": 1.5054396489478157,
+      "truth_above": 0.0071,
+      "truth_below": 0.007
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.9874,
+      "mc_se": 0.0011154030661603878,
+      "median_width": 0.26033920158838864,
+      "se_ratio": 1.5221595959675733,
+      "truth_above": 0.0061,
+      "truth_below": 0.0065
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.8154,
+       "1.3": 0.4112
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.2827186192358886,
+      "q90_ratio": 1.365382032478476
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.9874,
+      "mc_se": 0.0011154030661603878,
+      "median_width": 0.2603392015883886,
+      "se_ratio": 1.5221595959675733,
+      "truth_above": 0.0061,
+      "truth_below": 0.0065
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.9851,
+      "mc_se": 0.0012115275481803963,
+      "median_width": 0.227387215006007,
+      "se_ratio": 1.4954834467236373,
+      "truth_above": 0.0081,
+      "truth_below": 0.0068
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.8339,
+       "1.3": 0.4478
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.2895690155758603,
+      "q90_ratio": 1.3814873034140898
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.9851,
+      "mc_se": 0.0012115275481803963,
+      "median_width": 0.227387215006007,
+      "se_ratio": 1.495483446723637,
+      "truth_above": 0.0081,
+      "truth_below": 0.0068
+     }
+    }
+   ]
+  },
+  {
+   "autocorrelation": {
+    "1": 0.19867106353874242,
+    "10": 0.19139453115831462,
+    "2": 0.19734129420917806,
+    "20": 0.18283675236561625,
+    "5": 0.19560156013517485
+   },
+   "delta": 1.0,
+   "reps": 10000,
+   "series": "break",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9992,
+      "mc_se": 0.00028272955275316074,
+      "median_width": 1.0225510386390553,
+      "se_ratio": 2.4073246803182315,
+      "truth_above": 0.0003,
+      "truth_below": 0.0005
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.9992,
+      "mc_se": 0.00028272955275316074,
+      "median_width": 1.022551038639055,
+      "se_ratio": 2.4073246803182315,
+      "truth_above": 0.0003,
+      "truth_below": 0.0005
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9992,
+      "mc_se": 0.00028272955275316074,
+      "median_width": 1.0234075398778848,
+      "se_ratio": 2.4195085769618694,
+      "truth_above": 0.0003,
+      "truth_below": 0.0005
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9993,
+      "mc_se": 0.00026448251359967713,
+      "median_width": 0.9651891759748785,
+      "se_ratio": 2.6018291293755076,
+      "truth_above": 0.0002,
+      "truth_below": 0.0005
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9998,
+      "mc_se": 0.0001414072133945005,
+      "median_width": 1.0743538184055637,
+      "se_ratio": 2.66757578844884,
+      "truth_above": 0.0001,
+      "truth_below": 0.0001
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9994,
+      "mc_se": 0.0002448754785600316,
+      "median_width": 0.9118088721192735,
+      "se_ratio": 2.4006077021252654,
+      "truth_above": 0.0001,
+      "truth_below": 0.0005
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 1.1470394006451698,
+      "se_ratio": 2.9627917972474136,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.945220992313057,
+      "se_ratio": 2.5831342900018326,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.9592125354559384,
+      "se_ratio": 2.6321411692870322,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.6399,
+       "1.3": 0.4019
+      },
+      "long_blocks": 3,
+      "median_ratio": 1.2615463227989951,
+      "q90_ratio": 1.4320203474020556
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.9592125354559384,
+      "se_ratio": 2.6321411692870322,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.9998,
+      "mc_se": 0.0001414072133945005,
+      "median_width": 0.8176089802457657,
+      "se_ratio": 2.5972324253216863,
+      "truth_above": 0.0,
+      "truth_below": 0.0002
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.999,
+       "1.3": 0.9965
+      },
+      "long_blocks": 3,
+      "median_ratio": 1.7011607702488951,
+      "q90_ratio": 1.7768132908957477
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.9998,
+      "mc_se": 0.0001414072133945005,
+      "median_width": 0.7402645822346813,
+      "se_ratio": 2.4118437510834316,
+      "truth_above": 0.0,
+      "truth_below": 0.0002
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.657612592362957,
+      "se_ratio": 2.5650600687787235,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.8425,
+       "1.3": 0.5073
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.3015496346849507,
+      "q90_ratio": 1.4031206659385964
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.657612592362957,
+      "se_ratio": 2.565060068778723,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.5727217215183976,
+      "se_ratio": 2.5474569995169762,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.9984,
+       "1.3": 0.9704
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.4128531295398088,
+      "q90_ratio": 1.4534605363104773
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.9999,
+      "mc_se": 9.999499987498824e-05,
+      "median_width": 0.5446984146291539,
+      "se_ratio": 2.441824404642049,
+      "truth_above": 0.0001,
+      "truth_below": 0.0
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.49449214830121146,
+      "se_ratio": 2.449238121153715,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.9993,
+       "1.3": 0.9863
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.4556851960043156,
+      "q90_ratio": 1.5183083315532782
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.4944921483012115,
+      "se_ratio": 2.4492381211537144,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.4305343388437484,
+      "se_ratio": 2.5018941095398977,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 1.0,
+       "1.3": 0.9895
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.3942935741513054,
+      "q90_ratio": 1.4228688469447475
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.43053433884374837,
+      "se_ratio": 2.5018941095398977,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.37340142422130307,
+      "se_ratio": 2.4465929212233175,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 1.0,
+       "1.3": 0.9909
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.410288643459222,
+      "q90_ratio": 1.4520586258084611
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 1.0,
+      "mc_se": 0.0,
+      "median_width": 0.3734014242213031,
+      "se_ratio": 2.4465929212233175,
+      "truth_above": 0.0,
+      "truth_below": 0.0
+     }
+    }
+   ]
+  },
+  {
+   "autocorrelation": {
     "1": -0.0010480243017800574,
     "10": -0.002837299152979816,
     "2": -0.0006844526955588501,
@@ -1724,6 +2817,7 @@
     "5": -0.002714479185789063
    },
    "reps": 4000,
+   "score": "rps",
    "series": "scores:placebo",
    "sizes": [
     {
@@ -1737,6 +2831,7 @@
       "truth_below": 0.0505
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.90475,
@@ -1758,6 +2853,7 @@
       "truth_below": 0.04925
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.95825,
@@ -1779,6 +2875,7 @@
       "truth_below": 0.0455
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.9125,
@@ -1800,6 +2897,7 @@
       "truth_below": 0.04925
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.902,
@@ -1821,6 +2919,15 @@
       "truth_below": 0.04525
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.278,
+       "1.3": 0.183
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9555002701971098,
+      "q90_ratio": 1.395087493024343
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.9035,
@@ -1842,6 +2949,15 @@
       "truth_below": 0.04675
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.252,
+       "1.3": 0.17925
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.912874965951362,
+      "q90_ratio": 1.4128991912630617
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.9115,
@@ -1863,6 +2979,15 @@
       "truth_below": 0.04675
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.199,
+       "1.3": 0.0935
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9798209085809673,
+      "q90_ratio": 1.2938897027960343
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.90175,
@@ -1884,6 +3009,15 @@
       "truth_below": 0.04475
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1715,
+       "1.3": 0.06575
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9843090651705215,
+      "q90_ratio": 1.2606590455592268
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.91,
@@ -1905,6 +3039,15 @@
       "truth_below": 0.0465
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.16225,
+       "1.3": 0.06075
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9822104948968249,
+      "q90_ratio": 1.2502258167217832
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.9065,
@@ -1926,6 +3069,15 @@
       "truth_below": 0.04625
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.10525,
+       "1.3": 0.01975
+      },
+      "long_blocks": 10,
+      "median_ratio": 0.990936031529018,
+      "q90_ratio": 1.2045388058965765
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.91325,
@@ -1947,6 +3099,15 @@
       "truth_below": 0.04775
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.08675,
+       "1.3": 0.017
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9878204070080833,
+      "q90_ratio": 1.1875658564875597
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.90675,
@@ -1958,10 +3119,645 @@
      }
     }
    ],
+   "skewness": 0.001407102540003598,
    "target": "1",
    "true_mean": 0.0,
    "truth_run_mc_se": 8.861474151308201e-06,
    "truth_run_mean": 1.9491560758731375e-07
+  },
+  {
+   "autocorrelation": {
+    "1": 0.001486993438447998,
+    "10": -0.0009941409261840538,
+    "2": 0.0024286603415480308,
+    "20": -0.00029337544426500924,
+    "5": 0.00047345738922837717
+   },
+   "reps": 4000,
+   "score": "brier",
+   "series": "scores:placebo",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.88925,
+      "mc_se": 0.004961966281122838,
+      "median_width": 0.01171759860969408,
+      "se_ratio": 0.8846905358440574,
+      "truth_above": 0.05075,
+      "truth_below": 0.06
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.88925,
+      "mc_se": 0.004961966281122838,
+      "median_width": 0.011717598609694077,
+      "se_ratio": 0.8846905358440573,
+      "truth_above": 0.05075,
+      "truth_below": 0.06
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.88975,
+      "mc_se": 0.004952144421864127,
+      "median_width": 0.01171624944989274,
+      "se_ratio": 0.8854260757969634,
+      "truth_above": 0.05125,
+      "truth_below": 0.059
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9515,
+      "mc_se": 0.0033966067626382654,
+      "median_width": 0.0180769642657981,
+      "se_ratio": 1.551103287944419,
+      "truth_above": 0.02275,
+      "truth_below": 0.02575
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.89125,
+      "mc_se": 0.0049224850812369155,
+      "median_width": 0.011158910189863275,
+      "se_ratio": 0.8797701247626365,
+      "truth_above": 0.0525,
+      "truth_below": 0.05625
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.895,
+      "mc_se": 0.004847035176270129,
+      "median_width": 0.011091868781767865,
+      "se_ratio": 0.9212630580910203,
+      "truth_above": 0.051,
+      "truth_below": 0.054
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.884,
+      "mc_se": 0.005063200568810207,
+      "median_width": 0.010647285675538683,
+      "se_ratio": 0.869014026315177,
+      "truth_above": 0.056,
+      "truth_below": 0.06
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.885,
+      "mc_se": 0.005044179814399958,
+      "median_width": 0.010399858515882574,
+      "se_ratio": 0.8921837067717483,
+      "truth_above": 0.05575,
+      "truth_below": 0.05925
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.88825,
+      "mc_se": 0.004981514265261116,
+      "median_width": 0.01032689267749206,
+      "se_ratio": 0.8913095265455422,
+      "truth_above": 0.055,
+      "truth_below": 0.05675
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.28125,
+       "1.3": 0.19225
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9828961992523473,
+      "q90_ratio": 1.4056411451163318
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.88825,
+      "mc_se": 0.004981514265261116,
+      "median_width": 0.01032689267749206,
+      "se_ratio": 0.8913095265455422,
+      "truth_above": 0.055,
+      "truth_below": 0.05675
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.88375,
+      "mc_se": 0.005067936895325354,
+      "median_width": 0.009076635467730517,
+      "se_ratio": 0.8813563649672898,
+      "truth_above": 0.05725,
+      "truth_below": 0.059
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.26975,
+       "1.3": 0.19175
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9439840441300353,
+      "q90_ratio": 1.4247723863569395
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.88825,
+      "mc_se": 0.004981514265261116,
+      "median_width": 0.009179437745573754,
+      "se_ratio": 0.9085022078671161,
+      "truth_above": 0.05475,
+      "truth_below": 0.057
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.8865,
+      "mc_se": 0.005015419972444981,
+      "median_width": 0.007675428410574075,
+      "se_ratio": 0.9099233303478785,
+      "truth_above": 0.05675,
+      "truth_below": 0.05675
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.22125,
+       "1.3": 0.096
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9945799598551417,
+      "q90_ratio": 1.2971278534993151
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.8865,
+      "mc_se": 0.005015419972444981,
+      "median_width": 0.007675428410574075,
+      "se_ratio": 0.9099233303478785,
+      "truth_above": 0.05675,
+      "truth_below": 0.05675
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.89075,
+      "mc_se": 0.004932404015791893,
+      "median_width": 0.006793113990592202,
+      "se_ratio": 0.9287173450943971,
+      "truth_above": 0.052,
+      "truth_below": 0.05725
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1805,
+       "1.3": 0.06825
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9977275073565973,
+      "q90_ratio": 1.266286813834152
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.8925,
+      "mc_se": 0.004897544027367188,
+      "median_width": 0.006903535209416318,
+      "se_ratio": 0.9465592773779457,
+      "truth_above": 0.052,
+      "truth_below": 0.0555
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.892,
+      "mc_se": 0.004907545211202847,
+      "median_width": 0.006155464916212711,
+      "se_ratio": 0.93962104117977,
+      "truth_above": 0.05125,
+      "truth_below": 0.05675
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.173,
+       "1.3": 0.064
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.0016418905772584,
+      "q90_ratio": 1.2599925517507407
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.892,
+      "mc_se": 0.004907545211202847,
+      "median_width": 0.006155464916212713,
+      "se_ratio": 0.9396210411797701,
+      "truth_above": 0.05125,
+      "truth_below": 0.05675
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.89425,
+      "mc_se": 0.004862276665822298,
+      "median_width": 0.005298775508140089,
+      "se_ratio": 0.9556569013043688,
+      "truth_above": 0.05,
+      "truth_below": 0.05575
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.115,
+       "1.3": 0.02325
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.0089843099019635,
+      "q90_ratio": 1.2133902754330832
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.89425,
+      "mc_se": 0.004862276665822298,
+      "median_width": 0.0052987755081400885,
+      "se_ratio": 0.9556569013043689,
+      "truth_above": 0.05,
+      "truth_below": 0.05575
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.88575,
+      "mc_se": 0.00502983442818946,
+      "median_width": 0.004725999634222095,
+      "se_ratio": 0.9514191203340069,
+      "truth_above": 0.05625,
+      "truth_below": 0.058
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.10025,
+       "1.3": 0.0155
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.004209687449431,
+      "q90_ratio": 1.2003798617750463
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.88575,
+      "mc_se": 0.00502983442818946,
+      "median_width": 0.004725999634222095,
+      "se_ratio": 0.9514191203340069,
+      "truth_above": 0.05625,
+      "truth_below": 0.058
+     }
+    }
+   ],
+   "skewness": 0.00013652569220128885,
+   "target": "1",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 2.3289314850548516e-05,
+   "truth_run_mean": -7.6008863161557756e-06
+  },
+  {
+   "autocorrelation": {
+    "1": 0.00391857634565502,
+    "10": 0.000944115034872917,
+    "2": 0.004832383955058407,
+    "20": 0.0009530312774960254,
+    "5": 0.003146693226241431
+   },
+   "reps": 4000,
+   "score": "log_loss",
+   "series": "scores:placebo",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.87875,
+      "mc_se": 0.005161115129020084,
+      "median_width": 0.019188807538033568,
+      "se_ratio": 0.8431415347499936,
+      "truth_above": 0.05525,
+      "truth_below": 0.066
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.87875,
+      "mc_se": 0.005161115129020084,
+      "median_width": 0.019188807538033564,
+      "se_ratio": 0.8431415347499936,
+      "truth_above": 0.05525,
+      "truth_below": 0.066
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.87875,
+      "mc_se": 0.005161115129020084,
+      "median_width": 0.019133629101293195,
+      "se_ratio": 0.8429585799922068,
+      "truth_above": 0.0555,
+      "truth_below": 0.06575
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9425,
+      "mc_se": 0.0036808202210920327,
+      "median_width": 0.028222594808592023,
+      "se_ratio": 1.4384729426672465,
+      "truth_above": 0.02625,
+      "truth_below": 0.03125
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.878,
+      "mc_se": 0.0051748429927873174,
+      "median_width": 0.018130245240910642,
+      "se_ratio": 0.8411278350823065,
+      "truth_above": 0.05775,
+      "truth_below": 0.06425
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8805,
+      "mc_se": 0.005128833931801654,
+      "median_width": 0.01807852921643207,
+      "se_ratio": 0.87785252715021,
+      "truth_above": 0.0575,
+      "truth_below": 0.062
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.87375,
+      "mc_se": 0.00525145069242776,
+      "median_width": 0.017323114248685836,
+      "se_ratio": 0.8323523540841459,
+      "truth_above": 0.06225,
+      "truth_below": 0.064
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8785,
+      "mc_se": 0.005165698161913838,
+      "median_width": 0.016936042910407706,
+      "se_ratio": 0.8528045896728286,
+      "truth_above": 0.058,
+      "truth_below": 0.0635
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.879,
+      "mc_se": 0.005156524992667057,
+      "median_width": 0.01679843562892505,
+      "se_ratio": 0.8509446317456465,
+      "truth_above": 0.05875,
+      "truth_below": 0.06225
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.29525,
+       "1.3": 0.19725
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9923940558812581,
+      "q90_ratio": 1.4168398709292376
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.879,
+      "mc_se": 0.005156524992667057,
+      "median_width": 0.01679843562892505,
+      "se_ratio": 0.8509446317456467,
+      "truth_above": 0.05875,
+      "truth_below": 0.06225
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.871,
+      "mc_se": 0.005299976415041863,
+      "median_width": 0.014899377720952994,
+      "se_ratio": 0.8443900012205333,
+      "truth_above": 0.0635,
+      "truth_below": 0.0655
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.28025,
+       "1.3": 0.19925
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9568815833409328,
+      "q90_ratio": 1.4377287479548715
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.87975,
+      "mc_se": 0.005142711772499018,
+      "median_width": 0.014895931996990578,
+      "se_ratio": 0.8677351436522538,
+      "truth_above": 0.05575,
+      "truth_below": 0.0645
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.87575,
+      "mc_se": 0.005215648030206793,
+      "median_width": 0.012544455148347185,
+      "se_ratio": 0.8669181655439214,
+      "truth_above": 0.05975,
+      "truth_below": 0.0645
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2275,
+       "1.3": 0.10425
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.0082904024127815,
+      "q90_ratio": 1.3038136214681972
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.87575,
+      "mc_se": 0.005215648030206793,
+      "median_width": 0.012544455148347181,
+      "se_ratio": 0.8669181655439214,
+      "truth_above": 0.05975,
+      "truth_below": 0.0645
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.8775,
+      "mc_se": 0.00518395963525952,
+      "median_width": 0.011153885382429746,
+      "se_ratio": 0.88435599077971,
+      "truth_above": 0.05775,
+      "truth_below": 0.06475
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.18775,
+       "1.3": 0.07525
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.0133961595878458,
+      "q90_ratio": 1.2755396310431533
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.8805,
+      "mc_se": 0.005128833931801654,
+      "median_width": 0.011271385505103171,
+      "se_ratio": 0.8994808937922459,
+      "truth_above": 0.05875,
+      "truth_below": 0.06075
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.87675,
+      "mc_se": 0.005197582070059115,
+      "median_width": 0.010103792196546914,
+      "se_ratio": 0.8917817436859874,
+      "truth_above": 0.05725,
+      "truth_below": 0.066
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.187,
+       "1.3": 0.072
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.0168503043474706,
+      "q90_ratio": 1.2660838460129
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.87675,
+      "mc_se": 0.005197582070059115,
+      "median_width": 0.010103792196546914,
+      "se_ratio": 0.8917817436859874,
+      "truth_above": 0.05725,
+      "truth_below": 0.066
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.87975,
+      "mc_se": 0.005142711772499018,
+      "median_width": 0.008683935250746743,
+      "se_ratio": 0.9064519860384999,
+      "truth_above": 0.059,
+      "truth_below": 0.06125
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.13025,
+       "1.3": 0.02825
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.0213150896756706,
+      "q90_ratio": 1.220973111675395
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.87975,
+      "mc_se": 0.005142711772499018,
+      "median_width": 0.008683935250746743,
+      "se_ratio": 0.9064519860384999,
+      "truth_above": 0.059,
+      "truth_below": 0.06125
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.8725,
+      "mc_se": 0.0052736076361443495,
+      "median_width": 0.007708402120374281,
+      "se_ratio": 0.9054006093441831,
+      "truth_above": 0.06425,
+      "truth_below": 0.06325
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.117,
+       "1.3": 0.01975
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.0207685994082405,
+      "q90_ratio": 1.210529927505753
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.8725,
+      "mc_se": 0.0052736076361443495,
+      "median_width": 0.007708402120374281,
+      "se_ratio": 0.9054006093441831,
+      "truth_above": 0.06425,
+      "truth_below": 0.06325
+     }
+    }
+   ],
+   "skewness": -0.0016955358912508615,
+   "target": "1",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 3.9720748187380275e-05,
+   "truth_run_mean": -1.7346126369632765e-05
   },
   {
    "autocorrelation": {
@@ -1972,6 +3768,7 @@
     "5": -0.004378114930354144
    },
    "reps": 4000,
+   "score": "rps",
    "series": "scores:own_history",
    "sizes": [
     {
@@ -1985,6 +3782,7 @@
       "truth_below": 0.03275
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.9115,
@@ -2006,6 +3804,7 @@
       "truth_below": 0.03275
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.969,
@@ -2027,6 +3826,7 @@
       "truth_below": 0.03025
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.921,
@@ -2048,6 +3848,7 @@
       "truth_below": 0.0345
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.91275,
@@ -2069,6 +3870,15 @@
       "truth_below": 0.03175
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.27725,
+       "1.3": 0.18275
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9657136992070148,
+      "q90_ratio": 1.3945712746733554
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.91175,
@@ -2090,6 +3900,15 @@
       "truth_below": 0.028
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.25425,
+       "1.3": 0.17325
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9136876185833114,
+      "q90_ratio": 1.4046729698891087
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.917,
@@ -2111,6 +3930,15 @@
       "truth_below": 0.0265
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.19725,
+       "1.3": 0.082
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9840793898563589,
+      "q90_ratio": 1.2845124263663257
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.92,
@@ -2132,6 +3960,15 @@
       "truth_below": 0.0245
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.16575,
+       "1.3": 0.05575
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9784646616170556,
+      "q90_ratio": 1.256929503429887
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.9305,
@@ -2153,6 +3990,15 @@
       "truth_below": 0.025
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1455,
+       "1.3": 0.0535
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9722774765314895,
+      "q90_ratio": 1.2458116716550856
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.92525,
@@ -2174,6 +4020,15 @@
       "truth_below": 0.025
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.088,
+       "1.3": 0.015
+      },
+      "long_blocks": 10,
+      "median_ratio": 0.9874873495114014,
+      "q90_ratio": 1.1916750648405467
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.92875,
@@ -2195,6 +4050,15 @@
       "truth_below": 0.0215
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.06875,
+       "1.3": 0.01125
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9726138795601593,
+      "q90_ratio": 1.173705057731355
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.92975,
@@ -2206,10 +4070,645 @@
      }
     }
    ],
+   "skewness": -0.01661711433734928,
    "target": "1",
    "true_mean": 0.0,
    "truth_run_mc_se": 7.877282510390526e-06,
    "truth_run_mean": -2.6029390125702905e-06
+  },
+  {
+   "autocorrelation": {
+    "1": -0.0007533985915204593,
+    "10": -0.0025635516200778865,
+    "2": -0.00018899691061231527,
+    "20": -0.001836834378369703,
+    "5": -0.0014724935150578575
+   },
+   "reps": 4000,
+   "score": "brier",
+   "series": "scores:own_history",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.91275,
+      "mc_se": 0.004461990517134703,
+      "median_width": 0.01161694575586705,
+      "se_ratio": 0.9427300821853025,
+      "truth_above": 0.05125,
+      "truth_below": 0.036
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.91275,
+      "mc_se": 0.004461990517134703,
+      "median_width": 0.01161694575586705,
+      "se_ratio": 0.9427300821853024,
+      "truth_above": 0.05125,
+      "truth_below": 0.036
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.914,
+      "mc_se": 0.004432944845133987,
+      "median_width": 0.011583464782937612,
+      "se_ratio": 0.9446118871128769,
+      "truth_above": 0.05125,
+      "truth_below": 0.03475
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.95925,
+      "mc_se": 0.0031260773143030212,
+      "median_width": 0.017870048083503065,
+      "se_ratio": 1.6641876457793492,
+      "truth_above": 0.02575,
+      "truth_below": 0.015
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90925,
+      "mc_se": 0.004541872892871397,
+      "median_width": 0.011100833991782695,
+      "se_ratio": 0.9446906611057897,
+      "truth_above": 0.0545,
+      "truth_below": 0.03625
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.912,
+      "mc_se": 0.004479285657334213,
+      "median_width": 0.011049858983596617,
+      "se_ratio": 0.9865943844589649,
+      "truth_above": 0.054,
+      "truth_below": 0.034
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90225,
+      "mc_se": 0.004695607987790292,
+      "median_width": 0.010475479559130557,
+      "se_ratio": 0.9399079878999348,
+      "truth_above": 0.05625,
+      "truth_below": 0.0415
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9085,
+      "mc_se": 0.00455872103774732,
+      "median_width": 0.01021473129106798,
+      "se_ratio": 0.962072990821788,
+      "truth_above": 0.05525,
+      "truth_below": 0.03625
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.90925,
+      "mc_se": 0.004541872892871397,
+      "median_width": 0.010162148079451521,
+      "se_ratio": 0.9625792675272089,
+      "truth_above": 0.05425,
+      "truth_below": 0.0365
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.294,
+       "1.3": 0.204
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.983032237515828,
+      "q90_ratio": 1.4092484257523
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.90925,
+      "mc_se": 0.004541872892871397,
+      "median_width": 0.010162148079451525,
+      "se_ratio": 0.962579267527209,
+      "truth_above": 0.05425,
+      "truth_below": 0.0365
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.90125,
+      "mc_se": 0.004716949159679379,
+      "median_width": 0.008929091281667101,
+      "se_ratio": 0.9597229227487455,
+      "truth_above": 0.058,
+      "truth_below": 0.04075
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.26925,
+       "1.3": 0.19525
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9428821204527951,
+      "q90_ratio": 1.4253899385676623
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.90925,
+      "mc_se": 0.004541872892871397,
+      "median_width": 0.009071209931144682,
+      "se_ratio": 0.9898563281493034,
+      "truth_above": 0.0535,
+      "truth_below": 0.03725
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.91,
+      "mc_se": 0.004524930938699506,
+      "median_width": 0.007541219833982305,
+      "se_ratio": 0.9949303329984254,
+      "truth_above": 0.056,
+      "truth_below": 0.034
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.21275,
+       "1.3": 0.09525
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.0001068697542295,
+      "q90_ratio": 1.2954227356266168
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.91,
+      "mc_se": 0.004524930938699506,
+      "median_width": 0.007541219833982304,
+      "se_ratio": 0.9949303329984254,
+      "truth_above": 0.056,
+      "truth_below": 0.034
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.91275,
+      "mc_se": 0.004461990517134703,
+      "median_width": 0.006677213418682284,
+      "se_ratio": 1.0115257996737412,
+      "truth_above": 0.05425,
+      "truth_below": 0.033
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.18925,
+       "1.3": 0.06925
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.003182966122432,
+      "q90_ratio": 1.2672263667445038
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.91775,
+      "mc_se": 0.004344103402889946,
+      "median_width": 0.006740089053320226,
+      "se_ratio": 1.0324791106012217,
+      "truth_above": 0.0525,
+      "truth_below": 0.02975
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.91125,
+      "mc_se": 0.004496483000635052,
+      "median_width": 0.006038874775843383,
+      "se_ratio": 1.0229534398580857,
+      "truth_above": 0.05575,
+      "truth_below": 0.033
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.16825,
+       "1.3": 0.064
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9903139019791344,
+      "q90_ratio": 1.2560489745801455
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.91125,
+      "mc_se": 0.004496483000635052,
+      "median_width": 0.006038874775843385,
+      "se_ratio": 1.0229534398580857,
+      "truth_above": 0.05575,
+      "truth_below": 0.033
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.913,
+      "mc_se": 0.004456203541132294,
+      "median_width": 0.0051857959928305105,
+      "se_ratio": 1.0510099695353152,
+      "truth_above": 0.053,
+      "truth_below": 0.034
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.107,
+       "1.3": 0.01925
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.0052082971262872,
+      "q90_ratio": 1.2058879307821821
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.913,
+      "mc_se": 0.004456203541132294,
+      "median_width": 0.0051857959928305105,
+      "se_ratio": 1.0510099695353152,
+      "truth_above": 0.053,
+      "truth_below": 0.034
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.91575,
+      "mc_se": 0.004391808781698038,
+      "median_width": 0.004592205177564399,
+      "se_ratio": 1.0508145038905996,
+      "truth_above": 0.0545,
+      "truth_below": 0.02975
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.08725,
+       "1.3": 0.016
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9980446725610975,
+      "q90_ratio": 1.1880168438212386
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.91575,
+      "mc_se": 0.004391808781698038,
+      "median_width": 0.004592205177564399,
+      "se_ratio": 1.0508145038905996,
+      "truth_above": 0.0545,
+      "truth_below": 0.02975
+     }
+    }
+   ],
+   "skewness": -0.014087594851372249,
+   "target": "1",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 2.068531239094222e-05,
+   "truth_run_mean": -1.8013133841767366e-05
+  },
+  {
+   "autocorrelation": {
+    "1": 0.0013025952570014394,
+    "10": -0.0012212894495269473,
+    "2": 0.0025092386127866318,
+    "20": -0.0004734367057621044,
+    "5": 0.0006877385443067903
+   },
+   "reps": 4000,
+   "score": "log_loss",
+   "series": "scores:own_history",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.903,
+      "mc_se": 0.004679503178757334,
+      "median_width": 0.019054043568007772,
+      "se_ratio": 0.9128889613615033,
+      "truth_above": 0.05575,
+      "truth_below": 0.04125
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.903,
+      "mc_se": 0.004679503178757334,
+      "median_width": 0.019054043568007776,
+      "se_ratio": 0.9128889613615033,
+      "truth_above": 0.05575,
+      "truth_below": 0.04125
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9055,
+      "mc_se": 0.004625195941795332,
+      "median_width": 0.01899908229321258,
+      "se_ratio": 0.9135735124308936,
+      "truth_above": 0.0545,
+      "truth_below": 0.04
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.96125,
+      "mc_se": 0.003051574900768452,
+      "median_width": 0.027926591101858984,
+      "se_ratio": 1.558492586040334,
+      "truth_above": 0.0235,
+      "truth_below": 0.01525
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90025,
+      "mc_se": 0.004738141447339875,
+      "median_width": 0.01829346574775261,
+      "se_ratio": 0.9134997199171434,
+      "truth_above": 0.0585,
+      "truth_below": 0.04125
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.90625,
+      "mc_se": 0.004608712876172695,
+      "median_width": 0.018130099894510115,
+      "se_ratio": 0.9503650466112686,
+      "truth_above": 0.05775,
+      "truth_below": 0.036
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.89725,
+      "mc_se": 0.004800844652246102,
+      "median_width": 0.017365741619165636,
+      "se_ratio": 0.910796957478462,
+      "truth_above": 0.06125,
+      "truth_below": 0.0415
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.89625,
+      "mc_se": 0.004821460813384259,
+      "median_width": 0.0168888524501217,
+      "se_ratio": 0.9306353879562194,
+      "truth_above": 0.0625,
+      "truth_below": 0.04125
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.89825,
+      "mc_se": 0.004780087276922881,
+      "median_width": 0.016791519550452567,
+      "se_ratio": 0.930406639100398,
+      "truth_above": 0.06225,
+      "truth_below": 0.0395
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.30275,
+       "1.3": 0.21
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9933280234985111,
+      "q90_ratio": 1.418867252561943
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.89825,
+      "mc_se": 0.004780087276922881,
+      "median_width": 0.01679151955045257,
+      "se_ratio": 0.930406639100398,
+      "truth_above": 0.06225,
+      "truth_below": 0.0395
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.89375,
+      "mc_se": 0.0048723951374041894,
+      "median_width": 0.01478054471009617,
+      "se_ratio": 0.9208824941049243,
+      "truth_above": 0.06225,
+      "truth_below": 0.044
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2765,
+       "1.3": 0.1975
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9436133971365662,
+      "q90_ratio": 1.44183591092417
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.90025,
+      "mc_se": 0.004738141447339875,
+      "median_width": 0.014790279843169715,
+      "se_ratio": 0.9460219616866531,
+      "truth_above": 0.05925,
+      "truth_below": 0.0405
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.90325,
+      "mc_se": 0.004674115892337288,
+      "median_width": 0.012309071891971467,
+      "se_ratio": 0.9482430938973136,
+      "truth_above": 0.05975,
+      "truth_below": 0.037
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.22025,
+       "1.3": 0.10025
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.0094227934508357,
+      "q90_ratio": 1.300029214764369
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.90325,
+      "mc_se": 0.004674115892337288,
+      "median_width": 0.012309071891971465,
+      "se_ratio": 0.9482430938973135,
+      "truth_above": 0.05975,
+      "truth_below": 0.037
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.9,
+      "mc_se": 0.004743416490252568,
+      "median_width": 0.01091028537255582,
+      "se_ratio": 0.9615382925598638,
+      "truth_above": 0.06175,
+      "truth_below": 0.03825
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.19975,
+       "1.3": 0.07775
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.0134588502460287,
+      "q90_ratio": 1.2777583808762774
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.904,
+      "mc_se": 0.004657896520963083,
+      "median_width": 0.010998145866096983,
+      "se_ratio": 0.9788231343062688,
+      "truth_above": 0.058,
+      "truth_below": 0.038
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.90025,
+      "mc_se": 0.004738141447339875,
+      "median_width": 0.009832426231454434,
+      "se_ratio": 0.9715516240121245,
+      "truth_above": 0.063,
+      "truth_below": 0.03675
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.18325,
+       "1.3": 0.07725
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.003163702529335,
+      "q90_ratio": 1.2726878786850797
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.90025,
+      "mc_se": 0.004738141447339875,
+      "median_width": 0.009832426231454434,
+      "se_ratio": 0.9715516240121245,
+      "truth_above": 0.063,
+      "truth_below": 0.03675
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.9045,
+      "mc_se": 0.004647035345249701,
+      "median_width": 0.008455505455596111,
+      "se_ratio": 1.0017694028871529,
+      "truth_above": 0.0605,
+      "truth_below": 0.035
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.12875,
+       "1.3": 0.023
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.014232429011161,
+      "q90_ratio": 1.2202301753323042
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.9045,
+      "mc_se": 0.004647035345249701,
+      "median_width": 0.008455505455596111,
+      "se_ratio": 1.0017694028871529,
+      "truth_above": 0.0605,
+      "truth_below": 0.035
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.90525,
+      "mc_se": 0.004630670510304097,
+      "median_width": 0.007512481447919097,
+      "se_ratio": 0.9989138375828256,
+      "truth_above": 0.06175,
+      "truth_below": 0.033
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1035,
+       "1.3": 0.0195
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.0057735020740584,
+      "q90_ratio": 1.2034080321738383
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.90525,
+      "mc_se": 0.004630670510304097,
+      "median_width": 0.0075124814479190965,
+      "se_ratio": 0.9989138375828254,
+      "truth_above": 0.06175,
+      "truth_below": 0.033
+     }
+    }
+   ],
+   "skewness": -0.021694599031185136,
+   "target": "1",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 3.522076245711744e-05,
+   "truth_run_mean": -3.8452018325666814e-05
   },
   {
    "autocorrelation": {
@@ -2220,6 +4719,7 @@
     "5": -0.005995759877486192
    },
    "reps": 4000,
+   "score": "rps",
    "series": "scores:volatility",
    "sizes": [
     {
@@ -2233,6 +4733,7 @@
       "truth_below": 0.02125
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.9355,
@@ -2254,6 +4755,7 @@
       "truth_below": 0.023
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.97475,
@@ -2275,6 +4777,7 @@
       "truth_below": 0.024
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.94325,
@@ -2296,6 +4799,7 @@
       "truth_below": 0.025
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.9395,
@@ -2317,6 +4821,15 @@
       "truth_below": 0.0195
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.264,
+       "1.3": 0.17
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9479552312105122,
+      "q90_ratio": 1.385467559776574
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.9375,
@@ -2338,6 +4851,15 @@
       "truth_below": 0.018
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2375,
+       "1.3": 0.15825
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.8949277913607034,
+      "q90_ratio": 1.3924607321672897
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.94375,
@@ -2359,6 +4881,15 @@
       "truth_below": 0.01175
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.18975,
+       "1.3": 0.07975
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9604766059662306,
+      "q90_ratio": 1.2780378269092099
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.9505,
@@ -2380,6 +4911,15 @@
       "truth_below": 0.011
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.16175,
+       "1.3": 0.057
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9595764455366015,
+      "q90_ratio": 1.2553641996054397
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.9515,
@@ -2401,6 +4941,15 @@
       "truth_below": 0.007
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.13375,
+       "1.3": 0.04625
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9441427631223982,
+      "q90_ratio": 1.2309095628664457
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.9555,
@@ -2422,6 +4971,15 @@
       "truth_below": 0.01
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.102,
+       "1.3": 0.02075
+      },
+      "long_blocks": 10,
+      "median_ratio": 0.9637427242230585,
+      "q90_ratio": 1.2011979802521886
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.96,
@@ -2443,6 +5001,15 @@
       "truth_below": 0.008
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.08,
+       "1.3": 0.01525
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9522405457116431,
+      "q90_ratio": 1.1792157669694372
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.96,
@@ -2454,10 +5021,645 @@
      }
     }
    ],
+   "skewness": -0.18124585887219027,
    "target": "1",
    "true_mean": -0.0008039341738995389,
    "truth_run_mc_se": 7.303304372131274e-06,
    "truth_run_mean": -0.0008039341738995389
+  },
+  {
+   "autocorrelation": {
+    "1": 0.0029829021228749233,
+    "10": -0.0013198363958485122,
+    "2": 0.002389254801800041,
+    "20": -0.002597878693419646,
+    "5": 0.002456157179665861
+   },
+   "reps": 4000,
+   "score": "brier",
+   "series": "scores:volatility",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.92125,
+      "mc_se": 0.0042587685279902214,
+      "median_width": 0.014089337895502586,
+      "se_ratio": 0.925359137273581,
+      "truth_above": 0.037,
+      "truth_below": 0.04175
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.92125,
+      "mc_se": 0.0042587685279902214,
+      "median_width": 0.014089337895502586,
+      "se_ratio": 0.9253591372735809,
+      "truth_above": 0.037,
+      "truth_below": 0.04175
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.92175,
+      "mc_se": 0.004246378972136143,
+      "median_width": 0.013928627604962067,
+      "se_ratio": 0.9264571750648908,
+      "truth_above": 0.03625,
+      "truth_below": 0.042
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.96375,
+      "mc_se": 0.0029553315169368057,
+      "median_width": 0.021095119874695305,
+      "se_ratio": 1.5936108020838555,
+      "truth_above": 0.021,
+      "truth_below": 0.01525
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.924,
+      "mc_se": 0.004189988066808782,
+      "median_width": 0.013324722458425222,
+      "se_ratio": 0.9284518517254582,
+      "truth_above": 0.03375,
+      "truth_below": 0.04225
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.93025,
+      "mc_se": 0.004027559357104498,
+      "median_width": 0.01343704064724472,
+      "se_ratio": 0.9715692230635811,
+      "truth_above": 0.0325,
+      "truth_below": 0.03725
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.91775,
+      "mc_se": 0.004344103402889946,
+      "median_width": 0.012766778310283163,
+      "se_ratio": 0.9161093169326218,
+      "truth_above": 0.03475,
+      "truth_below": 0.0475
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.92325,
+      "mc_se": 0.004208902395518337,
+      "median_width": 0.012517480186015586,
+      "se_ratio": 0.9400852752735822,
+      "truth_above": 0.0355,
+      "truth_below": 0.04125
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.92625,
+      "mc_se": 0.00413252155166794,
+      "median_width": 0.012454888520691243,
+      "se_ratio": 0.9426604013412819,
+      "truth_above": 0.03275,
+      "truth_below": 0.041
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.284,
+       "1.3": 0.187
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9819184540358313,
+      "q90_ratio": 1.4000004921614675
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.92625,
+      "mc_se": 0.00413252155166794,
+      "median_width": 0.012454888520691244,
+      "se_ratio": 0.942660401341282,
+      "truth_above": 0.03275,
+      "truth_below": 0.041
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.922,
+      "mc_se": 0.004240165091125579,
+      "median_width": 0.011063782156361075,
+      "se_ratio": 0.9731862154591434,
+      "truth_above": 0.038,
+      "truth_below": 0.04
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.25425,
+       "1.3": 0.1765
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9188244794996256,
+      "q90_ratio": 1.4186078960893636
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.92825,
+      "mc_se": 0.004080500505452732,
+      "median_width": 0.01121074130306776,
+      "se_ratio": 1.0035470676571645,
+      "truth_above": 0.038,
+      "truth_below": 0.03375
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.92475,
+      "mc_se": 0.004170954252326439,
+      "median_width": 0.009330793581356583,
+      "se_ratio": 0.9862020766888798,
+      "truth_above": 0.03825,
+      "truth_below": 0.037
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.222,
+       "1.3": 0.1015
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9958916987752651,
+      "q90_ratio": 1.3007835511130508
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.92475,
+      "mc_se": 0.004170954252326439,
+      "median_width": 0.009330793581356583,
+      "se_ratio": 0.9862020766888798,
+      "truth_above": 0.03825,
+      "truth_below": 0.037
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.9225,
+      "mc_se": 0.004227698842159882,
+      "median_width": 0.008243446651166251,
+      "se_ratio": 0.9967206204947763,
+      "truth_above": 0.03975,
+      "truth_below": 0.03775
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.192,
+       "1.3": 0.07
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.0031751452167024,
+      "q90_ratio": 1.2705335825500204
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.92725,
+      "mc_se": 0.004106623841429842,
+      "median_width": 0.008357692131046231,
+      "se_ratio": 1.0144612259974364,
+      "truth_above": 0.039,
+      "truth_below": 0.03375
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.92875,
+      "mc_se": 0.0040673528707256285,
+      "median_width": 0.0074340315090186074,
+      "se_ratio": 1.0120882545189014,
+      "truth_above": 0.03675,
+      "truth_below": 0.0345
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.16775,
+       "1.3": 0.0635
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9869418286425958,
+      "q90_ratio": 1.2586226890638175
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.92875,
+      "mc_se": 0.0040673528707256285,
+      "median_width": 0.0074340315090186074,
+      "se_ratio": 1.0120882545189014,
+      "truth_above": 0.03675,
+      "truth_below": 0.0345
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.92925,
+      "mc_se": 0.004054147182207374,
+      "median_width": 0.0064690389312305205,
+      "se_ratio": 1.0286806425046906,
+      "truth_above": 0.0345,
+      "truth_below": 0.03625
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.12375,
+       "1.3": 0.02775
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.0000627769282622,
+      "q90_ratio": 1.2200250456100494
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.92925,
+      "mc_se": 0.004054147182207374,
+      "median_width": 0.00646903893123052,
+      "se_ratio": 1.0286806425046906,
+      "truth_above": 0.0345,
+      "truth_below": 0.03625
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.92175,
+      "mc_se": 0.004246378972136143,
+      "median_width": 0.005761516215358231,
+      "se_ratio": 1.0372306493717733,
+      "truth_above": 0.04175,
+      "truth_below": 0.0365
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.101,
+       "1.3": 0.02225
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9958860350147203,
+      "q90_ratio": 1.2008570905163705
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.92175,
+      "mc_se": 0.004246378972136143,
+      "median_width": 0.005761516215358231,
+      "se_ratio": 1.0372306493717731,
+      "truth_above": 0.04175,
+      "truth_below": 0.0365
+     }
+    }
+   ],
+   "skewness": 0.04932033230662438,
+   "target": "1",
+   "true_mean": -0.0022974943790013596,
+   "truth_run_mc_se": 2.5819113921796406e-05,
+   "truth_run_mean": -0.0022974943790013596
+  },
+  {
+   "autocorrelation": {
+    "1": 0.007865311443805782,
+    "10": 0.001954713356268226,
+    "2": 0.008373409636740192,
+    "20": -0.0011852107946519067,
+    "5": 0.007429586822335624
+   },
+   "reps": 4000,
+   "score": "log_loss",
+   "series": "scores:volatility",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.91525,
+      "mc_se": 0.004403618895295096,
+      "median_width": 0.025865522979727728,
+      "se_ratio": 0.8373099860262646,
+      "truth_above": 0.03125,
+      "truth_below": 0.0535
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.91525,
+      "mc_se": 0.004403618895295096,
+      "median_width": 0.025865522979727728,
+      "se_ratio": 0.8373099860262646,
+      "truth_above": 0.03125,
+      "truth_below": 0.0535
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.91275,
+      "mc_se": 0.004461990517134703,
+      "median_width": 0.02559159044527013,
+      "se_ratio": 0.8380088912861925,
+      "truth_above": 0.032,
+      "truth_below": 0.05525
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.96175,
+      "mc_se": 0.00303261180750191,
+      "median_width": 0.03851588509128267,
+      "se_ratio": 1.3997009986855746,
+      "truth_above": 0.017,
+      "truth_below": 0.02125
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.914,
+      "mc_se": 0.004432944845133987,
+      "median_width": 0.02453437424932308,
+      "se_ratio": 0.8379534513634819,
+      "truth_above": 0.0335,
+      "truth_below": 0.0525
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.91425,
+      "mc_se": 0.004427102254861525,
+      "median_width": 0.024436797720959316,
+      "se_ratio": 0.8705073890429963,
+      "truth_above": 0.0325,
+      "truth_below": 0.05325
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9105,
+      "mc_se": 0.004513583664894227,
+      "median_width": 0.02352093861480533,
+      "se_ratio": 0.8258016562168802,
+      "truth_above": 0.03275,
+      "truth_below": 0.05675
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.91475,
+      "mc_se": 0.004415383264791405,
+      "median_width": 0.02307209481065889,
+      "se_ratio": 0.8431624860242919,
+      "truth_above": 0.03275,
+      "truth_below": 0.0525
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.91725,
+      "mc_se": 0.004356100248502093,
+      "median_width": 0.022924618678469566,
+      "se_ratio": 0.8443239317515541,
+      "truth_above": 0.031,
+      "truth_below": 0.05175
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.28275,
+       "1.3": 0.18775
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9888949333340817,
+      "q90_ratio": 1.407748736141193
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.91725,
+      "mc_se": 0.004356100248502093,
+      "median_width": 0.022924618678469573,
+      "se_ratio": 0.8443239317515543,
+      "truth_above": 0.031,
+      "truth_below": 0.05175
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.9095,
+      "mc_se": 0.004536236049854549,
+      "median_width": 0.02047357029429544,
+      "se_ratio": 0.8659713330591536,
+      "truth_above": 0.03575,
+      "truth_below": 0.05475
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2585,
+       "1.3": 0.17875
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9261081976940342,
+      "q90_ratio": 1.420559497961666
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.9125,
+      "mc_se": 0.004467766500165379,
+      "median_width": 0.020661312480891886,
+      "se_ratio": 0.891187221362867,
+      "truth_above": 0.03675,
+      "truth_below": 0.05075
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.91025,
+      "mc_se": 0.004519262591950151,
+      "median_width": 0.01743640479894159,
+      "se_ratio": 0.8699505676334546,
+      "truth_above": 0.0355,
+      "truth_below": 0.05425
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.23325,
+       "1.3": 0.11
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.0069466333898527,
+      "q90_ratio": 1.3087531655602045
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.91025,
+      "mc_se": 0.004519262591950151,
+      "median_width": 0.01743640479894159,
+      "se_ratio": 0.8699505676334546,
+      "truth_above": 0.0355,
+      "truth_below": 0.05425
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.90375,
+      "mc_se": 0.004663312596749224,
+      "median_width": 0.015492845953059699,
+      "se_ratio": 0.8822819094574753,
+      "truth_above": 0.03775,
+      "truth_below": 0.0585
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.20825,
+       "1.3": 0.08025
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.0064298627592096,
+      "q90_ratio": 1.2828888950123343
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.9085,
+      "mc_se": 0.00455872103774732,
+      "median_width": 0.015534283701178566,
+      "se_ratio": 0.8955744117985136,
+      "truth_above": 0.03525,
+      "truth_below": 0.05625
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.908,
+      "mc_se": 0.0045699015306678095,
+      "median_width": 0.013949803680895968,
+      "se_ratio": 0.8914261118235729,
+      "truth_above": 0.0365,
+      "truth_below": 0.0555
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.18575,
+       "1.3": 0.0775
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.001579503517032,
+      "q90_ratio": 1.276194800921901
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.908,
+      "mc_se": 0.0045699015306678095,
+      "median_width": 0.013949803680895968,
+      "se_ratio": 0.8914261118235729,
+      "truth_above": 0.0365,
+      "truth_below": 0.0555
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.90275,
+      "mc_se": 0.004684880934986501,
+      "median_width": 0.012092038977593988,
+      "se_ratio": 0.9091536559334942,
+      "truth_above": 0.037,
+      "truth_below": 0.06025
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.141,
+       "1.3": 0.037
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.0151709460372205,
+      "q90_ratio": 1.2321337454583055
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.90275,
+      "mc_se": 0.004684880934986501,
+      "median_width": 0.012092038977593988,
+      "se_ratio": 0.9091536559334942,
+      "truth_above": 0.037,
+      "truth_below": 0.06025
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.899,
+      "mc_se": 0.004764425463788892,
+      "median_width": 0.010827547389750742,
+      "se_ratio": 0.9161333897841824,
+      "truth_above": 0.0425,
+      "truth_below": 0.0585
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.124,
+       "1.3": 0.03525
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.0104315750001085,
+      "q90_ratio": 1.2184643008568703
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.899,
+      "mc_se": 0.004764425463788892,
+      "median_width": 0.010827547389750742,
+      "se_ratio": 0.9161333897841824,
+      "truth_above": 0.0425,
+      "truth_below": 0.0585
+     }
+    }
+   ],
+   "skewness": 0.5073968861994098,
+   "target": "1",
+   "true_mean": -0.003683332106231489,
+   "truth_run_mc_se": 5.600676426722813e-05,
+   "truth_run_mean": -0.003683332106231489
   },
   {
    "autocorrelation": {
@@ -2468,6 +5670,7 @@
     "5": -0.0061613362221752295
    },
    "reps": 4000,
+   "score": "rps",
    "series": "scores:placebo",
    "sizes": [
     {
@@ -2481,6 +5684,7 @@
       "truth_below": 0.0485
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.909,
@@ -2502,6 +5706,7 @@
       "truth_below": 0.05025
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.92175,
@@ -2523,6 +5728,7 @@
       "truth_below": 0.0545
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.9065,
@@ -2544,6 +5750,7 @@
       "truth_below": 0.057
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.90125,
@@ -2565,6 +5772,15 @@
       "truth_below": 0.0525
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.287,
+       "1.3": 0.191
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9726204713492652,
+      "q90_ratio": 1.405850597933658
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.8995,
@@ -2586,6 +5802,15 @@
       "truth_below": 0.05275
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.26125,
+       "1.3": 0.18275
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9248247959603622,
+      "q90_ratio": 1.4216980228593854
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.901,
@@ -2607,6 +5832,15 @@
       "truth_below": 0.05475
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.22725,
+       "1.3": 0.10575
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.0044481112777541,
+      "q90_ratio": 1.30540797497479
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.8945,
@@ -2628,6 +5862,15 @@
       "truth_below": 0.0545
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1975,
+       "1.3": 0.077
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9981558850327917,
+      "q90_ratio": 1.279338846120255
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.89875,
@@ -2649,6 +5892,15 @@
       "truth_below": 0.051
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.17625,
+       "1.3": 0.07125
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9969539894835107,
+      "q90_ratio": 1.2716842289921984
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.89975,
@@ -2670,6 +5922,15 @@
       "truth_below": 0.051
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.12175,
+       "1.3": 0.0235
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.0078710845606222,
+      "q90_ratio": 1.218337713652261
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.89525,
@@ -2691,6 +5952,15 @@
       "truth_below": 0.04875
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.10775,
+       "1.3": 0.0205
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.00566477905021,
+      "q90_ratio": 1.204919139661895
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.8945,
@@ -2702,10 +5972,645 @@
      }
     }
    ],
+   "skewness": -0.0006988749078885543,
    "target": "cum",
    "true_mean": 0.0,
    "truth_run_mc_se": 3.395910976840086e-05,
    "truth_run_mean": -2.8498032543989937e-05
+  },
+  {
+   "autocorrelation": {
+    "1": 0.5800514670299202,
+    "10": -0.010234993255760319,
+    "2": 0.39478988529141795,
+    "20": -0.009076243674570694,
+    "5": -0.003616898070342849
+   },
+   "reps": 4000,
+   "score": "brier",
+   "series": "scores:placebo",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90475,
+      "mc_se": 0.004641590177406876,
+      "median_width": 0.03608958713046502,
+      "se_ratio": 0.893524754563607,
+      "truth_above": 0.0465,
+      "truth_below": 0.04875
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.90475,
+      "mc_se": 0.004641590177406876,
+      "median_width": 0.03608958713046501,
+      "se_ratio": 0.8935247545636069,
+      "truth_above": 0.0465,
+      "truth_below": 0.04875
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9035,
+      "mc_se": 0.004668719042735385,
+      "median_width": 0.035896023733763584,
+      "se_ratio": 0.8917424563404723,
+      "truth_above": 0.04625,
+      "truth_below": 0.05025
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.92475,
+      "mc_se": 0.004170954252326439,
+      "median_width": 0.04139656623294234,
+      "se_ratio": 1.0903824405860703,
+      "truth_above": 0.035,
+      "truth_below": 0.04025
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8975,
+      "mc_se": 0.004795668618659968,
+      "median_width": 0.03458070792553106,
+      "se_ratio": 0.8869640344431251,
+      "truth_above": 0.04575,
+      "truth_below": 0.05675
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.903,
+      "mc_se": 0.004679503178757334,
+      "median_width": 0.03405806024701666,
+      "se_ratio": 0.9171511280783776,
+      "truth_above": 0.04525,
+      "truth_below": 0.05175
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.894,
+      "mc_se": 0.004867340136049668,
+      "median_width": 0.03267366666531352,
+      "se_ratio": 0.8783600353262186,
+      "truth_above": 0.051,
+      "truth_below": 0.055
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.89775,
+      "mc_se": 0.00479048373079379,
+      "median_width": 0.032153510502426694,
+      "se_ratio": 0.8991524906530521,
+      "truth_above": 0.04925,
+      "truth_below": 0.053
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.89575,
+      "mc_se": 0.004831716503997311,
+      "median_width": 0.0319746739462514,
+      "se_ratio": 0.8989021345034375,
+      "truth_above": 0.05125,
+      "truth_below": 0.053
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2815,
+       "1.3": 0.189
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9652906514750443,
+      "q90_ratio": 1.399909599069328
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.89575,
+      "mc_se": 0.004831716503997311,
+      "median_width": 0.0319746739462514,
+      "se_ratio": 0.8989021345034375,
+      "truth_above": 0.05125,
+      "truth_below": 0.053
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.89675,
+      "mc_se": 0.0048111702708384775,
+      "median_width": 0.028003177055477384,
+      "se_ratio": 0.9079651575033466,
+      "truth_above": 0.0495,
+      "truth_below": 0.05375
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.25825,
+       "1.3": 0.17875
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.925840973534239,
+      "q90_ratio": 1.4179464715408951
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.89975,
+      "mc_se": 0.004748682383040583,
+      "median_width": 0.02814676312174382,
+      "se_ratio": 0.9293825418464492,
+      "truth_above": 0.046,
+      "truth_below": 0.05425
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.8905,
+      "mc_se": 0.00493735126358253,
+      "median_width": 0.023740455752262087,
+      "se_ratio": 0.9241782745070284,
+      "truth_above": 0.05225,
+      "truth_below": 0.05725
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2235,
+       "1.3": 0.10225
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9992495386364939,
+      "q90_ratio": 1.3026761805171725
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.8905,
+      "mc_se": 0.00493735126358253,
+      "median_width": 0.023740455752262083,
+      "se_ratio": 0.9241782745070284,
+      "truth_above": 0.05225,
+      "truth_below": 0.05725
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.893,
+      "mc_se": 0.004887509590783428,
+      "median_width": 0.020924883228106553,
+      "se_ratio": 0.9304080608868598,
+      "truth_above": 0.05125,
+      "truth_below": 0.05575
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.19675,
+       "1.3": 0.0745
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.0009436954782094,
+      "q90_ratio": 1.276075169351142
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.89825,
+      "mc_se": 0.004780087276922881,
+      "median_width": 0.02116191404242379,
+      "se_ratio": 0.9454684467467068,
+      "truth_above": 0.0485,
+      "truth_below": 0.05325
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.894,
+      "mc_se": 0.004867340136049668,
+      "median_width": 0.01901065783848757,
+      "se_ratio": 0.9472650045413098,
+      "truth_above": 0.049,
+      "truth_below": 0.057
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1765,
+       "1.3": 0.067
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.0055451222650815,
+      "q90_ratio": 1.2676502224111064
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.894,
+      "mc_se": 0.004867340136049668,
+      "median_width": 0.01901065783848757,
+      "se_ratio": 0.9472650045413098,
+      "truth_above": 0.049,
+      "truth_below": 0.057
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.89375,
+      "mc_se": 0.0048723951374041894,
+      "median_width": 0.016418982862840284,
+      "se_ratio": 0.9498666583949663,
+      "truth_above": 0.05125,
+      "truth_below": 0.055
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.12075,
+       "1.3": 0.02225
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.012953441856389,
+      "q90_ratio": 1.2157253222816988
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.89375,
+      "mc_se": 0.0048723951374041894,
+      "median_width": 0.016418982862840277,
+      "se_ratio": 0.9498666583949663,
+      "truth_above": 0.05125,
+      "truth_below": 0.055
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.896,
+      "mc_se": 0.004826593001279474,
+      "median_width": 0.014669752161900196,
+      "se_ratio": 0.9688357920755547,
+      "truth_above": 0.054,
+      "truth_below": 0.05
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.10875,
+       "1.3": 0.019
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.0107567066380092,
+      "q90_ratio": 1.2075231510911995
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.896,
+      "mc_se": 0.004826593001279474,
+      "median_width": 0.014669752161900196,
+      "se_ratio": 0.9688357920755547,
+      "truth_above": 0.054,
+      "truth_below": 0.05
+     }
+    }
+   ],
+   "skewness": -0.000992942460129292,
+   "target": "cum",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 7.081475570586037e-05,
+   "truth_run_mean": -6.644418189775157e-05
+  },
+  {
+   "autocorrelation": {
+    "1": 0.4791520669881016,
+    "10": -0.007078334056932359,
+    "2": 0.3151906488818592,
+    "20": -0.005904456390552696,
+    "5": -0.000557939384545463
+   },
+   "reps": 4000,
+   "score": "log_loss",
+   "series": "scores:placebo",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.89625,
+      "mc_se": 0.004821460813384259,
+      "median_width": 0.04917295289190206,
+      "se_ratio": 0.8836510070104612,
+      "truth_above": 0.051,
+      "truth_below": 0.05275
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.89625,
+      "mc_se": 0.004821460813384259,
+      "median_width": 0.04917295289190206,
+      "se_ratio": 0.8836510070104612,
+      "truth_above": 0.051,
+      "truth_below": 0.05275
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.89875,
+      "mc_se": 0.004769655058282516,
+      "median_width": 0.04894698840368037,
+      "se_ratio": 0.881632193139106,
+      "truth_above": 0.04925,
+      "truth_below": 0.052
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.931,
+      "mc_se": 0.0040074617902108554,
+      "median_width": 0.05802444205460363,
+      "se_ratio": 1.1147527520141463,
+      "truth_above": 0.0305,
+      "truth_below": 0.0385
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.889,
+      "mc_se": 0.00496686520855962,
+      "median_width": 0.04690346536391257,
+      "se_ratio": 0.8763399385413669,
+      "truth_above": 0.05225,
+      "truth_below": 0.05875
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.90125,
+      "mc_se": 0.004716949159679379,
+      "median_width": 0.04646668422187492,
+      "se_ratio": 0.9063161805559814,
+      "truth_above": 0.04625,
+      "truth_below": 0.0525
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.887,
+      "mc_se": 0.005005771668783944,
+      "median_width": 0.04467987556998583,
+      "se_ratio": 0.8670896127557058,
+      "truth_above": 0.0535,
+      "truth_below": 0.0595
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.89375,
+      "mc_se": 0.0048723951374041894,
+      "median_width": 0.04395823024140484,
+      "se_ratio": 0.8872503606738232,
+      "truth_above": 0.04875,
+      "truth_below": 0.0575
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.893,
+      "mc_se": 0.004887509590783428,
+      "median_width": 0.043628620231657186,
+      "se_ratio": 0.8872240881202845,
+      "truth_above": 0.04925,
+      "truth_below": 0.05775
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2825,
+       "1.3": 0.18125
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9678860332218296,
+      "q90_ratio": 1.403673941069361
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.893,
+      "mc_se": 0.004887509590783428,
+      "median_width": 0.0436286202316572,
+      "se_ratio": 0.8872240881202847,
+      "truth_above": 0.04925,
+      "truth_below": 0.05775
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.893,
+      "mc_se": 0.004887509590783428,
+      "median_width": 0.038169863372397125,
+      "se_ratio": 0.8978361737198337,
+      "truth_above": 0.05175,
+      "truth_below": 0.05525
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.25825,
+       "1.3": 0.18225
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9252151643986841,
+      "q90_ratio": 1.4223695032626666
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.893,
+      "mc_se": 0.004887509590783428,
+      "median_width": 0.03824885850512716,
+      "se_ratio": 0.918080464463295,
+      "truth_above": 0.05275,
+      "truth_below": 0.05425
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.88875,
+      "mc_se": 0.004971756166084575,
+      "median_width": 0.03215382550139077,
+      "se_ratio": 0.9142876257281386,
+      "truth_above": 0.0535,
+      "truth_below": 0.05775
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.22675,
+       "1.3": 0.102
+      },
+      "long_blocks": 5,
+      "median_ratio": 1.005006508943429,
+      "q90_ratio": 1.301513966483884
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.88875,
+      "mc_se": 0.004971756166084575,
+      "median_width": 0.03215382550139077,
+      "se_ratio": 0.9142876257281386,
+      "truth_above": 0.0535,
+      "truth_below": 0.05775
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.8895,
+      "mc_se": 0.004957059360144884,
+      "median_width": 0.028473805599192638,
+      "se_ratio": 0.9230039608210603,
+      "truth_above": 0.0535,
+      "truth_below": 0.057
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2,
+       "1.3": 0.0715
+      },
+      "long_blocks": 6,
+      "median_ratio": 1.0087624973730658,
+      "q90_ratio": 1.2738728437883462
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.89175,
+      "mc_se": 0.004912533396833042,
+      "median_width": 0.02874138133416954,
+      "se_ratio": 0.9374057384557579,
+      "truth_above": 0.05175,
+      "truth_below": 0.0565
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.8965,
+      "mc_se": 0.004816319912547339,
+      "median_width": 0.025852454549909157,
+      "se_ratio": 0.9392134260208318,
+      "truth_above": 0.04975,
+      "truth_below": 0.05375
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1855,
+       "1.3": 0.07225
+      },
+      "long_blocks": 7,
+      "median_ratio": 1.0067153378484799,
+      "q90_ratio": 1.2695899621172406
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.8965,
+      "mc_se": 0.004816319912547339,
+      "median_width": 0.025852454549909164,
+      "se_ratio": 0.9392134260208318,
+      "truth_above": 0.04975,
+      "truth_below": 0.05375
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.891,
+      "mc_se": 0.004927448629869214,
+      "median_width": 0.02230257090075132,
+      "se_ratio": 0.9415641526048838,
+      "truth_above": 0.05175,
+      "truth_below": 0.05725
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.12525,
+       "1.3": 0.02275
+      },
+      "long_blocks": 10,
+      "median_ratio": 1.0166934532119418,
+      "q90_ratio": 1.2176491995889875
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.891,
+      "mc_se": 0.004927448629869214,
+      "median_width": 0.02230257090075132,
+      "se_ratio": 0.9415641526048838,
+      "truth_above": 0.05175,
+      "truth_below": 0.05725
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.89425,
+      "mc_se": 0.004862276665822298,
+      "median_width": 0.01981736286356921,
+      "se_ratio": 0.958632748120269,
+      "truth_above": 0.05125,
+      "truth_below": 0.0545
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1115,
+       "1.3": 0.01875
+      },
+      "long_blocks": 12,
+      "median_ratio": 1.0141972852552072,
+      "q90_ratio": 1.207503562693105
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.89425,
+      "mc_se": 0.004862276665822298,
+      "median_width": 0.019817362863569214,
+      "se_ratio": 0.9586327481202688,
+      "truth_above": 0.05125,
+      "truth_below": 0.0545
+     }
+    }
+   ],
+   "skewness": -0.0013663123426279132,
+   "target": "cum",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 9.659889894459626e-05,
+   "truth_run_mean": -9.692793099225325e-05
   },
   {
    "autocorrelation": {
@@ -2716,6 +6621,7 @@
     "5": -0.012124131935133885
    },
    "reps": 4000,
+   "score": "rps",
    "series": "scores:own_history",
    "sizes": [
     {
@@ -2729,6 +6635,7 @@
       "truth_below": 0.03775
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.913,
@@ -2750,6 +6657,7 @@
       "truth_below": 0.038
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.9305,
@@ -2771,6 +6679,7 @@
       "truth_below": 0.04
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.91225,
@@ -2792,6 +6701,7 @@
       "truth_below": 0.0395
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.906,
@@ -2813,6 +6723,15 @@
       "truth_below": 0.0375
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2845,
+       "1.3": 0.19525
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9678554140209581,
+      "q90_ratio": 1.4118585190183843
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.906,
@@ -2834,6 +6753,15 @@
       "truth_below": 0.0385
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.25575,
+       "1.3": 0.17275
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9160651488173424,
+      "q90_ratio": 1.4204695050258522
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.91475,
@@ -2855,6 +6783,15 @@
       "truth_below": 0.03625
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2105,
+       "1.3": 0.11
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.990039714829513,
+      "q90_ratio": 1.3082910066167892
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.91275,
@@ -2876,6 +6813,15 @@
       "truth_below": 0.0325
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1815,
+       "1.3": 0.0735
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9916005802731348,
+      "q90_ratio": 1.273166226779669
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.9195,
@@ -2897,6 +6843,15 @@
       "truth_below": 0.0295
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.165,
+       "1.3": 0.05775
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9762449247915419,
+      "q90_ratio": 1.253375064114721
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.921,
@@ -2918,6 +6873,15 @@
       "truth_below": 0.02675
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.105,
+       "1.3": 0.0195
+      },
+      "long_blocks": 10,
+      "median_ratio": 0.9890517328852111,
+      "q90_ratio": 1.203445186087509
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.92725,
@@ -2939,6 +6903,15 @@
       "truth_below": 0.0225
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.092,
+       "1.3": 0.0155
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9881203369385378,
+      "q90_ratio": 1.1938704443191503
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.93025,
@@ -2950,10 +6923,645 @@
      }
     }
    ],
+   "skewness": -0.03348220241598143,
    "target": "cum",
    "true_mean": 0.0,
    "truth_run_mc_se": 3.028079490594873e-05,
    "truth_run_mean": -1.791938228600666e-05
+  },
+  {
+   "autocorrelation": {
+    "1": 0.5788090475685538,
+    "10": -0.01821234348289287,
+    "2": 0.39343466139331884,
+    "20": -0.014579468531295629,
+    "5": -0.009436414024237791
+   },
+   "reps": 4000,
+   "score": "brier",
+   "series": "scores:own_history",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90925,
+      "mc_se": 0.004541872892871397,
+      "median_width": 0.03540843382086949,
+      "se_ratio": 0.9383486069839181,
+      "truth_above": 0.052,
+      "truth_below": 0.03875
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.90925,
+      "mc_se": 0.004541872892871397,
+      "median_width": 0.03540843382086949,
+      "se_ratio": 0.9383486069839179,
+      "truth_above": 0.052,
+      "truth_below": 0.03875
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90775,
+      "mc_se": 0.00457547640962119,
+      "median_width": 0.035480794067448224,
+      "se_ratio": 0.9372495820314175,
+      "truth_above": 0.05275,
+      "truth_below": 0.0395
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9325,
+      "mc_se": 0.003966854862482367,
+      "median_width": 0.04061552763674615,
+      "se_ratio": 1.1458603226154542,
+      "truth_above": 0.0405,
+      "truth_below": 0.027
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90625,
+      "mc_se": 0.004608712876172695,
+      "median_width": 0.03366880345334562,
+      "se_ratio": 0.9372065852533108,
+      "truth_above": 0.054,
+      "truth_below": 0.03975
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.91075,
+      "mc_se": 0.004507894117545355,
+      "median_width": 0.0338194981217278,
+      "se_ratio": 0.9728411332760324,
+      "truth_above": 0.055,
+      "truth_below": 0.03425
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.899,
+      "mc_se": 0.004764425463788892,
+      "median_width": 0.03193356027530443,
+      "se_ratio": 0.9327288508577517,
+      "truth_above": 0.05775,
+      "truth_below": 0.04325
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.90475,
+      "mc_se": 0.004641590177406876,
+      "median_width": 0.031725783800057666,
+      "se_ratio": 0.9585345899825848,
+      "truth_above": 0.05825,
+      "truth_below": 0.037
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.905,
+      "mc_se": 0.004636135243928934,
+      "median_width": 0.03152078989587486,
+      "se_ratio": 0.9582385358231,
+      "truth_above": 0.05825,
+      "truth_below": 0.03675
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.28725,
+       "1.3": 0.19525
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9700906468323492,
+      "q90_ratio": 1.4137662317411852
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.905,
+      "mc_se": 0.004636135243928934,
+      "median_width": 0.03152078989587487,
+      "se_ratio": 0.9582385358231,
+      "truth_above": 0.05825,
+      "truth_below": 0.03675
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.9095,
+      "mc_se": 0.004536236049854549,
+      "median_width": 0.02745297528036031,
+      "se_ratio": 0.977787468300763,
+      "truth_above": 0.05225,
+      "truth_below": 0.03825
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.25425,
+       "1.3": 0.18025
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9105793915408575,
+      "q90_ratio": 1.418867125250203
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.917,
+      "mc_se": 0.004362080925429971,
+      "median_width": 0.027658150847236284,
+      "se_ratio": 1.0059636153298617,
+      "truth_above": 0.05025,
+      "truth_below": 0.03275
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.915,
+      "mc_se": 0.004409506775139368,
+      "median_width": 0.023137309776262924,
+      "se_ratio": 1.00474908946312,
+      "truth_above": 0.04975,
+      "truth_below": 0.03525
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2145,
+       "1.3": 0.099
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9866428003530554,
+      "q90_ratio": 1.299198301357459
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.915,
+      "mc_se": 0.004409506775139368,
+      "median_width": 0.023137309776262917,
+      "se_ratio": 1.00474908946312,
+      "truth_above": 0.04975,
+      "truth_below": 0.03525
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.92125,
+      "mc_se": 0.0042587685279902214,
+      "median_width": 0.020620854001944924,
+      "se_ratio": 1.0279989179532947,
+      "truth_above": 0.04775,
+      "truth_below": 0.031
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.186,
+       "1.3": 0.06875
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9886318569870924,
+      "q90_ratio": 1.2690706068057769
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.925,
+      "mc_se": 0.00416458281223942,
+      "median_width": 0.020944355846062194,
+      "se_ratio": 1.0453787423063305,
+      "truth_above": 0.04625,
+      "truth_below": 0.02875
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.9225,
+      "mc_se": 0.004227698842159882,
+      "median_width": 0.018746701447749925,
+      "se_ratio": 1.0525975495543352,
+      "truth_above": 0.04775,
+      "truth_below": 0.02975
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.16475,
+       "1.3": 0.06225
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9817516346477575,
+      "q90_ratio": 1.2562832810619136
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.9225,
+      "mc_se": 0.004227698842159882,
+      "median_width": 0.018746701447749925,
+      "se_ratio": 1.0525975495543354,
+      "truth_above": 0.04775,
+      "truth_below": 0.02975
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.925,
+      "mc_se": 0.00416458281223942,
+      "median_width": 0.016182367014326605,
+      "se_ratio": 1.0821606833942568,
+      "truth_above": 0.045,
+      "truth_below": 0.03
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.107,
+       "1.3": 0.01675
+      },
+      "long_blocks": 10,
+      "median_ratio": 0.9941886981867953,
+      "q90_ratio": 1.2035089407895372
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.925,
+      "mc_se": 0.00416458281223942,
+      "median_width": 0.016182367014326605,
+      "se_ratio": 1.0821606833942568,
+      "truth_above": 0.045,
+      "truth_below": 0.03
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.9315,
+      "mc_se": 0.00399398766898447,
+      "median_width": 0.01441122239868416,
+      "se_ratio": 1.0936144679609299,
+      "truth_above": 0.04575,
+      "truth_below": 0.02275
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.08725,
+       "1.3": 0.01475
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.988838383901095,
+      "q90_ratio": 1.1895443805616164
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.9315,
+      "mc_se": 0.00399398766898447,
+      "median_width": 0.01441122239868416,
+      "se_ratio": 1.0936144679609296,
+      "truth_above": 0.04575,
+      "truth_below": 0.02275
+     }
+    }
+   ],
+   "skewness": -0.02956396091601911,
+   "target": "cum",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 6.309555311383717e-05,
+   "truth_run_mean": -5.457988079893738e-05
+  },
+  {
+   "autocorrelation": {
+    "1": 0.4775078985933876,
+    "10": -0.013425229736892915,
+    "2": 0.3138688876027352,
+    "20": -0.011274183382028014,
+    "5": -0.006153335427800535
+   },
+   "reps": 4000,
+   "score": "log_loss",
+   "series": "scores:own_history",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9055,
+      "mc_se": 0.004625195941795332,
+      "median_width": 0.048310459051269294,
+      "se_ratio": 0.9379779807619621,
+      "truth_above": 0.05275,
+      "truth_below": 0.04175
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.9055,
+      "mc_se": 0.004625195941795332,
+      "median_width": 0.048310459051269294,
+      "se_ratio": 0.9379779807619621,
+      "truth_above": 0.05275,
+      "truth_below": 0.04175
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90525,
+      "mc_se": 0.004630670510304097,
+      "median_width": 0.048409830390710396,
+      "se_ratio": 0.9370014833075441,
+      "truth_above": 0.05275,
+      "truth_below": 0.042
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9375,
+      "mc_se": 0.0038273277230987156,
+      "median_width": 0.05679530392180228,
+      "se_ratio": 1.184483099919378,
+      "truth_above": 0.03725,
+      "truth_below": 0.02525
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90125,
+      "mc_se": 0.004716949159679379,
+      "median_width": 0.04627590083675157,
+      "se_ratio": 0.9358216587161425,
+      "truth_above": 0.05475,
+      "truth_below": 0.044
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.91,
+      "mc_se": 0.004524930938699506,
+      "median_width": 0.04586553942541726,
+      "se_ratio": 0.9711526565569347,
+      "truth_above": 0.05475,
+      "truth_below": 0.03525
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8985,
+      "mc_se": 0.004774875652831182,
+      "median_width": 0.04372515221684528,
+      "se_ratio": 0.9292055657765755,
+      "truth_above": 0.0565,
+      "truth_below": 0.045
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9025,
+      "mc_se": 0.004690249193806232,
+      "median_width": 0.04280314929752052,
+      "se_ratio": 0.9544362988504804,
+      "truth_above": 0.056,
+      "truth_below": 0.0415
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.9045,
+      "mc_se": 0.004647035345249701,
+      "median_width": 0.04264446008142159,
+      "se_ratio": 0.9538889130215155,
+      "truth_above": 0.05425,
+      "truth_below": 0.04125
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.28,
+       "1.3": 0.198
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.97687521624836,
+      "q90_ratio": 1.4175779005478903
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9045,
+      "mc_se": 0.004647035345249701,
+      "median_width": 0.04264446008142159,
+      "se_ratio": 0.9538889130215155,
+      "truth_above": 0.05425,
+      "truth_below": 0.04125
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.909,
+      "mc_se": 0.004547499312809183,
+      "median_width": 0.037465120056900406,
+      "se_ratio": 0.9753315851947668,
+      "truth_above": 0.05325,
+      "truth_below": 0.03775
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.25075,
+       "1.3": 0.1755
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9151990947589996,
+      "q90_ratio": 1.4187660870762677
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.913,
+      "mc_se": 0.004456203541132294,
+      "median_width": 0.03768204958673499,
+      "se_ratio": 1.0028162543035086,
+      "truth_above": 0.05075,
+      "truth_below": 0.03625
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.91675,
+      "mc_se": 0.004368049836597564,
+      "median_width": 0.03161463183323931,
+      "se_ratio": 1.0012095482436147,
+      "truth_above": 0.049,
+      "truth_below": 0.03425
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.21325,
+       "1.3": 0.09625
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9901123867951864,
+      "q90_ratio": 1.2953431354828957
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.91675,
+      "mc_se": 0.004368049836597564,
+      "median_width": 0.0316146318332393,
+      "se_ratio": 1.0012095482436145,
+      "truth_above": 0.049,
+      "truth_below": 0.03425
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.917,
+      "mc_se": 0.004362080925429971,
+      "median_width": 0.028119014366816842,
+      "se_ratio": 1.0273746181140888,
+      "truth_above": 0.04725,
+      "truth_below": 0.03575
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.19025,
+       "1.3": 0.06775
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9910256276094359,
+      "q90_ratio": 1.2688650762225233
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.92375,
+      "mc_se": 0.004196306039244518,
+      "median_width": 0.028453748291877357,
+      "se_ratio": 1.0437943697435776,
+      "truth_above": 0.04475,
+      "truth_below": 0.0315
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.92025,
+      "mc_se": 0.004283396359782737,
+      "median_width": 0.025480859707441607,
+      "se_ratio": 1.0484588421056902,
+      "truth_above": 0.049,
+      "truth_below": 0.03075
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.166,
+       "1.3": 0.062
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9820072250158408,
+      "q90_ratio": 1.2552930379332445
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.92025,
+      "mc_se": 0.004283396359782737,
+      "median_width": 0.025480859707441607,
+      "se_ratio": 1.0484588421056902,
+      "truth_above": 0.049,
+      "truth_below": 0.03075
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.9245,
+      "mc_se": 0.004177312233960972,
+      "median_width": 0.022046687589861065,
+      "se_ratio": 1.0730333240475398,
+      "truth_above": 0.04525,
+      "truth_below": 0.03025
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1035,
+       "1.3": 0.01875
+      },
+      "long_blocks": 10,
+      "median_ratio": 0.9965320264068536,
+      "q90_ratio": 1.2028589758111583
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.9245,
+      "mc_se": 0.004177312233960972,
+      "median_width": 0.022046687589861058,
+      "se_ratio": 1.0730333240475396,
+      "truth_above": 0.04525,
+      "truth_below": 0.03025
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.92425,
+      "mc_se": 0.004183656818502205,
+      "median_width": 0.019509395361771167,
+      "se_ratio": 1.0833812354794354,
+      "truth_above": 0.04925,
+      "truth_below": 0.0265
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.0865,
+       "1.3": 0.016
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9909683921696286,
+      "q90_ratio": 1.1887245838316323
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.92425,
+      "mc_se": 0.004183656818502205,
+      "median_width": 0.019509395361771167,
+      "se_ratio": 1.0833812354794354,
+      "truth_above": 0.04925,
+      "truth_below": 0.0265
+     }
+    }
+   ],
+   "skewness": -0.029378849940221708,
+   "target": "cum",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 8.577386708105562e-05,
+   "truth_run_mean": -9.399160498528455e-05
   },
   {
    "autocorrelation": {
@@ -2964,6 +7572,7 @@
     "5": -0.025632306643431406
    },
    "reps": 4000,
+   "score": "rps",
    "series": "scores:volatility",
    "sizes": [
     {
@@ -2977,6 +7586,7 @@
       "truth_below": 0.0215
      },
      "dates": 100,
+     "persistence": null,
      "previous": {
       "blocks": 5,
       "coverage": 0.9355,
@@ -2998,6 +7608,7 @@
       "truth_below": 0.02025
      },
      "dates": 101,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.95,
@@ -3019,6 +7630,7 @@
       "truth_below": 0.02025
      },
      "dates": 110,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.94125,
@@ -3040,6 +7652,7 @@
       "truth_below": 0.02175
      },
      "dates": 119,
+     "persistence": null,
      "previous": {
       "blocks": 6,
       "coverage": 0.93975,
@@ -3061,6 +7674,15 @@
       "truth_below": 0.02
      },
      "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.25875,
+       "1.3": 0.17525
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9435970816731674,
+      "q90_ratio": 1.3892136479318127
+     },
      "previous": {
       "blocks": 6,
       "coverage": 0.93775,
@@ -3082,6 +7704,15 @@
       "truth_below": 0.018
      },
      "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2245,
+       "1.3": 0.15325
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.8779424304301617,
+      "q90_ratio": 1.3902205417345916
+     },
      "previous": {
       "blocks": 8,
       "coverage": 0.9455,
@@ -3103,6 +7734,15 @@
       "truth_below": 0.01325
      },
      "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.19275,
+       "1.3": 0.092
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.958912129487435,
+      "q90_ratio": 1.2895195924764442
+     },
      "previous": {
       "blocks": 10,
       "coverage": 0.9515,
@@ -3124,6 +7764,15 @@
       "truth_below": 0.0115
      },
      "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.16375,
+       "1.3": 0.064
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9548513980902695,
+      "q90_ratio": 1.2611107324576567
+     },
      "previous": {
       "blocks": 13,
       "coverage": 0.95825,
@@ -3145,6 +7794,15 @@
       "truth_below": 0.0095
      },
      "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.135,
+       "1.3": 0.05
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9415668274742666,
+      "q90_ratio": 1.235321965109233
+     },
      "previous": {
       "blocks": 15,
       "coverage": 0.9635,
@@ -3166,6 +7824,15 @@
       "truth_below": 0.009
      },
      "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.10325,
+       "1.3": 0.02025
+      },
+      "long_blocks": 10,
+      "median_ratio": 0.9642598933274915,
+      "q90_ratio": 1.2023935326647612
+     },
      "previous": {
       "blocks": 20,
       "coverage": 0.96525,
@@ -3187,6 +7854,15 @@
       "truth_below": 0.0075
      },
      "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.08625,
+       "1.3": 0.02025
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9563291291351852,
+      "q90_ratio": 1.1862157386710535
+     },
      "previous": {
       "blocks": 25,
       "coverage": 0.972,
@@ -3198,10 +7874,645 @@
      }
     }
    ],
+   "skewness": -0.26568071221900313,
    "target": "cum",
    "true_mean": -0.002886203829005292,
    "truth_run_mc_se": 2.766392622644322e-05,
    "truth_run_mean": -0.002886203829005292
+  },
+  {
+   "autocorrelation": {
+    "1": 0.5957631821827664,
+    "10": -0.027668738126022364,
+    "2": 0.40883447577762,
+    "20": -0.020782380521733756,
+    "5": -0.01959969833265213
+   },
+   "reps": 4000,
+   "score": "brier",
+   "series": "scores:volatility",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.93275,
+      "mc_se": 0.00396003274923327,
+      "median_width": 0.039436843325510174,
+      "se_ratio": 0.9832716530115775,
+      "truth_above": 0.04075,
+      "truth_below": 0.0265
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.93275,
+      "mc_se": 0.00396003274923327,
+      "median_width": 0.039436843325510174,
+      "se_ratio": 0.9832716530115775,
+      "truth_above": 0.04075,
+      "truth_below": 0.0265
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.93275,
+      "mc_se": 0.00396003274923327,
+      "median_width": 0.03919553529690456,
+      "se_ratio": 0.9855003650919281,
+      "truth_above": 0.0405,
+      "truth_below": 0.02675
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9515,
+      "mc_se": 0.0033966067626382654,
+      "median_width": 0.04557455543701806,
+      "se_ratio": 1.202084215207629,
+      "truth_above": 0.03675,
+      "truth_below": 0.01175
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.93725,
+      "mc_se": 0.0038344633751021787,
+      "median_width": 0.03764782331861763,
+      "se_ratio": 0.990912811400257,
+      "truth_above": 0.03875,
+      "truth_below": 0.024
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.94125,
+      "mc_se": 0.003718145959345866,
+      "median_width": 0.036964158733898515,
+      "se_ratio": 1.0367484557278455,
+      "truth_above": 0.0395,
+      "truth_below": 0.01925
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.93475,
+      "mc_se": 0.0039048827607240663,
+      "median_width": 0.035889071774165365,
+      "se_ratio": 0.9878366526475215,
+      "truth_above": 0.03975,
+      "truth_below": 0.0255
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.93475,
+      "mc_se": 0.0039048827607240663,
+      "median_width": 0.0352809596006016,
+      "se_ratio": 1.0232273795980948,
+      "truth_above": 0.04125,
+      "truth_below": 0.024
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.936,
+      "mc_se": 0.0038698837191833025,
+      "median_width": 0.035038398049758585,
+      "se_ratio": 1.024873842130661,
+      "truth_above": 0.04,
+      "truth_below": 0.024
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.25775,
+       "1.3": 0.17275
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9451479261122191,
+      "q90_ratio": 1.3912120102128105
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.936,
+      "mc_se": 0.0038698837191833025,
+      "median_width": 0.03503839804975859,
+      "se_ratio": 1.0248738421306611,
+      "truth_above": 0.04,
+      "truth_below": 0.024
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.94275,
+      "mc_se": 0.0036732967991982357,
+      "median_width": 0.030403190164254475,
+      "se_ratio": 1.0688448146363814,
+      "truth_above": 0.038,
+      "truth_below": 0.01925
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.2325,
+       "1.3": 0.16
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.8934280049970753,
+      "q90_ratio": 1.394257338797659
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.94925,
+      "mc_se": 0.003470390377896987,
+      "median_width": 0.031030134836090534,
+      "se_ratio": 1.1040494484116463,
+      "truth_above": 0.036,
+      "truth_below": 0.01475
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.95,
+      "mc_se": 0.003446012188022557,
+      "median_width": 0.0259958794930831,
+      "se_ratio": 1.1233481362758537,
+      "truth_above": 0.03475,
+      "truth_below": 0.01525
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.199,
+       "1.3": 0.09325
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9692903617131323,
+      "q90_ratio": 1.2932775204189162
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.95,
+      "mc_se": 0.003446012188022557,
+      "median_width": 0.025995879493083098,
+      "se_ratio": 1.1233481362758537,
+      "truth_above": 0.03475,
+      "truth_below": 0.01525
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.9495,
+      "mc_se": 0.003462287899640929,
+      "median_width": 0.02306209536929702,
+      "se_ratio": 1.1652530598552633,
+      "truth_above": 0.036,
+      "truth_below": 0.0145
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.16525,
+       "1.3": 0.06325
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9619192485214179,
+      "q90_ratio": 1.2600934928848309
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.95625,
+      "mc_se": 0.0032340353082488124,
+      "median_width": 0.02335215052873191,
+      "se_ratio": 1.1872184892461866,
+      "truth_above": 0.0325,
+      "truth_below": 0.01125
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.95975,
+      "mc_se": 0.003107649332695052,
+      "median_width": 0.021005298588663693,
+      "se_ratio": 1.2046554317814986,
+      "truth_above": 0.0295,
+      "truth_below": 0.01075
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.137,
+       "1.3": 0.04975
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9473230757770567,
+      "q90_ratio": 1.2339917593707894
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.95975,
+      "mc_se": 0.003107649332695052,
+      "median_width": 0.021005298588663693,
+      "se_ratio": 1.2046554317814986,
+      "truth_above": 0.0295,
+      "truth_below": 0.01075
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.961,
+      "mc_se": 0.0030610047370103837,
+      "median_width": 0.018164698332699982,
+      "se_ratio": 1.2352840840236816,
+      "truth_above": 0.027,
+      "truth_below": 0.012
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.10225,
+       "1.3": 0.01925
+      },
+      "long_blocks": 10,
+      "median_ratio": 0.9673781287934498,
+      "q90_ratio": 1.2010486321591418
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.961,
+      "mc_se": 0.0030610047370103837,
+      "median_width": 0.018164698332699982,
+      "se_ratio": 1.2352840840236816,
+      "truth_above": 0.027,
+      "truth_below": 0.012
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.967,
+      "mc_se": 0.0028244911046062804,
+      "median_width": 0.01632874316446913,
+      "se_ratio": 1.2572523079685292,
+      "truth_above": 0.0245,
+      "truth_below": 0.0085
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.08325,
+       "1.3": 0.01875
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9616278852175066,
+      "q90_ratio": 1.1872029377640432
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.967,
+      "mc_se": 0.0028244911046062804,
+      "median_width": 0.01632874316446913,
+      "se_ratio": 1.2572523079685292,
+      "truth_above": 0.0245,
+      "truth_below": 0.0085
+     }
+    }
+   ],
+   "skewness": -0.19037386433898928,
+   "target": "cum",
+   "true_mean": -0.0066898036275868595,
+   "truth_run_mc_se": 6.066848816985619e-05,
+   "truth_run_mean": -0.0066898036275868595
+  },
+  {
+   "autocorrelation": {
+    "1": 0.4725317396075129,
+    "10": -0.017813404493714942,
+    "2": 0.3126993077750138,
+    "20": -0.014248681123029322,
+    "5": -0.011287721590002447
+   },
+   "reps": 4000,
+   "score": "log_loss",
+   "series": "scores:volatility",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.927,
+      "mc_se": 0.004113119254288647,
+      "median_width": 0.05600078380109795,
+      "se_ratio": 0.9650152707554551,
+      "truth_above": 0.04,
+      "truth_below": 0.033
+     },
+     "dates": 100,
+     "persistence": null,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.927,
+      "mc_se": 0.004113119254288647,
+      "median_width": 0.05600078380109794,
+      "se_ratio": 0.9650152707554551,
+      "truth_above": 0.04,
+      "truth_below": 0.033
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.928,
+      "mc_se": 0.004087052727822335,
+      "median_width": 0.05563388019206466,
+      "se_ratio": 0.9668497323624123,
+      "truth_above": 0.0395,
+      "truth_below": 0.0325
+     },
+     "dates": 101,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.95275,
+      "mc_se": 0.0033547517605629186,
+      "median_width": 0.066471517036994,
+      "se_ratio": 1.2219164096553266,
+      "truth_above": 0.03275,
+      "truth_below": 0.0145
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9315,
+      "mc_se": 0.00399398766898447,
+      "median_width": 0.053205053523991165,
+      "se_ratio": 0.9712427432946312,
+      "truth_above": 0.0365,
+      "truth_below": 0.032
+     },
+     "dates": 110,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.93425,
+      "mc_se": 0.003918766945736885,
+      "median_width": 0.05319505406968643,
+      "se_ratio": 1.0129710023707121,
+      "truth_above": 0.038,
+      "truth_below": 0.02775
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9315,
+      "mc_se": 0.00399398766898447,
+      "median_width": 0.050941661727027424,
+      "se_ratio": 0.9674559564627023,
+      "truth_above": 0.03575,
+      "truth_below": 0.03275
+     },
+     "dates": 119,
+     "persistence": null,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.93125,
+      "mc_se": 0.004000732354832049,
+      "median_width": 0.04992506409362614,
+      "se_ratio": 0.997463939970914,
+      "truth_above": 0.04025,
+      "truth_below": 0.0285
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.92825,
+      "mc_se": 0.004080500505452732,
+      "median_width": 0.049691462206351455,
+      "se_ratio": 0.998347778556535,
+      "truth_above": 0.0415,
+      "truth_below": 0.03025
+     },
+     "dates": 120,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.27125,
+       "1.3": 0.178
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.9524672561002232,
+      "q90_ratio": 1.3930408878919127
+     },
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.92825,
+      "mc_se": 0.004080500505452732,
+      "median_width": 0.04969146220635146,
+      "se_ratio": 0.998347778556535,
+      "truth_above": 0.0415,
+      "truth_below": 0.03025
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.945,
+      "mc_se": 0.003604684452209376,
+      "median_width": 0.043514759453031945,
+      "se_ratio": 1.0357753842457664,
+      "truth_above": 0.032,
+      "truth_below": 0.023
+     },
+     "dates": 150,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.24475,
+       "1.3": 0.16775
+      },
+      "long_blocks": 3,
+      "median_ratio": 0.8995748571679936,
+      "q90_ratio": 1.3991217928298498
+     },
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.94575,
+      "mc_se": 0.0035814430576235614,
+      "median_width": 0.04413834158938933,
+      "se_ratio": 1.0685403805079474,
+      "truth_above": 0.03475,
+      "truth_below": 0.0195
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.948,
+      "mc_se": 0.0035105555115964213,
+      "median_width": 0.03657683529868931,
+      "se_ratio": 1.078611194288676,
+      "truth_above": 0.0305,
+      "truth_below": 0.0215
+     },
+     "dates": 200,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.20525,
+       "1.3": 0.094
+      },
+      "long_blocks": 5,
+      "median_ratio": 0.9757342112838521,
+      "q90_ratio": 1.2950612842245917
+     },
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.948,
+      "mc_se": 0.0035105555115964213,
+      "median_width": 0.036576835298689304,
+      "se_ratio": 1.078611194288676,
+      "truth_above": 0.0305,
+      "truth_below": 0.0215
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.94725,
+      "mc_se": 0.0035343824602043273,
+      "median_width": 0.03245051337220693,
+      "se_ratio": 1.1164770262375778,
+      "truth_above": 0.03225,
+      "truth_below": 0.0205
+     },
+     "dates": 250,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.169,
+       "1.3": 0.07
+      },
+      "long_blocks": 6,
+      "median_ratio": 0.9764922218745165,
+      "q90_ratio": 1.2697447650405405
+     },
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.952,
+      "mc_se": 0.0033799408278844187,
+      "median_width": 0.03279221882250968,
+      "se_ratio": 1.1359999540223817,
+      "truth_above": 0.03,
+      "truth_below": 0.018
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.955,
+      "mc_se": 0.003277766007511825,
+      "median_width": 0.02962386441143121,
+      "se_ratio": 1.138730473672211,
+      "truth_above": 0.02975,
+      "truth_below": 0.01525
+     },
+     "dates": 300,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1425,
+       "1.3": 0.051
+      },
+      "long_blocks": 7,
+      "median_ratio": 0.9595420342730101,
+      "q90_ratio": 1.2412054817817875
+     },
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.955,
+      "mc_se": 0.003277766007511825,
+      "median_width": 0.0296238644114312,
+      "se_ratio": 1.1387304736722113,
+      "truth_above": 0.02975,
+      "truth_below": 0.01525
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.95525,
+      "mc_se": 0.0032690762265508567,
+      "median_width": 0.025491188527046897,
+      "se_ratio": 1.1607782652816567,
+      "truth_above": 0.02925,
+      "truth_below": 0.0155
+     },
+     "dates": 400,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.1065,
+       "1.3": 0.018
+      },
+      "long_blocks": 10,
+      "median_ratio": 0.9785974340571588,
+      "q90_ratio": 1.206145070953224
+     },
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.95525,
+      "mc_se": 0.0032690762265508567,
+      "median_width": 0.025491188527046894,
+      "se_ratio": 1.1607782652816567,
+      "truth_above": 0.02925,
+      "truth_below": 0.0155
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.95625,
+      "mc_se": 0.0032340353082488124,
+      "median_width": 0.02279969406771904,
+      "se_ratio": 1.1718190412042595,
+      "truth_above": 0.02975,
+      "truth_below": 0.014
+     },
+     "dates": 500,
+     "persistence": {
+      "flag_rate": {
+       "1.2": 0.09175,
+       "1.3": 0.01825
+      },
+      "long_blocks": 12,
+      "median_ratio": 0.9734257398744275,
+      "q90_ratio": 1.1941921908193174
+     },
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.95625,
+      "mc_se": 0.0032340353082488124,
+      "median_width": 0.02279969406771904,
+      "se_ratio": 1.1718190412042595,
+      "truth_above": 0.02975,
+      "truth_below": 0.014
+     }
+    }
+   ],
+   "skewness": -0.04747122624627197,
+   "target": "cum",
+   "true_mean": -0.009869430243011538,
+   "truth_run_mc_se": 9.068681685925563e-05,
+   "truth_run_mean": -0.009869430243011538
   }
  ],
  "data_class": "synthetic",
@@ -3209,6 +8520,10 @@
   "alpha_prior": 50.0,
   "arch": 0.06,
   "block": 20,
+  "breaks": [
+   0.5,
+   1.0
+  ],
   "chunk": 250,
   "correlation": 0.5,
   "daily_vol": 0.025,
@@ -3216,6 +8531,7 @@
   "half_life": 63.0,
   "kappa": 40.0,
   "level": 0.9,
+  "long_block": 40,
   "max_stocks": 5,
   "min_stocks": 2,
   "names": 4,
@@ -3248,12 +8564,16 @@
   ],
   "t_df": 5.0,
   "tau": 0.005,
+  "thresholds": [
+   1.2,
+   1.3
+  ],
   "truth_reps": 4000,
   "vol_decay": 0.94,
   "warmup": 756,
   "within_date": 0.5
  },
  "schema": "stock_lab_comparison_coverage",
- "schema_version": "1.0",
+ "schema_version": "1.1",
  "use": "coverage of a reporting interval; never a decision test"
 }

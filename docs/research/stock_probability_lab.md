@@ -1190,9 +1190,11 @@ stable bands, estimators or model versions.
     of the block means over √K. The interval is t on (K − 1) degrees of
     freedom.
   - **Coverage at a nominal 90%** (`stock_lab.comparison_coverage`; record
-    `docs/research/stock_lab_comparison_coverage.json`). The simulation ran
-    10,000 records per stylized cell and 4,000 per score cell, at 100 to 500
-    dates. The tests rerun a smaller version.
+    `docs/research/stock_lab_comparison_coverage.json`, schema 1.1). The
+    simulation ran 10,000 records per stylized cell and 4,000 per score
+    cell, at 100 to 500 dates. The tests rerun a smaller version. Schema 1.1
+    added the Brier and log loss cells, the break series and the flag rates
+    below. The earlier cells reproduce exactly.
     - **Short dependence: 88.4–90.4%.** This covers independent dates, AR(1)
       persistence up to 0.5 with Student-t shocks, and panels of 2–5 matched
       stocks a date with cross-sectional correlation 0.5.
@@ -1206,16 +1208,70 @@ stable bands, estimators or model versions.
         memory.
       - The five-session totals' overlap (lag-1 autocorrelation 0.65) fits
         inside a block.
+    - **Per score.** On the next-session symmetric placebo, RPS covered
+      89.7–91.3%, Brier 88.4–89.4% and log loss 87.1–88.0%. The log loss runs
+      low although its per-date differences are symmetric (skewness 0.00).
+      Heavier tails are the likely cause; they were not measured. On the
+      five-session total, the placebo's three scores covered 88.7–90.9%.
+      - **Skewed log loss.** The volatility challenger's next-session log-loss
+        differences are skewed (mean skewness +0.51). The interval covered
+        89.9–91.7%, but its misses are lopsided: the truth fell below it in
+        5.2–6.0% of records and above it in 3.1–4.2%.
     - **Longer persistence: too narrow.** Coverage was 86.0–86.9% at AR(1)
       0.75 and 79.2–81.5% at 0.9. The simulations are stationary, so, as for
       the calibration interval, they cannot rule out regime persistence in
       real differences.
+    - **A mid-record shift.** Independent dates whose mean steps up by 0.5
+      or 1 per-date standard deviation halfway through: the interval covered
+      the record's mean in 97.9–100% of records. The shift widens it: it is
+      too wide, not too narrow, for the period observed. But the difference
+      was not steady, so the mean says little about the next stretch.
     - **Before the merge.** One date past whole blocks counted as a block of
       its own. At 101 dates the interval was up to 1.6 times as wide as at
       100, and covered 92.2–97.5%. With the merge it covers 89.5–93.8%.
   - **Reporting conventions (owner decision, 2026-10-20).** The date-clustered
     Jeffreys interval and this block t interval are reporting conventions
     only, never decision tests.
+  - **The persistence check (owner decision, 2026-10-20).** Beside each
+    score's SE, the same SE comes from blocks of 40 dates, the remainder
+    again merged into the last whole block, once three such blocks exist
+    (120 dates). The ratio SE40 / SE20 is near 1 for independent dates. It
+    grows when per-date differences stay alike for longer than 20 dates, or
+    when their mean shifts. Every block of 40 joins whole blocks of 20, so
+    the ratio is bounded above: by √(5/2) ≈ 1.58 at 120 dates and 1.50 at
+    200, and by up to 1.96 when a last block of 40 joins three blocks of 20.
+    - **The flag.** `persistence_suspected` is raised when the RPS ratio
+      exceeds 1.3. The Brier and log loss ratios are stored, never flagged.
+      With a flag on each score, a caveat would appear far more often by
+      chance, because the three ratios are only partly correlated. Below 120
+      dates, or with a zero SE, the flag is not computed (`None`).
+    - **The caveat.** The briefing adds one line after the comparison, only
+      when the flag is on. For a ratio of 1.49 it reads: "Caveat (reported
+      only): for RPS, the standard error from blocks of 40 dates is 1.49
+      times the one from blocks of 20. The differences may stay alike for
+      longer than 20 dates, or may have shifted during the record, so the
+      90% intervals may be too narrow. This changes no number above and no
+      decision." No number, interval or decision depends on it. The tests
+      check that by building the same comparison with the flag forced on
+      and forced off.
+    - **False alarms** (ratio above 1.3, independent dates): 18.4% at 120
+      dates, 9.2% at 200, 5.5% at 300 and 1.1% at 500. The symmetric RPS
+      placebo gave 18.3%, 9.3%, 6.1% and 1.7% for the next session. The
+      starting point of 1.2 gave 27.8%, 20.4%, 15.3% and 7.8% on independent
+      dates. The ratio is noisy with few blocks of 40: two degrees of freedom
+      at 120 dates.
+    - **Detection.** The flag fired in 29.8%, 21.8%, 19.1% and 10.1% of
+      AR(1) 0.9 records at 120, 200, 300 and 500 dates. That is a weak
+      signal: its median ratio is only 1.07–1.15, because blocks of 40 miss
+      most of that persistence too. At AR(1) 0.75 it fired in 2.8–22.1%,
+      barely above the false-alarm rate. A mid-record shift is caught far
+      more often: 29.5–79.6% for a shift of 0.5 standard deviations, and
+      40.2–99.7% for a shift of 1 (98.6% from 300 dates). The
+      volatility-scaled challenger, whose dependence is short, was flagged
+      at the false-alarm rate (17.0% at 120 dates, 1.5% at 500).
+    - **Reading it.** A flag is a reason to read the interval with caution,
+      not evidence of a regime. No flag does not show that the differences
+      are short-lived.
   - Fewer than 100 matched dates give no difference. Rows that differ in
     outcome are reported, not compared.
   - **B1's side.** Each forecast of schema 1.1 records B1 beside it (the
@@ -1225,7 +1281,10 @@ stable bands, estimators or model versions.
     It is matched only with the model it was recorded beside.
   - **What is shown.** The next session's comparison, for the current model:
     matched forecasts and dates, then RPS, Brier score and log loss
-    differences with 90% intervals once 100 dates are matched.
+    differences with 90% intervals once 100 dates are matched ("t on K
+    blocks of 20 or more dates"), and the persistence caveat when its flag
+    is on. The briefing's JSON copy (briefing schema 1.1) also holds every
+    score's SE from blocks of 40 dates, its ratio and the flag.
     "Insufficient evidence" is shown until then, and records from before
     schema 1.1 have no B1 side.
   - A comparison is reported, never a decision. Whether a challenger beats

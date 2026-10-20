@@ -72,13 +72,29 @@ Matched comparisons
     narrow under strong persistence. The interval is a reporting convention
     (owner, 2026-10-20), never a decision test: whether a challenger beats
     B1 is decided on development data only (A7).
+
+The persistence check (reported only)
+    Beside each score's SE, the same SE from blocks of PERSISTENCE_BLOCK
+    dates (a remainder again merged into the last whole block), once at
+    least MIN_PERSISTENCE_BLOCKS of them exist (120 dates), and the ratio
+    SE40 / SE20. Every block of 40 joins whole blocks of 20, so the ratio
+    is near 1 for independent dates and bounded above (by sqrt(5/2) at 120
+    dates, when each block of 40 joins two of 20).
+    It grows when per-date differences stay alike for longer than a block
+    of 20, or when their mean shifts during the record. When the RPS ratio
+    exceeds PERSISTENCE_THRESHOLD (the owner's choice, 2026-10-20), the
+    comparison is marked persistence_suspected. The Brier and log loss
+    ratios are reported, never flagged: a flag on any of three scores would
+    fire far more often by chance. The flag never changes a number, an
+    interval or a decision. Its simulated false-alarm and detection rates
+    are in stock_lab.comparison_coverage.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
 import numpy as np
 
@@ -94,6 +110,10 @@ MIN_SESSIONS = 50  # ... over at least this many settled sessions (health.stock_
 CUMULATIVE_LAGS = 4  # five-session totals of dates up to four sessions apart share sessions
 COMPARISON_BLOCK = 20  # dates per block for a comparison's standard error
 MIN_COMPARISON_BLOCKS = 5  # so at least 100 matched dates
+PERSISTENCE_BLOCK = 40  # dates per block for the persistence check's standard error
+MIN_PERSISTENCE_BLOCKS = 3  # so at least 120 matched dates
+PERSISTENCE_THRESHOLD = 1.3  # SE40 / SE20 of RPS above this: persistence suspected (2026-10-20)
+PERSISTENCE_SCORE = "rps"  # the score whose ratio raises the flag (A7's score)
 REFERENCE = "B1"
 NONE = "none"
 OUTCOME_MISMATCH = "outcome_mismatch"
@@ -480,6 +500,8 @@ class ScoreDifference:
     se: float | None
     low: float | None
     high: float | None
+    se_long: float | None  # the SE from blocks of 40 dates; None below 3 such blocks
+    se_ratio: float | None  # se_long / se; None without se_long or when se is zero
 
 
 @dataclass(frozen=True)
@@ -491,10 +513,12 @@ class MatchedComparison:
     n: int
     dates: int
     blocks: int
+    long_blocks: int  # blocks of 40 dates, for the persistence check
     unmatched_candidate: int
     unmatched_baseline: int
     differences: tuple[ScoreDifference, ...]
     status: str  # ok, insufficient, none or outcome_mismatch
+    persistence_suspected: bool | None  # the RPS ratio above the threshold; None: not checked
 
 
 def comparison_blocks(dates: int, block: int = COMPARISON_BLOCK) -> np.ndarray:
@@ -520,6 +544,26 @@ class BlockInterval:
     blocks: int
 
 
+def block_se(
+    values: Sequence[float] | np.ndarray, block: int = COMPARISON_BLOCK
+) -> tuple[np.ndarray, int]:
+    """
+    The standard error of the mean of per-date values in time order (the
+    last axis) from blocks of `block` dates, and the number of blocks
+    (module docstring).
+    """
+
+    values = np.asarray(values, dtype="float64")
+    dates = values.shape[-1]
+    sizes = np.bincount(comparison_blocks(dates, block))
+    blocks = len(sizes)
+    if blocks < 2:
+        raise ValueError("a block standard error needs at least two blocks")
+    starts = np.concatenate([[0], np.cumsum(sizes)[:-1]])
+    deviation = np.add.reduceat(values, starts, axis=-1) - sizes * values.mean(axis=-1)[..., None]
+    return np.sqrt(blocks / (blocks - 1) * (deviation**2).sum(axis=-1)) / dates, blocks
+
+
 def block_t_interval(
     values: Sequence[float] | np.ndarray, level: float = LEVEL, block: int = COMPARISON_BLOCK
 ) -> BlockInterval:
@@ -529,17 +573,31 @@ def block_t_interval(
     """
 
     values = np.asarray(values, dtype="float64")
-    dates = values.shape[-1]
-    sizes = np.bincount(comparison_blocks(dates, block))
-    blocks = len(sizes)
-    if blocks < 2:
-        raise ValueError("a block t interval needs at least two blocks")
     estimate = values.mean(axis=-1)
-    starts = np.concatenate([[0], np.cumsum(sizes)[:-1]])
-    deviation = np.add.reduceat(values, starts, axis=-1) - sizes * estimate[..., None]
-    se = np.sqrt(blocks / (blocks - 1) * (deviation**2).sum(axis=-1)) / dates
+    se, blocks = block_se(values, block)
     q = t_quantile(level, blocks - 1)
     return BlockInterval(estimate, se, estimate - q * se, estimate + q * se, blocks)
+
+
+def persistence_ratio(
+    values: Sequence[float] | np.ndarray,
+    block: int = COMPARISON_BLOCK,
+    long_block: int = PERSISTENCE_BLOCK,
+) -> np.ndarray | None:
+    """
+    SE from blocks of `long_block` dates over SE from blocks of `block` dates
+    for per-date values in time order (the last axis), NaN where the second
+    is zero; None with fewer than MIN_PERSISTENCE_BLOCKS long blocks (module
+    docstring).
+    """
+
+    values = np.asarray(values, dtype="float64")
+    if values.shape[-1] // long_block < MIN_PERSISTENCE_BLOCKS:
+        return None
+    short, _ = block_se(values, block)
+    long, _ = block_se(values, long_block)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(short > 0, long / short, np.nan)
 
 
 def _by_key(found: Sequence[Observation], side: str) -> dict[tuple[str, str], Observation]:
@@ -559,8 +617,14 @@ def matched_comparison(
     level: float = LEVEL,
     block: int = COMPARISON_BLOCK,
     min_blocks: int = MIN_COMPARISON_BLOCKS,
+    long_block: int = PERSISTENCE_BLOCK,
+    threshold: float = PERSISTENCE_THRESHOLD,
 ) -> MatchedComparison:
-    """Candidate minus B1 on exactly matched observations (module docstring)."""
+    """
+    Candidate minus B1 on exactly matched observations, with each score's
+    persistence ratio and the RPS flag (module docstring). The flag never
+    changes a number.
+    """
 
     target, band, candidate_estimator, _ = _one(candidate)
     base_target, base_band, baseline_estimator, _ = _one(baseline)
@@ -580,15 +644,23 @@ def matched_comparison(
         "n": len(pairs),
         "dates": len(distinct),
         "blocks": blocks,
+        "long_blocks": len(distinct) // long_block,
         "unmatched_candidate": len(candidates) - len(pairs),
         "unmatched_baseline": len(baselines) - len(pairs),
     }
-    empty = tuple(ScoreDifference(name, None, None, None, None, None, None) for name in SCORE_NAMES)
+    empty = tuple(
+        ScoreDifference(name, *(None,) * (len(fields(ScoreDifference)) - 1)) for name in SCORE_NAMES
+    )
     if any(o.outcome != m.outcome for o, m in pairs):
-        return MatchedComparison(**common, differences=empty, status=OUTCOME_MISMATCH)
+        return MatchedComparison(
+            **common, differences=empty, status=OUTCOME_MISMATCH, persistence_suspected=None
+        )
     if not pairs or blocks < max(min_blocks, 2):  # a spread needs two blocks
         return MatchedComparison(
-            **common, differences=empty, status=INSUFFICIENT if pairs else NONE
+            **common,
+            differences=empty,
+            status=INSUFFICIENT if pairs else NONE,
+            persistence_suspected=None,
         )
     position = {day: i for i, day in enumerate(distinct)}
     index = np.array([position[o.as_of_session] for o, _ in pairs])
@@ -598,6 +670,7 @@ def matched_comparison(
         a = np.bincount(index, weights=[getattr(o, name) for o, _ in pairs]) / per_date
         b = np.bincount(index, weights=[getattr(m, name) for _, m in pairs]) / per_date
         found = block_t_interval(a - b, level, block)
+        ratio = persistence_ratio(a - b, block, long_block)
         differences.append(
             ScoreDifference(
                 name,
@@ -607,9 +680,17 @@ def matched_comparison(
                 float(found.se),
                 float(found.low),
                 float(found.high),
+                se_long=None if ratio is None else float(block_se(a - b, long_block)[0]),
+                se_ratio=None if ratio is None or np.isnan(ratio) else float(ratio),
             )
         )
-    return MatchedComparison(**common, differences=tuple(differences), status=OK)
+    (flagged,) = (d.se_ratio for d in differences if d.score == PERSISTENCE_SCORE)
+    return MatchedComparison(
+        **common,
+        differences=tuple(differences),
+        status=OK,
+        persistence_suspected=None if flagged is None else flagged > threshold,
+    )
 
 
 # --- the development record, read as stored ---

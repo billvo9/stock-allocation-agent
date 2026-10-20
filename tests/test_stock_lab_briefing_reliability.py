@@ -29,6 +29,7 @@ from stock_agent.stock_lab.briefing.reliability import (
     development_evidence,
     matched_comparison,
     observations,
+    persistence_ratio,
     rolling,
     t_quantile,
 )
@@ -495,6 +496,132 @@ def test_no_matched_rows_is_reported_not_guessed():
     moved = [Observation(**{**o.__dict__, "symbol": "ELSEWHERE"}) for o in baseline]
     result = matched_comparison(candidate, moved)
     assert result.status == "none" and result.n == 0
+
+
+# --- the persistence check: blocks of 40 dates against blocks of 20 ---
+
+
+def test_the_persistence_ratio_of_a_worked_example():
+    # Block-of-20 means (1, 1, -1, -1, 0, 0), so d = 0:
+    #   SE20^2 = 6/5 * 400 * 4 / 120^2 = 2/15
+    # Block-of-40 means (1, -1, 0):
+    #   SE40^2 = 3/2 * 1600 * 2 / 120^2 = 1/3
+    # SE40 / SE20 = sqrt(5/2). Alternating block-of-20 means cancel inside every block of 40.
+    stepped = np.repeat([1.0, 1.0, -1.0, -1.0, 0.0, 0.0], 20)
+    assert float(persistence_ratio(stepped)) == pytest.approx(math.sqrt(2.5))
+    alternating = np.repeat([1.0, -1.0] * 3, 20)
+    assert float(persistence_ratio(alternating)) == pytest.approx(0.0)
+
+
+def test_the_persistence_ratio_needs_three_blocks_of_forty_and_a_spread():
+    values = np.random.default_rng(20).normal(size=120)
+    assert persistence_ratio(values[:119]) is None
+    found = persistence_ratio(values)
+    long, short = block_t_interval(values, block=40), block_t_interval(values)
+    assert float(found) == pytest.approx(float(long.se / short.se))
+    assert math.isnan(float(persistence_ratio(np.full(130, 0.25))))  # no spread: no ratio
+
+
+def test_the_ratio_is_bounded_because_blocks_of_forty_join_whole_blocks_of_twenty():
+    # Each block of 40 or more dates is a union of c blocks of 20 or more (c is 2, or 3 for a
+    # last block of 60 to 79 dates), so (sum of its deviations)^2 <= c * (the sum of squares).
+    # Hence SE40 / SE20 <= sqrt(c * K40 / (K40 - 1) * (K20 - 1) / K20): sqrt(5/2) at 120 dates.
+    rng = np.random.default_rng(21)
+    for dates in (120, 139, 140, 159, 160, 199, 200, 257, 500):
+        long, short = dates // 40, dates // 20
+        joined = np.bincount(np.minimum(np.arange(short) // 2, long - 1)).max()
+        bound = math.sqrt(joined * long / (long - 1) * (short - 1) / short)
+        found = persistence_ratio(rng.normal(size=(2000, dates)))
+        assert found.max() <= bound + 1e-12, dates
+
+
+def test_the_ratio_runs_row_by_row_on_a_matrix():
+    values = np.random.default_rng(22).normal(size=(3, 163))
+    together = persistence_ratio(values)
+    for row, series in enumerate(values):
+        assert float(persistence_ratio(series)) == pytest.approx(together[row])
+
+
+def _shifting(dates, before, after, *, stocks=2, noise=0.0, seed=23):
+    """Matched pairs whose per-date RPS difference is `before`, then `after` from mid-record."""
+
+    rng = np.random.default_rng(seed)
+    candidate, baseline = [], []
+    for i in range(dates):
+        gap = (before if i < dates // 2 else after) + rng.normal(0, noise)
+        for s in range(stocks):
+            common = {
+                "symbol": f"S{s}",
+                "as_of_session": DATES[i],
+                "target": "1",
+                "band": 0.005,
+                "model_version": "m",
+                "p_decrease": 0.3,
+                "p_stable": 0.3,
+                "p_increase": 0.4,
+                "outcome": 2,
+                "session": DATES[i],
+            }
+            base = 0.2 + rng.normal(0, 0.01)
+            baseline.append(Observation(**common, estimator="B1", rps=base, brier=0.6,
+                                        log_loss=1.0 + rng.normal(0, 0.05)))  # fmt: skip
+            candidate.append(Observation(**common, estimator="B3", rps=base + gap, brier=0.6,
+                                         log_loss=1.0 + rng.normal(0, 0.05)))  # fmt: skip
+    return candidate, baseline
+
+
+def _of(result, name):
+    return next(d for d in result.differences if d.score == name)
+
+
+def test_a_comparison_reports_each_score_ratio_and_flags_on_rps_only():
+    candidate, baseline = _shifting(160, -0.02, 0.02, noise=0.005)
+    result = matched_comparison(candidate, baseline)
+    assert (result.dates, result.blocks, result.long_blocks) == (160, 8, 4)
+    rps, brier, log_loss = (_of(result, name) for name in ("rps", "brier", "log_loss"))
+    per_date = np.array([np.mean([c.rps - b.rps for c, b in zip(candidate, baseline)
+                                  if c.as_of_session == day]) for day in DATES[:160]])  # fmt: skip
+    assert rps.se_long == pytest.approx(float(block_t_interval(per_date, block=40).se))
+    assert rps.se_ratio == pytest.approx(rps.se_long / rps.se)
+    assert rps.se_ratio > reliability.PERSISTENCE_THRESHOLD and result.persistence_suspected
+    assert brier.se == brier.se_long == 0.0 and brier.se_ratio is None  # no spread: no ratio
+    assert log_loss.se_ratio is not None and log_loss.se_ratio < reliability.PERSISTENCE_THRESHOLD
+
+
+def test_a_steady_difference_raises_no_flag():
+    candidate, baseline = _shifting(160, -0.01, -0.01, noise=0.005)
+    result = matched_comparison(candidate, baseline)
+    rps = _of(result, "rps")
+    assert rps.se_ratio < reliability.PERSISTENCE_THRESHOLD
+    assert result.persistence_suspected is False
+
+
+def test_the_flag_never_changes_a_number():
+    candidate, baseline = _shifting(160, -0.02, 0.02, noise=0.005)
+    always = matched_comparison(candidate, baseline, threshold=0.0)
+    never = matched_comparison(candidate, baseline, threshold=math.inf)
+    assert (always.persistence_suspected, never.persistence_suspected) == (True, False)
+    assert always.differences == never.differences
+    assert {**always.__dict__, "persistence_suspected": None} == {
+        **never.__dict__,
+        "persistence_suspected": None,
+    }
+
+
+def test_without_three_blocks_of_forty_or_a_spread_there_is_no_flag():
+    candidate, baseline = _shifting(119, -0.02, 0.02, noise=0.005)
+    result = matched_comparison(candidate, baseline)
+    assert (result.status, result.long_blocks, result.persistence_suspected) == ("ok", 2, None)
+    assert all(d.se_long is None and d.se_ratio is None for d in result.differences)
+    rng = np.random.default_rng(24)
+    _, baseline = _paired(rng, 130, 2, 0.0)
+    twin = [Observation(**{**o.__dict__, "estimator": "B3"}) for o in baseline]
+    result = matched_comparison(twin, baseline)
+    assert result.persistence_suspected is None
+    candidate, baseline = _paired(rng, 99, 2, 0.01)
+    result = matched_comparison(candidate, baseline)
+    assert result.status == INSUFFICIENT and result.persistence_suspected is None
+    assert all(d.se_long is None and d.se_ratio is None for d in result.differences)
 
 
 # --- the development record, read as stored ---

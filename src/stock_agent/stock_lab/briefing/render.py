@@ -532,6 +532,8 @@ def render_text(briefing: Briefing) -> str:
     for entry in prospective.rolling:
         out += _wrap(rolling_text(entry), "  ")
     out += _wrap(f"Compared with B1: {prospective.comparison_words}", "  ")
+    if prospective.comparison_caveat:
+        out += _wrap(prospective.comparison_caveat, "  ")
     for note in (*briefing.reliability.notes, INTERVAL_NOTE):
         out += _wrap(note, "  ")
     out += ["", "LIMITATIONS"]
@@ -810,6 +812,8 @@ def _reliability_html(briefing: Briefing) -> str:
     for entry in prospective.rolling:
         parts.append(f"<p>{_e(rolling_text(entry))}</p>")
     parts.append(f"<p><strong>Compared with B1.</strong> {_e(prospective.comparison_words)}</p>")
+    if prospective.comparison_caveat:
+        parts.append(f"<p>{_e(prospective.comparison_caveat)}</p>")
     parts += [f'<p class="subtle">{_e(note)}</p>' for note in (*section.notes, INTERVAL_NOTE)]
     return "".join(parts)
 
