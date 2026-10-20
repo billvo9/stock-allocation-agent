@@ -566,6 +566,33 @@ How the ledger works:
 
 - It prints a launchd agent for 20:30 New York time on weekdays; the owner
   installs it.
+- **The time zone.** launchd takes the Mac's local time with no time zone,
+  so the printer converts 20:30 New York to the zone given and refuses a
+  zone whose clock changes on other dates than New York's, or never, as for
+  the briefing (section 9).
+  - In such a zone a fixed local time is 20:30 New York for part of the
+    year only. It runs later for the rest: 21:30 in Europe/London (the
+    weeks between the two countries' changes) or Asia/Tokyo (all summer),
+    22:30 in Australia/Sydney.
+  - It can also run earlier: in Antarctica/Troll, at 19:30, before the
+    close counts as available (20:00).
+  - A late run is not wrong: the job takes its session from the wall
+    clock, and Model Health allows six hours. The printed file would
+    still not do what it says, so it is refused.
+  - US and Canadian zones that follow New York's changes are accepted. A
+    test reads back the agent printed for every zone in the time-zone
+    database: refused, or 20:30 New York on each day it would fire in 2026.
+- **Private files.** It writes with a private umask (files 0600), like the
+  briefing's agent and the Model Health agent. The job already creates
+  the store, the monitor files and the kept ledger head 0600; the umask
+  covers anything else it creates.
+- **Installing.** First create the private folders, each with mode 700:
+  `mkdir -p -m 700 ~/stock-agent-private ~/stock-agent-private/stock_lab
+  ~/stock-agent-private/stock_lab/logs` (one command). `-m` sets the mode
+  of the folders named only: one created on the way gets 0755, and the
+  store refuses a `stock_lab` folder others can read.
+- **An earlier printout.** An agent installed from one keeps its old
+  settings until it is printed again, unloaded and loaded.
 - With `--briefing` it prints the 08:30 premarket-briefing agent, and with
   `--email-dry-run` a description of an email adapter (section 9).
 - The job itself skips holidays through the calendar.
@@ -1311,6 +1338,7 @@ stable bands, estimators or model versions.
     open.
   - US and Canadian zones that follow New York's changes are accepted and
     tested on both sides of each change.
+  - The 20:30 daily agent follows the same rule (section 6, Scheduling).
 - **The optional wake.** It is printed as a note on standard error, never
   run and never part of the agent file.
 - **The email dry run.** `.venv/bin/python scripts/stock_lab_schedule.py
