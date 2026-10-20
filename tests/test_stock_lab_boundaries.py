@@ -44,6 +44,7 @@ RESEARCH_SIDE = (
     "size_simulation",
     "decision_tests",
     "planned_simulation",
+    "comparison_coverage",
 )
 # The only project code that may import the Stock Lab.
 CONSUMERS = ("stock_agent/app/", "stock_agent/stock_lab/")

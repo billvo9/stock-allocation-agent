@@ -1144,8 +1144,47 @@ stable bands, estimators or model versions.
   session, horizon, band and model version, with equal outcomes.
   - The difference is the mean of per-date differences.
   - Per-date differences are serially dependent, as the A7 packet measured.
-    So the standard error comes from the means of blocks of 20 consecutive
-    dates, with a t interval on (blocks − 1) degrees of freedom.
+    So the standard error comes from blocks of 20 consecutive dates, counted
+    from the first matched date. A shorter remainder joins the last whole
+    block, so a block holds 20 to 39 dates (the owner's choice, 2026-10-20).
+    With T dates in K blocks, block means m_k of n_k dates and the mean
+    difference d̄:
+
+    ```text
+    SE² = K / (K − 1) · Σ_k n_k² (m_k − d̄)² / T²
+    ```
+
+    This is the cluster-robust form of the next-session calibration variance,
+    with blocks of dates as the clusters. With whole blocks it is the spread
+    of the block means over √K. The interval is t on (K − 1) degrees of
+    freedom.
+  - **Coverage at a nominal 90%** (`stock_lab.comparison_coverage`; record
+    `docs/research/stock_lab_comparison_coverage.json`). The simulation ran
+    10,000 records per stylized cell and 4,000 per score cell, at 100 to 500
+    dates. The tests rerun a smaller version.
+    - **Short dependence: 88.4–90.4%.** This covers independent dates, AR(1)
+      persistence up to 0.5 with Student-t shocks, and panels of 2–5 matched
+      stocks a date with cross-sectional correlation 0.5.
+    - **RPS differences on simulated prices.** Four stocks, GARCH volatility,
+      correlation 0.5 and B1 at half-life 63; the next session and the
+      five-session total.
+      - A symmetric placebo covered 89.2–91.3%.
+      - Against the stock's own B1, a placebo and a volatility-scaled
+        challenger covered 90.0–97.2%. That is conservative: B1 learns from
+        the sessions it was scored on, so the differences revert over its
+        memory.
+      - The five-session totals' overlap (lag-1 autocorrelation 0.65) fits
+        inside a block.
+    - **Longer persistence: too narrow.** Coverage was 86.0–86.9% at AR(1)
+      0.75 and 79.2–81.5% at 0.9. The simulations are stationary, so, as for
+      the calibration interval, they cannot rule out regime persistence in
+      real differences.
+    - **Before the merge.** One date past whole blocks counted as a block of
+      its own. At 101 dates the interval was up to 1.6 times as wide as at
+      100, and covered 92.2–97.5%. With the merge it covers 89.5–93.8%.
+  - **Reporting conventions (owner decision, 2026-10-20).** The date-clustered
+    Jeffreys interval and this block t interval are reporting conventions
+    only, never decision tests.
   - Fewer than 100 matched dates give no difference. Rows that differ in
     outcome are reported, not compared.
   - **B1's side.** Each forecast of schema 1.1 records B1 beside it (the

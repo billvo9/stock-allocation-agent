@@ -55,10 +55,23 @@ Matched comparisons
     each score (RPS, Brier, log loss; lower is better) is the mean over dates
     of the per-date mean difference. Per-date differences are serially
     dependent (the A7 packet measured it), so the standard error comes from
-    the means of consecutive blocks of COMPARISON_BLOCK dates, with a t
-    interval on (blocks - 1) degrees of freedom; fewer than
-    MIN_COMPARISON_BLOCKS blocks give no difference. This is descriptive,
-    not the A7 test: which test decides "beats B1" is the owner's decision.
+    blocks of COMPARISON_BLOCK consecutive dates, counted from the first
+    matched date, with a shorter remainder merged into the last whole block
+    (so a block holds 20 to 39 dates). With T dates in K blocks, block means
+    m_k of n_k dates and the mean difference d:
+
+        SE^2 = K / (K - 1) * sum_k n_k^2 (m_k - d)^2 / T^2
+
+    the cluster-robust form of a single session's calibration variance, with
+    blocks of dates as the clusters; with whole blocks it is the spread of
+    the block means over sqrt(K). The interval is t on (K - 1) degrees of
+    freedom; fewer than MIN_COMPARISON_BLOCKS blocks give no difference.
+
+    Simulated coverage at a nominal 90% (stock_lab.comparison_coverage) is
+    near nominal when the dependence dies out within a few dates, and too
+    narrow under strong persistence. The interval is a reporting convention
+    (owner, 2026-10-20), never a decision test: whether a challenger beats
+    B1 is decided on development data only (A7).
 """
 
 from __future__ import annotations
@@ -484,6 +497,51 @@ class MatchedComparison:
     status: str  # ok, insufficient, none or outcome_mismatch
 
 
+def comparison_blocks(dates: int, block: int = COMPARISON_BLOCK) -> np.ndarray:
+    """
+    Each of `dates` consecutive dates' block: runs of `block` dates from the
+    first, a shorter remainder merged into the last whole block. Earlier
+    blocks never move as dates are added.
+    """
+
+    if block < 1:
+        raise ValueError("a block holds at least one date")
+    if dates < block:
+        raise ValueError("fewer dates than one whole block")
+    return np.minimum(np.arange(dates) // block, dates // block - 1)
+
+
+@dataclass(frozen=True)
+class BlockInterval:
+    estimate: np.ndarray  # one per series: the mean over the last axis
+    se: np.ndarray
+    low: np.ndarray
+    high: np.ndarray
+    blocks: int
+
+
+def block_t_interval(
+    values: Sequence[float] | np.ndarray, level: float = LEVEL, block: int = COMPARISON_BLOCK
+) -> BlockInterval:
+    """
+    The mean of per-date values in time order (the last axis: one series, or
+    one per row) with its block t interval (module docstring).
+    """
+
+    values = np.asarray(values, dtype="float64")
+    dates = values.shape[-1]
+    sizes = np.bincount(comparison_blocks(dates, block))
+    blocks = len(sizes)
+    if blocks < 2:
+        raise ValueError("a block t interval needs at least two blocks")
+    estimate = values.mean(axis=-1)
+    starts = np.concatenate([[0], np.cumsum(sizes)[:-1]])
+    deviation = np.add.reduceat(values, starts, axis=-1) - sizes * estimate[..., None]
+    se = np.sqrt(blocks / (blocks - 1) * (deviation**2).sum(axis=-1)) / dates
+    q = t_quantile(level, blocks - 1)
+    return BlockInterval(estimate, se, estimate - q * se, estimate + q * se, blocks)
+
+
 def _by_key(found: Sequence[Observation], side: str) -> dict[tuple[str, str], Observation]:
     out: dict[tuple[str, str], Observation] = {}
     for o in found:
@@ -513,7 +571,7 @@ def matched_comparison(
     candidates, baselines = _by_key(candidate, "candidate"), _by_key(baseline, "baseline")
     pairs = [(o, baselines[key]) for key, o in candidates.items() if key in baselines]
     distinct = sorted({o.as_of_session for o, _ in pairs})
-    blocks = len(set(cluster_ids(distinct, block).tolist())) if pairs else 0
+    blocks = len(distinct) // block  # whole blocks; a remainder joins the last
     common = {
         "target": target,
         "band": band,
@@ -528,31 +586,27 @@ def matched_comparison(
     empty = tuple(ScoreDifference(name, None, None, None, None, None, None) for name in SCORE_NAMES)
     if any(o.outcome != m.outcome for o, m in pairs):
         return MatchedComparison(**common, differences=empty, status=OUTCOME_MISMATCH)
-    if not pairs or len(distinct) < block * min_blocks:
+    if not pairs or blocks < max(min_blocks, 2):  # a spread needs two blocks
         return MatchedComparison(
             **common, differences=empty, status=INSUFFICIENT if pairs else NONE
         )
     position = {day: i for i, day in enumerate(distinct)}
     index = np.array([position[o.as_of_session] for o, _ in pairs])
     per_date = np.bincount(index).astype("float64")
-    block_of = cluster_ids(distinct, block)
-    q = t_quantile(level, blocks - 1)
     differences = []
     for name in SCORE_NAMES:
         a = np.bincount(index, weights=[getattr(o, name) for o, _ in pairs]) / per_date
         b = np.bincount(index, weights=[getattr(m, name) for _, m in pairs]) / per_date
-        block_means = np.bincount(block_of, weights=a - b) / np.bincount(block_of)
-        difference = float(np.mean(a - b))
-        se = float(np.std(block_means, ddof=1) / math.sqrt(blocks))
+        found = block_t_interval(a - b, level, block)
         differences.append(
             ScoreDifference(
                 name,
                 float(np.mean(a)),
                 float(np.mean(b)),
-                difference,
-                se,
-                difference - q * se,
-                difference + q * se,
+                float(found.estimate),
+                float(found.se),
+                float(found.low),
+                float(found.high),
             )
         )
     return MatchedComparison(**common, differences=tuple(differences), status=OK)

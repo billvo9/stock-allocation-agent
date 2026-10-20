@@ -93,6 +93,7 @@ RESEARCH_ENTRY_POINTS = (
     "stock_agent.stock_lab.size_simulation",
     "stock_agent.stock_lab.decision_tests",
     "stock_agent.stock_lab.planned_simulation",
+    "stock_agent.stock_lab.comparison_coverage",
     "stock_agent.stock_lab.features",
     "stock_agent.stock_lab.view",
     "stock_agent.stock_lab.forecast_view",
@@ -107,6 +108,7 @@ RESEARCH_ENTRY_POINTS = (
 RESEARCH_SCRIPTS = (
     "scripts/stock_lab_evaluate.py",
     "scripts/stock_lab_a7_simulation.py",
+    "scripts/stock_lab_comparison_coverage.py",
     "scripts/stock_lab_fetch.py",
     "scripts/stock_lab_daily.py",
     "scripts/stock_lab_schedule.py",

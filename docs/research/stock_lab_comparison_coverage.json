@@ -1,0 +1,3259 @@
+{
+ "cells": [
+  {
+   "autocorrelation": {
+    "1": -0.001966718342791201,
+    "10": -0.0023921472295030844,
+    "2": -0.0009469096954944103,
+    "20": -0.001921457653907418,
+    "5": -0.0021776631041071164
+   },
+   "phi": 0.0,
+   "reps": 10000,
+   "series": "ar1",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9037,
+      "mc_se": 0.0029500222033062742,
+      "median_width": 0.38760575891831445,
+      "se_ratio": 0.9342641404364722,
+      "truth_above": 0.0493,
+      "truth_below": 0.047
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.9037,
+      "mc_se": 0.0029500222033062742,
+      "median_width": 0.3876057589183145,
+      "se_ratio": 0.9342641404364722,
+      "truth_above": 0.0493,
+      "truth_below": 0.047
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9044,
+      "mc_se": 0.002940419017759204,
+      "median_width": 0.38568869648906623,
+      "se_ratio": 0.9351818823438894,
+      "truth_above": 0.0499,
+      "truth_below": 0.0457
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9548,
+      "mc_se": 0.0020774253295846763,
+      "median_width": 0.5266534418712325,
+      "se_ratio": 1.585025139368577,
+      "truth_above": 0.0232,
+      "truth_below": 0.022
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9002,
+      "mc_se": 0.0029973314798333534,
+      "median_width": 0.3669669673807544,
+      "se_ratio": 0.9340418557643576,
+      "truth_above": 0.0515,
+      "truth_below": 0.0483
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.906,
+      "mc_se": 0.0029182871688714935,
+      "median_width": 0.3617554063173558,
+      "se_ratio": 0.9782509218769946,
+      "truth_above": 0.0488,
+      "truth_below": 0.0452
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8991,
+      "mc_se": 0.0030119626491708026,
+      "median_width": 0.34972009586246544,
+      "se_ratio": 0.9256954489436894,
+      "truth_above": 0.0524,
+      "truth_below": 0.0485
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9039,
+      "mc_se": 0.0029472833253693133,
+      "median_width": 0.3427126248197606,
+      "se_ratio": 0.9505163272734185,
+      "truth_above": 0.0497,
+      "truth_below": 0.0464
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.9019,
+      "mc_se": 0.0029744981089252684,
+      "median_width": 0.3412075936693417,
+      "se_ratio": 0.949767993462051,
+      "truth_above": 0.0504,
+      "truth_below": 0.0477
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9019,
+      "mc_se": 0.0029744981089252684,
+      "median_width": 0.3412075936693417,
+      "se_ratio": 0.9497679934620513,
+      "truth_above": 0.0504,
+      "truth_below": 0.0477
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.9028,
+      "mc_se": 0.0029622991071125817,
+      "median_width": 0.2956161057715584,
+      "se_ratio": 0.9567084298797346,
+      "truth_above": 0.0501,
+      "truth_below": 0.0471
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.9068,
+      "mc_se": 0.0029071250403104433,
+      "median_width": 0.29701790990905036,
+      "se_ratio": 0.9878894732981645,
+      "truth_above": 0.0476,
+      "truth_below": 0.0456
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.9036,
+      "mc_se": 0.0029513901809147505,
+      "median_width": 0.2483144448287815,
+      "se_ratio": 0.9735356981843675,
+      "truth_above": 0.0496,
+      "truth_below": 0.0468
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.9036,
+      "mc_se": 0.0029513901809147505,
+      "median_width": 0.24831444482878146,
+      "se_ratio": 0.9735356981843675,
+      "truth_above": 0.0496,
+      "truth_below": 0.0468
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.8956,
+      "mc_se": 0.003057787435385266,
+      "median_width": 0.2184435546113242,
+      "se_ratio": 0.9737568800678906,
+      "truth_above": 0.0537,
+      "truth_below": 0.0507
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.9021,
+      "mc_se": 0.0029717939026789857,
+      "median_width": 0.2207836623705764,
+      "se_ratio": 0.992186856389491,
+      "truth_above": 0.0502,
+      "truth_below": 0.0477
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.8944,
+      "mc_se": 0.0030732497457902773,
+      "median_width": 0.19729627119818888,
+      "se_ratio": 0.9765550165483938,
+      "truth_above": 0.0544,
+      "truth_below": 0.0512
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.8944,
+      "mc_se": 0.0030732497457902773,
+      "median_width": 0.19729627119818888,
+      "se_ratio": 0.9765550165483938,
+      "truth_above": 0.0544,
+      "truth_below": 0.0512
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.8962,
+      "mc_se": 0.003050009180314053,
+      "median_width": 0.16892880573060853,
+      "se_ratio": 0.9764906110475322,
+      "truth_above": 0.0526,
+      "truth_below": 0.0512
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.8962,
+      "mc_se": 0.003050009180314053,
+      "median_width": 0.16892880573060853,
+      "se_ratio": 0.9764906110475322,
+      "truth_above": 0.0526,
+      "truth_below": 0.0512
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.9,
+      "mc_se": 0.0029999999999999996,
+      "median_width": 0.15053021783088558,
+      "se_ratio": 0.9861290981577249,
+      "truth_above": 0.0511,
+      "truth_below": 0.0489
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.9,
+      "mc_se": 0.0029999999999999996,
+      "median_width": 0.15053021783088555,
+      "se_ratio": 0.9861290981577249,
+      "truth_above": 0.0511,
+      "truth_below": 0.0489
+     }
+    }
+   ]
+  },
+  {
+   "autocorrelation": {
+    "1": 0.2461272509998877,
+    "10": -0.0031514771267576497,
+    "2": 0.05788848332569913,
+    "20": -0.003295773609997778,
+    "5": -0.002240609171709582
+   },
+   "phi": 0.25,
+   "reps": 10000,
+   "series": "ar1",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8949,
+      "mc_se": 0.003066822296775605,
+      "median_width": 0.4923868473001261,
+      "se_ratio": 0.9243293236590139,
+      "truth_above": 0.0539,
+      "truth_below": 0.0512
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.8949,
+      "mc_se": 0.003066822296775605,
+      "median_width": 0.49238684730012605,
+      "se_ratio": 0.9243293236590139,
+      "truth_above": 0.0539,
+      "truth_below": 0.0512
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8951,
+      "mc_se": 0.003064245257808193,
+      "median_width": 0.4897946284260052,
+      "se_ratio": 0.925520504073364,
+      "truth_above": 0.0542,
+      "truth_below": 0.0507
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9371,
+      "mc_se": 0.002427830101139698,
+      "median_width": 0.5971784040495547,
+      "se_ratio": 1.352700556853747,
+      "truth_above": 0.0316,
+      "truth_below": 0.0313
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8961,
+      "mc_se": 0.0030513077524235406,
+      "median_width": 0.4648154450452467,
+      "se_ratio": 0.9219713112309096,
+      "truth_above": 0.0528,
+      "truth_below": 0.0511
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.901,
+      "mc_se": 0.0029866201633284403,
+      "median_width": 0.45964357652803556,
+      "se_ratio": 0.961659331369952,
+      "truth_above": 0.0513,
+      "truth_below": 0.0477
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8924,
+      "mc_se": 0.003098745552639003,
+      "median_width": 0.4431212866173775,
+      "se_ratio": 0.9095879288801697,
+      "truth_above": 0.0556,
+      "truth_below": 0.052
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.897,
+      "mc_se": 0.0030395887879777423,
+      "median_width": 0.4331576433508838,
+      "se_ratio": 0.9331254580688783,
+      "truth_above": 0.0537,
+      "truth_below": 0.0493
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.8972,
+      "mc_se": 0.00303697481056396,
+      "median_width": 0.4321859320045367,
+      "se_ratio": 0.9329702332525932,
+      "truth_above": 0.0535,
+      "truth_below": 0.0493
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8972,
+      "mc_se": 0.00303697481056396,
+      "median_width": 0.43218593200453675,
+      "se_ratio": 0.9329702332525932,
+      "truth_above": 0.0535,
+      "truth_below": 0.0493
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.8941,
+      "mc_se": 0.0030770958711096408,
+      "median_width": 0.3755189355911356,
+      "se_ratio": 0.933454987851164,
+      "truth_above": 0.0553,
+      "truth_below": 0.0506
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.898,
+      "mc_se": 0.0030264831075028317,
+      "median_width": 0.37646685672988156,
+      "se_ratio": 0.9593407610378302,
+      "truth_above": 0.0524,
+      "truth_below": 0.0496
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.8966,
+      "mc_se": 0.003044806069358113,
+      "median_width": 0.31475970012501603,
+      "se_ratio": 0.9554352122181432,
+      "truth_above": 0.0555,
+      "truth_below": 0.0479
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.8966,
+      "mc_se": 0.003044806069358113,
+      "median_width": 0.31475970012501603,
+      "se_ratio": 0.9554352122181431,
+      "truth_above": 0.0555,
+      "truth_below": 0.0479
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.8985,
+      "mc_se": 0.0030198965214059906,
+      "median_width": 0.27708401844431596,
+      "se_ratio": 0.9598548122876072,
+      "truth_above": 0.0556,
+      "truth_below": 0.0459
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.902,
+      "mc_se": 0.0029731464814233416,
+      "median_width": 0.2808212120502903,
+      "se_ratio": 0.9766180671759632,
+      "truth_above": 0.0528,
+      "truth_below": 0.0452
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.8951,
+      "mc_se": 0.003064245257808193,
+      "median_width": 0.2518365376414263,
+      "se_ratio": 0.9646089583782602,
+      "truth_above": 0.0543,
+      "truth_below": 0.0506
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.8951,
+      "mc_se": 0.003064245257808193,
+      "median_width": 0.2518365376414263,
+      "se_ratio": 0.9646089583782602,
+      "truth_above": 0.0543,
+      "truth_below": 0.0506
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.8919,
+      "mc_se": 0.00310506666595099,
+      "median_width": 0.2149680477678862,
+      "se_ratio": 0.9626678284633671,
+      "truth_above": 0.058,
+      "truth_below": 0.0501
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.8919,
+      "mc_se": 0.00310506666595099,
+      "median_width": 0.21496804776788617,
+      "se_ratio": 0.9626678284633671,
+      "truth_above": 0.058,
+      "truth_below": 0.0501
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.8904,
+      "mc_se": 0.003123905248242975,
+      "median_width": 0.1909305061419137,
+      "se_ratio": 0.9658889525303024,
+      "truth_above": 0.0561,
+      "truth_below": 0.0535
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.8904,
+      "mc_se": 0.003123905248242975,
+      "median_width": 0.1909305061419137,
+      "se_ratio": 0.9658889525303024,
+      "truth_above": 0.0561,
+      "truth_below": 0.0535
+     }
+    }
+   ]
+  },
+  {
+   "autocorrelation": {
+    "1": 0.49437596213814233,
+    "10": -0.005184752230385926,
+    "2": 0.2425598240210349,
+    "20": -0.006869817547526139,
+    "5": 0.024837695950279858
+   },
+   "phi": 0.5,
+   "reps": 10000,
+   "series": "ar1",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8958,
+      "mc_se": 0.0030551981932437702,
+      "median_width": 0.6406210207931253,
+      "se_ratio": 0.9087286717787688,
+      "truth_above": 0.0505,
+      "truth_below": 0.0537
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.8958,
+      "mc_se": 0.0030551981932437702,
+      "median_width": 0.6406210207931253,
+      "se_ratio": 0.9087286717787688,
+      "truth_above": 0.0505,
+      "truth_below": 0.0537
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8945,
+      "mc_se": 0.0030719659828845765,
+      "median_width": 0.6378045987269862,
+      "se_ratio": 0.9091312887093738,
+      "truth_above": 0.0512,
+      "truth_below": 0.0543
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9241,
+      "mc_se": 0.0026483804485005545,
+      "median_width": 0.7106026567965176,
+      "se_ratio": 1.139361150570011,
+      "truth_above": 0.038,
+      "truth_below": 0.0379
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8917,
+      "mc_se": 0.0031075892585732748,
+      "median_width": 0.6123954047131452,
+      "se_ratio": 0.9081596579088833,
+      "truth_above": 0.0543,
+      "truth_below": 0.054
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8946,
+      "mc_se": 0.0030706813576143006,
+      "median_width": 0.5974223433868944,
+      "se_ratio": 0.9368419826138339,
+      "truth_above": 0.054,
+      "truth_below": 0.0514
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8872,
+      "mc_se": 0.003163481626309848,
+      "median_width": 0.5817796318598931,
+      "se_ratio": 0.8979326961779981,
+      "truth_above": 0.0574,
+      "truth_below": 0.0554
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8901,
+      "mc_se": 0.0031276507157929254,
+      "median_width": 0.5657696989307557,
+      "se_ratio": 0.916318529058804,
+      "truth_above": 0.0552,
+      "truth_below": 0.0547
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.8905,
+      "mc_se": 0.003122655120246231,
+      "median_width": 0.5635474583279909,
+      "se_ratio": 0.9170060032637106,
+      "truth_above": 0.0553,
+      "truth_below": 0.0542
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8905,
+      "mc_se": 0.003122655120246231,
+      "median_width": 0.563547458327991,
+      "se_ratio": 0.9170060032637106,
+      "truth_above": 0.0553,
+      "truth_below": 0.0542
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.8903,
+      "mc_se": 0.0031251545561779824,
+      "median_width": 0.4925897468467299,
+      "se_ratio": 0.9257913340713886,
+      "truth_above": 0.0543,
+      "truth_below": 0.0554
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.8934,
+      "mc_se": 0.0030860401812030903,
+      "median_width": 0.49243861599224914,
+      "se_ratio": 0.948763387037147,
+      "truth_above": 0.0515,
+      "truth_below": 0.0551
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.8926,
+      "mc_se": 0.0030962112331040987,
+      "median_width": 0.41274505624692237,
+      "se_ratio": 0.9410187922200519,
+      "truth_above": 0.0518,
+      "truth_below": 0.0556
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.8926,
+      "mc_se": 0.0030962112331040987,
+      "median_width": 0.4127450562469223,
+      "se_ratio": 0.9410187922200519,
+      "truth_above": 0.0518,
+      "truth_below": 0.0556
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.8907,
+      "mc_se": 0.0031201524001240703,
+      "median_width": 0.3645759835662228,
+      "se_ratio": 0.9488303459953623,
+      "truth_above": 0.052,
+      "truth_below": 0.0573
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.8943,
+      "mc_se": 0.0030745326474116356,
+      "median_width": 0.3662661380611673,
+      "se_ratio": 0.9608896609239975,
+      "truth_above": 0.0506,
+      "truth_below": 0.0551
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.8913,
+      "mc_se": 0.0031126244553431113,
+      "median_width": 0.328591093279238,
+      "se_ratio": 0.9559342291259609,
+      "truth_above": 0.0524,
+      "truth_below": 0.0563
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.8913,
+      "mc_se": 0.0031126244553431113,
+      "median_width": 0.328591093279238,
+      "se_ratio": 0.9559342291259608,
+      "truth_above": 0.0524,
+      "truth_below": 0.0563
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.8898,
+      "mc_se": 0.003131388829257714,
+      "median_width": 0.2820507206146853,
+      "se_ratio": 0.9566931695488855,
+      "truth_above": 0.054,
+      "truth_below": 0.0562
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.8898,
+      "mc_se": 0.003131388829257714,
+      "median_width": 0.2820507206146853,
+      "se_ratio": 0.9566931695488855,
+      "truth_above": 0.054,
+      "truth_below": 0.0562
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.8902,
+      "mc_se": 0.003126403045034341,
+      "median_width": 0.25115327385232766,
+      "se_ratio": 0.954526594406317,
+      "truth_above": 0.0541,
+      "truth_below": 0.0557
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.8902,
+      "mc_se": 0.003126403045034341,
+      "median_width": 0.25115327385232766,
+      "se_ratio": 0.954526594406317,
+      "truth_above": 0.0541,
+      "truth_below": 0.0557
+     }
+    }
+   ]
+  },
+  {
+   "autocorrelation": {
+    "1": 0.7429804868508638,
+    "10": 0.041247490510085444,
+    "2": 0.5508182495987938,
+    "20": -0.010076681643709284,
+    "5": 0.22110075486733927
+   },
+   "phi": 0.75,
+   "reps": 10000,
+   "series": "ar1",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8682,
+      "mc_se": 0.003382732031952871,
+      "median_width": 0.9063761855214891,
+      "se_ratio": 0.8280045903752995,
+      "truth_above": 0.0675,
+      "truth_below": 0.0643
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.8682,
+      "mc_se": 0.003382732031952871,
+      "median_width": 0.9063761855214891,
+      "se_ratio": 0.8280045903752995,
+      "truth_above": 0.0675,
+      "truth_below": 0.0643
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.869,
+      "mc_se": 0.0033740035566074914,
+      "median_width": 0.9028309777275045,
+      "se_ratio": 0.8289918133617425,
+      "truth_above": 0.0667,
+      "truth_below": 0.0643
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8762,
+      "mc_se": 0.003293532450120995,
+      "median_width": 0.9027087095396708,
+      "se_ratio": 0.8972499084140024,
+      "truth_above": 0.0607,
+      "truth_below": 0.0631
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.868,
+      "mc_se": 0.0033849076796864047,
+      "median_width": 0.8658761711735756,
+      "se_ratio": 0.8343278424126758,
+      "truth_above": 0.0654,
+      "truth_below": 0.0666
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8647,
+      "mc_se": 0.003420437252750004,
+      "median_width": 0.8364353267687905,
+      "se_ratio": 0.8481379662492449,
+      "truth_above": 0.0694,
+      "truth_below": 0.0659
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8645,
+      "mc_se": 0.003422568479957705,
+      "median_width": 0.8244670303874686,
+      "se_ratio": 0.829910589980744,
+      "truth_above": 0.0669,
+      "truth_below": 0.0686
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8652,
+      "mc_se": 0.0034150982416322963,
+      "median_width": 0.8024043148937556,
+      "se_ratio": 0.841876867988787,
+      "truth_above": 0.0674,
+      "truth_below": 0.0674
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.8649,
+      "mc_se": 0.0034183035266049737,
+      "median_width": 0.7981211226529856,
+      "se_ratio": 0.8420014006797687,
+      "truth_above": 0.0677,
+      "truth_below": 0.0674
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8649,
+      "mc_se": 0.0034183035266049737,
+      "median_width": 0.7981211226529857,
+      "se_ratio": 0.8420014006797688,
+      "truth_above": 0.0677,
+      "truth_below": 0.0674
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.862,
+      "mc_se": 0.0034489998550304404,
+      "median_width": 0.7032651973973667,
+      "se_ratio": 0.8535057519537698,
+      "truth_above": 0.0704,
+      "truth_below": 0.0676
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.8603,
+      "mc_se": 0.0034667551110512556,
+      "median_width": 0.6933875110649672,
+      "se_ratio": 0.8607772503952673,
+      "truth_above": 0.0712,
+      "truth_below": 0.0685
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.8598,
+      "mc_se": 0.0034719441239743475,
+      "median_width": 0.5868287081058484,
+      "se_ratio": 0.860492214569587,
+      "truth_above": 0.0711,
+      "truth_below": 0.0691
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.8598,
+      "mc_se": 0.0034719441239743475,
+      "median_width": 0.5868287081058483,
+      "se_ratio": 0.860492214569587,
+      "truth_above": 0.0711,
+      "truth_below": 0.0691
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.8623,
+      "mc_se": 0.0034458483715915306,
+      "median_width": 0.5233918758574665,
+      "se_ratio": 0.8703228636747107,
+      "truth_above": 0.068,
+      "truth_below": 0.0697
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.8611,
+      "mc_se": 0.0034584214607245316,
+      "median_width": 0.5198251120968631,
+      "se_ratio": 0.8709974172426419,
+      "truth_above": 0.0683,
+      "truth_below": 0.0706
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.8611,
+      "mc_se": 0.0034584214607245316,
+      "median_width": 0.4724195981040121,
+      "se_ratio": 0.8761511929753745,
+      "truth_above": 0.0691,
+      "truth_below": 0.0698
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.8611,
+      "mc_se": 0.0034584214607245316,
+      "median_width": 0.4724195981040121,
+      "se_ratio": 0.8761511929753745,
+      "truth_above": 0.0691,
+      "truth_below": 0.0698
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.8632,
+      "mc_se": 0.003436360865799749,
+      "median_width": 0.40469747987363935,
+      "se_ratio": 0.8851611555498603,
+      "truth_above": 0.0701,
+      "truth_below": 0.0667
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.8632,
+      "mc_se": 0.003436360865799749,
+      "median_width": 0.4046974798736393,
+      "se_ratio": 0.8851611555498603,
+      "truth_above": 0.0701,
+      "truth_below": 0.0667
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.862,
+      "mc_se": 0.0034489998550304404,
+      "median_width": 0.3599029346401699,
+      "se_ratio": 0.8910241801006702,
+      "truth_above": 0.0711,
+      "truth_below": 0.0669
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.862,
+      "mc_se": 0.0034489998550304404,
+      "median_width": 0.35990293464017,
+      "se_ratio": 0.8910241801006704,
+      "truth_above": 0.0711,
+      "truth_below": 0.0669
+     }
+    }
+   ]
+  },
+  {
+   "autocorrelation": {
+    "1": 0.8923600415904366,
+    "10": 0.3100065720908946,
+    "2": 0.7959215788585119,
+    "20": 0.07986274329992218,
+    "5": 0.562642060962399
+   },
+   "phi": 0.9,
+   "reps": 10000,
+   "series": "ar1",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8012,
+      "mc_se": 0.003990971811476498,
+      "median_width": 1.172052288164923,
+      "se_ratio": 0.6969137353206427,
+      "truth_above": 0.0979,
+      "truth_below": 0.1009
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.8012,
+      "mc_se": 0.003990971811476498,
+      "median_width": 1.172052288164923,
+      "se_ratio": 0.6969137353206427,
+      "truth_above": 0.0979,
+      "truth_below": 0.1009
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8027,
+      "mc_se": 0.003979606890133748,
+      "median_width": 1.169682960456283,
+      "se_ratio": 0.6994057673389936,
+      "truth_above": 0.0968,
+      "truth_below": 0.1005
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.7886,
+      "mc_se": 0.004083014082757982,
+      "median_width": 1.084838266260052,
+      "se_ratio": 0.6913221142191249,
+      "truth_above": 0.1042,
+      "truth_below": 0.1072
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8149,
+      "mc_se": 0.003883786683122543,
+      "median_width": 1.1418511441849002,
+      "se_ratio": 0.7134527947879826,
+      "truth_above": 0.0888,
+      "truth_below": 0.0963
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.7955,
+      "mc_se": 0.004033357782295045,
+      "median_width": 1.0622786136847666,
+      "se_ratio": 0.6951840719111229,
+      "truth_above": 0.0988,
+      "truth_below": 0.1057
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8091,
+      "mc_se": 0.00393010419709198,
+      "median_width": 1.1054999180889458,
+      "se_ratio": 0.7164195682007108,
+      "truth_above": 0.0918,
+      "truth_below": 0.0991
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.7972,
+      "mc_se": 0.004020847671822448,
+      "median_width": 1.0407252533157125,
+      "se_ratio": 0.7036057935268377,
+      "truth_above": 0.0978,
+      "truth_below": 0.105
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.7978,
+      "mc_se": 0.004016405855986171,
+      "median_width": 1.0384873814721525,
+      "se_ratio": 0.7048332823405236,
+      "truth_above": 0.0975,
+      "truth_below": 0.1047
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.7978,
+      "mc_se": 0.004016405855986171,
+      "median_width": 1.0384873814721527,
+      "se_ratio": 0.7048332823405236,
+      "truth_above": 0.0975,
+      "truth_below": 0.1047
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.8058,
+      "mc_se": 0.003955835689206518,
+      "median_width": 0.9383292105536465,
+      "se_ratio": 0.7270520051080678,
+      "truth_above": 0.0972,
+      "truth_below": 0.097
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.7939,
+      "mc_se": 0.0040450313966643075,
+      "median_width": 0.898477513647491,
+      "se_ratio": 0.7109390838544137,
+      "truth_above": 0.1036,
+      "truth_below": 0.1025
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.7916,
+      "mc_se": 0.0040616430173022345,
+      "median_width": 0.7852202842591622,
+      "se_ratio": 0.7250245818298882,
+      "truth_above": 0.1057,
+      "truth_below": 0.1027
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.7916,
+      "mc_se": 0.0040616430173022345,
+      "median_width": 0.7852202842591622,
+      "se_ratio": 0.7250245818298882,
+      "truth_above": 0.1057,
+      "truth_below": 0.1027
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.8003,
+      "mc_se": 0.003997748241197787,
+      "median_width": 0.7119586324212166,
+      "se_ratio": 0.7448197207449466,
+      "truth_above": 0.1005,
+      "truth_below": 0.0992
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.7897,
+      "mc_se": 0.004075216681355729,
+      "median_width": 0.6945720214679743,
+      "se_ratio": 0.7318216139321317,
+      "truth_above": 0.1051,
+      "truth_below": 0.1052
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.7956,
+      "mc_se": 0.004032624951566907,
+      "median_width": 0.6385133156240566,
+      "se_ratio": 0.7392376416584026,
+      "truth_above": 0.1014,
+      "truth_below": 0.103
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.7956,
+      "mc_se": 0.004032624951566907,
+      "median_width": 0.6385133156240566,
+      "se_ratio": 0.7392376416584026,
+      "truth_above": 0.1014,
+      "truth_below": 0.103
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.794,
+      "mc_se": 0.004044304637388237,
+      "median_width": 0.5518974910167396,
+      "se_ratio": 0.755753767748814,
+      "truth_above": 0.1051,
+      "truth_below": 0.1009
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.794,
+      "mc_se": 0.004044304637388237,
+      "median_width": 0.5518974910167397,
+      "se_ratio": 0.755753767748814,
+      "truth_above": 0.1051,
+      "truth_below": 0.1009
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.7948,
+      "mc_se": 0.00403847694062997,
+      "median_width": 0.4922239932822662,
+      "se_ratio": 0.7545019129067302,
+      "truth_above": 0.1044,
+      "truth_below": 0.1008
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.7948,
+      "mc_se": 0.00403847694062997,
+      "median_width": 0.4922239932822662,
+      "se_ratio": 0.7545019129067302,
+      "truth_above": 0.1044,
+      "truth_below": 0.1008
+     }
+    }
+   ]
+  },
+  {
+   "autocorrelation": {
+    "1": -0.0017478732739537918,
+    "10": -0.002203381873560615,
+    "2": -0.0019946351864879234,
+    "20": -0.002124872988110631,
+    "5": -0.0015932571047667285
+   },
+   "phi": 0.0,
+   "reps": 10000,
+   "series": "panel",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8979,
+      "mc_se": 0.0030277977145113243,
+      "median_width": 0.5003544028315438,
+      "se_ratio": 0.9321474198571904,
+      "truth_above": 0.0487,
+      "truth_below": 0.0534
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.8979,
+      "mc_se": 0.0030277977145113243,
+      "median_width": 0.5003544028315438,
+      "se_ratio": 0.9321474198571902,
+      "truth_above": 0.0487,
+      "truth_below": 0.0534
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8975,
+      "mc_se": 0.0030330471476717933,
+      "median_width": 0.49897109382748767,
+      "se_ratio": 0.9316172041685367,
+      "truth_above": 0.0495,
+      "truth_below": 0.053
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9495,
+      "mc_se": 0.002189743135621162,
+      "median_width": 0.6974451210253056,
+      "se_ratio": 1.5887559103402749,
+      "truth_above": 0.0257,
+      "truth_below": 0.0248
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8941,
+      "mc_se": 0.0030770958711096408,
+      "median_width": 0.47515556868908315,
+      "se_ratio": 0.9333820011240137,
+      "truth_above": 0.0525,
+      "truth_below": 0.0534
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9021,
+      "mc_se": 0.0029717939026789857,
+      "median_width": 0.47205991416019155,
+      "se_ratio": 0.9781080711431902,
+      "truth_above": 0.0487,
+      "truth_below": 0.0492
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8941,
+      "mc_se": 0.0030770958711096408,
+      "median_width": 0.4512875848554175,
+      "se_ratio": 0.9262353983124855,
+      "truth_above": 0.0508,
+      "truth_below": 0.0551
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8967,
+      "mc_se": 0.003043503080333581,
+      "median_width": 0.44237564707654,
+      "se_ratio": 0.9501695976554971,
+      "truth_above": 0.0513,
+      "truth_below": 0.052
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.8992,
+      "mc_se": 0.0030106371418688106,
+      "median_width": 0.4403019671663838,
+      "se_ratio": 0.9509932725209335,
+      "truth_above": 0.0492,
+      "truth_below": 0.0516
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8992,
+      "mc_se": 0.0030106371418688106,
+      "median_width": 0.4403019671663838,
+      "se_ratio": 0.9509932725209335,
+      "truth_above": 0.0492,
+      "truth_below": 0.0516
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.8999,
+      "mc_se": 0.003001332870576004,
+      "median_width": 0.38313219496011364,
+      "se_ratio": 0.9560960727282832,
+      "truth_above": 0.049,
+      "truth_below": 0.0511
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.9079,
+      "mc_se": 0.002891670624396907,
+      "median_width": 0.3859412748735487,
+      "se_ratio": 0.9884168119832134,
+      "truth_above": 0.0454,
+      "truth_below": 0.0467
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.8963,
+      "mc_se": 0.003048709727081278,
+      "median_width": 0.3208882558953878,
+      "se_ratio": 0.9658601104659718,
+      "truth_above": 0.0506,
+      "truth_below": 0.0531
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.8963,
+      "mc_se": 0.003048709727081278,
+      "median_width": 0.3208882558953877,
+      "se_ratio": 0.9658601104659718,
+      "truth_above": 0.0506,
+      "truth_below": 0.0531
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.8944,
+      "mc_se": 0.0030732497457902773,
+      "median_width": 0.2834811945993174,
+      "se_ratio": 0.9683068408597045,
+      "truth_above": 0.0514,
+      "truth_below": 0.0542
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.9003,
+      "mc_se": 0.0029959958277674553,
+      "median_width": 0.28609183824998363,
+      "se_ratio": 0.9863068080199184,
+      "truth_above": 0.0477,
+      "truth_below": 0.052
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.8961,
+      "mc_se": 0.0030513077524235406,
+      "median_width": 0.2558073544476655,
+      "se_ratio": 0.9752308750509455,
+      "truth_above": 0.0504,
+      "truth_below": 0.0535
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.8961,
+      "mc_se": 0.0030513077524235406,
+      "median_width": 0.25580735444766545,
+      "se_ratio": 0.9752308750509455,
+      "truth_above": 0.0504,
+      "truth_below": 0.0535
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.9022,
+      "mc_se": 0.002970440371392767,
+      "median_width": 0.2184160299901252,
+      "se_ratio": 0.9816458837207758,
+      "truth_above": 0.0486,
+      "truth_below": 0.0492
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.9022,
+      "mc_se": 0.002970440371392767,
+      "median_width": 0.2184160299901252,
+      "se_ratio": 0.9816458837207758,
+      "truth_above": 0.0486,
+      "truth_below": 0.0492
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.8997,
+      "mc_se": 0.0030039958388786087,
+      "median_width": 0.19412901990110337,
+      "se_ratio": 0.9881654926513014,
+      "truth_above": 0.0521,
+      "truth_below": 0.0482
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.8997,
+      "mc_se": 0.0030039958388786087,
+      "median_width": 0.19412901990110337,
+      "se_ratio": 0.9881654926513014,
+      "truth_above": 0.0521,
+      "truth_below": 0.0482
+     }
+    }
+   ]
+  },
+  {
+   "autocorrelation": {
+    "1": 0.2960077402618101,
+    "10": -0.0039448105350201774,
+    "2": 0.14514920038160498,
+    "20": -0.0042896879064500066,
+    "5": 0.014368496144205057
+   },
+   "phi": 0.5,
+   "reps": 10000,
+   "series": "panel",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8964,
+      "mc_se": 0.003047409391598051,
+      "median_width": 0.7214955545354709,
+      "se_ratio": 0.9211202143261487,
+      "truth_above": 0.051,
+      "truth_below": 0.0526
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.8964,
+      "mc_se": 0.003047409391598051,
+      "median_width": 0.7214955545354709,
+      "se_ratio": 0.9211202143261487,
+      "truth_above": 0.051,
+      "truth_below": 0.0526
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8969,
+      "mc_se": 0.0030408944407854734,
+      "median_width": 0.7168783989450641,
+      "se_ratio": 0.9228635213069993,
+      "truth_above": 0.0514,
+      "truth_below": 0.0517
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.936,
+      "mc_se": 0.002447529366524536,
+      "median_width": 0.8545530626550146,
+      "se_ratio": 1.2607783805332389,
+      "truth_above": 0.0318,
+      "truth_below": 0.0322
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8922,
+      "mc_se": 0.0031012765113739857,
+      "median_width": 0.6836320594643317,
+      "se_ratio": 0.9203574429343379,
+      "truth_above": 0.0537,
+      "truth_below": 0.0541
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9,
+      "mc_se": 0.0029999999999999996,
+      "median_width": 0.6711948829019768,
+      "se_ratio": 0.9562406785919296,
+      "truth_above": 0.0499,
+      "truth_below": 0.0501
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8909,
+      "mc_se": 0.0031176463879022585,
+      "median_width": 0.6514807693811431,
+      "se_ratio": 0.908040092716569,
+      "truth_above": 0.0535,
+      "truth_below": 0.0556
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8944,
+      "mc_se": 0.0030732497457902773,
+      "median_width": 0.6349614529609873,
+      "se_ratio": 0.9301895638013912,
+      "truth_above": 0.053,
+      "truth_below": 0.0526
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.8951,
+      "mc_se": 0.003064245257808193,
+      "median_width": 0.6321732630094904,
+      "se_ratio": 0.9292691566621433,
+      "truth_above": 0.0524,
+      "truth_below": 0.0525
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8951,
+      "mc_se": 0.003064245257808193,
+      "median_width": 0.6321732630094905,
+      "se_ratio": 0.9292691566621433,
+      "truth_above": 0.0524,
+      "truth_below": 0.0525
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.8893,
+      "mc_se": 0.003137602747321592,
+      "median_width": 0.5526381912380387,
+      "se_ratio": 0.9272635553608414,
+      "truth_above": 0.0548,
+      "truth_below": 0.0559
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.8974,
+      "mc_se": 0.003034357263078954,
+      "median_width": 0.5510220356223967,
+      "se_ratio": 0.9495566202163271,
+      "truth_above": 0.0509,
+      "truth_below": 0.0517
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.8837,
+      "mc_se": 0.0032058432588010282,
+      "median_width": 0.4602615472561284,
+      "se_ratio": 0.9338234806988125,
+      "truth_above": 0.057,
+      "truth_below": 0.0593
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.8837,
+      "mc_se": 0.0032058432588010282,
+      "median_width": 0.46026154725612844,
+      "se_ratio": 0.9338234806988123,
+      "truth_above": 0.057,
+      "truth_below": 0.0593
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.8892,
+      "mc_se": 0.003138843098977711,
+      "median_width": 0.4081638610109244,
+      "se_ratio": 0.9438890932497909,
+      "truth_above": 0.0537,
+      "truth_below": 0.0571
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.8933,
+      "mc_se": 0.0030873145288421782,
+      "median_width": 0.4095792794822774,
+      "se_ratio": 0.9565819108071496,
+      "truth_above": 0.0527,
+      "truth_below": 0.054
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.8889,
+      "mc_se": 0.0031425593073162515,
+      "median_width": 0.3666757272714898,
+      "se_ratio": 0.9491956390195238,
+      "truth_above": 0.0566,
+      "truth_below": 0.0545
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.8889,
+      "mc_se": 0.0031425593073162515,
+      "median_width": 0.3666757272714897,
+      "se_ratio": 0.9491956390195238,
+      "truth_above": 0.0566,
+      "truth_below": 0.0545
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.8875,
+      "mc_se": 0.003159806164941135,
+      "median_width": 0.3143240088001367,
+      "se_ratio": 0.9502278790217867,
+      "truth_above": 0.0543,
+      "truth_below": 0.0582
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.8875,
+      "mc_se": 0.003159806164941135,
+      "median_width": 0.3143240088001367,
+      "se_ratio": 0.9502278790217867,
+      "truth_above": 0.0543,
+      "truth_below": 0.0582
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.8863,
+      "mc_se": 0.0031744654668148468,
+      "median_width": 0.2796038549432648,
+      "se_ratio": 0.9517320487306846,
+      "truth_above": 0.056,
+      "truth_below": 0.0577
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.8863,
+      "mc_se": 0.0031744654668148468,
+      "median_width": 0.2796038549432648,
+      "se_ratio": 0.9517320487306846,
+      "truth_above": 0.056,
+      "truth_below": 0.0577
+     }
+    }
+   ]
+  },
+  {
+   "autocorrelation": {
+    "1": -0.0010480243017800574,
+    "10": -0.002837299152979816,
+    "2": -0.0006844526955588501,
+    "20": -0.0018753490096703874,
+    "5": -0.002714479185789063
+   },
+   "reps": 4000,
+   "series": "scores:placebo",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90475,
+      "mc_se": 0.004641590177406876,
+      "median_width": 0.004622417979334758,
+      "se_ratio": 0.922774631507533,
+      "truth_above": 0.04475,
+      "truth_below": 0.0505
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.90475,
+      "mc_se": 0.004641590177406876,
+      "median_width": 0.004622417979334756,
+      "se_ratio": 0.9227746315075328,
+      "truth_above": 0.04475,
+      "truth_below": 0.0505
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.908,
+      "mc_se": 0.0045699015306678095,
+      "median_width": 0.004616611709129072,
+      "se_ratio": 0.924663553112412,
+      "truth_above": 0.04275,
+      "truth_below": 0.04925
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.95825,
+      "mc_se": 0.0031625518770448634,
+      "median_width": 0.007344609704909213,
+      "se_ratio": 1.6579488069481498,
+      "truth_above": 0.02025,
+      "truth_below": 0.0215
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90975,
+      "mc_se": 0.004530588744854251,
+      "median_width": 0.0043509584831401575,
+      "se_ratio": 0.9159604277661525,
+      "truth_above": 0.04475,
+      "truth_below": 0.0455
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9125,
+      "mc_se": 0.004467766500165379,
+      "median_width": 0.004349664295163419,
+      "se_ratio": 0.9621814258959835,
+      "truth_above": 0.042,
+      "truth_below": 0.0455
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.897,
+      "mc_se": 0.004806011860160147,
+      "median_width": 0.0041834900291727786,
+      "se_ratio": 0.904616412300576,
+      "truth_above": 0.05375,
+      "truth_below": 0.04925
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.902,
+      "mc_se": 0.004700957349306627,
+      "median_width": 0.004088192395387947,
+      "se_ratio": 0.930925614932428,
+      "truth_above": 0.05125,
+      "truth_below": 0.04675
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.9035,
+      "mc_se": 0.004668719042735385,
+      "median_width": 0.004050323654718047,
+      "se_ratio": 0.9318212380255374,
+      "truth_above": 0.05125,
+      "truth_below": 0.04525
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9035,
+      "mc_se": 0.004668719042735385,
+      "median_width": 0.004050323654718049,
+      "se_ratio": 0.9318212380255376,
+      "truth_above": 0.05125,
+      "truth_below": 0.04525
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.901,
+      "mc_se": 0.004722261110950981,
+      "median_width": 0.003571935923203603,
+      "se_ratio": 0.9247896513881217,
+      "truth_above": 0.05225,
+      "truth_below": 0.04675
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.9115,
+      "mc_se": 0.004490761349704525,
+      "median_width": 0.0036116832299189806,
+      "se_ratio": 0.9564695359417796,
+      "truth_above": 0.04675,
+      "truth_below": 0.04175
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.90175,
+      "mc_se": 0.004706297310519172,
+      "median_width": 0.0029994736358430517,
+      "se_ratio": 0.9589280791548273,
+      "truth_above": 0.0515,
+      "truth_below": 0.04675
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.90175,
+      "mc_se": 0.004706297310519172,
+      "median_width": 0.002999473635843051,
+      "se_ratio": 0.9589280791548273,
+      "truth_above": 0.0515,
+      "truth_below": 0.04675
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.90625,
+      "mc_se": 0.004608712876172695,
+      "median_width": 0.0026708636872142004,
+      "se_ratio": 0.9766834003651638,
+      "truth_above": 0.049,
+      "truth_below": 0.04475
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.91,
+      "mc_se": 0.004524930938699506,
+      "median_width": 0.002708152365620882,
+      "se_ratio": 0.9975188963901883,
+      "truth_above": 0.047,
+      "truth_below": 0.043
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.9065,
+      "mc_se": 0.004603198616179842,
+      "median_width": 0.002423665659418645,
+      "se_ratio": 0.9925640482864043,
+      "truth_above": 0.047,
+      "truth_below": 0.0465
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.9065,
+      "mc_se": 0.004603198616179842,
+      "median_width": 0.002423665659418645,
+      "se_ratio": 0.9925640482864043,
+      "truth_above": 0.047,
+      "truth_below": 0.0465
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.91325,
+      "mc_se": 0.0044504055292748325,
+      "median_width": 0.0020890064528506546,
+      "se_ratio": 1.0075606679565519,
+      "truth_above": 0.0405,
+      "truth_below": 0.04625
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.91325,
+      "mc_se": 0.0044504055292748325,
+      "median_width": 0.0020890064528506546,
+      "se_ratio": 1.0075606679565519,
+      "truth_above": 0.0405,
+      "truth_below": 0.04625
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.90675,
+      "mc_se": 0.004597674344165755,
+      "median_width": 0.0018667239270137059,
+      "se_ratio": 1.0038958329503216,
+      "truth_above": 0.0455,
+      "truth_below": 0.04775
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.90675,
+      "mc_se": 0.004597674344165755,
+      "median_width": 0.001866723927013706,
+      "se_ratio": 1.0038958329503216,
+      "truth_above": 0.0455,
+      "truth_below": 0.04775
+     }
+    }
+   ],
+   "target": "1",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 8.861474151308201e-06,
+   "truth_run_mean": 1.9491560758731375e-07
+  },
+  {
+   "autocorrelation": {
+    "1": -0.0035157268239600008,
+    "10": -0.004005678888409881,
+    "2": -0.003929908607918782,
+    "20": -0.00336855896500672,
+    "5": -0.004378114930354144
+   },
+   "reps": 4000,
+   "series": "scores:own_history",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9115,
+      "mc_se": 0.004490761349704525,
+      "median_width": 0.004483892300326139,
+      "se_ratio": 0.9685550861173422,
+      "truth_above": 0.05575,
+      "truth_below": 0.03275
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.9115,
+      "mc_se": 0.004490761349704525,
+      "median_width": 0.004483892300326139,
+      "se_ratio": 0.9685550861173421,
+      "truth_above": 0.05575,
+      "truth_below": 0.03275
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.91175,
+      "mc_se": 0.004485028915737334,
+      "median_width": 0.0044614484718033445,
+      "se_ratio": 0.9709689484141688,
+      "truth_above": 0.0555,
+      "truth_below": 0.03275
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.969,
+      "mc_se": 0.002740392307681513,
+      "median_width": 0.007243239832182876,
+      "se_ratio": 1.7735828737900792,
+      "truth_above": 0.022,
+      "truth_below": 0.009
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.91425,
+      "mc_se": 0.004427102254861525,
+      "median_width": 0.004248103713848441,
+      "se_ratio": 0.9704312055801748,
+      "truth_above": 0.0555,
+      "truth_below": 0.03025
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.921,
+      "mc_se": 0.004264944313821693,
+      "median_width": 0.004284254958541527,
+      "se_ratio": 1.0200210429038938,
+      "truth_above": 0.05,
+      "truth_below": 0.029
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90725,
+      "mc_se": 0.004586595619301968,
+      "median_width": 0.004044105901627806,
+      "se_ratio": 0.966174450572086,
+      "truth_above": 0.05825,
+      "truth_below": 0.0345
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.91275,
+      "mc_se": 0.004461990517134703,
+      "median_width": 0.003975629121719088,
+      "se_ratio": 0.9927063179355243,
+      "truth_above": 0.05575,
+      "truth_below": 0.0315
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.91175,
+      "mc_se": 0.004485028915737334,
+      "median_width": 0.003941088985073523,
+      "se_ratio": 0.9953712258458978,
+      "truth_above": 0.0565,
+      "truth_below": 0.03175
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.91175,
+      "mc_se": 0.004485028915737334,
+      "median_width": 0.003941088985073524,
+      "se_ratio": 0.9953712258458978,
+      "truth_above": 0.0565,
+      "truth_below": 0.03175
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.91425,
+      "mc_se": 0.004427102254861525,
+      "median_width": 0.0034733573623415047,
+      "se_ratio": 1.0047115913859344,
+      "truth_above": 0.05775,
+      "truth_below": 0.028
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.917,
+      "mc_se": 0.004362080925429971,
+      "median_width": 0.0035518004082423296,
+      "se_ratio": 1.0423918171474564,
+      "truth_above": 0.05375,
+      "truth_below": 0.02925
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.92,
+      "mc_se": 0.004289522117905443,
+      "median_width": 0.0029426957748367854,
+      "se_ratio": 1.0493136884689696,
+      "truth_above": 0.0535,
+      "truth_below": 0.0265
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.92,
+      "mc_se": 0.004289522117905443,
+      "median_width": 0.0029426957748367854,
+      "se_ratio": 1.0493136884689696,
+      "truth_above": 0.0535,
+      "truth_below": 0.0265
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.92475,
+      "mc_se": 0.004170954252326439,
+      "median_width": 0.002607057465705768,
+      "se_ratio": 1.072512907693078,
+      "truth_above": 0.05075,
+      "truth_below": 0.0245
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.9305,
+      "mc_se": 0.004020875215671335,
+      "median_width": 0.002639384437453789,
+      "se_ratio": 1.0982097199005365,
+      "truth_above": 0.04825,
+      "truth_below": 0.02125
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.92525,
+      "mc_se": 0.004158197851834373,
+      "median_width": 0.002368354250391524,
+      "se_ratio": 1.0837549841383292,
+      "truth_above": 0.04975,
+      "truth_below": 0.025
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.92525,
+      "mc_se": 0.004158197851834373,
+      "median_width": 0.002368354250391524,
+      "se_ratio": 1.0837549841383292,
+      "truth_above": 0.04975,
+      "truth_below": 0.025
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.92875,
+      "mc_se": 0.0040673528707256285,
+      "median_width": 0.0020425456853129347,
+      "se_ratio": 1.1096061787140175,
+      "truth_above": 0.04625,
+      "truth_below": 0.025
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.92875,
+      "mc_se": 0.0040673528707256285,
+      "median_width": 0.0020425456853129347,
+      "se_ratio": 1.1096061787140175,
+      "truth_above": 0.04625,
+      "truth_below": 0.025
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.92975,
+      "mc_se": 0.004040882870735059,
+      "median_width": 0.001812056301044484,
+      "se_ratio": 1.1202052546508934,
+      "truth_above": 0.04875,
+      "truth_below": 0.0215
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.92975,
+      "mc_se": 0.004040882870735059,
+      "median_width": 0.001812056301044484,
+      "se_ratio": 1.1202052546508932,
+      "truth_above": 0.04875,
+      "truth_below": 0.0215
+     }
+    }
+   ],
+   "target": "1",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 7.877282510390526e-06,
+   "truth_run_mean": -2.6029390125702905e-06
+  },
+  {
+   "autocorrelation": {
+    "1": -0.004544791083097834,
+    "10": -0.006388322648939852,
+    "2": -0.0065166000553767344,
+    "20": -0.0053051764723702185,
+    "5": -0.005995759877486192
+   },
+   "reps": 4000,
+   "series": "scores:volatility",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9355,
+      "mc_se": 0.003883933251228708,
+      "median_width": 0.004712740708519992,
+      "se_ratio": 1.0039573401042072,
+      "truth_above": 0.04325,
+      "truth_below": 0.02125
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.9355,
+      "mc_se": 0.003883933251228708,
+      "median_width": 0.004712740708519993,
+      "se_ratio": 1.0039573401042072,
+      "truth_above": 0.04325,
+      "truth_below": 0.02125
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.932,
+      "mc_se": 0.003980452235613435,
+      "median_width": 0.004676630598481139,
+      "se_ratio": 1.0057751329288038,
+      "truth_above": 0.045,
+      "truth_below": 0.023
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.97475,
+      "mc_se": 0.002480546184814949,
+      "median_width": 0.007658670649513913,
+      "se_ratio": 1.8173686363985668,
+      "truth_above": 0.0205,
+      "truth_below": 0.00475
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9375,
+      "mc_se": 0.0038273277230987156,
+      "median_width": 0.004475963838828407,
+      "se_ratio": 1.011552944111655,
+      "truth_above": 0.0385,
+      "truth_below": 0.024
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.94325,
+      "mc_se": 0.003658190724251538,
+      "median_width": 0.0044867563755663815,
+      "se_ratio": 1.0711670082619706,
+      "truth_above": 0.0405,
+      "truth_below": 0.01625
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.93125,
+      "mc_se": 0.004000732354832049,
+      "median_width": 0.004228003533246244,
+      "se_ratio": 1.0018028243662642,
+      "truth_above": 0.04375,
+      "truth_below": 0.025
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9395,
+      "mc_se": 0.003769607075014583,
+      "median_width": 0.004166789180435183,
+      "se_ratio": 1.0376958184723732,
+      "truth_above": 0.0425,
+      "truth_below": 0.018
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.9375,
+      "mc_se": 0.0038273277230987156,
+      "median_width": 0.00414276237943066,
+      "se_ratio": 1.0397455925004426,
+      "truth_above": 0.043,
+      "truth_below": 0.0195
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9375,
+      "mc_se": 0.0038273277230987156,
+      "median_width": 0.00414276237943066,
+      "se_ratio": 1.0397455925004426,
+      "truth_above": 0.043,
+      "truth_below": 0.0195
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.93675,
+      "mc_se": 0.0038486828103911092,
+      "median_width": 0.0036455581154562406,
+      "se_ratio": 1.0953913584327024,
+      "truth_above": 0.04525,
+      "truth_below": 0.018
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.94375,
+      "mc_se": 0.0036430048551985223,
+      "median_width": 0.003733249527165635,
+      "se_ratio": 1.1382407170521427,
+      "truth_above": 0.043,
+      "truth_below": 0.01325
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.9505,
+      "mc_se": 0.0034296410161998,
+      "median_width": 0.003088277938455992,
+      "se_ratio": 1.148283711385831,
+      "truth_above": 0.03775,
+      "truth_below": 0.01175
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.9505,
+      "mc_se": 0.0034296410161998,
+      "median_width": 0.0030882779384559913,
+      "se_ratio": 1.148283711385831,
+      "truth_above": 0.03775,
+      "truth_below": 0.01175
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.947,
+      "mc_se": 0.003542280338990692,
+      "median_width": 0.0027271206278903478,
+      "se_ratio": 1.1770271144075264,
+      "truth_above": 0.042,
+      "truth_below": 0.011
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.9515,
+      "mc_se": 0.0033966067626382654,
+      "median_width": 0.002801280647509197,
+      "se_ratio": 1.2066098707865915,
+      "truth_above": 0.03975,
+      "truth_below": 0.00875
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.9555,
+      "mc_se": 0.003260358492558755,
+      "median_width": 0.002498682161423846,
+      "se_ratio": 1.220467921363926,
+      "truth_above": 0.0375,
+      "truth_below": 0.007
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.9555,
+      "mc_se": 0.003260358492558755,
+      "median_width": 0.002498682161423846,
+      "se_ratio": 1.220467921363926,
+      "truth_above": 0.0375,
+      "truth_below": 0.007
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.96,
+      "mc_se": 0.003098386676965935,
+      "median_width": 0.0021633805377352395,
+      "se_ratio": 1.2453345876572488,
+      "truth_above": 0.03,
+      "truth_below": 0.01
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.96,
+      "mc_se": 0.003098386676965935,
+      "median_width": 0.002163380537735239,
+      "se_ratio": 1.2453345876572488,
+      "truth_above": 0.03,
+      "truth_below": 0.01
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.96,
+      "mc_se": 0.003098386676965935,
+      "median_width": 0.0019432927567300487,
+      "se_ratio": 1.2784622305361615,
+      "truth_above": 0.032,
+      "truth_below": 0.008
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.96,
+      "mc_se": 0.003098386676965935,
+      "median_width": 0.0019432927567300487,
+      "se_ratio": 1.2784622305361615,
+      "truth_above": 0.032,
+      "truth_below": 0.008
+     }
+    }
+   ],
+   "target": "1",
+   "true_mean": -0.0008039341738995389,
+   "truth_run_mc_se": 7.303304372131274e-06,
+   "truth_run_mean": -0.0008039341738995389
+  },
+  {
+   "autocorrelation": {
+    "1": 0.6525337508521817,
+    "10": -0.012198205755110094,
+    "2": 0.4522572019626904,
+    "20": -0.0113159732378846,
+    "5": -0.0061613362221752295
+   },
+   "reps": 4000,
+   "series": "scores:placebo",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.909,
+      "mc_se": 0.004547499312809183,
+      "median_width": 0.017270224551070894,
+      "se_ratio": 0.8963465680318544,
+      "truth_above": 0.0425,
+      "truth_below": 0.0485
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.909,
+      "mc_se": 0.004547499312809183,
+      "median_width": 0.01727022455107089,
+      "se_ratio": 0.8963465680318544,
+      "truth_above": 0.0425,
+      "truth_below": 0.0485
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.90775,
+      "mc_se": 0.00457547640962119,
+      "median_width": 0.017187111639861904,
+      "se_ratio": 0.8947915941525718,
+      "truth_above": 0.042,
+      "truth_below": 0.05025
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.92175,
+      "mc_se": 0.004246378972136143,
+      "median_width": 0.01946293163585211,
+      "se_ratio": 1.0685383975375442,
+      "truth_above": 0.037,
+      "truth_below": 0.04125
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9,
+      "mc_se": 0.004743416490252568,
+      "median_width": 0.016540836489822415,
+      "se_ratio": 0.8900747037917953,
+      "truth_above": 0.0455,
+      "truth_below": 0.0545
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9065,
+      "mc_se": 0.004603198616179842,
+      "median_width": 0.016252164618428048,
+      "se_ratio": 0.9196643787674597,
+      "truth_above": 0.0425,
+      "truth_below": 0.051
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.89225,
+      "mc_se": 0.004902548763143514,
+      "median_width": 0.0157727443564947,
+      "se_ratio": 0.8835627708042321,
+      "truth_above": 0.05075,
+      "truth_below": 0.057
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.90125,
+      "mc_se": 0.004716949159679379,
+      "median_width": 0.015273420534207355,
+      "se_ratio": 0.9037532012365567,
+      "truth_above": 0.04725,
+      "truth_below": 0.0515
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.8995,
+      "mc_se": 0.004753939156110436,
+      "median_width": 0.015271150693134204,
+      "se_ratio": 0.9033732903331396,
+      "truth_above": 0.048,
+      "truth_below": 0.0525
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.8995,
+      "mc_se": 0.004753939156110436,
+      "median_width": 0.015271150693134207,
+      "se_ratio": 0.9033732903331398,
+      "truth_above": 0.048,
+      "truth_below": 0.0525
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.89975,
+      "mc_se": 0.004748682383040583,
+      "median_width": 0.013344613724638058,
+      "se_ratio": 0.911982315000799,
+      "truth_above": 0.0475,
+      "truth_below": 0.05275
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.901,
+      "mc_se": 0.004722261110950981,
+      "median_width": 0.013520772940112571,
+      "se_ratio": 0.9343208721576355,
+      "truth_above": 0.0475,
+      "truth_below": 0.0515
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.8945,
+      "mc_se": 0.004857204700236547,
+      "median_width": 0.011352741270991028,
+      "se_ratio": 0.9288698031058629,
+      "truth_above": 0.05075,
+      "truth_below": 0.05475
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.8945,
+      "mc_se": 0.004857204700236547,
+      "median_width": 0.011352741270991024,
+      "se_ratio": 0.9288698031058628,
+      "truth_above": 0.05075,
+      "truth_below": 0.05475
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.894,
+      "mc_se": 0.004867340136049668,
+      "median_width": 0.00999528462399318,
+      "se_ratio": 0.9331668738675046,
+      "truth_above": 0.0515,
+      "truth_below": 0.0545
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.89875,
+      "mc_se": 0.004769655058282516,
+      "median_width": 0.010134126910238241,
+      "se_ratio": 0.948659572216955,
+      "truth_above": 0.04925,
+      "truth_below": 0.052
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.89975,
+      "mc_se": 0.004748682383040583,
+      "median_width": 0.009126233005994366,
+      "se_ratio": 0.9498330193186846,
+      "truth_above": 0.04925,
+      "truth_below": 0.051
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.89975,
+      "mc_se": 0.004748682383040583,
+      "median_width": 0.00912623300599437,
+      "se_ratio": 0.9498330193186846,
+      "truth_above": 0.04925,
+      "truth_below": 0.051
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.89525,
+      "mc_se": 0.004841937564136902,
+      "median_width": 0.007883243105767324,
+      "se_ratio": 0.954805538333409,
+      "truth_above": 0.05375,
+      "truth_below": 0.051
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.89525,
+      "mc_se": 0.004841937564136902,
+      "median_width": 0.007883243105767324,
+      "se_ratio": 0.9548055383334088,
+      "truth_above": 0.05375,
+      "truth_below": 0.051
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.8945,
+      "mc_se": 0.004857204700236547,
+      "median_width": 0.007046508263225278,
+      "se_ratio": 0.9736986083910809,
+      "truth_above": 0.05675,
+      "truth_below": 0.04875
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.8945,
+      "mc_se": 0.004857204700236547,
+      "median_width": 0.0070465082632252775,
+      "se_ratio": 0.9736986083910809,
+      "truth_above": 0.05675,
+      "truth_below": 0.04875
+     }
+    }
+   ],
+   "target": "cum",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 3.395910976840086e-05,
+   "truth_run_mean": -2.8498032543989937e-05
+  },
+  {
+   "autocorrelation": {
+    "1": 0.6520318722895962,
+    "10": -0.021622144873138283,
+    "2": 0.4513421212646566,
+    "20": -0.017230490631482836,
+    "5": -0.012124131935133885
+   },
+   "reps": 4000,
+   "series": "scores:own_history",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.913,
+      "mc_se": 0.004456203541132294,
+      "median_width": 0.01703271948011792,
+      "se_ratio": 0.9383435177796385,
+      "truth_above": 0.04925,
+      "truth_below": 0.03775
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.913,
+      "mc_se": 0.004456203541132294,
+      "median_width": 0.01703271948011792,
+      "se_ratio": 0.9383435177796385,
+      "truth_above": 0.04925,
+      "truth_below": 0.03775
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9115,
+      "mc_se": 0.004490761349704525,
+      "median_width": 0.016940100313285873,
+      "se_ratio": 0.937144621820868,
+      "truth_above": 0.0505,
+      "truth_below": 0.038
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.9305,
+      "mc_se": 0.004020875215671335,
+      "median_width": 0.019001486294028903,
+      "se_ratio": 1.1187340089203883,
+      "truth_above": 0.042,
+      "truth_below": 0.0275
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9035,
+      "mc_se": 0.004668719042735385,
+      "median_width": 0.016155669729844037,
+      "se_ratio": 0.9370022531557872,
+      "truth_above": 0.0565,
+      "truth_below": 0.04
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.91225,
+      "mc_se": 0.004473531532804927,
+      "median_width": 0.016095172496755975,
+      "se_ratio": 0.9724409846919967,
+      "truth_above": 0.054,
+      "truth_below": 0.03375
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.8995,
+      "mc_se": 0.004753939156110436,
+      "median_width": 0.015372839877661727,
+      "se_ratio": 0.9337062626038591,
+      "truth_above": 0.061,
+      "truth_below": 0.0395
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.906,
+      "mc_se": 0.004614217160039176,
+      "median_width": 0.015241169074113228,
+      "se_ratio": 0.9591122019993183,
+      "truth_above": 0.05725,
+      "truth_below": 0.03675
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.906,
+      "mc_se": 0.004614217160039176,
+      "median_width": 0.015135439272661411,
+      "se_ratio": 0.958976037819099,
+      "truth_above": 0.0565,
+      "truth_below": 0.0375
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.906,
+      "mc_se": 0.004614217160039176,
+      "median_width": 0.015135439272661415,
+      "se_ratio": 0.958976037819099,
+      "truth_above": 0.0565,
+      "truth_below": 0.0375
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.90575,
+      "mc_se": 0.004619711503438282,
+      "median_width": 0.013163729109278996,
+      "se_ratio": 0.9757184745871929,
+      "truth_above": 0.05575,
+      "truth_below": 0.0385
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.91475,
+      "mc_se": 0.004415383264791405,
+      "median_width": 0.013189341870285417,
+      "se_ratio": 1.0043236875860204,
+      "truth_above": 0.05225,
+      "truth_below": 0.033
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.91275,
+      "mc_se": 0.004461990517134703,
+      "median_width": 0.011117402716500819,
+      "se_ratio": 1.0044728071247593,
+      "truth_above": 0.051,
+      "truth_below": 0.03625
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.91275,
+      "mc_se": 0.004461990517134703,
+      "median_width": 0.011117402716500815,
+      "se_ratio": 1.004472807124759,
+      "truth_above": 0.051,
+      "truth_below": 0.03625
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.914,
+      "mc_se": 0.004432944845133987,
+      "median_width": 0.0099303081905971,
+      "se_ratio": 1.0250675004852954,
+      "truth_above": 0.0535,
+      "truth_below": 0.0325
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.9195,
+      "mc_se": 0.004301736567945555,
+      "median_width": 0.010022806338598585,
+      "se_ratio": 1.0429320038021763,
+      "truth_above": 0.05025,
+      "truth_below": 0.03025
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.921,
+      "mc_se": 0.004264944313821693,
+      "median_width": 0.008970683556821693,
+      "se_ratio": 1.0527170439784606,
+      "truth_above": 0.0495,
+      "truth_below": 0.0295
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.921,
+      "mc_se": 0.004264944313821693,
+      "median_width": 0.00897068355682169,
+      "se_ratio": 1.0527170439784606,
+      "truth_above": 0.0495,
+      "truth_below": 0.0295
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.92725,
+      "mc_se": 0.004106623841429842,
+      "median_width": 0.007774404360676135,
+      "se_ratio": 1.0867431739872078,
+      "truth_above": 0.046,
+      "truth_below": 0.02675
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.92725,
+      "mc_se": 0.004106623841429842,
+      "median_width": 0.0077744043606761334,
+      "se_ratio": 1.0867431739872078,
+      "truth_above": 0.046,
+      "truth_below": 0.02675
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.93025,
+      "mc_se": 0.004027559357104498,
+      "median_width": 0.006926808495730539,
+      "se_ratio": 1.0995662561773487,
+      "truth_above": 0.04725,
+      "truth_below": 0.0225
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.93025,
+      "mc_se": 0.004027559357104498,
+      "median_width": 0.0069268084957305395,
+      "se_ratio": 1.0995662561773487,
+      "truth_above": 0.04725,
+      "truth_below": 0.0225
+     }
+    }
+   ],
+   "target": "cum",
+   "true_mean": 0.0,
+   "truth_run_mc_se": 3.028079490594873e-05,
+   "truth_run_mean": -1.791938228600666e-05
+  },
+  {
+   "autocorrelation": {
+    "1": 0.6843712522174755,
+    "10": -0.035089970783366606,
+    "2": 0.47992210614787245,
+    "20": -0.026095934230132827,
+    "5": -0.025632306643431406
+   },
+   "reps": 4000,
+   "series": "scores:volatility",
+   "sizes": [
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9355,
+      "mc_se": 0.003883933251228708,
+      "median_width": 0.018654621901385875,
+      "se_ratio": 0.9877063069312163,
+      "truth_above": 0.043,
+      "truth_below": 0.0215
+     },
+     "dates": 100,
+     "previous": {
+      "blocks": 5,
+      "coverage": 0.9355,
+      "mc_se": 0.003883933251228708,
+      "median_width": 0.018654621901385872,
+      "se_ratio": 0.9877063069312163,
+      "truth_above": 0.043,
+      "truth_below": 0.0215
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.93775,
+      "mc_se": 0.0038201746524210126,
+      "median_width": 0.01851151834419848,
+      "se_ratio": 0.9896862055960435,
+      "truth_above": 0.042,
+      "truth_below": 0.02025
+     },
+     "dates": 101,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.95,
+      "mc_se": 0.003446012188022557,
+      "median_width": 0.020852265911946145,
+      "se_ratio": 1.1747216009436021,
+      "truth_above": 0.03675,
+      "truth_below": 0.01325
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.93475,
+      "mc_se": 0.0039048827607240663,
+      "median_width": 0.017591712260914043,
+      "se_ratio": 0.9960032512144241,
+      "truth_above": 0.045,
+      "truth_below": 0.02025
+     },
+     "dates": 110,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.94125,
+      "mc_se": 0.003718145959345866,
+      "median_width": 0.01740607090506933,
+      "se_ratio": 1.0429625327521306,
+      "truth_above": 0.04175,
+      "truth_below": 0.017
+     }
+    },
+    {
+     "current": {
+      "blocks": 5,
+      "coverage": 0.9345,
+      "mc_se": 0.003911833010239573,
+      "median_width": 0.01670721977380371,
+      "se_ratio": 0.9920976638907711,
+      "truth_above": 0.04375,
+      "truth_below": 0.02175
+     },
+     "dates": 119,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.93975,
+      "mc_se": 0.0037623110417667497,
+      "median_width": 0.016545413236233722,
+      "se_ratio": 1.0301166653353693,
+      "truth_above": 0.04225,
+      "truth_below": 0.018
+     }
+    },
+    {
+     "current": {
+      "blocks": 6,
+      "coverage": 0.93775,
+      "mc_se": 0.0038201746524210126,
+      "median_width": 0.016447282105546662,
+      "se_ratio": 1.0316771205282835,
+      "truth_above": 0.04225,
+      "truth_below": 0.02
+     },
+     "dates": 120,
+     "previous": {
+      "blocks": 6,
+      "coverage": 0.93775,
+      "mc_se": 0.0038201746524210126,
+      "median_width": 0.01644728210554667,
+      "se_ratio": 1.0316771205282835,
+      "truth_above": 0.04225,
+      "truth_below": 0.02
+     }
+    },
+    {
+     "current": {
+      "blocks": 7,
+      "coverage": 0.9415,
+      "mc_se": 0.003710719269899031,
+      "median_width": 0.014296352422525683,
+      "se_ratio": 1.0807071269668238,
+      "truth_above": 0.0405,
+      "truth_below": 0.018
+     },
+     "dates": 150,
+     "previous": {
+      "blocks": 8,
+      "coverage": 0.9455,
+      "mc_se": 0.0035892112643309253,
+      "median_width": 0.014582080950581585,
+      "se_ratio": 1.1171357802072623,
+      "truth_above": 0.04125,
+      "truth_below": 0.01325
+     }
+    },
+    {
+     "current": {
+      "blocks": 10,
+      "coverage": 0.9515,
+      "mc_se": 0.0033966067626382654,
+      "median_width": 0.012237080634742863,
+      "se_ratio": 1.1453654020339814,
+      "truth_above": 0.03525,
+      "truth_below": 0.01325
+     },
+     "dates": 200,
+     "previous": {
+      "blocks": 10,
+      "coverage": 0.9515,
+      "mc_se": 0.0033966067626382654,
+      "median_width": 0.012237080634742863,
+      "se_ratio": 1.1453654020339814,
+      "truth_above": 0.03525,
+      "truth_below": 0.01325
+     }
+    },
+    {
+     "current": {
+      "blocks": 12,
+      "coverage": 0.955,
+      "mc_se": 0.003277766007511825,
+      "median_width": 0.010895223741189022,
+      "se_ratio": 1.1892309999069879,
+      "truth_above": 0.0335,
+      "truth_below": 0.0115
+     },
+     "dates": 250,
+     "previous": {
+      "blocks": 13,
+      "coverage": 0.95825,
+      "mc_se": 0.0031625518770448634,
+      "median_width": 0.011048811552707162,
+      "se_ratio": 1.2121337701555952,
+      "truth_above": 0.03325,
+      "truth_below": 0.0085
+     }
+    },
+    {
+     "current": {
+      "blocks": 15,
+      "coverage": 0.9635,
+      "mc_se": 0.0029651201493362785,
+      "median_width": 0.009962190361190993,
+      "se_ratio": 1.243304637962953,
+      "truth_above": 0.027,
+      "truth_below": 0.0095
+     },
+     "dates": 300,
+     "previous": {
+      "blocks": 15,
+      "coverage": 0.9635,
+      "mc_se": 0.0029651201493362785,
+      "median_width": 0.009962190361190993,
+      "se_ratio": 1.243304637962953,
+      "truth_above": 0.027,
+      "truth_below": 0.0095
+     }
+    },
+    {
+     "current": {
+      "blocks": 20,
+      "coverage": 0.96525,
+      "mc_se": 0.0028957916663669,
+      "median_width": 0.008656031955746397,
+      "se_ratio": 1.2804125080099296,
+      "truth_above": 0.02575,
+      "truth_below": 0.009
+     },
+     "dates": 400,
+     "previous": {
+      "blocks": 20,
+      "coverage": 0.96525,
+      "mc_se": 0.0028957916663669,
+      "median_width": 0.008656031955746397,
+      "se_ratio": 1.2804125080099296,
+      "truth_above": 0.02575,
+      "truth_below": 0.009
+     }
+    },
+    {
+     "current": {
+      "blocks": 25,
+      "coverage": 0.972,
+      "mc_se": 0.0026084478143141004,
+      "median_width": 0.007713944066535489,
+      "se_ratio": 1.3064760258765993,
+      "truth_above": 0.0205,
+      "truth_below": 0.0075
+     },
+     "dates": 500,
+     "previous": {
+      "blocks": 25,
+      "coverage": 0.972,
+      "mc_se": 0.0026084478143141004,
+      "median_width": 0.007713944066535489,
+      "se_ratio": 1.3064760258765993,
+      "truth_above": 0.0205,
+      "truth_below": 0.0075
+     }
+    }
+   ],
+   "target": "cum",
+   "true_mean": -0.002886203829005292,
+   "truth_run_mc_se": 2.766392622644322e-05,
+   "truth_run_mean": -0.002886203829005292
+  }
+ ],
+ "data_class": "synthetic",
+ "design": {
+  "alpha_prior": 50.0,
+  "arch": 0.06,
+  "block": 20,
+  "chunk": 250,
+  "correlation": 0.5,
+  "daily_vol": 0.025,
+  "garch": 0.92,
+  "half_life": 63.0,
+  "kappa": 40.0,
+  "level": 0.9,
+  "max_stocks": 5,
+  "min_stocks": 2,
+  "names": 4,
+  "panel_persistence": [
+   0.0,
+   0.5
+  ],
+  "persistence": [
+   0.0,
+   0.25,
+   0.5,
+   0.75,
+   0.9
+  ],
+  "reps": 10000,
+  "score_reps": 4000,
+  "seed": 20261020,
+  "sizes": [
+   100,
+   101,
+   110,
+   119,
+   120,
+   150,
+   200,
+   250,
+   300,
+   400,
+   500
+  ],
+  "t_df": 5.0,
+  "tau": 0.005,
+  "truth_reps": 4000,
+  "vol_decay": 0.94,
+  "warmup": 756,
+  "within_date": 0.5
+ },
+ "schema": "stock_lab_comparison_coverage",
+ "schema_version": "1.0",
+ "use": "coverage of a reporting interval; never a decision test"
+}
