@@ -278,10 +278,84 @@ def test_the_selection_rule_needs_holm_and_climbs_only_when_beaten():
 
 
 def test_selection_ignores_a_challenger_that_passes_only_before_holm(demo_record):
+    from stock_agent.stock_lab.evaluation import ALPHA
+    from stock_agent.stock_lab.scores import holm
+
     pooled = [r for r in demo_record["comparisons"] if r["target"] == "daily_pooled"]
     beaten = set(demo_record["selection"]["beating_reference"])
+    # Decision A7: Holm runs over the fold-block t p-values, at a 2.5% family level.
+    adjusted = holm({row["model"]: row["fold_t_p_one_sided"] for row in pooled})
+    assert ALPHA == 0.025
     for row in pooled:
-        assert (row["model"] in beaten) == (row["mean_diff"] < 0 and row["p_holm"] < 0.05)
+        assert row["p_holm"] == adjusted[row["model"]]
+        assert (row["model"] in beaten) == (row["mean_diff"] < 0 and row["p_holm"] < ALPHA)
+
+
+@pytest.mark.parametrize(
+    ("p_values", "beaten"),
+    [
+        ({"B0": 0.01, "B2": 0.02, "B3": 0.03, "M1": 0.04}, set()),  # 0.04 > 0.025 / 4 = 0.00625
+        ({"B0": 0.004, "B2": 0.02, "B3": 0.03, "M1": 0.5}, {"B0"}),  # Holm stops at 0.02 * 3
+        ({"B0": 0.001, "B2": 0.006, "B3": 0.009, "M1": 0.012}, {"B0", "B2", "B3", "M1"}),
+        ({"B0": 0.02, "B2": 0.6, "B3": 0.7, "M1": 0.8}, set()),  # below 2.5% only before Holm
+    ],
+)
+def test_holm_over_the_fold_block_t_decides_who_beats_b1(p_values, beaten):
+    from stock_agent.stock_lab.evaluation import _beating
+
+    rows = [
+        {"model": m, "mean_diff": -0.001, "fold_t_p_one_sided": p, "p_one_sided": 1e-9}
+        for m, p in p_values.items()
+    ]
+    assert {row["model"] for row in _beating(rows)} == beaten
+    worse = [{**rows[0], "mean_diff": 0.001, "fold_t_p_one_sided": 1e-6}]
+    assert _beating(worse) == []  # a smaller p for a worse challenger never beats B1
+
+
+@pytest.mark.parametrize(("p", "moved"), [(0.03, False), (0.0249, True), (float("nan"), False)])
+def test_a_step_moves_only_below_the_confirmed_level(monkeypatch, p, moved):
+    from stock_agent.stock_lab import evaluation as ev
+
+    def comparison(model, target, diff, fold_starts):
+        return {"mean_diff": -0.001, "p_one_sided": 1e-9, "fold_t_p_one_sided": p,
+                "boot_p_one_sided": 0.5}  # fmt: skip
+
+    monkeypatch.setattr(ev, "_comparison", comparison)
+    dates = pd.bdate_range("2020-01-01", periods=10)
+    pooled = {m: [pd.Series(-0.001, index=dates)] for m in ("B3", "M1")}
+    chosen, (step,) = ev._select([{"model": "B3"}, {"model": "M1"}], pooled, dates[:1])
+    assert step["moved"] is moved and chosen == ("M1" if moved else "B3")
+
+
+def test_the_deciding_test_is_read_from_the_selection():
+    from stock_agent.app import stock_wording as words
+    from stock_agent.stock_lab.forecast_view import deciding_test
+
+    assert deciding_test({"selection": {"decision_test": "fold_block_t"}}) == "fold_block_t"
+    assert deciding_test({"decision_rule": "x", "selection": {}}) == "newey_west"
+    assert deciding_test({"selection": {"decision_test": "unknown"}}) == "newey_west"
+    assert words.comparison_note("fold_block_t") == words.COMPARISON_NOTE_A7
+    assert words.comparison_note("newey_west") == words.COMPARISON_NOTE
+    assert "2.5%" in words.COMPARISON_NOTE_A7 and "Newey-West decides" in words.COMPARISON_NOTE
+
+
+def test_newey_west_no_longer_decides_a_step(demo_record):
+    from stock_agent.stock_lab.evaluation import _select
+
+    dates = pd.bdate_range("2020-01-01", periods=780)
+    starts = pd.DatetimeIndex(pd.to_datetime(["2020-01-01", "2021-01-01", "2022-01-01"]))
+    rng = np.random.RandomState(5)
+    better_in_one_year = np.where(dates < "2021-01-01", -0.004, 0.0) + rng.normal(0, 0.0005, 780)
+    pooled = {
+        "B3": [pd.Series(-0.001 + rng.normal(0, 0.0005, 780), index=dates)],
+        "M1": [pd.Series(-0.001 + better_in_one_year, index=dates)],
+    }
+    chosen, steps = _select([{"model": "B3"}, {"model": "M1"}], pooled, starts)
+    (step,) = steps
+    assert step["p_one_sided"] < 0.001  # Newey-West would have moved to M1
+    assert step["fold_t_p_one_sided"] > 0.025 and not step["moved"] and chosen == "B3"
+    assert demo_record["selection"]["decision_test"] == "fold_block_t"
+    assert demo_record["decision_rule"] == demo_record["selection"]["decision_rule"]
 
 
 def test_the_record_keeps_every_inner_choice_path_calibration_and_sensitivity(demo_record):
@@ -460,7 +534,7 @@ def test_the_diagnostics_tables_show_every_reported_test_and_band(demo_record):
         "RPS minus B1",
         "Standard error (Newey-West)",
         "One-sided p (Newey-West)",
-        "Holm-adjusted p",
+        "Holm-adjusted p (fold-block t, decides)",
         "One-sided p (fold-block t)",
         "One-sided p (block bootstrap)",
         "Dates",
@@ -469,13 +543,13 @@ def test_the_diagnostics_tables_show_every_reported_test_and_band(demo_record):
         sizes = size_table(demo_record, placebo)
         assert sizes.index.name == "Placebo half-life (sessions)"
         assert list(sizes.index) == ["21", "63", "126", "252"]
-        assert list(sizes.columns) == ["Newey-West (decides)", "Fold-block t", "Block bootstrap"]
+        assert list(sizes.columns) == ["Newey-West", "Fold-block t (decides)", "Block bootstrap"]
         assert all("%" in cell and "±" in cell for cell in sizes.to_numpy().ravel())
     rates = {
         (r["placebo"], f"{r['half_life']:.0f}", r["method"]): r
         for r in demo_record["size_simulation"]["rates"]
     }
-    cell = size_table(demo_record, "other_vs_own").loc["63", "Fold-block t"]
+    cell = size_table(demo_record, "other_vs_own").loc["63", "Fold-block t (decides)"]
     row = rates[("other_vs_own", "63", "fold_block_t")]
     assert cell.startswith(f"{row['rate']:.1%}") and cell.endswith("too often") == bool(
         row["exceeds_nominal"]
@@ -489,6 +563,16 @@ def test_the_diagnostics_tables_show_every_reported_test_and_band(demo_record):
         "Volatility-scaled (B3)",
         "B3 minus B1",
     ]
+
+
+def test_a_record_from_before_a7_still_says_newey_west_decided(demo_record):
+    from stock_agent.stock_lab.forecast_view import comparison_table, deciding_test, size_table
+
+    old = copy.deepcopy(demo_record)  # as a record from before A7 (schema 1.2) is stored
+    del old["decision_rule"], old["selection"]["decision_rule"], old["selection"]["decision_test"]
+    assert deciding_test(old) == "newey_west" and deciding_test(demo_record) == "fold_block_t"
+    assert "Holm-adjusted p (Newey-West, decides)" in comparison_table(old).columns
+    assert "Newey-West (decides)" in size_table(old, "other_vs_own").columns
 
 
 def test_an_older_record_without_the_extras_still_renders(demo_record):

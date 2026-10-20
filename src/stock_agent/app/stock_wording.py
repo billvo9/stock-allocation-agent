@@ -360,6 +360,22 @@ COMPARISON_NOTE = (
     "other tests are shown beside it as checks: a t-test on the yearly averages (fold-block t) "
     "and a block bootstrap of whole dates."
 )
+# Decision A7 (2026-10-19): evaluations that record it are decided by the fold-block t.
+COMPARISON_NOTE_A7 = (
+    "Each estimator's daily RPS minus the recent-weighted baseline's, averaged per date across "
+    "stocks (stocks that move together are not independent evidence). A t-test on the yearly "
+    "averages decides (the fold-block t, one-sided), with Holm's correction for the comparisons "
+    "made at a 2.5% family level (decision A7). Two other tests are shown beside it as checks: "
+    "Newey-West standard errors and a block bootstrap of whole dates."
+)
+
+
+def comparison_note(deciding: str) -> str:
+    """The comparison note for the test that decided (forecast_view.deciding_test)."""
+
+    return COMPARISON_NOTE_A7 if deciding == "fold_block_t" else COMPARISON_NOTE
+
+
 SIZE_TITLE = "How often each test is fooled (simulated)"
 SIZE_NOTE = (
     "Simulated panels shaped like this one ({names} stocks, {years} test years, returns "

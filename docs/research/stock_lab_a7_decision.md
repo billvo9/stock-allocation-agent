@@ -1,7 +1,9 @@
 # A7 decision packet: which test decides "a challenger beats B1"
 
-Status: synthetic panels only; awaiting the owner. The pre-registration is
-unchanged below.
+Status: the owner confirmed the recommendation on 2026-10-19 ("Confirm the
+2.5% rule (Recommended)"): the fold-block t at a one-sided 2.5% family level
+decides, implemented in `stock_lab.evaluation` (schema 1.3). The evidence
+below is from synthetic panels only, and the pre-registration is unchanged.
 
 How the ordering is evidenced, and how far:
 - **Server-side.** GitHub's repository activity log

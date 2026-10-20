@@ -7,8 +7,10 @@ The tests. Every comparison reduces to one loss differential per date (a
 challenger's RPS minus B1's, averaged across stocks). Its mean gets three
 tests, all one-sided toward "the challenger is better" (a negative mean):
     newey_west                Bartlett long-run variance, lag `lag`, normal
-                              critical values (the pre-registered decision test);
-    fold_block_t              a t-test on the per-fold means, t(folds - 1);
+                              critical values (the decision test as first
+                              pre-registered; reported only since decision A7);
+    fold_block_t              a t-test on the per-fold means, t(folds - 1) (the
+                              decision test since decision A7, 2026-10-19);
     circular_block_bootstrap  the bootstrap SE of the mean over circular blocks
                               of whole dates, t(blocks - 1).
 `one_sided_tests` is the only place they are computed, for the evaluation and

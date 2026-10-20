@@ -13,14 +13,18 @@ Freezing (`freeze`)
       refused (`protected_period`), never trimmed.
     - The histories must be the evaluation's own (the same stocks and the
       same panel hash) and the settings its own (`config_mismatch`).
-    - Which estimator. Until the owner confirms the test that decides whether
-      a challenger beats B1 (decision A7), only B1, the pre-registered
-      default, is frozen: an evaluation selected under the earlier rule never
-      promotes a challenger (`a7_unresolved`). Once a rule is confirmed and
-      named in frozen_model.CONFIRMED_DECISION_RULES, the evaluation must
-      record that rule (`decision_rule`), and the frozen estimator is exactly
-      its selection (`not_the_selection` otherwise). The record's own check
-      enforces the same, so the store refuses a hand-made record too.
+    - Which estimator. The evaluation's selection, when the evaluation records
+      a rule the owner confirmed for "beats B1" (decision A7: the fold-block t
+      at 2.5%, frozen_model.CONFIRMED_DECISION_RULES); the frozen estimator is
+      then exactly its selection (`not_the_selection` otherwise). The record
+      must be whole (schema 1.3 or later, the rule and the fold-block t named
+      in its selection) and its selection must follow from its own recorded
+      comparisons and steps (`inconsistent_selection`). An evaluation without
+      a confirmed rule freezes only B1, the pre-registered default, and never
+      promotes a challenger (`a7_unresolved`). An evaluation stored before A7
+      (decided by Newey-West at 5%) is refused even earlier, because its
+      settings name the 5% level (`config_mismatch`). The record's own check
+      enforces the A7 rule too, so the store refuses a hand-made record.
     - The histories must be the evaluation's bars exactly: every stored field
       of each one (its `histories_sha256`, evaluation schema 1.2).
     - The record is loaded back and must reproduce the in-memory model's
@@ -71,6 +75,7 @@ from stock_agent.stock_lab import frozen_model as contract
 from stock_agent.stock_lab import logistic, monitoring, scores
 from stock_agent.stock_lab.contracts import DEVELOPMENT_END, StableBand
 from stock_agent.stock_lab.evaluation import (
+    SIMPLEST_FIRST,
     EvaluationConfig,
     _frequency_state,
     build_panel,
@@ -214,10 +219,63 @@ class Probabilities:
 # --- freezing ---
 
 
+def _version(text: object) -> tuple[int, ...]:
+    try:
+        return tuple(int(part) for part in str(text).split("."))
+    except ValueError:
+        return (0,)
+
+
+def _consistent(selection: Mapping) -> bool:
+    """
+    Whether a recorded selection follows from its own recorded evidence: B1 when nothing beat
+    it; otherwise the simplest challenger that beat B1, replaced by each step that moved.
+    """
+
+    beating = list(selection.get("beating_reference") or [])
+    if not beating:
+        return selection["selected"] == BENCHMARK and not selection.get("steps")
+    order = list(SIMPLEST_FIRST)
+    if any(model not in order for model in beating):
+        return False
+    current = min(beating, key=order.index)
+    for step in selection.get("steps") or []:
+        if step.get("against") != current or step.get("challenger") not in beating:
+            return False
+        if step.get("moved"):
+            current = step["challenger"]
+    return selection["selected"] == current
+
+
+def _confirmed_rule(evaluation: Mapping) -> str | None:
+    """The evaluation's decision rule when the owner confirmed it and the record is whole."""
+
+    rule = evaluation.get("decision_rule")
+    selection = evaluation["selection"]
+    if rule is None or rule not in contract.CONFIRMED_DECISION_RULES:
+        return None
+    whole = (
+        _version(evaluation.get("schema_version")) >= (1, 3)
+        and selection.get("decision_rule") == rule
+        and selection.get("decision_test") == "fold_block_t"
+    )
+    if not whole:
+        raise RegistryRefused(
+            "inconsistent_selection",
+            "the evaluation names a confirmed rule its selection does not record",
+        )
+    if not _consistent(selection):
+        raise RegistryRefused(
+            "inconsistent_selection",
+            "the recorded selection does not follow from its recorded comparisons and steps",
+        )
+    return rule
+
+
 def _choose(evaluation: Mapping, requested: str | None) -> tuple[str, dict]:
     selected = evaluation["selection"]["selected"]
-    rule = evaluation.get("decision_rule")
-    confirmed = rule is not None and rule in contract.CONFIRMED_DECISION_RULES
+    rule = _confirmed_rule(evaluation)
+    confirmed = rule is not None
     if confirmed:
         chosen = selected if requested is None else requested
         if chosen != selected:
@@ -231,13 +289,13 @@ def _choose(evaluation: Mapping, requested: str | None) -> tuple[str, dict]:
         if chosen != BENCHMARK:
             raise RegistryRefused(
                 "a7_unresolved",
-                "which test decides whether a challenger beats B1 (decision A7) is not confirmed, "
-                "so only B1 may be frozen",
+                "the evaluation records no confirmed rule for whether a challenger beats B1 "
+                "(decision A7), so only B1 may be frozen",
             )
         why = (
-            "Decision A7 (which test decides whether a challenger beats B1) is not confirmed, so "
-            "B1, the pre-registered default, is frozen; the evaluation's own selection is "
-            "reported only."
+            "The evaluation records no confirmed rule for whether a challenger beats B1 (it "
+            "predates decision A7), so B1, the pre-registered default, is frozen; the "
+            "evaluation's own selection is reported only."
         )
     return chosen, {
         "evaluation_selected": selected,

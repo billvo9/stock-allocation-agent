@@ -89,12 +89,21 @@ def real_frozen(histories):
     return registry.freeze(real, record, REAL_CONFIG, created_at=CREATED)
 
 
-def _confirmed(evaluation: dict, selected: str) -> dict:
-    """An evaluation record as the confirmed A7 rule would write it, selecting `selected`."""
+def _confirmed(evaluation: dict, selected: str, rule: str = CONFIRMED) -> dict:
+    """
+    An evaluation record as a confirmed rule would write it, selecting `selected` on its own
+    recorded evidence (the challenger beat B1; no step moved).
+    """
 
     record = copy.deepcopy(evaluation)
-    record["decision_rule"] = CONFIRMED
-    record["selection"]["selected"] = selected
+    record["decision_rule"] = rule
+    record["selection"].update(
+        selected=selected,
+        decision_rule=rule,
+        decision_test="fold_block_t",
+        beating_reference=[] if selected == "B1" else [selected],
+        steps=[],
+    )
     return record
 
 
@@ -268,8 +277,9 @@ def test_it_records_everything_a_forecast_needs_to_be_reproduced(frozen, evaluat
 def test_the_contract_constants_match_the_rest_of_the_lab():
     assert frozen_model.WINDOW_SESSIONS == inference_schema.INFERENCE_SESSIONS
     assert frozen_model.DEVELOPMENT_END == str(contracts.DEVELOPMENT_END)
-    # The owner has not confirmed decision A7: no challenger can be registered.
-    assert frozen_model.CONFIRMED_DECISION_RULES == frozenset()
+    # Decision A7 (2026-10-19): the fold-block t at 2.5% is the one confirmed rule.
+    assert frozen_model.CONFIRMED_DECISION_RULES == {frozen_model.A7_DECISION_RULE}
+    assert frozen_model.A7_DECISION_RULE == "fold_block_t_holm_one_sided_2.5pct_v1"
 
 
 def test_the_record_contract_needs_only_the_standard_library():
@@ -522,9 +532,10 @@ def test_a_two_class_m1_matches_its_fit_without_overflow():
 
 
 @pytest.mark.parametrize("selected", CHALLENGERS)
-def test_only_b1_is_frozen_while_a7_is_unresolved(histories, evaluation, selected):
+def test_an_evaluation_under_the_earlier_rule_freezes_only_b1(histories, evaluation, selected):
     record = copy.deepcopy(evaluation)
-    record["selection"]["selected"] = selected  # as the pre-A7 Newey-West rule might select
+    del record["decision_rule"]  # an evaluation from before A7 (schema 1.2): Newey-West at 5%
+    record["selection"]["selected"] = selected  # as that earlier rule might select
     frozen = registry.freeze(histories, record, CONFIG, created_at=CREATED)
     assert frozen["estimator"] == "B1"
     assert frozen["selection"]["evaluation_selected"] == selected
@@ -735,3 +746,58 @@ def test_an_older_store_without_the_table_reads_as_empty(tmp_path, evaluation):
         connection.close()
     assert store.frozen_models(DataClass.SYNTHETIC) == ()
     assert store.frozen_model("0" * 64) is None
+
+
+def test_an_evaluation_under_the_confirmed_rule_freezes_its_own_selection(histories, evaluation):
+    assert evaluation["decision_rule"] == frozen_model.A7_DECISION_RULE
+    assert evaluation["selection"]["decision_rule"] == frozen_model.A7_DECISION_RULE
+    frozen = registry.freeze(histories, evaluation, CONFIG, created_at=CREATED)
+    assert frozen["estimator"] == evaluation["selection"]["selected"]
+    assert frozen["selection"]["decision_rule"] == frozen_model.A7_DECISION_RULE
+    challenger = _confirmed(evaluation, "B3", frozen_model.A7_DECISION_RULE)  # no monkeypatch
+    assert registry.freeze(histories, challenger, CONFIG, created_at=CREATED)["estimator"] == "B3"
+
+
+@pytest.mark.parametrize(
+    "forge",
+    [
+        lambda r: r["selection"].update(beating_reference=[]),  # B3 selected, nothing beat B1
+        lambda r: r["selection"].update(beating_reference=["B0", "B3"]),  # B0 is simpler
+        lambda r: r["selection"].update(
+            beating_reference=["B3", "M1"],
+            steps=[{"challenger": "M1", "against": "B3", "moved": True}],
+        ),  # the step moved to M1
+        lambda r: r["selection"].update(beating_reference=["B9"]),
+        lambda r: r["selection"].pop("decision_rule"),
+        lambda r: r["selection"].update(decision_test="newey_west"),
+        lambda r: r.update(schema_version="1.2"),
+    ],
+)
+def test_a_confirmed_selection_must_follow_from_its_own_record(histories, evaluation, forge):
+    record = _confirmed(evaluation, "B3", frozen_model.A7_DECISION_RULE)
+    forge(record)
+    with pytest.raises(registry.RegistryRefused) as caught:
+        registry.freeze(histories, record, CONFIG, created_at=CREATED)
+    assert caught.value.reason == "inconsistent_selection"
+
+
+def test_a_climbing_selection_that_follows_its_steps_is_frozen(histories, evaluation):
+    record = _confirmed(evaluation, "M1", frozen_model.A7_DECISION_RULE)
+    record["selection"].update(
+        beating_reference=["M1", "B3"],
+        steps=[{"challenger": "M1", "against": "B3", "moved": True}],
+    )
+    assert registry.freeze(histories, record, CONFIG, created_at=CREATED)["estimator"] == "M1"
+
+
+def test_an_evaluation_stored_before_a7_is_refused_by_its_5_percent_settings(histories, evaluation):
+    old = copy.deepcopy(evaluation)
+    del old["decision_rule"]
+    for key in ("decision_rule", "decision_test"):
+        old["selection"].pop(key)
+    old["schema_version"] = "1.2"
+    old["config"] = {**old["config"], "alpha": 0.05}  # as every pre-A7 record stores it
+    old["selection"]["selected"] = "M1"
+    with pytest.raises(registry.RegistryRefused) as caught:
+        registry.freeze(histories, old, CONFIG, created_at=CREATED)
+    assert caught.value.reason == "config_mismatch"

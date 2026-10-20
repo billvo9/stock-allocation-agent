@@ -880,15 +880,27 @@ the owner's answers and messages in session:
     development-only state check.
   - Real models are frozen only under this rule (`frozen_model.check`).
   - It approves no freeze, no recent-window fetch and no activation (A4).
+- 2026-10-19, Stock Lab decision A7, which test decides whether a challenger
+  beats B1 (owner, by choosing this option in the Stock Lab real-path session;
+  the quoted text is the option chosen): "Confirm the 2.5% rule
+  (Recommended)".
+  - The rule: the fold-block t, t(18) on the 19 yearly fold means,
+    one-sided.
+  - Holm runs across B0, B2, B3 and M1 at a 2.5% family level, then the
+    simplest-first steps (B0, B3, B2, M1) at 2.5%.
+  - B1 stays the default.
+  - Implemented as `evaluation.DECISION_RULE` (evaluation schema 1.3) and
+    `frozen_model.CONFIRMED_DECISION_RULES`.
+  - An evaluation without the rule (schema 1.2 or earlier, Newey-West at 5%)
+    never registers a challenger.
+  - It approves no real evaluation run, freeze or activation.
 - Pending:
   - Stock Lab, in order (open item 10):
     1. authorization of the A1 read-only audit, after the token is
        configured;
     2. the separate storage approval;
     3. the confirmation of the bull-trap f;
-    4. A7, the final confirmation of the rule in
-       `docs/research/stock_lab_a7_decision.md` (owner preference above);
-    5. A4 activation.
+    4. A4 activation.
   - the rest of OD3;
   - OD8 groups C-D (cash returns and benchmarks; statistics and
     reporting). The decision packets are merged (#92); nothing in them is

@@ -23,10 +23,11 @@ Evaluate the Stock Lab's estimators walk-forward and record the result
              parameter fitted once on the same development rows, with the
              data fingerprints (the stored batches used), the versions, the
              environment and the commit, in the store's write-once
-             frozen_models table. Until the owner confirms decision A7 only
-             B1, the pre-registered default, is frozen; the evaluation's own
-             selection is reported. A refused freeze keeps the evaluation and
-             registers nothing (exit 1). A real model is frozen only from a
+             frozen_models table. The frozen estimator is the evaluation's
+             selection under the owner's decision A7 (the fold-block t at
+             2.5%; B1 unless a challenger beats it). A refused freeze keeps
+             the evaluation and registers nothing (exit 1). A real model is
+             frozen only from a
              checkout without uncommitted changes to tracked files, so its
              recorded commit holds the code that froze it (refused before any
              write otherwise, exit 2). It also prints the development-only

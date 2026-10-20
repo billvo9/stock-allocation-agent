@@ -56,7 +56,7 @@ never write, even one whose id was recomputed after an edit:
     - the fields, the schema and the id against the content;
     - the estimator and the B1 benchmark; the selection names the frozen
       estimator, and a challenger only under a confirmed decision rule
-      (CONFIRMED_DECISION_RULES: owner decision A7; empty until confirmed);
+      (CONFIRMED_DECISION_RULES: owner decision A7, confirmed 2026-10-19);
     - the data class: a real model covers real tickers only, uses the
       owner's state rule (REAL_STATE_RULES), its outcomes end on 2024-12-31
       and no history goes past it; a synthetic one covers demo identifiers
@@ -86,10 +86,13 @@ STATE_RULES = (FROZEN_LONG_RUN, WINDOW_ONLY)
 REAL_STATE_RULES = (FROZEN_LONG_RUN,)
 WINDOW_SESSIONS = 252  # decision A2's trailing window (equal to inference.schema's; tested)
 DEVELOPMENT_END = "2024-12-31"  # contracts.DEVELOPMENT_END (equality tested)
-# The decision rules the owner has confirmed for "beats B1" (decision A7). Empty
-# until the owner's confirmation is recorded; the change that implements the
-# confirmed rule adds its name here, so no challenger can be registered before.
-CONFIRMED_DECISION_RULES: frozenset[str] = frozenset()
+# Decision A7, confirmed by the owner on 2026-10-19 (docs/PROJECT_STATE.md): the
+# fold-block t on the yearly fold means decides whether a challenger beats B1, one-sided,
+# with Holm across the challengers at a 2.5% family level and simplest-first steps at
+# 2.5%. Evaluations record it (evaluation.py, schema 1.3); a model may register a
+# challenger only under a rule named here.
+A7_DECISION_RULE = "fold_block_t_holm_one_sided_2.5pct_v1"
+CONFIRMED_DECISION_RULES: frozenset[str] = frozenset({A7_DECISION_RULE})
 STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
 PARAMETER_FIELDS = (
     "estimator",
