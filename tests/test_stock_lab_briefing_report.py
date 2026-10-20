@@ -328,7 +328,11 @@ def test_reliability_keeps_development_and_prospective_evidence_apart(lab):
     assert rolling.rolling.status == "insufficient" and rolling.rolling.means is None
     assert prospective.comparison is None and "B1's own" in prospective.comparison_words
     assert "Synthetic replay" in prospective.words
-    assert any("decision A7" in note for note in section.notes)
+    assert any(
+        "since decision A7 (2026-10-19), by the fold-block t with Holm" in note
+        and "reported, never a decision" in note
+        for note in section.notes
+    )
     (stock_track,) = [t for t in found.stocks[0].track if t.category == "increase"]
     assert (stock_track.bin_low, stock_track.observed, stock_track.dates) == (0.6, 0.6, 200)
 

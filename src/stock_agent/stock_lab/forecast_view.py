@@ -484,12 +484,28 @@ def _number(value: float | None, spec: str) -> str:
     return DASH if value is None or np.isnan(value) else format(value, spec)
 
 
+DECIDING_WORDS = {"fold_block_t": "fold-block t", "newey_west": "Newey-West"}
+
+
+def deciding_test(evaluation: Mapping) -> str:
+    """
+    The test that decided the evaluation's selection, as its selection records it
+    (decision A7, evaluation schema 1.3: the fold-block t); Newey-West for a record
+    from before that, which names none.
+    """
+
+    recorded = (evaluation.get("selection") or {}).get("decision_test")
+    return recorded if recorded in DECIDING_WORDS else "newey_west"
+
+
 def comparison_table(evaluation: Mapping) -> pd.DataFrame:
     """
-    The pooled comparisons against B1: Newey-West decides (with Holm); the
-    fold-block t and block bootstrap p-values are shown beside it (records
-    older than schema 1.1 have none: a dash).
+    The pooled comparisons against B1, with Holm's adjustment of the deciding
+    test's p-value (deciding_test); the other tests' p-values are shown beside
+    it (records older than schema 1.1 have no fold-block t or bootstrap: a dash).
     """
+
+    holm = f"Holm-adjusted p ({DECIDING_WORDS[deciding_test(evaluation)]}, decides)"
 
     rows = [r for r in evaluation["comparisons"] if r["target"] == "daily_pooled"]
     out = []
@@ -500,7 +516,7 @@ def comparison_table(evaluation: Mapping) -> pd.DataFrame:
                 "RPS minus B1": f"{row['mean_diff']:+.5f}".replace("-", MINUS),
                 "Standard error (Newey-West)": _number(row["nw_se"], ".5f"),
                 "One-sided p (Newey-West)": _number(row["p_one_sided"], ".3f"),
-                "Holm-adjusted p": _number(row.get("p_holm"), ".3f"),
+                holm: _number(row.get("p_holm"), ".3f"),
                 "One-sided p (fold-block t)": _number(row.get("fold_t_p_one_sided"), ".3f"),
                 "One-sided p (block bootstrap)": _number(row.get("boot_p_one_sided"), ".3f"),
                 "Dates": f"{row['dates']:,}",
@@ -510,7 +526,7 @@ def comparison_table(evaluation: Mapping) -> pd.DataFrame:
 
 
 SIZE_METHOD_WORDS = {
-    "newey_west": "Newey-West (decides)",
+    "newey_west": "Newey-West",
     "fold_block_t": "Fold-block t",
     "circular_block_bootstrap": "Block bootstrap",
 }
@@ -528,13 +544,18 @@ def size_table(evaluation: Mapping, placebo: str) -> pd.DataFrame:
     rows = [r for r in (size or {}).get("rates", []) if r["placebo"] == placebo]
     if not rows:
         return pd.DataFrame()
+    deciding = deciding_test(evaluation)
+    names = {
+        method: words + (" (decides)" if method == deciding else "")
+        for method, words in SIZE_METHOD_WORDS.items()
+    }
     table: dict[str, dict[str, str]] = {}
     for row in rows:
         cell = f"{row['rate']:.1%} ± {row['mc_se'] * 100:.1f}"
         if row["exceeds_nominal"]:
             cell += ", too often"
-        table.setdefault(f"{row['half_life']:.0f}", {})[SIZE_METHOD_WORDS[row["method"]]] = cell
-    frame = pd.DataFrame.from_dict(table, orient="index")[list(SIZE_METHOD_WORDS.values())]
+        table.setdefault(f"{row['half_life']:.0f}", {})[names[row["method"]]] = cell
+    frame = pd.DataFrame.from_dict(table, orient="index")[list(names.values())]
     frame.index.name = "Placebo half-life (sessions)"
     return frame
 

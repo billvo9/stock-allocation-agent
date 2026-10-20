@@ -41,6 +41,7 @@ from stock_agent.stock_lab.forecast_view import (
     comparison_table,
     cumulative_cards,
     current_streak_sentence,
+    deciding_test,
     duration_summary,
     five_session_frame,
     five_session_table,
@@ -703,7 +704,7 @@ def _diagnostics(store: StockLabStore, selected: Selected | None) -> None:
     say(words.DIAGNOSTICS_EXPECTATIONS, "caption")
     section(words.SCORES_TITLE, words.SCORES_NOTE)
     st.table(scores_table(evaluation))
-    section(words.COMPARISON_TITLE, words.COMPARISON_NOTE)
+    section(words.COMPARISON_TITLE, words.comparison_note(deciding_test(evaluation)))
     comparisons = comparison_table(evaluation)
     if len(comparisons):
         st.table(comparisons)

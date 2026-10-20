@@ -62,7 +62,10 @@ def test_a_second_run_supersedes_and_keeps_every_earlier_forecast(tmp_path):
             out=io.StringIO(),
         )
     history = store.forecasts("DEMO_CALM")
-    assert len(history) == 2 and history[1]["supersedes"] == history[0]["forecast_id"]
+    # Both are recorded at the same simulated time, so the store's order between them is by id.
+    first, second = sorted(history, key=lambda f: f["supersedes"] is not None)
+    assert len(history) == 2 and second["supersedes"] == first["forecast_id"]
+    assert first["supersedes"] is None
 
 
 def test_real_stocks_are_refused_without_the_owners_evaluation_decision(tmp_path):
@@ -181,7 +184,8 @@ def test_diagnostics_views_read_the_stored_evaluation(demo_store):
     scores = fv.scores_table(evaluation)
     assert len(scores) == 5 and "RPS (primary)" in scores.columns
     comparisons = fv.comparison_table(evaluation)
-    assert "Holm-adjusted p" in comparisons.columns and len(comparisons) == 4
+    assert "Holm-adjusted p (fold-block t, decides)" in comparisons.columns
+    assert len(comparisons) == 4
     frame = fv.reliability_frame(evaluation, [evaluation["selection"]["selected"], "B1"])
     assert fv.calibration_status(frame, "B1", 1) in {
         "Close to calibrated",

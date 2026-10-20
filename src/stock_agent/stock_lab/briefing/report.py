@@ -1165,9 +1165,10 @@ def build_briefing(
         limitations.append("Private, local use: vendor data is never redistributed.")
     notes = (
         (
-            "Which test decides whether a challenger beats B1 (decision A7) is not yet resolved "
-            "and registered, so no challenger is promoted on real data. Stored p-values are "
-            "reported only."
+            "Whether a challenger beats B1 is decided in the development evaluation only: since "
+            "decision A7 (2026-10-19), by the fold-block t with Holm at a family level of 0.025; "
+            "an evaluation stored before then states its own rule. A comparison with B1 in this "
+            "briefing is reported, never a decision."
         ),
         (
             "Horizons and stable bands are never pooled; forecasts on one date, and correlated "

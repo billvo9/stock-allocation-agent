@@ -20,20 +20,23 @@ Protocol (pre-registered here; docs/research/stock_probability_lab.md, section 5
                the moving and direction decompositions (scores.py), per
                model and target.
     Inference  per decision date, the cross-sectional mean of each model's
-               RPS minus B1's (the reference); its mean with a Newey-West
-               standard error (lag NW_LAG, at least h - 1), the decision test,
-               and beside it the fold-block t (the test years as blocks) and a
-               circular block bootstrap (block BLOCK)
-               (size_simulation.one_sided_tests); Holm across the
-               pre-registered comparisons. Dates are the unit, never rows, so
-               stocks that move together are not counted as independent
-               evidence.
+               RPS minus B1's (the reference). The decision test (owner
+               decision A7, 2026-10-19, DECISION_RULE) is the fold-block t: a
+               t-test on the test years' means, t(folds - 1), one-sided; Holm
+               across the pre-registered challengers at a family level of
+               ALPHA (2.5%). Beside it, reported only: Newey-West (lag NW_LAG,
+               at least h - 1) and a circular block bootstrap (block BLOCK)
+               (size_simulation.one_sided_tests). Dates are the unit, never
+               rows, so stocks that move together are not counted as
+               independent evidence.
     Selection  the reported estimator is B1 unless a challenger has a lower
-               mean RPS with a Holm-adjusted one-sided p below ALPHA on the
-               primary target set (all five daily targets pooled by date);
-               among those, the lowest RPS. Every candidate and every inner
-               choice is recorded; nothing is selected on a test result alone.
-    Reported   never used to select: the fold-block t and bootstrap p-values,
+               mean RPS with a Holm-adjusted one-sided fold-block t p below
+               ALPHA on the primary target set (all five daily targets pooled
+               by date); among those, the simplest, replaced by a more complex
+               one only when its own fold-block t against the current choice
+               is below ALPHA too. Every candidate and every inner choice is
+               recorded; nothing is selected on a test result alone.
+    Reported   never used to select: the Newey-West and bootstrap p-values,
                B1's score at every half-life, B1 and B3 re-run at other stable
                bands on the same folds (SENSITIVITY_BANDS), and each test's
                simulated size on no-skill panels shaped like this one
@@ -63,13 +66,14 @@ from stock_agent.stock_lab import estimators as est
 from stock_agent.stock_lab import logistic, scores, size_simulation
 from stock_agent.stock_lab.contracts import DEFAULT_BAND, StableBand
 from stock_agent.stock_lab.features import FEATURE_VERSION, build_features
+from stock_agent.stock_lab.frozen_model import A7_DECISION_RULE
 from stock_agent.stock_lab.prices import BAR_COLUMNS, categorize, category_codes
 from stock_agent.stock_lab.reversal import volatility_regime
 from stock_agent.stock_lab.runs import RunRule
 from stock_agent.stock_lab.targets import HORIZONS, build_targets, cumulative_band
 
 SCHEMA = "stock_lab_evaluation"
-SCHEMA_VERSION = "1.2"  # 1.1: fold-block t, sizes, band sensitivity; 1.2: history hashes
+SCHEMA_VERSION = "1.3"  # 1.1: fold-block t etc.; 1.2: history hashes; 1.3: A7 decides
 MODELS = ("B0", "B1", "B2", "B3", "M1")
 REFERENCE = "B1"
 H_GRID = (21.0, 63.0, 126.0, 252.0)
@@ -77,7 +81,9 @@ NW_LAG = 10
 BLOCK = 20
 BOOTSTRAP_REPS = 499
 BOOTSTRAP_SEED = 7
-ALPHA = 0.05
+ALPHA = 0.025  # decision A7: the family level of Holm and of each simplest-first step
+DECISION_TEST = "fold_t_p_one_sided"  # decision A7: the fold-block t decides
+DECISION_RULE = A7_DECISION_RULE
 MIN_TRAIN_SESSIONS = 756  # three years before the first test window
 TARGETS = (*(f"target_{h}" for h in HORIZONS), "target_cum")
 SENSITIVITY_BANDS = (0.0025, 0.01)  # reported only, never used to select
@@ -349,6 +355,7 @@ def evaluate(
             "schema": SCHEMA,
             "schema_version": SCHEMA_VERSION,
             "run_id": run_id,
+            "decision_rule": DECISION_RULE,
             "created_at": created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             "data_class": data_class,
             "stocks": sorted(histories),
@@ -385,7 +392,6 @@ def _per_date_mean(values: np.ndarray, dates: pd.DatetimeIndex) -> pd.Series:
 def _score(panel, test_rows, preds: _Predictions, fold_starts: pd.DatetimeIndex) -> dict:
     dates_all = pd.DatetimeIndex(panel["date"])
     metrics, comparisons, reliability, calibration, by_stock, by_regime = [], [], [], [], [], []
-    p_values = {}
     pooled_diff: dict[str, list[pd.Series]] = {}
     for target in TARGETS:
         outcome_all = _codes(panel[target])
@@ -454,17 +460,8 @@ def _score(panel, test_rows, preds: _Predictions, fold_starts: pd.DatetimeIndex)
     pooled_rows = []
     for m, series in pooled_diff.items():
         combined = pd.concat(series, axis=1).mean(axis=1)
-        row = _comparison(m, "daily_pooled", combined, fold_starts)
-        pooled_rows.append(row)
-        p_values[m] = row["p_one_sided"]
-    adjusted = scores.holm(p_values)
-    for row in pooled_rows:
-        row["p_holm"] = adjusted.get(row["model"], math.nan)
-    beating = [
-        row
-        for row in pooled_rows
-        if row["mean_diff"] < 0 and row["p_holm"] == row["p_holm"] and row["p_holm"] < ALPHA
-    ]
+        pooled_rows.append(_comparison(m, "daily_pooled", combined, fold_starts))
+    beating = _beating(pooled_rows)
     selected, steps = _select(beating, pooled_diff, fold_starts)
     return {
         "metrics": metrics,
@@ -476,23 +473,43 @@ def _score(panel, test_rows, preds: _Predictions, fold_starts: pd.DatetimeIndex)
         "selection": {
             "rule": (
                 f"keep {REFERENCE} unless a challenger's mean RPS over the five daily targets is "
-                f"lower with a Holm-adjusted one-sided p below {ALPHA} (Newey-West, lag {NW_LAG}); "
-                "among those, start from the simplest and move to a more complex one only if it "
-                f"also beats the current choice (one-sided p below {ALPHA})"
+                f"lower with a Holm-adjusted one-sided p below {ALPHA} (the fold-block t on the "
+                "test years' means, t(folds - 1); decision A7); among those, start from the "
+                "simplest and move to a more complex one only if it also beats the current choice "
+                f"(one-sided fold-block t p below {ALPHA})"
             ),
+            "decision_rule": DECISION_RULE,
+            "decision_test": "fold_block_t",
             "selected": selected,
             "beating_reference": [row["model"] for row in beating],
             "steps": steps,
             "reported_only": (
-                "the fold-block t and circular block bootstrap p-values, the half-life and band "
-                "sensitivities and the simulated sizes are reported beside the results and never "
-                "used to select"
+                f"the Newey-West (lag {NW_LAG}) and circular block bootstrap p-values, the "
+                "half-life and band sensitivities and the simulated sizes are reported beside the "
+                "results and never used to select"
             ),
         },
     }
 
 
 SIMPLEST_FIRST = ("B0", "B1", "B3", "B2", "M1")
+
+
+def _beating(pooled_rows: list[dict]) -> list[dict]:
+    """
+    The challengers that beat B1 (decision A7): Holm across the pooled comparisons' one-sided
+    decision-test p-values (DECISION_TEST, the fold-block t), each row given its adjusted
+    `p_holm`; a challenger beats B1 when its mean RPS is lower and its p_holm is below ALPHA.
+    """
+
+    adjusted = scores.holm({row["model"]: row[DECISION_TEST] for row in pooled_rows})
+    for row in pooled_rows:
+        row["p_holm"] = adjusted.get(row["model"], math.nan)
+    return [
+        row
+        for row in pooled_rows
+        if row["mean_diff"] < 0 and not math.isnan(row["p_holm"]) and row["p_holm"] < ALPHA
+    ]
 
 
 def _select(
@@ -518,8 +535,8 @@ def _select(
         # (challenger - B1) - (current - B1) = challenger - current, per date.
         diff = (against_reference(challenger) - against_reference(current)).dropna()
         row = _comparison(challenger, "daily_pooled", diff, fold_starts)
-        moved = bool(row["mean_diff"] < 0 and row["p_one_sided"] == row["p_one_sided"]
-                     and row["p_one_sided"] < ALPHA)  # fmt: skip
+        p = row[DECISION_TEST]
+        moved = bool(row["mean_diff"] < 0 and not math.isnan(p) and p < ALPHA)
         steps.append(
             {
                 "challenger": challenger,
@@ -687,9 +704,10 @@ def _band_sensitivity(
 
 def _comparison(model: str, target: str, diff: pd.Series, fold_starts: pd.DatetimeIndex) -> dict:
     """
-    One per-date differential's mean and its three tests: Newey-West (the
-    decision test, p_one_sided), the fold-block t with the test years as blocks
-    and the circular block bootstrap (both reported only).
+    One per-date differential's mean and its three tests: the fold-block t with
+    the test years as blocks (the decision test since A7, fold_t_p_one_sided),
+    Newey-West (p_one_sided) and the circular block bootstrap (both reported
+    only).
     """
 
     values = diff.to_numpy(dtype="float64")

@@ -257,13 +257,17 @@ hard-coded.
   volatility through d (an expanding, point-in-time rank).
 - **Inference.**
   - Per-date cross-sectional mean loss differentials.
-  - Newey-West with lag 10 (at least h − 1), and a circular block bootstrap
-    (block 20) as a second view.
-  - Holm correction across the pre-registered comparisons against B1.
-  - Beside Newey-West, reported only: the fold-block t (a t-test on the
-    test years' means, t(folds − 1)) and the circular block bootstrap's
-    one-sided p. Newey-West still decides; `size_simulation.one_sided_tests`
-    computes all three for every comparison.
+  - **The decision test (owner decision A7, confirmed 2026-10-19).** The
+    fold-block t decides: a one-sided t-test on the test years' means,
+    t(folds − 1), with t(18) on the 19 yearly folds of real history.
+  - Holm runs across the pre-registered challengers (B0, B2, B3, M1) against
+    B1 at a family level of 2.5%.
+  - Beside it, reported only: Newey-West with lag 10 (at least h − 1) and a
+    circular block bootstrap (block 20).
+    `size_simulation.one_sided_tests` computes all three for every comparison.
+  - Records name the rule (`decision_rule`, evaluation schema 1.3). An older
+    record, decided by Newey-West at 5%, says so, and it never registers a
+    challenger (`stock_lab.frozen_model`).
   - **Simulated size** (`size_simulation`, recorded with every evaluation).
     No-skill panels have the evaluation's own number of stocks and test
     years (after a three-year warm-up). Returns are independent over time
@@ -295,15 +299,16 @@ hard-coded.
     - On the three demo stocks over three years, every test reaches 8–10%
       under the own-history placebo, and Newey-West 6–7.5% under the
       symmetric one.
-    - Which test decides is owner decision A7. Its decision packet,
+    - Which test decides was owner decision A7. Its decision packet,
       `docs/research/stock_lab_a7_decision.md`, simulates six tests under
       the planned conditions and recommends the fold-block t at a one-sided
-      family level of 2.5% (5% as the alternative).
+      family level of 2.5%, which the owner confirmed on 2026-10-19.
 - **Selection.**
-  - Keep B1 unless a challenger beats it (Holm).
+  - Keep B1 unless a challenger beats it: a lower mean RPS with a
+    Holm-adjusted one-sided fold-block t p below 0.025.
   - Then take the simplest such challenger (order B0, B1, B3, B2, M1).
   - Move to a more complex one only if it also beats the current choice on
-    the same per-date differences.
+    the same per-date differences: a one-sided fold-block t p below 0.025.
   - The steps are recorded.
 - **No selection on test results.** The half-life comes from the
   pre-registered grid {21, 63, 126, 252} and M1's penalty from {0.01, 0.1,
@@ -566,7 +571,7 @@ How the ledger works:
 
 The owner answered A1-A6 on 2026-10-16. They are given here in paraphrase,
 with the conditions that bind the implementation. A7 was raised afterwards
-by the simulated size checks (section 5) and is still open.
+by the simulated size checks (section 5) and was confirmed on 2026-10-19.
 
 | Id | Decision | Conditions | Status |
 |---|---|---|---|
@@ -576,7 +581,7 @@ by the simulated size checks (section 5) and is still open.
 | A4 | The write-once forecast and scoring protocol: approved | Activation needs successful data validation, a frozen registered model, verified decision timestamps and a successful end-to-end dry run. No backdating, rewriting of probabilities, or scoring of outcomes that existed before a forecast. Daily updates record skipped tickers, stale observations, model failures and missing outcomes in Model Health. Separate from ETF OD16 and PPO promotion. | protocol built; activation pending |
 | A5 | Version-1 definitions: approved | Daily band ±0.5%. Five-session band ±0.5% × √5 ≈ ±1.12%, shown as different. A Stable session ends a streak by default, and the pause rule is identified whenever used. The bull-trap setup (10% drawdown, 5% rebound, prior 20-session high, 10-session window) may be used for research. **The failure margin f awaits confirmation** (formula and example in section 5) before real-data risk flags. Price returns stay distinct from total returns, and ex-dividend moves are identified. | f to confirm |
 | A6 | Recent observed prices on the private dashboard: supported | Only after the retrieval and storage permissions. An isolated descriptive reader that cannot expose protected outcomes to development, training, tuning or backtesting. Recent observed history is kept distinct from research evidence, and current forecasts from completed outcomes. The holdout policies are not modified. | built on fixtures: the descriptive reader and the Recent prices tab (below), which shows an empty state until something is stored |
-| A7 | Which test decides "beats B1": open | Newey-West (lag 10, as pre-registered; 6–8% simulated size at a nominal 5%), the fold-block t (closest to nominal in simulation, as on the ETF track), or Newey-West against a simulated critical value | packet ready (`docs/research/stock_lab_a7_decision.md`, recommending the fold-block t at a 2.5% family level, 5% as the alternative); awaiting the owner; needed before the A3 evaluation selects |
+| A7 | Which test decides "beats B1": the fold-block t at a one-sided 2.5% family level, confirmed 2026-10-19 | t(folds − 1) on the yearly fold means; Holm across B0, B2, B3 and M1 at 2.5%; simplest-first steps (B0, B3, B2, M1) at 2.5%; B1 stays the default. Newey-West (lag 10) and the block bootstrap are reported only | implemented (`evaluation.DECISION_RULE`, evaluation schema 1.3); the evidence is in `docs/research/stock_lab_a7_decision.md` |
 
 ### A1 step 1: the read-only audit (awaiting the owner's authorization)
 

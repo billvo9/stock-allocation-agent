@@ -52,7 +52,10 @@ def test_the_planned_design_is_the_evaluations_own_settings():
     assert ps.UNIVERSE_SIZES == (4, 6, 10, 30)
     assert design.half_lives == evaluation.H_GRID
     assert (design.alpha_prior, design.kappa) == (config.alpha_prior, config.kappa)
-    assert design.tau == DEFAULT_BAND.tau and design.nominal == evaluation.ALPHA
+    assert design.tau == DEFAULT_BAND.tau
+    # The packet's pre-registered level is 5% and stays so; the owner confirmed 2.5% for the
+    # evaluation (decision A7), which the packet simulated in review (--set nominal=0.025).
+    assert design.nominal == ps.NOMINAL == 0.05 and evaluation.ALPHA == 0.025
     assert design.first == evaluation.MIN_TRAIN_SESSIONS
     assert design.years == 2024 - 2006 + 1 and design.dates == 4788
     assert design.challengers == 4  # B0, B3, B2 and M1 against B1
