@@ -869,6 +869,17 @@ the owner's answers and messages in session:
       that require a new registration.
   - Neither approves ETF-R1, ETF-R2 (the unscheduled-closure rule), a
     freeze, a registration or activation.
+- 2026-10-19, the Stock Lab frozen model's state rule, decision A2 item 4
+  (owner, by choosing this option in the Stock Lab real-path session; the
+  quoted text is the option chosen): "frozen_long_run (Recommended)".
+  - B0, the long-run mix, is frozen at 2024-12-31.
+  - B1's recency-weighted counts, the volatility, the run and every feature
+    come from the 252-session inference window only.
+  - The question named the caution: the half-life is the folds' majority choice,
+    and at H = 252 the window drops half of B1's weight. The freeze records a
+    development-only state check.
+  - Real models are frozen only under this rule (`frozen_model.check`).
+  - It approves no freeze, no recent-window fetch and no activation (A4).
 - Pending:
   - Stock Lab, in order (open item 10):
     1. authorization of the A1 read-only audit, after the token is

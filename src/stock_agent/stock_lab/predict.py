@@ -102,20 +102,38 @@ def fit_final(panel: pd.DataFrame, config: EvaluationConfig, record: Mapping) ->
     return FinalModel(config, half_life, tilt, errors, cum_errors, m1, version)
 
 
-def _probabilities(panel: pd.DataFrame, row: int, model: FinalModel, selected: str):
+def _frequencies(panel: pd.DataFrame, row: int, model: FinalModel):
+    """(B0, B1, B1 of the five-session total) at `row`, from the panel's own history."""
+
     config = model.config
     params = est.FrequencyParams(config.alpha_prior, model.half_life, config.kappa)
     b0, b1, _ = _frequency_state(panel, "category_code", params)
     _, b1_cum, _ = _frequency_state(panel, "cum_code", params)
+    return b0[row], b1[row], b1_cum[row]
+
+
+def _probabilities(
+    panel: pd.DataFrame, row: int, model: FinalModel, selected: str, frequencies=None
+):
+    """
+    (daily (5, 3), cumulative (3,), B0 (3,)) of `selected` at `row`. `frequencies`
+    is (B0, B1, B1 of the total) at that row; by default it is computed from the
+    panel's own history (a frozen model passes its own: registry.probabilities).
+    """
+
+    config = model.config
+    b0_row, b1_row, b1_cum_row = (
+        _frequencies(panel, row, model) if frequencies is None else frequencies
+    )
     symbols = panel["symbol"].to_numpy(dtype=object)
     sigma = panel["ewma_vol"].to_numpy(dtype="float64")
     one = slice(row, row + 1)
     if selected == "B0":
-        daily = np.repeat(b0[one], 5, axis=0)
+        daily = np.repeat(b0_row[None, :], 5, axis=0)
     elif selected == "B1":
-        daily = np.repeat(b1[one], 5, axis=0)
+        daily = np.repeat(b1_row[None, :], 5, axis=0)
     elif selected == "B2":
-        daily = est.b2_marginals(b1[one], est.states_of(panel.iloc[one]), model.tilt)[0]
+        daily = est.b2_marginals(b1_row[None, :], est.states_of(panel.iloc[one]), model.tilt)[0]
     elif selected in ("B3", "M1"):
         rows = []
         for h in HORIZONS:
@@ -135,8 +153,8 @@ def _probabilities(panel: pd.DataFrame, row: int, model: FinalModel, selected: s
             cumulative_band(config.band),
         )[0]
     else:
-        cumulative = b1_cum[row]
-    return daily, cumulative, b0[row]
+        cumulative = b1_cum_row
+    return daily, cumulative, b0_row
 
 
 def forecast_stock(

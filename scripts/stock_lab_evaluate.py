@@ -19,6 +19,20 @@ Evaluate the Stock Lab's estimators walk-forward and record the result
              the script refuses unless --authorized-evaluation is also
              passed. It records the evaluation only: no real forecast is made
              (that needs decisions A2 and A4).
+    --freeze     also freeze and register the model (stock_lab.registry): every
+             parameter fitted once on the same development rows, with the
+             data fingerprints (the stored batches used), the versions, the
+             environment and the commit, in the store's write-once
+             frozen_models table. Until the owner confirms decision A7 only
+             B1, the pre-registered default, is frozen; the evaluation's own
+             selection is reported. A refused freeze keeps the evaluation and
+             registers nothing (exit 1). A real model is frozen only from a
+             checkout without uncommitted changes to tracked files, so its
+             recorded commit holds the code that froze it (refused before any
+             write otherwise, exit 2). It also prints the development-only
+             state check (registry.state_check).
+             The model's running state follows the owner's decision A2,
+             item 4 (frozen_long_run, 2026-10-19), recorded with the model.
 
 The evaluation is written once (a second run is a new record); nothing
 earlier is overwritten. Prints the selection and the main scores only.
@@ -26,13 +40,16 @@ earlier is overwritten. Prints the selection and the main scores only.
 Usage:
     .venv/bin/python scripts/stock_lab_evaluate.py --demo
     .venv/bin/python scripts/stock_lab_evaluate.py --real --authorized-evaluation
+    .venv/bin/python scripts/stock_lab_evaluate.py --real --authorized-evaluation --freeze
 """
 
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import TextIO
 
 import pandas as pd
@@ -40,9 +57,76 @@ import pandas as pd
 from stock_agent.stock_lab.contracts import DEVELOPMENT_END, DataClass
 from stock_agent.stock_lab.evaluation import EvaluationConfig, build_panel, evaluate
 from stock_agent.stock_lab.predict import fit_final, forecast_stock
+from stock_agent.stock_lab.registry import RegistryRefused, freeze
 from stock_agent.stock_lab.store import StockLabStore, stamp, utc_now
 from stock_agent.stock_lab.synthetic import demo_histories
 from stock_agent.stock_lab.view import real_bars_shown
+
+PROJECT = Path(__file__).resolve().parents[1]
+
+
+def _git(*arguments: str) -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", *arguments],
+            cwd=PROJECT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def code_state() -> dict | None:
+    """
+    The checked-out commit and whether tracked files have uncommitted changes (recorded with
+    a frozen model); None when Git cannot say.
+    """
+
+    sha = (_git("rev-parse", "HEAD") or "").strip()
+    status = _git("status", "--porcelain", "--untracked-files=no")
+    if len(sha) != 40 or status is None:
+        return None
+    return {"sha": sha, "clean": status.strip() == ""}
+
+
+def _freeze(store, histories, record, config, *, args, created_at, code, lineage, out) -> int:
+    """Freeze and register the model (--freeze); 1 when refused, the evaluation kept."""
+
+    try:
+        frozen = freeze(
+            histories,
+            record,
+            config,
+            created_at=created_at,
+            code=code,
+            lineage=lineage,
+        )
+    except RegistryRefused as error:
+        print(f"not frozen: {error.reason} ({error.detail}); the evaluation is kept", file=out)
+        return 1
+    store.record_frozen_model(frozen)
+    selection = frozen["selection"]
+    print(
+        f"frozen model {frozen['model_id']}: {frozen['estimator']}, half-life "
+        f"{frozen['half_life']:g}, state rule {frozen['state_rule']}",
+        file=out,
+    )
+    print(f"  {selection['why']}", file=out)
+    check = frozen["state_check"]
+    if check.get("rows"):
+        rps = check["rps"]
+        print(
+            f"  state check (development only, reported): next-session RPS {rps['full_history']:.5f} "
+            f"from the full history, {rps['frozen_long_run']:.5f} frozen_long_run and "
+            f"{rps['window_only']:.5f} window_only from 252-session windows; the window leaves "
+            f"out {frozen['window_tail_weight']:.1%} of B1's recency weight",
+            file=out,
+        )
+    return 0
 
 
 def run_id(prefix: str, now: pd.Timestamp) -> str:
@@ -72,6 +156,7 @@ def main(
     which.add_argument("--demo", action="store_true")
     which.add_argument("--real", action="store_true")
     parser.add_argument("--authorized-evaluation", action="store_true")
+    parser.add_argument("--freeze", action="store_true")
     args = parser.parse_args(argv)
     store = store_factory()
     now = clock()
@@ -84,11 +169,31 @@ def main(
                 file=out,
             )
             return 2
-        histories = {}
+        code = code_state()
+        if args.freeze and (code is None or not code["clean"]):
+            print(
+                "refused: a real model is frozen only from a checkout whose commit holds the code "
+                "that froze it (no uncommitted changes to tracked files); nothing was written",
+                file=out,
+            )
+            return 2
+        histories, lineage = {}, {}
+        end = pd.Timestamp(DEVELOPMENT_END, tz="UTC")
         for ticker in store.watched():
-            bars = real_bars_shown(store.bars(ticker))
+            stored = store.bars(ticker)
+            bars = real_bars_shown(stored)
             if bars is not None and len(bars) > 1000:
                 histories[ticker] = bars
+                used = set(stored.bars.loc[stored.bars["session"] <= end, "batch_id"])
+                lineage[ticker] = [
+                    {
+                        "batch_id": batch.batch_id,
+                        "retrieved_at": batch.retrieved_at,
+                        "content_sha256": batch.content_sha256,
+                    }
+                    for batch in stored.batches
+                    if batch.batch_id in used
+                ]
         if not histories:
             print("nothing to evaluate: no watched stock has enough stored history", file=out)
             return 1
@@ -102,8 +207,14 @@ def main(
         )
         store.record_evaluation(record)
         _print_summary(record, out)
+        status = 0
+        if args.freeze:
+            status = _freeze(
+                store, histories, record, config, args=args, created_at=now, code=code,
+                lineage=lineage, out=out,
+            )  # fmt: skip
         print("no forecast recorded: real forecasts need decisions A2 and A4", file=out)
-        return 0
+        return status
 
     histories = dict(demo_histories())
     final = max(bars["session"].iloc[-1] for bars in histories.values())
@@ -119,6 +230,13 @@ def main(
     )
     store.record_evaluation(record)
     _print_summary(record, out)
+    if args.freeze:
+        status = _freeze(
+            store, histories, record, config, args=args, created_at=made, code=code_state(),
+            lineage=None, out=out,
+        )  # fmt: skip
+        if status:
+            return status
     panel = build_panel(histories, config)
     model = fit_final(panel, config, record)
     for stock_id, bars in histories.items():

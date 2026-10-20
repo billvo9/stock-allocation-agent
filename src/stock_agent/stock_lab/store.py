@@ -27,6 +27,10 @@ Tables
                        calendar; the page shows the latest check per ticker.
     evaluations        each walk-forward evaluation record (evaluation.py),
                        as strict JSON (write-once)
+    frozen_models      each registered frozen model (frozen_model.py, built by
+                       registry.py), checked before it is stored and again when
+                       read; it names a stored evaluation, by run id and content
+                       hash, and is never replaced: a change is a new model
     forecasts          each StockProbabilityForecast (forecast.py), checked
                        before it is stored and again when read; a newer
                        forecast names the one it supersedes, which stays
@@ -76,6 +80,7 @@ from pathlib import Path
 import pandas as pd
 
 from stock_agent.stock_lab import forecast as forecast_artifact
+from stock_agent.stock_lab import frozen_model
 from stock_agent.stock_lab.contracts import DataClass, SymbolReason, SymbolStatus
 from stock_agent.stock_lab.prices import BAR_COLUMNS, validate_bars
 from stock_agent.stock_lab.symbols import Classification, ListingRow, ParsedTicker
@@ -95,6 +100,7 @@ WRITE_ONCE_TABLES = (
     "scores",
     "job_runs",
     "ledger_entries",
+    "frozen_models",
 )
 
 SCHEMA = (
@@ -199,6 +205,15 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
     prev_entry_sha256 TEXT NOT NULL,
     entry_sha256 TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS frozen_models (
+    model_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    data_class TEXT NOT NULL CHECK (data_class IN ('real', 'synthetic')),
+    estimator TEXT NOT NULL,
+    evaluation_run_id TEXT NOT NULL REFERENCES evaluations (run_id),
+    content_sha256 TEXT NOT NULL,
+    record TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS price_bars (
     batch_id TEXT NOT NULL REFERENCES price_batches (batch_id),
     session TEXT NOT NULL,
@@ -257,6 +272,9 @@ BEGIN SELECT RAISE(ABORT, 'write-once table'); END;
 CREATE TRIGGER IF NOT EXISTS ledger_entries_no_replace BEFORE INSERT ON ledger_entries
 WHEN EXISTS (SELECT 1 FROM ledger_entries WHERE seq = NEW.seq)
 BEGIN SELECT RAISE(ABORT, 'write-once table'); END;
+CREATE TRIGGER IF NOT EXISTS frozen_models_no_replace BEFORE INSERT ON frozen_models
+WHEN EXISTS (SELECT 1 FROM frozen_models WHERE model_id = NEW.model_id)
+BEGIN SELECT RAISE(ABORT, 'write-once table'); END;
 CREATE TRIGGER IF NOT EXISTS price_bars_complete BEFORE INSERT ON price_bars
 WHEN (SELECT COUNT(*) FROM price_bars WHERE batch_id = NEW.batch_id)
      >= (SELECT row_count FROM price_batches WHERE batch_id = NEW.batch_id)
@@ -274,6 +292,14 @@ class StoreRefused(ValueError):
 
 
 CLOCK_SKEW = pd.Timedelta(minutes=5)  # how far a forecast's created_at may be from the clock
+_FROZEN_COLUMNS = "model_id, data_class, estimator, evaluation_run_id, content_sha256, record"
+FROZEN_QUERIES = {  # fixed statements: no value is ever formatted into SQL
+    "model_id": f"SELECT {_FROZEN_COLUMNS} FROM frozen_models WHERE model_id = ?",
+    "data_class": (
+        f"SELECT {_FROZEN_COLUMNS} FROM frozen_models WHERE data_class = ? "
+        "ORDER BY created_at, model_id"
+    ),
+}
 
 
 def utc_now() -> pd.Timestamp:
@@ -877,6 +903,96 @@ class StockLabStore:
         if any(hashlib.sha256(text.encode("utf-8")).hexdigest() != sha for sha, text in rows):
             raise StoreRefused("an evaluation record does not match its hash")
         return tuple(json.loads(text) for _, text in rows)
+
+    def record_frozen_model(self, record: dict) -> str:
+        """
+        Register one frozen model (write-once); returns its id. The record must pass
+        frozen_model.check, and must describe the stored evaluation it names: the same
+        content hash, data class, settings, stocks, panel and history hashes, created no
+        earlier than that evaluation and no later than the store's clock.
+        """
+
+        try:
+            checked = frozen_model.check(record)
+        except frozen_model.RegistryRefused as error:
+            raise StoreRefused(f"a frozen model failed its check ({error.reason})") from None
+        text = frozen_model.canonical(checked)
+        made = pd.Timestamp(checked["created_at"])
+        if made > self._clock() + CLOCK_SKEW:
+            raise StoreRefused("a frozen model cannot be created in the future")
+        with self._write() as connection:
+            stored = connection.execute(
+                "SELECT content_sha256, data_class, record FROM evaluations WHERE run_id = ?",
+                (checked["evaluation_run_id"],),
+            ).fetchone()
+            if stored is None:
+                raise StoreRefused("a frozen model's evaluation must be stored first")
+            evaluation = json.loads(stored[2])
+            histories = checked["data"]["histories"]
+            described = (
+                stored[0] == checked["evaluation_sha256"]
+                and stored[1] == checked["data_class"]
+                and evaluation.get("config") == checked["config"]
+                and evaluation.get("stocks") == checked["stocks"]
+                and evaluation.get("panel_sha256") == checked["data"]["panel_sha256"]
+                and evaluation.get("histories_sha256")
+                == {symbol: history["bars_sha256"] for symbol, history in histories.items()}
+            )
+            if not described:
+                raise StoreRefused("a frozen model names an evaluation it does not match")
+            if made < pd.Timestamp(evaluation["created_at"]):
+                raise StoreRefused("a frozen model cannot predate its evaluation")
+            connection.execute(
+                "INSERT INTO frozen_models VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    checked["model_id"],
+                    checked["created_at"],
+                    checked["data_class"],
+                    checked["estimator"],
+                    checked["evaluation_run_id"],
+                    hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                    text,
+                ),
+            )
+        return checked["model_id"]
+
+    def _frozen_rows(self, key: str, value: str) -> list[tuple]:
+        with self._read() as connection:
+            if connection is None:
+                return []
+            try:
+                return connection.execute(FROZEN_QUERIES[key], (value,)).fetchall()
+            except sqlite3.OperationalError as error:
+                if "no such table" in str(error):  # a store from before frozen models existed
+                    return []
+                raise
+
+    @staticmethod
+    def _frozen(row: tuple) -> dict:
+        model_id, data_class, estimator, run_id, sha, text = row
+        if hashlib.sha256(text.encode("utf-8")).hexdigest() != sha:
+            raise StoreRefused("a frozen model record does not match its hash")
+        try:
+            checked = dict(frozen_model.check(json.loads(text)))
+        except frozen_model.RegistryRefused as error:
+            raise StoreRefused(f"a frozen model record failed its check ({error.reason})") from None
+        columns = (checked["model_id"], checked["data_class"], checked["estimator"],
+                   checked["evaluation_run_id"])  # fmt: skip
+        if columns != (model_id, data_class, estimator, run_id):
+            raise StoreRefused("a frozen model's columns do not match its record")
+        return checked
+
+    def frozen_model(self, model_id: str) -> dict | None:
+        """One registered frozen model by its id, re-checked, or None."""
+
+        rows = self._frozen_rows("model_id", model_id)
+        return self._frozen(rows[0]) if rows else None
+
+    def frozen_models(self, data_class: DataClass) -> tuple[dict, ...]:
+        """Every registered frozen model of `data_class`, oldest first, each re-checked."""
+
+        rows = self._frozen_rows("data_class", DataClass(data_class).value)
+        return tuple(self._frozen(row) for row in rows)
 
     def record_forecast(self, record: dict, *, real_authorized: bool = False) -> str:
         """

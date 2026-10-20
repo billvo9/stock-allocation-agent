@@ -63,13 +63,13 @@ from stock_agent.stock_lab import estimators as est
 from stock_agent.stock_lab import logistic, scores, size_simulation
 from stock_agent.stock_lab.contracts import DEFAULT_BAND, StableBand
 from stock_agent.stock_lab.features import FEATURE_VERSION, build_features
-from stock_agent.stock_lab.prices import categorize, category_codes
+from stock_agent.stock_lab.prices import BAR_COLUMNS, categorize, category_codes
 from stock_agent.stock_lab.reversal import volatility_regime
 from stock_agent.stock_lab.runs import RunRule
 from stock_agent.stock_lab.targets import HORIZONS, build_targets, cumulative_band
 
 SCHEMA = "stock_lab_evaluation"
-SCHEMA_VERSION = "1.1"  # 1.1 adds the fold-block t, simulated sizes and band sensitivity
+SCHEMA_VERSION = "1.2"  # 1.1: fold-block t, sizes, band sensitivity; 1.2: history hashes
 MODELS = ("B0", "B1", "B2", "B3", "M1")
 REFERENCE = "B1"
 H_GRID = (21.0, 63.0, 126.0, 252.0)
@@ -360,9 +360,22 @@ def evaluate(
                 .to_numpy()
                 .tobytes()
             ).hexdigest(),
+            # Every stored field of every history (prices, volume, dividends, splits), so a model
+            # frozen later can show it was fitted on exactly these bars (registry.freeze).
+            "histories_sha256": {
+                symbol: history_sha256(bars) for symbol, bars in sorted(histories.items())
+            },
         }
     )
     return record
+
+
+def history_sha256(bars: pd.DataFrame) -> str:
+    """The content hash of one history's bars (prices.BAR_COLUMNS, in session order)."""
+
+    frame = bars.loc[:, list(BAR_COLUMNS)].reset_index(drop=True)
+    hashed = pd.util.hash_pandas_object(frame, index=False).to_numpy().tobytes()
+    return hashlib.sha256(hashed).hexdigest()
 
 
 def _per_date_mean(values: np.ndarray, dates: pd.DatetimeIndex) -> pd.Series:
