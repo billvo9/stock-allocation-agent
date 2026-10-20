@@ -907,13 +907,33 @@ the owner's answers and messages in session:
     scores stay in the existing write-once ledger (the A4 protocol).
   - They approve the design only: no fetch, storage, freeze or activation
     (A4).
+- 2026-10-20, Stock Lab A4 activation (owner, verbatim, in the lead session
+  at about 14:08 New York): "I approve A4 activation of frozen model
+  2b6cd0c1a52f5ecfc16d6c8e221956d6fd23093826618e895949ac62e7fa65e7 (B1,
+  half-life 252, frozen_long_run) for AMD, MRVL, MU and NVDA."
+  - Steps the owner ran on 2026-10-20 in their own terminal (from the
+    terminal output they shared):
+    - the read-only history audit (`stock_lab_fetch.py --authorized`), with
+      all four stocks ready and nothing to review;
+    - its storage (`--store`), four batches for 2003-01-02 to 2024-12-31;
+    - the pre-2025 evaluation and freeze (`stock_lab_evaluate.py --real
+      --authorized-evaluation --freeze`, run `R-20261020T174922886792Z`, 19
+      folds). No challenger beat B1 under A7, so B1 was frozen with
+      half-life 252 under the `frozen_long_run` state rule;
+    - the recent-window audit and its storage (`stock_lab_fetch_recent.py`),
+      252 sessions for 2025-10-17 to 2026-10-19.
+  - **The dry-run condition.** The owner's 14:01 New York dry run targeted
+    2026-10-19 and was refused for all four stocks (`after_next_open`), as
+    designed. A4's own condition, a successful end-to-end dry run, is
+    therefore not yet met. The activation change is to be merged only after
+    a dry run after 20:00 New York succeeds for every stock.
+  - It activates real forecast recording for this model id only. Any other
+    model, including a later re-freeze, needs its own activation.
 - Pending:
   - Stock Lab, in order (open item 10):
-    1. authorization of the A1 read-only audit, after the token is
-       configured;
-    2. the separate storage approval;
-    3. the confirmation of the bull-trap f;
-    4. A4 activation.
+    1. the confirmation of the bull-trap f;
+    2. the scheduled evening job, which needs the Tiingo key at run time, and
+       the briefing's delivery provider, address and installation.
   - the rest of OD3;
   - OD8 groups C-D (cash returns and benchmarks; statistics and
     reporting). The decision packets are merged (#92); nothing in them is

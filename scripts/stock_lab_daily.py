@@ -44,8 +44,8 @@ Modes
                       (write-once; a stale stock keeps its last forecast and
                       none is backfilled), the job run and its Model Health
                       input. Refused unless the owner activated that model
-                      (decision A4: evening.ACTIVATED_MODELS, empty until the
-                      owner's explicit go).
+                      (decision A4: evening.ACTIVATED_MODELS, only the
+                      models the owner explicitly activated).
 
 Scheduling: run it once a day after the availability time, for example with
 the launchd agent printed by `scripts/stock_lab_schedule.py` (the owner
