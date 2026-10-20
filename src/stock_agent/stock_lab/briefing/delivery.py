@@ -9,7 +9,8 @@ separate approval; this module reads, asks for and stores no credential.
 
 Where previews go
     STOCK_AGENT_STOCK_LAB_BRIEFING_HOME, or ~/stock-agent-private/
-    stock_lab_briefings/. The directory is refused inside any Git working
+    stock_lab_briefings/ (`stored.default_directory`; `stored` reads them
+    back without writing). The directory is refused inside any Git working
     tree (this repository is public) and when it holds the research
     store's database; it is created with mode 0o700, and each file with
     0o600, never overwritten.
@@ -45,13 +46,17 @@ from typing import Protocol
 
 import pandas as pd
 
+from stock_agent.stock_lab.briefing.stored import (
+    DIRECTORY,
+    HOME_ENV,
+    LOG_NAME,
+    default_directory,
+    working_tree,
+)
 from stock_agent.stock_lab.store import DB_NAME as RESEARCH_DB_NAME
 from stock_agent.stock_lab.store import default_path as research_store_path
 from stock_agent.stock_lab.store import stamp, utc_now
 
-HOME_ENV = "STOCK_AGENT_STOCK_LAB_BRIEFING_HOME"
-DIRECTORY = "stock_lab_briefings"
-LOG_NAME = "briefing_deliveries.sqlite3"
 CLAIMED = "claimed"
 SENT = "sent"
 FAILED = "failed"
@@ -80,24 +85,10 @@ class DeliveryRefused(ValueError):
     """A location or delivery the rules refuse."""
 
 
-def default_directory() -> Path:
-    configured = os.environ.get(HOME_ENV, "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    return Path.home() / "stock-agent-private" / DIRECTORY
-
-
 def research_home() -> Path:
     """The research store's directory (from its own environment variable or default)."""
 
     return research_store_path().parent
-
-
-def _working_tree(path: Path) -> Path | None:
-    for candidate in (path, *path.parents):
-        if (candidate / ".git").exists():
-            return candidate
-    return None
 
 
 def private_directory(path: Path | None = None) -> Path:
@@ -109,7 +100,7 @@ def private_directory(path: Path | None = None) -> Path:
     """
 
     resolved = (path or default_directory()).expanduser().resolve()
-    if _working_tree(resolved) is not None:
+    if working_tree(resolved) is not None:
         raise DeliveryRefused(
             "the briefing directory must be outside any Git working tree (the repository is public)"
         )
@@ -341,3 +332,19 @@ def deliver_once(
     kept = safe_receipt(receipt)
     log.finish(*key, attempt, SENT, kept)
     return DeliveryResult(SENT, adapter.channel, briefing.market_date, attempt, kept)
+
+
+__all__ = [
+    "DIRECTORY",
+    "HOME_ENV",
+    "LOG_NAME",
+    "DeliveryAdapter",
+    "DeliveryLog",
+    "DeliveryRefused",
+    "DeliveryResult",
+    "PreviewAdapter",
+    "RenderedBriefing",
+    "default_directory",
+    "deliver_once",
+    "private_directory",
+]

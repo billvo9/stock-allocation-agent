@@ -691,7 +691,10 @@ HEALTH_MODULES = ("stock_agent.health.model", "stock_agent.health.view")
 # their evaluation (logistic, evaluation, predict), whose results it reads as
 # stored records. From the inference store it reads only recent observed prices
 # through the descriptive reader (decision A6), never the writer or the
-# frozen-model reader.
+# frozen-model reader. The Premarket Briefing page reads the briefings already
+# written through the read-only `briefing.stored` (with the report, reliability,
+# timing and render modules it needs to read and word them), never the
+# preview writer and delivery log (`briefing.delivery`).
 STOCK_LAB_MODULES = tuple(
     f"stock_agent.stock_lab.{name}"
     for name in (
@@ -712,6 +715,11 @@ STOCK_LAB_MODULES = tuple(
         "estimators",
         "inference.recent",
         "inference.schema",
+        "briefing.stored",
+        "briefing.report",
+        "briefing.reliability",
+        "briefing.timing",
+        "briefing.render",
     )
 )
 APP_PROJECT_PREFIXES = (
@@ -727,8 +735,10 @@ APP_PROJECT_PACKAGES = {
     "stock_agent.health",
     "stock_agent.stock_lab",
     "stock_agent.stock_lab.inference",
+    "stock_agent.stock_lab.briefing",
 }
 FORBIDDEN = (
+    "stock_agent.stock_lab.briefing.delivery",
     "stock_agent.stock_lab.inference.store",
     "stock_agent.stock_lab.inference.window",
     "stock_agent.stock_lab.tiingo",
@@ -823,6 +833,7 @@ def test_rendering_the_app_loads_no_forbidden_module():
         "overview",
         "builder",
         "stock_lab",
+        "briefing",
         "experiments",
         "model_health",
         "evidence",
@@ -830,9 +841,12 @@ def test_rendering_the_app_loads_no_forbidden_module():
         assert f"stock_agent.app.{module}" in loaded, module
     assert {*HEALTH_MODULES, "stock_agent.app.health_summary"} <= loaded
     assert {"stock_agent.stock_lab.store", "stock_agent.stock_lab.view"} <= loaded
+    assert "stock_agent.stock_lab.briefing.stored" in loaded
 
 
-@pytest.mark.parametrize("package", ["health", "stock_lab", "stock_lab/inference"])
+@pytest.mark.parametrize(
+    "package", ["health", "stock_lab", "stock_lab/inference", "stock_lab/briefing"]
+)
 def test_the_health_and_stock_lab_package_inits_import_nothing(package):
     # The app may load these packages only because their __init__ runs no import.
     source = (SOURCE / "stock_agent" / package / "__init__.py").read_text(encoding="utf-8")

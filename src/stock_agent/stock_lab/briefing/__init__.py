@@ -20,7 +20,11 @@ Modules
     render       the briefing as plain text and as HTML
     delivery     the delivery-adapter interface, the local preview adapter
                  and the per-market-date duplicate-send log
+    stored       the briefings already written and the log, read back without
+                 writing (the Portfolio Lab's Premarket Briefing page)
 
 Nothing here sends anything anywhere: the only adapter writes files into a
-private local directory.
+private local directory. An 08:30 schedule is printed, never installed, by
+scripts/stock_lab_schedule.py --briefing, and an email adapter is described
+there as a dry run only (--email-dry-run).
 """

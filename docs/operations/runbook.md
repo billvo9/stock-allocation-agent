@@ -170,7 +170,11 @@ and repeat steps 1 to 4. To remove it, unload it and delete both files. The
 Stock Lab's daily job is a separate agent (`scripts/stock_lab_schedule.py`,
 `local.stock-lab.daily`): until it runs, its checks are insufficient
 evidence; once it has written a monitor file, a stopped job turns
-`forecast.stock_lab_job` failed (`job_overdue`).
+`forecast.stock_lab_job` failed (`job_overdue`). The premarket briefing's
+08:30 agent (`scripts/stock_lab_schedule.py --briefing`,
+`local.stock-lab.briefing`) is printed for the owner and not installed; its
+limits when the Mac sleeps are in `docs/research/stock_probability_lab.md`,
+section 9.
 
 ## Reproduce a failure
 

@@ -1,5 +1,5 @@
 """
-The Lab's six destinations: each is a small page script in `destinations/`
+The Lab's eight destinations: each is a small page script in `destinations/`
 (relative to run.py), so Streamlit's navigation and AppTest can reach every
 one by its file. Titles and URL paths are copy (`wording.NAV`).
 """

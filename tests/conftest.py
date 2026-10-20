@@ -92,6 +92,20 @@ def _hermetic_stock_lab_store(tmp_path_factory):
         yield
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _hermetic_briefing_directory(tmp_path_factory):
+    """
+    No test reads or writes the owner's private briefing folder: the Lab's
+    Premarket Briefing page and the briefing script use the directory named
+    by this variable, where nothing exists unless a test writes it.
+    """
+
+    with pytest.MonkeyPatch.context() as patch:
+        missing = tmp_path_factory.mktemp("no-briefings") / "briefings"
+        patch.setenv("STOCK_AGENT_STOCK_LAB_BRIEFING_HOME", str(missing))
+        yield
+
+
 @pytest.fixture(scope="session")
 def prospective_frozen(tmp_path_factory):
     """One synthetic F1 store, frozen bundle and registry (forecast_prospective_helpers)."""

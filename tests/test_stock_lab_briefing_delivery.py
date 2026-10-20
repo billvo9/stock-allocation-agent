@@ -217,14 +217,15 @@ def test_no_briefing_code_imports_mail_network_or_credential_modules():
 
 
 def test_the_briefing_reads_only_directory_variables_never_a_credential():
-    # Its own directory variable here; the store's location variable through
-    # store.default_path (also a path). Nothing else, and no credential, is read.
+    # Its own directory variable in stored.py (which delivery.py imports); the
+    # store's location variable through store.default_path (also a path).
+    # Nothing else, and no credential, is read.
     for path in _python_files():
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and node.attr in ("environ", "getenv"):
-                assert path.name == "delivery.py", path.name
-    source = (BRIEFING / "delivery.py").read_text(encoding="utf-8")
+                assert path.name == "stored.py", path.name
+    source = (BRIEFING / "stored.py").read_text(encoding="utf-8")
     assert source.count("os.environ") == 1 and "os.environ.get(HOME_ENV" in source
     for path in _python_files():
         code = path.read_text(encoding="utf-8")

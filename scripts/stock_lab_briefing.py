@@ -32,8 +32,12 @@ Options
     --tickers ...   brief these tickers instead of the watchlist
     --exclude ...   leave these out (default: SKHY SNDK, the owner's choice)
 
-Nothing is scheduled or installed here; a reviewed, authorized delivery
-schedule is a later, separate step. Printed paths show the home folder as ~.
+Nothing is scheduled or installed here: scripts/stock_lab_schedule.py
+--briefing prints an 08:30 launchd agent that runs `--preview`, for the
+owner to install once approved, and --email-dry-run describes an email
+adapter without one existing. The Portfolio Lab's Premarket Briefing page
+shows the written previews, read-only. Printed paths show the home folder
+as ~.
 
 Usage:
     .venv/bin/python scripts/stock_lab_briefing.py --demo

@@ -3,9 +3,10 @@ Streamlit entry point of the Portfolio Lab, the product app (separate from
 the research dashboard). Launch with scripts/run_portfolio_lab.py, which
 binds the server to 127.0.0.1 and disables usage statistics.
 
-Seven destinations share one top navigation (`navigation.PAGES`, one page
+Eight destinations share one top navigation (`navigation.PAGES`, one page
 script each): Overview (the landing page), Explore, Portfolio Builder,
-Stock Probability, Experiments, Model Health and Evidence. The editorial theme comes from the
+Stock Probability, Premarket Briefing, Experiments, Model Health and
+Evidence. The editorial theme comes from the
 script-level `.streamlit/config.toml` next to this file (with the bundled
 fonts in `static/`) and the CSS layer applied here once per run.
 
