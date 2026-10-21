@@ -203,6 +203,14 @@ _STOCK_LAB = {
         "evaluation_run_id": "S-synthetic",
     },
     "schedule": {"last_success_at": "2024-12-31T21:11:00.000000Z", "next_expected_at": None},
+    "evenings": {
+        "since": "2024-12-02",
+        "due": 20,
+        "recorded": 20,
+        "missed": [],
+        "recent": 10,
+        "recent_missed": 0,
+    },
     "symbols": {
         "tickers": [
             {"ticker": "DEMO_CALM", "status": "supported", "reason": "listed_us_stock"},

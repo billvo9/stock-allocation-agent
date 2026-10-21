@@ -12,7 +12,10 @@ JSON). Health recomputes nothing: every number here is measured by the job.
 `symbols` (each watched ticker's listing status) is an optional, additive
 field, added 2026-10-17. `outcomes` (the real job's scoring counts: scored,
 unscorable, pending, missing and refused reads) is another, added 2026-10-19,
-and so is the job's per-stock `results` ({ticker, status, reason}). SCHEMA_VERSION stays "1.0" on purpose: the agreed
+and so is the job's per-stock `results` ({ticker, status, reason}). `evenings`
+(the real job's prospective record: {since, due, recorded, missed, recent,
+recent_missed}, stock_lab.job.evening_record) is another, added 2026-10-20.
+SCHEMA_VERSION stays "1.0" on purpose: the agreed
 envelope ignores extra fields, so earlier files and readers stay valid,
 whereas a new version would make the current reader (which accepts "1.0"
 only) refuse every file. A reader that finds no `symbols` reports the
@@ -127,12 +130,15 @@ def monitor_document(
     schedule: Mapping,
     symbols: Mapping | None = None,
     outcomes: Mapping | None = None,
+    evenings: Mapping | None = None,
 ) -> dict:
-    """The health input; `symbols` and `outcomes` are optional (module docstring)."""
+    """The health input; `symbols`, `outcomes` and `evenings` are optional (module docstring)."""
 
     extra = {} if symbols is None else {"symbols": dict(symbols)}
     if outcomes is not None:
         extra["outcomes"] = dict(outcomes)
+    if evenings is not None:
+        extra["evenings"] = dict(evenings)
     return _clean(
         {
             "artifact": ARTIFACT,

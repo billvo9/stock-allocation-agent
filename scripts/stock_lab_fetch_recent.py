@@ -33,6 +33,14 @@ the window. A session it did not serve is held for the owner's review, not
 stored: a split or dividend on it would be invisible to the audit (the batch
 would record none there), and there is deliberately no override yet.
 
+The key. By default it comes from TIINGO_API_KEY. With --keychain it is read
+instead from the macOS Keychain (stock_agent.data.vendors.keychain: service
+stock-agent-tiingo, account stock-lab), once, just before the first request,
+and handed to the adapter in memory only, so an unattended run (the evening
+agent printed by scripts/stock_lab_schedule.py) needs no variable holding it.
+An item that cannot be read refuses the run before any request (exit 2),
+naming the reason, never the value.
+
 Exit codes: 0 success; 1 a refused request, response or write; 2 refused
 before any request.
 
@@ -40,6 +48,7 @@ Usage:
     .venv/bin/python scripts/stock_lab_fetch_recent.py                        # the plan only
     .venv/bin/python scripts/stock_lab_fetch_recent.py --authorized           # read-only run
     .venv/bin/python scripts/stock_lab_fetch_recent.py --authorized --store   # store (approval)
+    .venv/bin/python scripts/stock_lab_fetch_recent.py --authorized --store --keychain
 The tickers are always the saved watchlist (add or remove them in the Lab).
 """
 
@@ -54,6 +63,13 @@ from typing import TextIO
 import pandas as pd
 
 from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
+from stock_agent.data.vendors.keychain import (
+    TIINGO_ACCOUNT,
+    TIINGO_SERVICE,
+    KeychainRefused,
+    add_command,
+    read_key,
+)
 from stock_agent.data.vendors.tiingo import TiingoRequestFailed
 from stock_agent.stock_lab.audit import audit_bars, audit_lines
 from stock_agent.stock_lab.contracts import DataClass, SymbolStatus
@@ -126,6 +142,8 @@ def plan(
     research: StockLabStore,
     inference: InferenceStore,
     out: TextIO,
+    *,
+    keychain: bool = False,
 ) -> None:
     first, last = days[0].date(), days[-1].date()
     print("Stock Lab recent-window plan (no request made; pass --authorized to run):", file=out)
@@ -155,6 +173,12 @@ def plan(
     )
     print(f"  written to the inference store {shown(inference.path)}; the research store", file=out)
     print("  is never written; a ticker with an unserved session is held for review", file=out)
+    if keychain:
+        print(
+            f"the key: read from the macOS Keychain (service {TIINGO_SERVICE}, account "
+            f"{TIINGO_ACCOUNT}) just before the first request; not read now",
+            file=out,
+        )
 
 
 def main(
@@ -165,10 +189,12 @@ def main(
     inference_factory: Callable[[], InferenceStore] = InferenceStore,
     clock: Callable[[], pd.Timestamp] = utc_now,
     out: TextIO = sys.stdout,
+    key_reader: Callable[[], str] = read_key,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1], allow_abbrev=False)
     parser.add_argument("--authorized", action="store_true")
     parser.add_argument("--store", action="store_true")
+    parser.add_argument("--keychain", action="store_true")
     args = parser.parse_args(argv)
     research = store_factory()
 
@@ -199,14 +225,26 @@ def main(
         print(f"refused: the inference store's location ({error})", file=out)
         return 2
     if not args.authorized:
-        plan(tickers, supported, days, research, inference, out)
+        plan(tickers, supported, days, research, inference, out, keychain=args.keychain)
         return 0
     if not supported:
         print("nothing to fetch: no watched ticker has a supported listing check yet", file=out)
         return 0
 
     first, last = days[0].date(), days[-1].date()
-    adapter = adapter_factory(authorized=True, max_requests=len(supported))
+    key_source = {}
+    if args.keychain:
+        try:
+            key = key_reader()
+        except KeychainRefused as error:
+            print(
+                f"refused: the Tiingo key could not be read from the macOS Keychain ({error}); "
+                f"nothing was requested. To add it, type it at the prompt of: {add_command()}",
+                file=out,
+            )
+            return 2
+        key_source["token_provider"] = lambda: key
+    adapter = adapter_factory(authorized=True, max_requests=len(supported), **key_source)
     ready: list[str] = []
     review: list[str] = []
     try:

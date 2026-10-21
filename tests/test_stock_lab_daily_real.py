@@ -29,6 +29,8 @@ from stock_lab_inference_helpers import (
     window_start,
 )
 
+from stock_agent.health.model import HealthState
+from stock_agent.health.stock_lab import stock_lab_checks
 from stock_agent.stock_lab import evening, registry, synthetic
 from stock_agent.stock_lab.contracts import DataClass
 from stock_agent.stock_lab.evaluation import EvaluationConfig, evaluate
@@ -201,3 +203,45 @@ def test_a_model_id_shorter_than_16_characters_is_refused(lab):
         calendar_id=CALENDAR_ID,
     )  # fmt: skip
     assert code == 2 and "at least 16 characters" in out.getvalue()
+
+
+def test_a_skipped_evening_is_recorded_as_missed_and_never_backfilled(lab, monkeypatch):
+    store, _, model, clock, tmp_path = lab
+    monkeypatch.setattr(evening, "ACTIVATED_MODELS", frozenset({model["model_id"]}))
+    code, text = _main(lab, "--record-real")
+    assert code == 0, text
+    assert f"evenings since {AS_OF}: 0 of 0 closed evenings recorded" in text
+    # No run on the next evening (the Mac slept through it); the one after runs normally.
+    skipped, third = next_day(AS_OF), next_day(AS_OF, 2)
+    inference_clock = Clock(ny(third, "20:31"))
+    inference = type(lab[1])(lab[1].path, clock=inference_clock)
+    for ticker, stock_id in SOURCES.items():
+        record(inference, inference_clock, window_start(third), third,
+               retrieved_at=ny(third, "20:30"), ticker=ticker,
+               bars=steady_bars(window_start(third), third, stock=stock_id))  # fmt: skip
+    clock.now = ny(third, "20:35")
+    code, text = _main(lab, "--record-real")
+    assert code == 0, text
+    line = f"evenings since {AS_OF}: 1 of 2 closed evenings recorded; missed (latest 5): {skipped}"
+    assert line in text.splitlines()
+    assert {f["as_of_session"] for t in SOURCES for f in store.forecasts(t)} == {AS_OF, third}
+    written = sorted((tmp_path / "health" / "stock_lab_monitor").glob("*.json"))
+    document = json.loads(written[-1].read_text(encoding="utf-8"))
+    assert document["schema_version"] == "1.0"  # `evenings` is additive: the format stays
+    assert document["evenings"] == {"since": AS_OF, "due": 2, "recorded": 1, "missed": [skipped],
+                                    "recent": 10, "recent_missed": 1}  # fmt: skip
+    checks = {c.check_id: c for c in stock_lab_checks(written[-1].parent)}
+    job = checks["forecast.stock_lab_job"]
+    assert (job.state, job.reason) == (HealthState.DEGRADED, "evening_missed")
+    assert skipped in job.summary
+
+
+def test_a_dry_run_reports_the_evenings_and_records_nothing(lab, monkeypatch):
+    store, _, model, clock, _ = lab
+    monkeypatch.setattr(evening, "ACTIVATED_MODELS", frozenset({model["model_id"]}))
+    assert _main(lab, "--record-real")[0] == 0
+    before = store.path.read_bytes()
+    clock.now = ny(next_day(AS_OF, 2), "09:30")  # the next evening was never recorded
+    code, text = _main(lab, "--dry-run")
+    assert code == 0 and f"missed (latest 5): {next_day(AS_OF)}" in text
+    assert store.path.read_bytes() == before

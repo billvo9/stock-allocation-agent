@@ -564,8 +564,37 @@ How the ledger works:
 
 **Scheduling** (`scripts/stock_lab_schedule.py`):
 
-- It prints a launchd agent for 20:30 New York time on weekdays; the owner
-  installs it.
+- It prints the unattended evening agent, `local.stock-lab.daily`, for 20:30
+  New York time on weekdays, and with `--run-sh --model ID` its `run.sh`. The
+  owner installs both (`docs/operations/runbook.md`, "Stock Lab unattended
+  evening"). The agent starts `/bin/zsh -f
+  ~/stock-agent-private/stock_lab/run.sh`. That script runs only from a clean
+  `main` checkout, and each step under `env -i`:
+  1. `scripts/stock_lab_fetch_recent.py --authorized --store --keychain`;
+  2. only when that succeeds, `scripts/stock_lab_daily.py --record-real
+     --model ID`.
+
+  A failed price update stops the evening: no forecast is recorded, and none
+  is backfilled.
+- **The key at run time.** `--keychain` reads the Tiingo key from the macOS
+  Keychain (`stock_agent.data.vendors.keychain`: service
+  `stock-agent-tiingo`, account `stock-lab`). It runs `security
+  find-generic-password ... -w` without a shell, inside the fetch's own
+  process, once, just before the first request. The key never enters an
+  environment variable, a command-line argument, a file, a log or a message.
+  An item that cannot be read refuses the fetch before any request (exit 2).
+- **Missed evenings.** Each real run records the prospective record's
+  evenings since the first real forecast (`stock_lab.job.evening_record`,
+  the monitor file's optional `evenings`). An evening is due once the next
+  session opens. A due evening with no real forecast is missed, a permanent
+  gap. Model Health degrades `forecast.stock_lab_job` (`evening_missed`)
+  while a miss is among the last 10 due evenings, and lists older ones in its
+  detail.
+- **The wake.** The printer writes an optional `sudo pmset repeat
+  wakeorpoweron MTWRF 20:25:00` (in the Mac's zone) to stderr, never runs
+  it. pmset keeps one repeating pair, so it replaces the briefing's 08:25
+  wake. The evening's wake matters more: a late briefing can still be read,
+  but a missed evening cannot be recorded.
 - **The time zone.** launchd takes the Mac's local time with no time zone,
   so the printer converts 20:30 New York to the zone given and refuses a
   zone whose clock changes on other dates than New York's, or never, as for
@@ -592,7 +621,9 @@ How the ledger works:
   of the folders named only: one created on the way gets 0755, and the
   store refuses a `stock_lab` folder others can read.
 - **An earlier printout.** An agent installed from one keeps its old
-  settings until it is printed again, unloaded and loaded.
+  settings until it is printed again, booted out and bootstrapped. An agent
+  printed before 2026-10-20 ran only `stock_lab_daily.py` without
+  `--record-real`; replace it.
 - With `--briefing` it prints the 08:30 premarket-briefing agent, and with
   `--email-dry-run` a description of an email adapter (section 9).
 - The job itself skips holidays through the calendar.
@@ -971,11 +1002,11 @@ inference store for forecasts and scores, with named imports only
 only on its real path, so loading the script still loads nothing from the
 store.
 
-**Still needs the owner:** the A4 go (after the data steps, the freeze and a
-dry run), and a scheduled real evening. The printed launchd job runs only the
-daily job; a real evening also needs the recent-window fetch, which needs the
-Tiingo key at run time (for example from the macOS Keychain): a credentials
-and installation decision.
+**The scheduled real evening (prepared 2026-10-20, not installed).** The
+printed evening agent runs the recent-window fetch with the Tiingo key read
+from the macOS Keychain at run time, then `--record-real` for the activated
+model (section 6, Scheduling). Still the owner's: adding the Keychain item,
+installing the agent and the optional wake.
 
 
 ## 8. Learning notes
@@ -1449,10 +1480,12 @@ stable bands, estimators or model versions.
     labelled late preview and never sends or records the day's delivery.
   - A Mac asleep for several days gets one run, at wake, for the session
     due then.
-- **The evening job sleeps too.** The daily job at 20:30 has the same
+- **The evening job sleeps too.** The evening agent at 20:30 has the same
   limit. A forecast decided after the next 09:30 open is refused
-  (`after_next_open`), so the morning briefing then shows each stock as
-  unavailable or stale, with the reason.
+  (`after_next_open`). The morning briefing then shows each stock as
+  unavailable or stale, with the reason, and Model Health shows the missed
+  evening (`evening_missed`). The evening's own wake (section 6) replaces
+  this one, because pmset keeps one repeating pair.
 - **A local wake.**
   - **The command.** `sudo pmset repeat wakeorpoweron MTWRF 08:25:00` (in
     the Mac's local time; the printer gives the time for the zone).

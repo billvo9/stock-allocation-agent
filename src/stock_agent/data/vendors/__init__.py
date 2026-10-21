@@ -11,4 +11,6 @@ Modules:
     tiingo_prospective  Tiingo prospective mode for the prospective store
                         (`stock_agent.data.prospective`), sessions from its window only
     anchors             the owner's private, hand-filled distribution anchors (no network)
+    keychain            a vendor key read from the macOS Keychain at run time, for
+                        unattended owner jobs (no network)
 """
