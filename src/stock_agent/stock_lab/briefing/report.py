@@ -121,6 +121,11 @@ class ReadOnlyRecords:
     def forecasts(self, symbol: str) -> tuple[dict, ...]:
         return self._store.forecasts(symbol)
 
+    def forecast_symbols(self, data_class: DataClass) -> tuple[str, ...]:
+        """Every symbol with a stored forecast of `data_class` (the morning check reads it)."""
+
+        return self._store.forecast_symbols(data_class)
+
     def forecast_recorded_at(self, symbol: str) -> dict[str, str]:
         return self._store.forecast_recorded_at(symbol)
 

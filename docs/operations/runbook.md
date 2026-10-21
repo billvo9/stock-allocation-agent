@@ -226,6 +226,38 @@ until the run ends. The two stores are the default private folders
 (`STOCK_AGENT_STOCK_LAB_HOME`, `STOCK_AGENT_STOCK_LAB_INFERENCE_HOME`) never
 reach the job.
 
+**Notifications.** You learn of a failure from a local macOS notification,
+titled "Stock Lab", without reading the logs. `/usr/bin/osascript` shows it on
+this Mac and sends nothing anywhere. Each notice is one of a few fixed
+sentences: never a value, price, forecast or key. A notification that cannot
+be shown is ignored, and `run.sh` stops one that takes more than 10 seconds,
+so it never changes a run's exit status or keeps a run from ending. macOS lists
+these notifications under Script Editor (osascript's host application).
+
+| Notice | Shown by | Do |
+|---|---|---|
+| tonight's run was refused by the checkout check | `run.sh`, exit 3 (the checkout is not a clean `main`, or git or `cd` failed) | Fix what `daily.err.log` names (usually: switch the main checkout to a clean `main`), then recover the evening (below) |
+| tonight's price update was refused before any request | `run.sh`, exit 2 from the price update (for example the Keychain item) | Fix the reason in `daily.out.log`, then recover |
+| tonight's run failed (price update) | `run.sh`, any other non-zero exit from the price update | Read the last lines of both logs, then recover |
+| tonight's run failed (forecasts) | `run.sh`, a non-zero exit from the forecast step | Read `daily.out.log`, then recover |
+| last evening was not recorded; it can still be recorded before 09:30 | the morning check, before the open | Read the evening's logs, then recover before 09:30 |
+| last evening was not recorded, and after the 09:30 open it can no longer be | the morning check, after the open (a Mac that woke late) | Nothing to recover: the gap stays. Find the cause in the logs |
+| the morning check could not run | the morning check | Read `morning-check.out.log` |
+
+A run that never starts (the Mac shut down or logged out at 20:30, the agent
+not loaded, `run.sh` missing) cannot notify. The optional morning check
+(owner step 8) covers that. At 08:00 New York on weekdays, it reads the store
+read-only. When the prior session has no real forecast yet, it notifies while
+the evening can still be recorded. It counts an evening as recorded exactly
+as Model Health's `evening_missed` does: any real forecast as of that session.
+It checks nothing on weekends or market holidays (the NYSE calendar), so those
+days raise no false alarm; the next session morning checks the same evening
+while it can still be recorded. A late check (a Mac that woke after the open,
+or after 20:00) reports a gap in the evening before that day, never tonight's,
+whose run is still to come. A partial
+evening (some stocks recorded) exits 0 and raises no notice: Model Health
+shows it as `job_partial`.
+
 ### Owner steps
 
 Run every command from the main checkout, on `main`.
@@ -335,6 +367,50 @@ Run every command from the main checkout, on `main`.
      20:30.
    - `.venv/bin/python scripts/stock_lab_briefing.py --preview` shows each
      stock fresh. Model Health shows `forecast.stock_lab_job` healthy.
+7. **Notifications (once).** A `run.sh` printed before the notifications
+   existed shows none. Print it again with the step 3 commands (`run.sh.new`,
+   `mv`, `chmod 700`); the plist is unchanged, so nothing needs reloading.
+   Then allow and test the notifications:
+
+   ```bash
+   .venv/bin/python scripts/stock_lab_morning_check.py --test-notification
+   ```
+
+   It shows the fixed test notice and reads nothing. If no notification
+   appears, or macOS asks, allow notifications for Script Editor in System
+   Settings > Notifications. The Alerts style keeps each one on screen until
+   you dismiss it, so a notice that arrives while you are away still waits
+   for you.
+8. **The morning check (optional).** Print its agent (08:00 New York on
+   weekdays by default; `--time HH:MM` sets another time before 09:30, and
+   `--zone` converts it to the Mac's zone), then read it:
+
+   ```bash
+   .venv/bin/python scripts/stock_lab_schedule.py --morning-check > ~/Library/LaunchAgents/local.stock-lab.morning-check.plist
+   ```
+
+   ```bash
+   plutil -lint ~/Library/LaunchAgents/local.stock-lab.morning-check.plist
+   ```
+
+   ```bash
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.stock-lab.morning-check.plist
+   ```
+
+   To try it at once (it only reads the store, and on a session morning it
+   notifies only if last evening is not recorded):
+
+   ```bash
+   launchctl kickstart -k gui/$(id -u)/local.stock-lab.morning-check
+   ```
+
+   Its log is `~/stock-agent-private/stock_lab/logs/morning-check.out.log`,
+   one dated line per run. A check missed while the Mac sleeps runs at the
+   next wake, so a late one may report a gap that can no longer be filled.
+   Its exit codes: 0 nothing to report, 1 last evening not recorded
+   (notified), 2 the check could not run (notified). To remove it:
+   `launchctl bootout gui/$(id -u)/local.stock-lab.morning-check`, then
+   delete the plist.
 
 **Exit codes** (`launchctl print`, `last exit code`):
 

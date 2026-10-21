@@ -21,9 +21,11 @@ import io
 import os
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
+import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, available_timezones
@@ -33,6 +35,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "stock_lab_schedule.py"
 NEW_YORK = ZoneInfo("America/New_York")
+MODEL = "2b6cd0c1a52f5ecfc16d6c8e221956d6fd23093826618e895949ac62e7fa65e7"
 
 
 def _script():
@@ -129,6 +132,68 @@ def test_the_evening_wake_is_given_in_the_macs_zone():
         schedule.evening_wake_note("Europe/London")  # would drift, like the agent itself
 
 
+def test_the_morning_check_agent_runs_the_check_at_0800_new_york_on_weekdays():
+    code, printed, note = run("--morning-check")
+    assert code == 0 and printed == schedule.morning_check_plist()
+    agent = plistlib.loads(schedule.morning_check_plist(home=Path("/h")).encode())
+    assert agent == {
+        "Label": "local.stock-lab.morning-check",
+        "ProgramArguments": [
+            str(schedule.PROJECT / ".venv" / "bin" / "python"),
+            str(schedule.PROJECT / "scripts" / "stock_lab_morning_check.py"),
+        ],
+        "WorkingDirectory": str(schedule.PROJECT),
+        "EnvironmentVariables": {"PYTHONPATH": str(schedule.PROJECT / "src")},
+        "StartCalendarInterval": [
+            {"Weekday": day, "Hour": 8, "Minute": 0} for day in (1, 2, 3, 4, 5)
+        ],
+        "StandardOutPath": "/h/stock-agent-private/stock_lab/logs/morning-check.out.log",
+        "StandardErrorPath": "/h/stock-agent-private/stock_lab/logs/morning-check.err.log",
+        "Umask": 0o077,
+    }
+    assert schedule.MORNING_LABEL == agent["Label"]
+    # Printed, never run: how to allow and test the notifications, and what a sleeping Mac does.
+    assert "--test-notification" in note and "Script Editor" in note and "09:30" in note
+    assert "<plist" not in note and "osascript" not in printed
+
+
+@pytest.mark.parametrize(
+    ("time", "zone", "local"),
+    [
+        ("07:45", "America/New_York", (7, 45)),
+        ("07:45", "America/Los_Angeles", (4, 45)),
+        ("09:29", "America/Chicago", (8, 29)),
+        ("00:00", "America/New_York", (0, 0)),
+    ],
+)
+def test_the_morning_check_time_is_configurable_and_given_in_the_macs_zone(time, zone, local):
+    code, printed, _ = run("--morning-check", "--time", time, "--zone", zone)
+    assert code == 0
+    times = plistlib.loads(printed.encode())["StartCalendarInterval"]
+    assert {(t["Hour"], t["Minute"]) for t in times} == {local}
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--morning-check", "--time", "09:30"],  # the open: too late to record the evening
+        ["--morning-check", "--time", "12:00"],
+        ["--morning-check", "--time", "8:00"],
+        ["--morning-check", "--time", "08:60"],
+        ["--morning-check", "--time", "24:00"],
+        ["--morning-check", "--time", "08:00:00"],
+        ["--morning-check", "--time", "０８:００"],  # fullwidth digits are not HH:MM
+        ["--time", "08:00"],  # for the morning check only
+        ["--briefing", "--time", "08:00"],
+        ["--morning-check", "--model", MODEL],
+        ["--morning-check", "--zone", "Europe/London"],  # would drift to 09:00 New York
+    ],
+)
+def test_a_morning_check_time_that_is_not_before_the_open_is_refused_and_prints_nothing(args):
+    code, printed, message = run(*args)
+    assert code == 2 and printed == "" and message.startswith("refused:")
+
+
 def _launchd_weekday(day: date) -> int:
     return day.isoweekday() % 7  # launchd: Sunday 0, Monday 1, ... Saturday 6
 
@@ -204,7 +269,8 @@ def test_a_zone_that_is_not_one_is_refused_without_a_traceback(args):
 
 def test_the_options_are_exclusive_and_never_abbreviated():
     for args in (["--briefing", "--email-dry-run"], ["--brief"], ["--email"],
-                 ["--run-sh", "--briefing", "--model", MODEL], ["--run", "--model", MODEL]):  # fmt: skip
+                 ["--run-sh", "--briefing", "--model", MODEL], ["--run", "--model", MODEL],
+                 ["--morning-check", "--briefing"], ["--morning"], ["--tim", "08:00"]):  # fmt: skip
         with pytest.raises(SystemExit) as stopped:
             run(*args)
         assert stopped.value.code == 2
@@ -237,9 +303,6 @@ def test_the_email_dry_run_describes_the_adapter_and_its_approvals_only():
     assert f"-a {schedule.KEYCHAIN_ACCOUNT} " in add  # a generic label, never the address
 
 
-MODEL = "2b6cd0c1a52f5ecfc16d6c8e221956d6fd23093826618e895949ac62e7fa65e7"
-
-
 def test_run_sh_updates_prices_then_records_the_activated_model_and_never_holds_the_key():
     code, printed, note = run("--run-sh", "--model", MODEL)
     assert code == 0 and note == "" and printed == schedule.render_run_sh(MODEL)
@@ -254,11 +317,18 @@ def test_run_sh_updates_prices_then_records_the_activated_model_and_never_holds_
         '"${clean[@]}" "$python" scripts/stock_lab_fetch_recent.py --authorized --store --keychain'
     )
     assert lines[record] == (
-        'exec "${clean[@]}" "$python" scripts/stock_lab_daily.py --record-real --model "$model"'
+        '"${clean[@]}" "$python" scripts/stock_lab_daily.py --record-real --model "$model"'
     )
     # The fetch's status is checked before the record step, which runs only after success.
-    assert fetch < lines.index("fetched=$?") < lines.index("if (( fetched != 0 )); then") < record
-    assert lines[lines.index("if (( fetched != 0 )); then") + 2] == "  exit $fetched"
+    check = lines.index("if (( fetched != 0 )); then")
+    assert fetch < lines.index("fetched=$?") < check < record
+    assert lines.index("  exit $fetched", check) < lines.index("fi", check) < record
+    # The record step's status is kept, notified when it is not 0, and is the evening's.
+    assert lines[record + 1] == "recorded=$?" and lines[-1] == "exit $recorded"
+    assert lines.index("if (( recorded != 0 )); then") > record
+    assert (
+        f"notifier='{schedule.OSASCRIPT}'" in lines and schedule.OSASCRIPT == "/usr/bin/osascript"
+    )
     (clean,) = [line for line in lines if line.startswith("clean=(")]
     assert clean.startswith("clean=(/usr/bin/env -i ")
     assert 'PATH=/usr/bin:/bin:/usr/sbin:/sbin "PYTHONPATH=$repo/src")' in clean
@@ -288,8 +358,46 @@ def test_run_sh_needs_one_full_model_id_and_prints_nothing_otherwise(args):
 @pytest.mark.skipif(shutil.which("zsh") is None, reason="zsh is not installed")
 def test_run_sh_is_valid_zsh(tmp_path):
     path = tmp_path / "run.sh"
-    path.write_text(schedule.render_run_sh(MODEL, project=Path("/a b/it's here")), encoding="utf-8")
+    printed = schedule.render_run_sh(MODEL, project=Path("/a b/it's here"), notifier="/n o/it's")
+    path.write_text(printed, encoding="utf-8")
     assert subprocess.run(["zsh", "-n", str(path)], check=False).returncode == 0
+
+
+def test_run_sh_shows_its_notices_exactly_as_the_morning_check_does():
+    # The printer imports nothing from the package, so the two AppleScript commands are
+    # written twice; this keeps them identical.
+    from stock_agent.stock_lab import notify
+
+    assert (schedule.OSASCRIPT, schedule.APPLESCRIPT) == (notify.OSASCRIPT, notify.APPLESCRIPT)
+    assert schedule.NOTIFY_TIMEOUT == notify.TIMEOUT  # the same bound on both sides
+    lines = schedule.render_run_sh(MODEL).splitlines()
+    (shown,) = [line for line in lines if '"$notifier"' in line and not line.startswith("#")]
+    words = shlex.split(shown)  # zsh's single and double quotes, as POSIX reads them here
+    assert words[:9] == ["${plain[@]}", *notify.command("$1", program="$notifier")]
+    # Never waits for input, and runs in the background so that it can be bounded.
+    assert words[9:] == ["</dev/null", ">/dev/null", "2>&1", "&"]
+    # The notifier's environment is the steps' without PYTHONPATH, as notify.py's.
+    (plain,) = [line for line in lines if line.startswith("plain=(")]
+    assert plain.startswith("plain=(/usr/bin/env -i ") and "PYTHONPATH" not in plain
+    assert plain.endswith(" PATH=/usr/bin:/bin:/usr/sbin:/sbin)")
+    # The function always returns 0, so a notification never changes the evening's status.
+    start = lines.index("notify() {")
+    assert lines[lines.index("}", start) - 1] == "  return 0"
+
+
+def test_every_evening_notice_is_short_plain_ascii_and_holds_no_number_but_the_open():
+    printed = schedule.render_run_sh(MODEL)
+    assert set(schedule.EVENING_NOTICES) == {
+        "refused",
+        "fetch_refused",
+        "fetch_failed",
+        "record_failed",
+    }
+    for key, text in schedule.EVENING_NOTICES.items():
+        assert text.isascii() and text.isprintable() and len(text) <= 90, key
+        assert not re.search(r"\d", text.replace("09:30", "")), key  # no value, date or count
+        assert text.endswith("see the logs before 09:30"), key
+        assert f"notify {schedule._quoted(text)}" in printed, key
 
 
 def test_the_printer_imports_the_standard_library_only_and_runs_nothing():
@@ -334,6 +442,19 @@ esac
 [ -f "$exits" ] && exit "$(cat "$exits")"
 exit 0
 """
+# Stands in for /usr/bin/osascript: records its environment, its arguments and the notice
+# (its last argument), then hangs when $HOME/notifier-hang exists, or exits with
+# $HOME/notifier-exit when that file exists.
+FAKE_NOTIFIER = """#!/bin/sh
+/usr/bin/env > "$HOME/env-notifier"
+printf '%s\\n' "$@" > "$HOME/notifier-arguments"
+for notice; do :; done
+printf '%s\\n' "$notice" >> "$HOME/notices"
+[ -f "$HOME/notifier-hang" ] && exec /bin/sleep 60
+[ -f "$HOME/notifier-exit" ] && exit "$(cat "$HOME/notifier-exit")"
+exit 0
+"""
+NOTIFIER = "the notifier's folder/notifier"  # the fake, in the test's home: quoting is run
 SECRET = "planted-secret-value"
 SHELL_OWN = {"PWD", "OLDPWD", "SHLVL", "_"}  # set by the fake Python's own shell
 STAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ stock lab evening "
@@ -368,10 +489,35 @@ def evening(tmp_path):
     # A profile that would leak a variable and leave a trace if zsh read it.
     marker = home / "zshenv-was-read"
     (home / ".zshenv").write_text(f"touch {marker}\nexport FROM_ZSHENV={SECRET}\n")
-    (folder / schedule.RUN_SH).write_text(schedule.render_run_sh(MODEL, project=repo))
-    (folder / schedule.RUN_SH).chmod(0o700)
+    (home / NOTIFIER).parent.mkdir()
+    (home / NOTIFIER).write_text(FAKE_NOTIFIER, encoding="utf-8")
+    (home / NOTIFIER).chmod(0o755)
+    _write_run_sh(home, repo)
     arguments = plistlib.loads(schedule.plist(home=home).encode())["ProgramArguments"]
     return repo, home, arguments, marker
+
+
+def _write_run_sh(home: Path, project: Path) -> None:
+    """run.sh for `project`, showing its notices with the fake notifier, never osascript."""
+
+    run_sh = schedule.private_folder(home) / schedule.RUN_SH
+    printed = schedule.render_run_sh(MODEL, project=project, notifier=str(home / NOTIFIER))
+    # Never the real notifier: these tests must not show a notification on the Mac.
+    assert not [
+        line
+        for line in printed.splitlines()
+        if schedule.OSASCRIPT in line and not line.startswith("#")
+    ]
+    run_sh.write_text(printed, encoding="utf-8")
+    run_sh.chmod(0o700)
+
+
+def _notices(home: Path) -> list[str]:
+    path = home / "notices"
+    return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+
+NOTICE = schedule.EVENING_NOTICES
 
 
 def _launch(arguments, home: Path, **extra: str) -> subprocess.CompletedProcess:
@@ -405,6 +551,7 @@ def test_the_evening_updates_prices_then_records_with_only_the_named_variables(e
         "scripts/stock_lab_fetch_recent.py --authorized --store --keychain",
         f"scripts/stock_lab_daily.py --record-real --model {MODEL}",
     ]
+    assert _notices(home) == []  # a successful evening shows nothing
     assert not marker.exists()  # ~/.zshenv was never read
     for step in ("stock_lab_fetch_recent.py", "stock_lab_daily.py"):
         lines = (home / f"env-{step}").read_text(encoding="utf-8").splitlines()
@@ -429,6 +576,8 @@ def test_a_failed_price_update_stops_the_evening_before_any_forecast(evening, st
         r"tonight",
         line,
     ), line
+    # Exit 2 is the fetch's refusal before any request (for example the Keychain item).
+    assert _notices(home) == [NOTICE["fetch_refused" if status == 2 else "fetch_failed"]]
 
 
 @needs_shell
@@ -458,6 +607,8 @@ def test_the_evening_refuses_anything_but_a_clean_main_and_runs_nothing(evening,
     assert re.fullmatch(
         STAMP + rf"refused: {re.escape(str(repo))} {re.escape(reason)}.*; nothing was run", line
     ), line
+    # Notified without running any of the checkout's code (the notifier is a system tool).
+    assert _notices(home) == [NOTICE["refused"]]
 
 
 @needs_shell
@@ -466,8 +617,73 @@ def test_the_record_steps_status_is_the_evenings(evening, status):
     repo, home, arguments, _ = evening
     (repo / ".venv" / "record-exit").write_text(f"{status}\n", encoding="utf-8")
     done = _launch(arguments, home)
-    assert done.returncode == status and done.stderr == ""
+    assert done.returncode == status
     assert len(_steps(home)) == 2
+    if status == 0:
+        assert done.stderr == "" and _notices(home) == []
+        return
+    (line,) = done.stderr.strip().splitlines()
+    assert re.fullmatch(
+        STAMP + rf"failed: the forecast step exited {status}; see daily\.out\.log", line
+    ), line
+    assert _notices(home) == [NOTICE["record_failed"]]
+
+
+@needs_shell
+def test_the_notifier_gets_the_notice_as_an_argument_and_only_the_named_variables(evening):
+    repo, home, arguments, _ = evening
+    (repo / ".venv" / "fetch-exit").write_text("1\n", encoding="utf-8")
+    _launch(arguments, home)
+    from stock_agent.stock_lab import notify
+
+    shown = (home / "notifier-arguments").read_text(encoding="utf-8").splitlines()
+    assert shown == notify.command(NOTICE["fetch_failed"])[1:]
+    lines = (home / "env-notifier").read_text(encoding="utf-8").splitlines()
+    assert not [line for line in lines if SECRET in line or "TIINGO" in line]
+    names = {line.split("=", 1)[0] for line in lines if "=" in line}
+    assert names - SHELL_OWN == {"HOME", "USER", "LOGNAME", "TMPDIR", "PATH"}
+
+
+@needs_shell
+def test_a_notifier_that_hangs_is_stopped_and_never_holds_the_evening(evening, monkeypatch):
+    repo, home, arguments, _ = evening
+    monkeypatch.setattr(schedule, "NOTIFY_TIMEOUT", 1)  # the printed bound, shortened here
+    _write_run_sh(home, repo)
+    (home / "notifier-hang").touch()
+    (repo / ".venv" / "fetch-exit").write_text("5\n", encoding="utf-8")
+    started = time.monotonic()
+    done = _launch(arguments, home)
+    assert done.returncode == 5 and _notices(home) == [NOTICE["fetch_failed"]]
+    assert time.monotonic() - started < 20  # stopped after its bound, not after 60 seconds
+    assert len(done.stderr.strip().splitlines()) == 1
+
+
+@needs_shell
+@pytest.mark.parametrize("notifier", ["fails", "missing"])
+@pytest.mark.parametrize(
+    "outcome, status",
+    [("success", 0), ("fetch", 5), ("fetch-refused", 2), ("record", 5), ("refused", 3)],
+)
+def test_a_notifier_that_fails_or_is_missing_never_changes_the_evening(
+    evening, notifier, outcome, status
+):
+    repo, home, arguments, _ = evening
+    if notifier == "fails":  # an exit status no step uses, so it cannot pass for the step's
+        (home / "notifier-exit").write_text("9\n", encoding="utf-8")
+    else:
+        (home / NOTIFIER).unlink()
+    if outcome.startswith("fetch"):
+        (repo / ".venv" / "fetch-exit").write_text(f"{status}\n", encoding="utf-8")
+    elif outcome == "record":
+        (repo / ".venv" / "record-exit").write_text(f"{status}\n", encoding="utf-8")
+    elif outcome == "refused":
+        (repo / "README").write_text("edited\n", encoding="utf-8")
+    done = _launch(arguments, home)
+    assert done.returncode == status
+    steps = {"success": 2, "fetch": 1, "fetch-refused": 1, "record": 2, "refused": 0}
+    assert len(_steps(home)) == steps[outcome]
+    # Only the evening's own dated line: nothing from the notifier reaches the log.
+    assert len(done.stderr.strip().splitlines()) == (0 if outcome == "success" else 1)
 
 
 @needs_shell
@@ -485,6 +701,7 @@ def test_git_variables_and_configuration_cannot_hide_a_dirty_checkout(evening, t
     done = _launch(arguments, home, GIT_DIR=str(other / ".git"), GIT_WORK_TREE=str(other))
     assert done.returncode == 3 and _steps(home) == []
     assert "has uncommitted or untracked changes" in done.stderr
+    assert _notices(home) == [NOTICE["refused"]]
 
 
 @needs_shell
@@ -492,8 +709,8 @@ def test_the_evening_refuses_a_linked_worktree(evening):
     repo, home, arguments, _ = evening
     worktree = repo.parent / "worktree"
     _git(repo, "worktree", "add", "-q", "-b", "main-copy", str(worktree))
-    run_sh = schedule.private_folder(home) / schedule.RUN_SH
-    run_sh.write_text(schedule.render_run_sh(MODEL, project=worktree), encoding="utf-8")
+    _write_run_sh(home, worktree)
     done = _launch(arguments, home)
     assert done.returncode == 3 and _steps(home) == []
     assert "is not the main checkout" in done.stderr
+    assert _notices(home) == [NOTICE["refused"]]

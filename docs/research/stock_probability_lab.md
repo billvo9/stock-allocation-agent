@@ -590,6 +590,24 @@ How the ledger works:
   gap. Model Health degrades `forecast.stock_lab_job` (`evening_missed`)
   while a miss is among the last 10 due evenings, and lists older ones in its
   detail.
+- **Notifications** (added 2026-10-21). Local macOS notifications, shown by
+  `/usr/bin/osascript` and never sent off the Mac, so the owner learns of a
+  failure without reading logs. Each is one of a few fixed sentences, never
+  a value, price, forecast or key, and none ever changes a job's exit
+  status.
+  - `run.sh` shows one when it refuses the checkout, when the price update
+    fails or refuses, and when the forecast step fails.
+  - A run that never starts cannot notify. The optional morning check
+    covers that (`--morning-check [--time HH:MM]`, 08:00 New York on
+    weekdays by default, always before the 09:30 open):
+    `scripts/stock_lab_morning_check.py` reads the store read-only
+    (`stock_lab.morning`). When the prior session has no real forecast, it
+    says the evening can still be recorded before 09:30, or, after the open,
+    that it is a gap. It reads the same recorded evenings as
+    `evening_record` (`stock_lab.job.recorded_evenings`) and the briefing's
+    session timing, so weekends and holidays are never checked (the next
+    session morning checks the same evening in time), and a late check from
+    20:00 is of the evening before that day, never tonight's.
 - **The wake.** The printer writes an optional `sudo pmset repeat
   wakeorpoweron MTWRF 20:25:00` (in the Mac's zone) to stderr, never runs
   it. pmset keeps one repeating pair, so it replaces the briefing's 08:25
