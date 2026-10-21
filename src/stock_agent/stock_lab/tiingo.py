@@ -337,6 +337,12 @@ class StockAdapter:
             reason = TiingoFailure.HTTP_ERROR
         raise TiingoRequestFailed(reason, ticker=ticker, status=status)
 
+    def check_key(self) -> None:
+        """Refuse a missing or malformed key now, without a request (the key is not kept)."""
+
+        self._require_authorization()  # before the key is even read
+        _Token(self._token_provider())
+
     def listing(self) -> ListingResponse:
         """The supported-tickers listing (no key is sent to its host)."""
 

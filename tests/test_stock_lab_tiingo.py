@@ -14,7 +14,7 @@ from datetime import date
 import numpy as np
 import pytest
 
-from stock_agent.data.vendors.tiingo import TiingoFailure, TiingoRequestFailed
+from stock_agent.data.vendors.tiingo import TOKEN_ENV, TiingoFailure, TiingoRequestFailed
 from stock_agent.stock_lab.tiingo import (
     LISTING_URL,
     PRICE_FIELDS,
@@ -252,6 +252,25 @@ def test_an_unauthorized_adapter_never_reads_the_key():
     built = StockAdapter(authorized=False, token_provider=provider, transport=FakeTransport([]))
     with pytest.raises(NotAuthorized):
         built.prices("AAPL", START, END)
+    with pytest.raises(NotAuthorized):
+        built.check_key()
+
+
+def test_the_key_check_makes_no_request_and_refuses_a_missing_or_malformed_key(monkeypatch):
+    built, transport, _ = adapter([])
+    built.check_key()
+    assert transport.calls == [] and built.requests_made == 0
+    monkeypatch.delenv(TOKEN_ENV, raising=False)
+    with pytest.raises(TiingoRequestFailed) as raised:
+        StockAdapter(authorized=True, transport=transport).check_key()
+    assert raised.value.reason is TiingoFailure.MISSING_TOKEN
+    malformed = StockAdapter(
+        authorized=True, token_provider=lambda: "two words", transport=transport
+    )
+    with pytest.raises(TiingoRequestFailed) as raised:
+        malformed.check_key()
+    assert raised.value.reason is TiingoFailure.INVALID_TOKEN
+    assert "two words" not in str(raised.value) and transport.calls == []
 
 
 def test_a_refused_listing_request_is_not_blamed_on_the_key():
