@@ -43,13 +43,17 @@ Modes
                       inference store, stock_lab.evening), the forecasts
                       (write-once; a stale stock keeps its last forecast and
                       none is backfilled), the job run and its Model Health
-                      input. Refused unless the owner activated that model
-                      (decision A4: evening.ACTIVATED_MODELS, only the
-                      models the owner explicitly activated).
+                      input, with the prospective record's missed evenings
+                      (stock_lab.job.evening_record). Refused unless the
+                      owner activated that model (decision A4:
+                      evening.ACTIVATED_MODELS, only the models the owner
+                      explicitly activated).
 
-Scheduling: run it once a day after the availability time, for example with
-the launchd agent printed by `scripts/stock_lab_schedule.py` (the owner
-installs it; nothing here installs anything).
+Scheduling: the unattended evening (`scripts/stock_lab_schedule.py`, which
+prints the launchd agent and its run.sh) runs
+`scripts/stock_lab_fetch_recent.py --authorized --store --keychain` and, only
+when that succeeds, `--record-real --model ID`. The owner installs it; nothing
+here installs anything.
 
 Usage:
     .venv/bin/python scripts/stock_lab_daily.py --demo-replay 20
@@ -74,7 +78,7 @@ from stock_agent.calendars.nyse import CalendarRefused
 from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
 from stock_agent.stock_lab import scoring
 from stock_agent.stock_lab.contracts import DataClass
-from stock_agent.stock_lab.job import NOT_AUTHORIZED, record_run
+from stock_agent.stock_lab.job import NOT_AUTHORIZED, evening_record, record_run
 from stock_agent.stock_lab.replay import ReplayRefused, run_replay
 from stock_agent.stock_lab.store import StockLabStore, stamp, utc_now
 from stock_agent.stock_lab.synthetic import DEMO_IDS
@@ -234,6 +238,18 @@ def _real(args, *, store, clock, started, out, inference_path, calendar, calenda
             b1 = result.forecast["comparator"]["daily"][0]
             line += f"; next session {first['session']}: {_percent(first)}; B1 {_percent(b1)}"
         print(line, file=out)
+    finished = clock()
+    evenings = evening_record(
+        store, now=finished, expected=expected,
+        sessions=lambda first, last: calendar(first.date(), last.date()),
+    )  # fmt: skip
+    if evenings is not None:
+        missed = ", ".join(evenings["missed"][-5:]) or "none"
+        print(
+            f"evenings since {evenings['since']}: {evenings['recorded']} of {evenings['due']} "
+            f"closed evenings recorded; missed (latest 5): {missed}",
+            file=out,
+        )
     if not write:
         return 0
     done = [
@@ -244,7 +260,6 @@ def _real(args, *, store, clock, started, out, inference_path, calendar, calenda
     status = "ok"
     if trouble:
         status = "failed" if not done and refused else "partial"
-    finished = clock()
     path_written = record_run(
         store,
         run_id=f"job-{started.strftime('%Y%m%dT%H%M%S%fZ')}",
@@ -267,6 +282,7 @@ def _real(args, *, store, clock, started, out, inference_path, calendar, calenda
         measured_drift=evening.input_drift(found.panel, model),
         results=[r.row() for r in found.results],
         outcomes=outcomes.as_dict(),
+        evenings=evenings,
     )
     print(f"{status}; health input: {path_written}", file=out)
     return 0 if status != "failed" else 1

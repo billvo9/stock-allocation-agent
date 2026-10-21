@@ -524,7 +524,8 @@ def test_the_schedule_is_printed_never_installed(tmp_path):
     assert schedule.main([], out=out) == 0
     plan = plistlib.loads(out.getvalue().encode())
     assert plan["Label"] == schedule.LABEL
-    assert plan["ProgramArguments"][1].endswith("scripts/stock_lab_daily.py")
+    run_sh = Path.home() / "stock-agent-private" / "stock_lab" / "run.sh"  # the evening run
+    assert plan["ProgramArguments"] == ["/bin/zsh", "-f", str(run_sh)]
     times = plan["StartCalendarInterval"]
     assert [t["Weekday"] for t in times] == [1, 2, 3, 4, 5]
     assert {(t["Hour"], t["Minute"]) for t in times} == {(20, 30)}

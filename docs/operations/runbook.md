@@ -167,14 +167,194 @@ a profile or `launchctl setenv` (for example `TIINGO_API_KEY`) reaches
 To change the job, unload it (`launchctl bootout
 gui/$(id -u)/local.stock-agent.health`), move `run.sh` or the plist aside,
 and repeat steps 1 to 4. To remove it, unload it and delete both files. The
-Stock Lab's daily job is a separate agent (`scripts/stock_lab_schedule.py`,
-`local.stock-lab.daily`): until it runs, its checks are insufficient
+Stock Lab's unattended evening is a separate agent (`scripts/stock_lab_schedule.py`,
+`local.stock-lab.daily`; next section): until it runs, its checks are insufficient
 evidence; once it has written a monitor file, a stopped job turns
 `forecast.stock_lab_job` failed (`job_overdue`). The premarket briefing's
 08:30 agent (`scripts/stock_lab_schedule.py --briefing`,
 `local.stock-lab.briefing`) is printed for the owner and not installed; its
 limits when the Mac sleeps are in `docs/research/stock_probability_lab.md`,
 section 9.
+
+## Stock Lab unattended evening
+
+Each NYSE trading evening after 20:00 New York, and before the next 09:30
+open, the activated Stock Lab model records that evening's forecasts. Until
+now the owner ran the two steps by hand. The evening agent runs them
+unattended at 20:30 New York on weekdays:
+
+1. `scripts/stock_lab_fetch_recent.py --authorized --store --keychain` stores
+   the recent prices. The Tiingo key is read from the macOS Keychain inside
+   that process, once, just before the first request.
+2. Only when step 1 succeeds, `scripts/stock_lab_daily.py --record-real
+   --model <id>` records that evening's forecasts.
+
+A failed step 1 stops the run. That evening then has no forecast, and none is
+ever backfilled: a forecast made after the next open is refused. A missed
+evening is therefore a permanent gap in the prospective record.
+`scripts/stock_lab_schedule.py` prints the agent and its `run.sh`. Installing
+them is the owner's step, and nothing here installs, loads or wakes anything.
+
+**Where the key is, and where it never is.** It is in one Keychain item:
+service `stock-agent-tiingo`, account `stock-lab`. It is never in Git, the
+plist, `run.sh`, an environment variable, a command-line argument (only the
+item's labels are, in `security find-generic-password -s stock-agent-tiingo
+-a stock-lab -w`), a log, a report or an error message. If the item cannot be
+read (missing, a locked keychain, a prompt nobody can answer), step 1 refuses
+before any request. It exits 2 and names the reason, never the value. Because
+the agent runs in your logged-in session, a locked keychain or an access
+prompt may show a dialog instead. The read then gives up after 30 seconds
+(`timed_out`), and the dialog may stay on screen until you dismiss it.
+
+**Who else could read it.** The `security` tool reads back an item it added
+without a prompt. Any program running as you could therefore read it, an
+agent's shell included. Narrowing that is your decision, for example a
+command guard that refuses `security find-generic-password` to agents (a
+guardrail change).
+
+**What it runs.** launchd starts `/bin/zsh -f
+~/stock-agent-private/stock_lab/run.sh`. `run.sh` runs nothing unless the main
+checkout is a clean `main` (the same guard as the Model Health job, stricter in
+two ways). A linked worktree is refused, and git runs in the stripped
+environment and lists every untracked file whatever your git configuration
+hides. Otherwise it exits 3, with the reason on stderr.
+Each step runs under `env -i` with only `HOME`, `USER`, `LOGNAME`, `TMPDIR`, a
+system `PATH` and `PYTHONPATH`. `caffeinate -i` keeps the Mac from idle sleep
+until the run ends. The two stores are the default private folders
+(`~/stock-agent-private/stock_lab/` and
+`~/stock-agent-private/stock_lab_inference/`). Variables that move them
+(`STOCK_AGENT_STOCK_LAB_HOME`, `STOCK_AGENT_STOCK_LAB_INFERENCE_HOME`) never
+reach the job.
+
+### Owner steps
+
+Run every command from the main checkout, on `main`.
+
+1. **Prerequisites.**
+   - Make the checkout clean: `git status --porcelain` must print nothing.
+     Move an untracked file such as `.claude/launch.json`, or list it in
+     `.git/info/exclude`.
+   - Confirm that the stores are in their default folders:
+     `echo "${STOCK_AGENT_STOCK_LAB_HOME-}${STOCK_AGENT_STOCK_LAB_INFERENCE_HOME-}"`
+     must print an empty line.
+2. **The Keychain item.** Add the key once, typing it at the prompt so that
+   it never reaches the shell history (nothing follows `-w`):
+
+   ```bash
+   security add-generic-password -s stock-agent-tiingo -a stock-lab -U -w
+   ```
+
+   Check that it exists without showing it (`present` or `missing`):
+
+   ```bash
+   security find-generic-password -s stock-agent-tiingo -a stock-lab >/dev/null 2>&1 && echo present || echo missing
+   ```
+
+   By hand, `--keychain` now replaces `TIINGO_API_KEY`. Once the agent works,
+   remove the variable from your shell profile.
+3. **Write the files.** Print the files, then read them:
+
+   ```bash
+   mkdir -p -m 700 ~/stock-agent-private ~/stock-agent-private/stock_lab ~/stock-agent-private/stock_lab/logs
+   ```
+
+   ```bash
+   .venv/bin/python scripts/stock_lab_schedule.py --run-sh --model 2b6cd0c1a52f5ecfc16d6c8e221956d6fd23093826618e895949ac62e7fa65e7 > ~/stock-agent-private/stock_lab/run.sh.new && mv ~/stock-agent-private/stock_lab/run.sh.new ~/stock-agent-private/stock_lab/run.sh
+   ```
+
+   The file is written aside first and moved only when the printer succeeds.
+   A refused printout therefore never leaves an empty `run.sh` for launchd to
+   run silently.
+
+   ```bash
+   chmod 700 ~/stock-agent-private/stock_lab/run.sh
+   ```
+
+   ```bash
+   .venv/bin/python scripts/stock_lab_schedule.py > ~/Library/LaunchAgents/local.stock-lab.daily.plist
+   ```
+
+   ```bash
+   plutil -lint ~/Library/LaunchAgents/local.stock-lab.daily.plist
+   ```
+
+   The plist printer also writes the wake command to stderr (step 5). With
+   `--zone`, the printed times are converted to the Mac's zone.
+4. **Load the agent.** If an earlier `local.stock-lab.daily` is loaded
+   (`launchctl print gui/$(id -u)/local.stock-lab.daily` succeeds), unload
+   it first:
+
+   ```bash
+   launchctl bootout gui/$(id -u)/local.stock-lab.daily
+   ```
+
+   Then load the new agent:
+
+   ```bash
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.stock-lab.daily.plist
+   ```
+
+   To try it at once, run it between 20:00 New York and the next 09:30
+   open. This is a real evening: 4 Tiingo requests and that evening's
+   forecasts. A forecast already recorded is kept, never recalculated.
+
+   ```bash
+   launchctl kickstart -k gui/$(id -u)/local.stock-lab.daily
+   ```
+
+5. **The wake (optional, administrator).** launchd runs the agent only while
+   you are logged in. A Mac that is asleep is fine; one that is shut down or
+   logged out is not. A run missed during sleep starts at the next wake, and
+   it still records the evening only if that is before 09:30 New York. Wake
+   the Mac five minutes before the run:
+
+   ```bash
+   sudo pmset repeat wakeorpoweron MTWRF 20:25:00
+   ```
+
+   This is for a Mac on New York time. Use the time the printer gives for
+   your zone. pmset keeps a single repeating pair, so this replaces the
+   briefing's 08:25 wake. Keep the evening wake: a late briefing can still
+   be read, but a missed evening cannot be recorded. Check the schedule
+   before and after with `pmset -g sched`. A laptop should stay on power.
+   Confirm the first evening (step 6), because a Mac can fall asleep again
+   before 20:30 under its idle settings.
+6. **Verify the first unattended evening** (the next morning, before 09:30
+   New York, while a missed evening can still be recovered):
+   - `launchctl print gui/$(id -u)/local.stock-lab.daily` shows `runs` of at
+     least 1 and `last exit code = 0`.
+   - `tail -n 30 ~/stock-agent-private/stock_lab/logs/daily.out.log` shows:
+     - one `stored batch` per watched ticker and `read back: the <date>
+       window has 252 sessions`;
+     - then `model 2b6cd0c1a52f5ecf ... recorded`, each ticker `recorded`,
+       `evenings since 2026-10-20: N of N closed evenings recorded; missed
+       (latest 5): none` and `ok; health input: ...`.
+   - `~/stock-agent-private/stock_lab/logs/daily.err.log` has no `refused`
+     or `stopped` line.
+   - `pmset -g log | grep -i wake | tail -n 5` shows a wake shortly before
+     20:30.
+   - `.venv/bin/python scripts/stock_lab_briefing.py --preview` shows each
+     stock fresh. Model Health shows `forecast.stock_lab_job` healthy.
+
+**Exit codes** (`launchctl print`, `last exit code`):
+
+| Code | Meaning | Do |
+|---|---|---|
+| 0 | Prices stored, and the evening recorded (or already recorded) | Nothing |
+| 1 | The price update refused a request, response or write (no forecast), or the record step failed | Read the last lines of both logs |
+| 2 | Refused: the Keychain item could not be read (before any request), or the record step refused the model (not activated or not registered) | Fix the reason the log names |
+| 3 | Refused: the checkout is not a clean `main`; nothing ran | Switch the main checkout to `main` and clean it |
+| 127 | The venv's Python is missing | Recreate `.venv` |
+
+**Recovering a failed evening.** Before the next 09:30 New York open, fix
+the cause and run `launchctl kickstart -k gui/$(id -u)/local.stock-lab.daily`
+(or the two commands by hand). After 09:30 the evening stays a gap: never
+backfill, and never edit the stores. Model Health shows a stopped run as
+`job_overdue` and the gap as `evening_missed` (`forecast.stock_lab_job`).
+
+**To remove it:** `launchctl bootout gui/$(id -u)/local.stock-lab.daily`,
+then delete the plist and `run.sh`. Remove the wake with `sudo pmset repeat
+cancel`.
 
 ## Reproduce a failure
 
@@ -553,11 +733,11 @@ are never recomputed here.
 <a id="forecast-stock-lab-job"></a>
 ### Stock Lab daily update (`forecast.stock_lab_job`)
 
-- **What it means.** The last daily-job run's status as recorded by the job: ok is healthy, partial or skipped degraded, failed failed. Until the owner records decisions A1, A2 and A4, a real run records itself as skipped and not yet authorized, with the reason. That reads as not activated (`not_authorized`, insufficient evidence), so the rest of the private Model Health is not shown as degraded. Failed (`job_overdue`) when the monitor runs more than 6 hours past the run the job said was next, authorized or not: the scheduled job may have stopped, and its last file would otherwise stay green.
-- **Likely causes.** Not activated: approvals pending. Skipped (degraded): a step the job could not run. Failed: a provider error, an unreadable store, a ledger that does not verify.
-- **Diagnose.** The detail gives the last success and the next expected run; the private store's job runs keep every run's reason.
-- **Safe retry.** Re-run the job after fixing the cause.
-- **Fallback.** The last valid forecasts stay as they are, labelled stale.
+- **What it means.** The last daily-job run's status as recorded by the job: ok is healthy, partial or skipped degraded, failed failed. Until the owner records decisions A1, A2 and A4, a real run records itself as skipped and not yet authorized, with the reason. That reads as not activated (`not_authorized`, insufficient evidence), so the rest of the private Model Health is not shown as degraded. Failed (`job_overdue`) when the monitor runs more than 6 hours past the run the job said was next, authorized or not: the scheduled job may have stopped, and its last file would otherwise stay green. Degraded (`evening_missed`) when, among the last 10 closed evenings since the first real forecast, one recorded no forecast. An evening is closed once the next session has opened (09:30 New York), and after that its forecast can never be made, so a missed evening is a permanent gap in the prospective record. An older miss stays listed in the detail ("evenings since ...") without degrading the check.
+- **Likely causes.** Not activated: approvals pending. Skipped (degraded): a step the job could not run. Failed: a provider error, an unreadable store, a ledger that does not verify. A missed evening: the Mac was asleep, shut down or logged out from 20:30 until the next open; the evening agent refused (exit 3, not a clean `main`) or stopped at the price update (the Keychain item, a provider error); every stock was stale.
+- **Diagnose.** The detail gives the last success, the next expected run and the evening record; the private store's job runs keep every run's reason; the evening agent's logs (`~/stock-agent-private/stock_lab/logs/daily.*.log`) and `launchctl print gui/$(id -u)/local.stock-lab.daily` say why an evening did not run ("Stock Lab unattended evening").
+- **Safe retry.** Re-run the job after fixing the cause; an evening can still be recorded before the next 09:30 New York open, never after.
+- **Fallback.** The last valid forecasts stay as they are, labelled stale; a missed evening is never backfilled.
 
 <a id="forecast-stock-lab-scores"></a>
 ### Stock Lab rolling forecast scores (`forecast.stock_lab_scores`)

@@ -27,6 +27,13 @@ Fields besides the envelope (`inputs`):
                   evening job's scoring counts {scored, unscorable, pending,
                   missing, refused: [{ticker, forecast_id, reason}]}; missing
                   matured outcomes or refused reads degrade the scores check
+    evenings     optional and additive (added 2026-10-20; format 1.0): the real
+                  evening job's prospective record {since, due, recorded,
+                  missed: [session], recent, recent_missed}
+                  (stock_lab.job.evening_record). A due evening is one whose
+                  next 09:30 New York open has passed; a missed one recorded
+                  no forecast and never will (no backfill). A miss among the
+                  last `recent` due evenings degrades the job check
     symbols      optional and additive (added 2026-10-17; the format stays 1.0
                   because the envelope ignores extra fields, so earlier files
                   stay valid): {tickers: [{ticker, status, reason}]}, each
@@ -52,7 +59,8 @@ Checks (each says it is an experimental, unvalidated forecaster):
     forecast.stock_lab_job    the last daily run (failed is failed, partial
                               or skipped degraded; a run skipped because it
                               is not authorized yet is insufficient evidence,
-                              "not activated"; an overdue run is failed)
+                              "not activated"; an overdue run is failed; a
+                              recently missed evening is degraded)
     forecast.stock_lab_scores rolling RPS against the baseline over scored
                               daily targets (insufficient evidence below
                               MIN_SCORED; degraded when worse than the
@@ -73,7 +81,7 @@ In the private scope a synthetic input is at most insufficient_evidence.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 from stock_agent.health.inputs import (
@@ -157,6 +165,18 @@ def _parse(artifact: Artifact) -> dict:
                 raise FormatError("outcomes.refused rows must be objects")
             require(row, "ticker", "text")
             require(row, "reason", "text")
+    if document.get("evenings") is not None:
+        evenings = require(document, "evenings", "object")
+        since = _session(require(evenings, "since", "text"))
+        for key in ("due", "recorded", "recent", "recent_missed"):
+            require(evenings, key, "int")
+        missed = [_session(day) for day in require(evenings, "missed", "list")]
+        if missed != sorted(set(missed)) or (missed and missed[0] < since):
+            raise FormatError("evenings.missed must list distinct sessions since `since`, in order")
+        if evenings["recorded"] + len(evenings["missed"]) != evenings["due"]:
+            raise FormatError("evenings: recorded and missed must add up to due")
+        if evenings["recent_missed"] > min(evenings["recent"], len(evenings["missed"])):
+            raise FormatError("evenings.recent_missed exceeds the recent or missed evenings")
     if document.get("symbols") is not None:
         symbols = require(document, "symbols", "object")
         for row in require(symbols, "tickers", "list"):
@@ -165,6 +185,17 @@ def _parse(artifact: Artifact) -> dict:
             require(row, "ticker", "text")
             choice(row, "status", SYMBOL_STATUSES)
     return document
+
+
+def _session(value: object) -> date:
+    """A session written YYYY-MM-DD."""
+
+    if isinstance(value, str) and len(value) == 10:
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            pass
+    raise FormatError(f"{value!r} is not a session (YYYY-MM-DD)")
 
 
 def _check(check_id, state, reason, *, measured, value, unit, threshold, summary, detail,
@@ -301,6 +332,37 @@ def _outcome_findings(outcomes: dict | None) -> list[Finding]:
             )
         )
     return found
+
+
+def _evening_finding(evenings: dict | None) -> Finding | None:
+    """
+    The real job's prospective record (optional, added 2026-10-20): a missed evening among the
+    last `recent` due evenings degrades the job check; an older one is reported in the detail.
+    """
+
+    if not evenings or not evenings["recent_missed"]:
+        return None
+    missed = evenings["missed"]
+    count = evenings["recent_missed"]
+    return Finding(
+        HealthState.DEGRADED,
+        "evening_missed",
+        f"{count} of the last {min(evenings['recent'], evenings['due'])} closed evenings recorded "
+        f"no forecast (latest {missed[-1]}): permanent gaps in the prospective record, since a "
+        "forecast is never made after the next 09:30 open. Check the evening agent's log; "
+        f"{len(missed)} missed since {evenings['since']}.",
+    )
+
+
+def _evening_text(evenings: dict | None) -> str:
+    if not evenings:
+        return ""
+    missed = evenings["missed"]
+    shown = ", ".join(missed[-5:]) if missed else "none"
+    return (
+        f"evenings since {evenings['since']}: {evenings['recorded']} of {evenings['due']} "
+        f"recorded; missed (latest 5): {shown}; "
+    )
 
 
 def stock_lab_checks(
@@ -453,6 +515,9 @@ def stock_lab_checks(
             ),
         )
     findings = [Finding(state, reason, text), *common]
+    evening = _evening_finding(document.get("evenings"))
+    if evening is not None:
+        findings.append(evening)
     next_expected = document["schedule"].get("next_expected_at")
     if now is not None and next_expected:
         due = parse_timestamp("next_expected_at", next_expected)
@@ -478,7 +543,8 @@ def stock_lab_checks(
             threshold="the last scheduled update completed",
             summary=finding.summary,
             detail=f"last success {schedule.get('last_success_at')}; next expected "
-            f"{schedule.get('next_expected_at')}; {described}",
+            f"{schedule.get('next_expected_at')}; {_evening_text(document.get('evenings'))}"
+            f"{described}",
             evidence=evidence,
         )
     )
