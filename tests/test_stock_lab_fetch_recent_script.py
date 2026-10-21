@@ -18,6 +18,7 @@ from stock_lab_inference_helpers import Clock, ny
 from test_stock_lab_tiingo import FakeTransport, price_row
 
 from stock_agent.calendars import nyse_rules
+from stock_agent.data.vendors.tiingo import TOKEN_ENV, env_token
 from stock_agent.stock_lab.contracts import DataClass, SymbolReason, SymbolStatus
 from stock_agent.stock_lab.inference.schema import DB_NAME
 from stock_agent.stock_lab.inference.store import InferenceStore
@@ -68,7 +69,7 @@ def prices(start: int = 0, **overrides) -> tuple[int, bytes]:
     return 200, json.dumps(rows[start:]).encode()
 
 
-def run(research, tmp_path, argv, responses=()):
+def run(research, tmp_path, argv, responses=(), token_provider=lambda: KEY):
     transport = FakeTransport(list(responses))
     clock = Clock(NOW)
 
@@ -78,7 +79,7 @@ def run(research, tmp_path, argv, responses=()):
             return clock.now
 
         return StockAdapter(
-            token_provider=lambda: KEY,
+            token_provider=token_provider,
             transport=transport,
             sleep=lambda s: None,
             clock=stamped,
@@ -205,3 +206,19 @@ def test_a_failed_request_stops_the_run_without_the_key(research, tmp_path):
     code, text, _, inference = run(research, tmp_path, ["--authorized", "--store"], [(401, b"")])
     assert code == 1 and "invalid_token" in text and KEY not in text
     assert not inference.exists()
+
+
+def test_a_missing_key_stops_the_run_before_any_request_or_write(research, tmp_path, monkeypatch):
+    supported(research)
+    monkeypatch.delenv(TOKEN_ENV, raising=False)
+    before = research.path.read_bytes()
+    code, text, transport, inference = run(
+        research,
+        tmp_path,
+        ["--authorized", "--store"],
+        [prices() for _ in WATCHED],
+        token_provider=env_token,
+    )
+    assert code == 1 and "missing_token" in text and transport.calls == []
+    assert not inference.exists() and not inference.parent.exists()
+    assert research.path.read_bytes() == before

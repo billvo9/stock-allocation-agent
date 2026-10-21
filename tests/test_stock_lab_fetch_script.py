@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 from test_stock_lab_tiingo import FakeTransport, listing_zip, price_row
 
+from stock_agent.data.vendors.tiingo import TOKEN_ENV, env_token
 from stock_agent.stock_lab.store import DB_NAME, StockLabStore
 from stock_agent.stock_lab.symbols import parse_tickers
 from stock_agent.stock_lab.tiingo import StockAdapter
@@ -34,12 +35,12 @@ def store(tmp_path):
     return store
 
 
-def run(store, argv, responses=()):
+def run(store, argv, responses=(), token_provider=lambda: "k"):
     transport = FakeTransport(list(responses))
 
     def factory(**kwargs):
         return StockAdapter(
-            token_provider=lambda: "k", transport=transport, sleep=lambda s: None, **kwargs
+            token_provider=token_provider, transport=transport, sleep=lambda s: None, **kwargs
         )
 
     out = io.StringIO()
@@ -143,6 +144,22 @@ def test_a_failed_request_stops_the_run_without_the_key(store):
     code, text, _ = run(store, ["--authorized"], [(200, listing_zip(LISTING)), (401, b"")])
     assert code == 1 and "invalid_token" in text
     assert store.batches("AAPL") == ()
+
+
+@pytest.mark.parametrize("argv", [["--authorized", "--store"], ["--authorized"]])
+def test_a_missing_key_stops_the_run_before_any_request_or_write(store, monkeypatch, argv):
+    # Regression (2026-10-20): --store wrote the listing snapshot and the checks, then
+    # stopped with missing_token at the first prices request. The key is now checked first.
+    monkeypatch.delenv(TOKEN_ENV, raising=False)
+    database = store.path.read_bytes()
+    events = store.events()
+    code, text, transport = run(
+        store, argv, [(200, listing_zip(LISTING)), (200, prices())], token_provider=env_token
+    )
+    assert code == 1 and "missing_token" in text and transport.calls == []
+    assert store.latest_listing() is None and store.latest_checks() == {}
+    assert store.batches("AAPL") == ()
+    assert store.path.read_bytes() == database and store.events().equals(events)
 
 
 def test_weekdays_after_counts_weekdays():

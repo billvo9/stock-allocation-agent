@@ -30,7 +30,8 @@ the checks and one write-once price batch per ticker into the private Stock
 Lab store (stock_lab.store; outside the repository), only for tickers whose
 audit is ready (the others are reported, not stored). Sessions of the NYSE
 calendar that Tiingo did not serve are stored as rows without prices, so a
-gap stays a gap.
+gap stays a gap. A missing or malformed key stops an authorized run before
+any request or write.
 
 Usage:
     .venv/bin/python scripts/stock_lab_fetch.py                         # the plan only
@@ -144,6 +145,8 @@ def main(
 
     adapter = adapter_factory(authorized=True, max_requests=len(tickers) + 1)
     try:
+        # The listing needs no key, so check the key first: before any request or write.
+        adapter.check_key()
         listing = adapter.listing()
         ends = [row.end_date for row in listing.rows if row.end_date is not None]
         if not ends:

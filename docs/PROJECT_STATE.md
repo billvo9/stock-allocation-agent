@@ -924,9 +924,23 @@ the owner's answers and messages in session:
       252 sessions for 2025-10-17 to 2026-10-19.
   - **The dry-run condition.** The owner's 14:01 New York dry run targeted
     2026-10-19 and was refused for all four stocks (`after_next_open`), as
-    designed. A4's own condition, a successful end-to-end dry run, is
-    therefore not yet met. The activation change is to be merged only after
-    a dry run after 20:00 New York succeeds for every stock.
+    designed. The owner merged the activation change, PR #112 (merge commit
+    `0a82a86`), at 14:55 New York (18:55 UTC), before the dry run below.
+  - **Go-live, 2026-10-20** (from the terminal output the owner shared;
+    facts only, no new approval):
+    - At about 20:06 New York, `stock_lab_fetch_recent.py --authorized
+      --store` stored a 252-session window, 2025-10-20 to 2026-10-20, with
+      0 gaps for AMD, MRVL, MU and NVDA.
+    - The dry run (`stock_lab_daily.py --dry-run --model
+      2b6cd0c1…7fa65e7`, the id above) then targeted session 2026-10-20.
+      It produced next-session forecasts for 2026-10-21 for all four
+      stocks (Increase/Stable/Decrease, %): AMD 47/11/42, MRVL 48/13/39,
+      MU 45/14/41 and NVDA 44/16/40. B1's comparison was identical,
+      because the model is B1.
+    - **A4's dry-run condition is met**: a dry run after 20:00 New York
+      succeeded for every stock, before any real forecast was recorded.
+    - The first real forecasts were recorded at 20:16 New York. The
+      briefing reads "made Tue 20 Oct 2026, 20:16 New York".
   - It activates real forecast recording for this model id only. Any other
     model, including a later re-freeze, needs its own activation.
 - Pending:
