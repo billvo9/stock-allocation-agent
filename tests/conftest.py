@@ -93,6 +93,22 @@ def _hermetic_stock_lab_store(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _hermetic_stock_lab_health_inputs(tmp_path_factory):
+    """
+    No test writes the Stock Lab's Model Health input into the owner's shared
+    folder (~/stock-agent-private/health_inputs): the daily job's default is
+    the directory named by this variable. A test that writes there forgot
+    --health-inputs, so the session fails when it ends.
+    """
+
+    with pytest.MonkeyPatch.context() as patch:
+        missing = tmp_path_factory.mktemp("no-health-inputs") / "health_inputs"
+        patch.setenv("STOCK_AGENT_STOCK_LAB_HEALTH_INPUTS", str(missing))
+        yield
+    assert not missing.exists(), "a test wrote to the daily job's default health inputs"
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _hermetic_briefing_directory(tmp_path_factory):
     """
     No test reads or writes the owner's private briefing folder: the Lab's

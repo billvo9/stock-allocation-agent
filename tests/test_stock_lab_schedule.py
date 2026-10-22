@@ -7,10 +7,13 @@ private umask. A zone that would drift is refused (for the briefing, to 09:30;
 for the evening, an hour or more either way). run.sh runs only a clean main
 checkout, updates prices with the key from the Keychain and records the
 evening only after that succeeds, each step in a stripped environment; it is
-run here under the real /bin/zsh -f with a fake venv Python. The optional wakes
-are notes only; the dry run describes an email adapter and its approvals without
-an address, a credential or any code that could connect. Nothing is installed,
-loaded, connected or sent.
+run here under the real /bin/zsh -f with a fake venv Python. When git cannot read
+the checkout (macOS privacy protection keeps launchd jobs out of ~/Desktop), the refusal
+gives git's message and that cause, never a detached HEAD; the printer warns when
+it runs from such a folder. The evening writes its Model Health input to the shared
+~/stock-agent-private/health_inputs. The optional wakes are notes only; the dry run
+describes an email adapter and its approvals without an address, a credential or
+any code that could connect. Nothing is installed, loaded, connected or sent.
 """
 
 from __future__ import annotations
@@ -36,6 +39,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "stock_lab_schedule.py"
 NEW_YORK = ZoneInfo("America/New_York")
 MODEL = "2b6cd0c1a52f5ecfc16d6c8e221956d6fd23093826618e895949ac62e7fa65e7"
+# The home folder main() prints for: never this checkout's, wherever the checkout is, so the
+# protected-folder warning appears only in the tests that place the checkout inside it.
+HOME = Path("/Users/someone")
 
 
 def _script():
@@ -50,7 +56,7 @@ schedule = _script()
 
 def run(*args: str) -> tuple[int, str, str]:
     out, err = io.StringIO(), io.StringIO()
-    code = schedule.main(list(args), out=out, err=err)
+    code = schedule.main(list(args), out=out, err=err, home=HOME)
     return code, out.getvalue(), err.getvalue()
 
 
@@ -106,7 +112,7 @@ def test_a_zone_that_would_drift_to_the_open_is_refused_and_prints_nothing(zone)
 
 def test_the_evening_agent_starts_run_sh_at_2030_new_york_with_a_private_umask():
     code, printed, note = run()
-    assert code == 0 and printed == schedule.plist()
+    assert code == 0 and printed == schedule.plist(home=HOME)
     agent = plistlib.loads(schedule.plist("America/Los_Angeles", home=Path("/h")).encode())
     # Only zsh -f and the private run.sh: no variable, working folder or key in the file.
     assert agent == {
@@ -134,7 +140,7 @@ def test_the_evening_wake_is_given_in_the_macs_zone():
 
 def test_the_morning_check_agent_runs_the_check_at_0800_new_york_on_weekdays():
     code, printed, note = run("--morning-check")
-    assert code == 0 and printed == schedule.morning_check_plist()
+    assert code == 0 and printed == schedule.morning_check_plist(home=HOME)
     agent = plistlib.loads(schedule.morning_check_plist(home=Path("/h")).encode())
     assert agent == {
         "Label": "local.stock-lab.morning-check",
@@ -305,11 +311,14 @@ def test_the_email_dry_run_describes_the_adapter_and_its_approvals_only():
 
 def test_run_sh_updates_prices_then_records_the_activated_model_and_never_holds_the_key():
     code, printed, note = run("--run-sh", "--model", MODEL)
-    assert code == 0 and note == "" and printed == schedule.render_run_sh(MODEL)
+    assert code == 0 and note == "" and printed == schedule.render_run_sh(MODEL, home=HOME)
     lines = printed.splitlines()
     assert lines[0] == "#!/bin/zsh -f"  # none of the user's zsh startup files
     assert "set -u" in lines and "umask 077" in lines
     assert f"repo='{schedule.PROJECT}'" in lines and f"model={MODEL}" in lines
+    assert "git='/usr/bin/git'" in lines
+    # The Model Health input goes to the shared folder, whichever checkout runs the evening.
+    assert f"inputs='{HOME}/stock-agent-private/health_inputs'" in lines
     code_lines = [line for line in lines if not line.lstrip().startswith("#")]
     (fetch,) = [i for i, line in enumerate(lines) if line in code_lines and "fetch_recent" in line]
     (record,) = [i for i, line in enumerate(lines) if line in code_lines and "--record" in line]
@@ -317,7 +326,8 @@ def test_run_sh_updates_prices_then_records_the_activated_model_and_never_holds_
         '"${clean[@]}" "$python" scripts/stock_lab_fetch_recent.py --authorized --store --keychain'
     )
     assert lines[record] == (
-        '"${clean[@]}" "$python" scripts/stock_lab_daily.py --record-real --model "$model"'
+        '"${clean[@]}" "$python" scripts/stock_lab_daily.py --record-real --model "$model" '
+        '--health-inputs "$inputs"'
     )
     # The fetch's status is checked before the record step, which runs only after success.
     check = lines.index("if (( fetched != 0 )); then")
@@ -455,6 +465,21 @@ printf '%s\\n' "$notice" >> "$HOME/notices"
 exit 0
 """
 NOTIFIER = "the notifier's folder/notifier"  # the fake, in the test's home: quoting is run
+# Stands in for /usr/bin/git: the real git, except for the git command named in
+# $HOME/git-fails (symbolic-ref or status), which prints $HOME/git-message on stderr and
+# exits with $HOME/git-exit, as git does when it cannot read the checkout; an exit of 0
+# prints the message, then runs the real git (a warning on success).
+FAKE_GIT = """#!/bin/sh
+if [ -f "$HOME/git-fails" ] && [ "$3" = "$(cat "$HOME/git-fails")" ]; then
+  cat "$HOME/git-message" >&2
+  status=$(cat "$HOME/git-exit")
+  [ "$status" = 0 ] || exit "$status"
+fi
+exec {git} "$@"
+"""
+GIT_PROGRAM = "git's folder/git"  # the fake, in the test's home
+# What git printed on 2026-10-21, when launchd ran the evening from a checkout in ~/Desktop.
+PRIVACY_REFUSAL = "fatal: Unable to read current working directory: Operation not permitted"
 SECRET = "planted-secret-value"
 SHELL_OWN = {"PWD", "OLDPWD", "SHLVL", "_"}  # set by the fake Python's own shell
 STAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ stock lab evening "
@@ -492,16 +517,28 @@ def evening(tmp_path):
     (home / NOTIFIER).parent.mkdir()
     (home / NOTIFIER).write_text(FAKE_NOTIFIER, encoding="utf-8")
     (home / NOTIFIER).chmod(0o755)
+    (home / GIT_PROGRAM).parent.mkdir()
+    (home / GIT_PROGRAM).write_text(FAKE_GIT.format(git=shlex.quote(GIT)), encoding="utf-8")
+    (home / GIT_PROGRAM).chmod(0o755)
     _write_run_sh(home, repo)
     arguments = plistlib.loads(schedule.plist(home=home).encode())["ProgramArguments"]
     return repo, home, arguments, marker
 
 
 def _write_run_sh(home: Path, project: Path) -> None:
-    """run.sh for `project`, showing its notices with the fake notifier, never osascript."""
+    """
+    run.sh for `project` and `home`, showing its notices with the fake notifier, never
+    osascript, and reading the checkout with the fake git (the real one unless told).
+    """
 
     run_sh = schedule.private_folder(home) / schedule.RUN_SH
-    printed = schedule.render_run_sh(MODEL, project=project, notifier=str(home / NOTIFIER))
+    printed = schedule.render_run_sh(
+        MODEL,
+        project=project,
+        notifier=str(home / NOTIFIER),
+        home=home,
+        git=str(home / GIT_PROGRAM),
+    )
     # Never the real notifier: these tests must not show a notification on the Mac.
     assert not [
         line
@@ -549,7 +586,10 @@ def test_the_evening_updates_prices_then_records_with_only_the_named_variables(e
     assert done.stderr == ""
     assert _steps(home) == [
         "scripts/stock_lab_fetch_recent.py --authorized --store --keychain",
-        f"scripts/stock_lab_daily.py --record-real --model {MODEL}",
+        (
+            f"scripts/stock_lab_daily.py --record-real --model {MODEL} "
+            f"--health-inputs {home}/stock-agent-private/health_inputs"
+        ),
     ]
     assert _notices(home) == []  # a successful evening shows nothing
     assert not marker.exists()  # ~/.zshenv was never read
@@ -714,3 +754,207 @@ def test_the_evening_refuses_a_linked_worktree(evening):
     assert done.returncode == 3 and _steps(home) == []
     assert "is not the main checkout" in done.stderr
     assert _notices(home) == [NOTICE["refused"]]
+
+
+# --- the runner checkout: protected folders and honest refusals --------------------------
+
+
+@pytest.mark.parametrize(
+    "project, folder",
+    [
+        ("Desktop/OMSA/stock-allocation-agent", "Desktop"),
+        ("Documents/repo", "Documents"),
+        ("Downloads/repo", "Downloads"),
+        ("Desktop", "Desktop"),
+        ("desktop/repo", "Desktop"),  # macOS's default file system ignores case
+        ("stock-agent-runner", None),
+        ("Desktop-runner/repo", None),
+        ("Projects/Desktop/repo", None),  # only the home folder's own Desktop
+    ],
+)
+def test_a_checkout_in_a_folder_launchd_jobs_cannot_read_is_recognized(project, folder):
+    assert schedule.protected_folder(HOME / project, HOME) == folder
+    assert schedule.protected_folder(Path("/Users/other") / project, HOME) is None
+
+
+def test_a_home_folder_given_through_a_link_is_recognized_too(tmp_path):
+    real = tmp_path / "real home"
+    (real / "Desktop" / "repo").mkdir(parents=True)
+    link = tmp_path / "home link"
+    link.symlink_to(real)
+    checkout = (real / "Desktop" / "repo").resolve()  # as PROJECT is: resolved
+    assert schedule.protected_folder(checkout, link) == "Desktop"
+
+
+@pytest.mark.parametrize(
+    "args", [["--run-sh", "--model", MODEL], ["--briefing"], ["--morning-check"]]
+)
+def test_an_agent_printed_from_a_folder_launchd_jobs_cannot_read_is_warned_about(monkeypatch, args):
+    checkout = HOME / "Desktop" / "OMSA" / "stock-allocation-agent"
+    monkeypatch.setattr(schedule, "PROJECT", checkout)
+    code, printed, note = run(*args)
+    assert code == 0
+    (warning,) = [line for line in note.splitlines() if line.startswith("warning:")]
+    assert f"this checkout ({checkout}) is inside ~/Desktop" in warning
+    assert "Operation not permitted" in warning and "~/stock-agent-runner" in warning
+    # A warning, not a refusal: the file is printed for this checkout, and holds no warning.
+    assert str(checkout) in printed and "warning:" not in printed and warning not in printed
+
+
+@pytest.mark.parametrize(
+    "args",
+    [["--run-sh", "--model", MODEL], ["--briefing"], ["--morning-check"], [], ["--email-dry-run"]],
+)
+def test_no_warning_from_a_runner_checkout_or_for_what_runs_no_checkout_code(monkeypatch, args):
+    monkeypatch.setattr(schedule, "PROJECT", HOME / "stock-agent-runner")
+    assert "warning" not in run(*args)[2]
+    # The evening plist runs ~/stock-agent-private/stock_lab/run.sh, never the checkout, and
+    # the email dry run prints no agent: neither warns, wherever it is printed from.
+    if args in ([], ["--email-dry-run"]):
+        monkeypatch.setattr(schedule, "PROJECT", HOME / "Desktop" / "repo")
+        assert "warning" not in run(*args)[2]
+
+
+def test_the_evening_writes_where_every_checkouts_model_health_reads(tmp_path):
+    from stock_agent.health import stock_lab as health_stock_lab
+    from stock_agent.stock_lab import monitoring
+
+    shared = tmp_path / "stock-agent-private" / "health_inputs"
+    assert schedule.health_inputs(tmp_path) == monitoring.shared_inputs(tmp_path) == shared
+    assert tmp_path.joinpath(*health_stock_lab.SHARED_INPUTS) == shared
+    # Outside every checkout, so a runner clone and the owner's checkout share it.
+    assert schedule.health_inputs(tmp_path).parent == schedule.private_folder(tmp_path).parent
+
+
+def _git_fails(home: Path, command: str, message: str, status: int) -> None:
+    """Make the fake git fail `command` with `message` on stderr and exit `status`."""
+
+    (home / "git-fails").write_text(f"{command}\n", encoding="utf-8")
+    (home / "git-message").write_text(message, encoding="utf-8")
+    (home / "git-exit").write_text(f"{status}\n", encoding="utf-8")
+
+
+PRIVACY_CAUSE = (
+    "macOS privacy protection blocks launchd jobs from ~/Desktop, ~/Documents and ~/Downloads: "
+    "run the evening from a runner checkout outside them"
+)
+
+
+@needs_shell
+@pytest.mark.parametrize("command", ["symbolic-ref", "status"])
+def test_a_checkout_launchd_cannot_read_is_refused_with_gits_message_and_its_cause(
+    evening, command
+):
+    # What happened on 2026-10-21: run.sh said "detached HEAD" for a checkout in ~/Desktop.
+    repo, home, arguments, _ = evening
+    _git_fails(home, command, PRIVACY_REFUSAL + "\n", 128)
+    done = _launch(arguments, home)
+    assert done.returncode == schedule.REFUSED_EXIT and _steps(home) == []
+    (line,) = done.stderr.strip().splitlines()
+    assert re.fullmatch(
+        STAMP + rf"refused: git cannot read the checkout {re.escape(str(repo))} \(exit 128: "
+        rf"{re.escape(PRIVACY_REFUSAL)}\); {re.escape(PRIVACY_CAUSE)}; nothing was run",
+        line,
+    ), line
+    assert "detached" not in done.stderr and "uncommitted" not in done.stderr
+    assert _notices(home) == [NOTICE["refused"]]
+
+
+@needs_shell
+@pytest.mark.parametrize(
+    "command, message, status",
+    [
+        # /usr/bin/git without the developer tools exits 1, like a detached HEAD, but says so.
+        ("symbolic-ref", "xcrun: error: invalid active developer path\nmore detail\n", 1),
+        ("symbolic-ref", "", 128),
+        ("status", "fatal: index file corrupt\n", 128),
+    ],
+    ids=["exit-1-with-a-message", "no-message", "status-error"],
+)
+def test_any_other_git_error_is_reported_as_gits_own_never_as_a_detached_head(
+    evening, command, message, status
+):
+    repo, home, arguments, _ = evening
+    _git_fails(home, command, message, status)
+    done = _launch(arguments, home)
+    assert done.returncode == 3 and _steps(home) == []
+    (line,) = done.stderr.strip().splitlines()  # only git's first line, on one dated line
+    first = message.splitlines()[0] if message else "no message"
+    assert line.endswith(
+        f"refused: git cannot read the checkout {repo} (exit {status}: {first}); see git's "
+        "message; nothing was run"
+    ), line
+    assert "detached" not in line and "privacy" not in line
+    assert _notices(home) == [NOTICE["refused"]]
+
+
+@needs_shell
+@pytest.mark.parametrize("present", [True, False], ids=["plain-folder", "moved-away"])
+def test_a_folder_that_is_not_a_checkout_is_named_with_the_real_gits_message(
+    evening, tmp_path, present
+):
+    _, home, arguments, _ = evening
+    folder = tmp_path / "not a checkout"
+    if present:
+        folder.mkdir()
+    _write_run_sh(home, folder)
+    done = _launch(arguments, home)
+    assert done.returncode == 3 and _steps(home) == []
+    (line,) = done.stderr.strip().splitlines()
+    assert f"refused: git cannot read the checkout {folder} (exit 128: fatal: " in line, line
+    if present:
+        assert "not a git repository" in line and "; the folder is not a Git checkout;" in line
+    else:
+        assert "cannot change to" in line and "; see git's message;" in line
+    assert "detached" not in line
+
+
+@needs_shell
+@pytest.mark.parametrize("command", ["symbolic-ref", "status"])
+def test_a_warning_from_git_on_success_still_keeps_the_evening_from_starting(evening, command):
+    _, home, arguments, _ = evening
+    _git_fails(home, command, "warning: unable to access a configuration file\n", 0)
+    done = _launch(arguments, home)
+    assert done.returncode == 3 and _steps(home) == []
+    (line,) = done.stderr.strip().splitlines()  # one dated line, git's warning on it
+    if command == "symbolic-ref":
+        assert "(exit 0: warning: unable to access a configuration file)" in line, line
+    else:  # anything git status prints is not a clean tree; its first line is shown
+        assert line.endswith(
+            "has uncommitted or untracked changes, or git warned (git status --porcelain: "
+            "warning: unable to access a configuration file); nothing was run"
+        ), line
+    assert "detached" not in line
+    assert _notices(home) == [NOTICE["refused"]]
+
+
+@needs_shell
+@pytest.mark.parametrize(
+    "change, listed",
+    [
+        (lambda repo: (repo / "conftest.py").write_text("x\n", encoding="utf-8"), "?? conftest.py"),
+        (lambda repo: (repo / "README").write_text("edited\n", encoding="utf-8"), " M README"),
+    ],
+    ids=["untracked", "modified"],
+)
+def test_a_dirty_checkout_is_refused_with_its_first_change(evening, change, listed):
+    repo, home, arguments, _ = evening
+    change(repo)
+    done = _launch(arguments, home)
+    assert done.returncode == 3 and _steps(home) == []
+    (line,) = done.stderr.strip().splitlines()
+    assert line.endswith(
+        f"refused: {repo} has uncommitted or untracked changes, or git warned "
+        f"(git status --porcelain: {listed}); nothing was run"
+    ), line
+
+
+@needs_shell
+def test_control_characters_in_gits_message_never_reach_the_log(evening):
+    _, home, arguments, _ = evening
+    _git_fails(home, "symbolic-ref", "fatal: \x1b[31mred\x07 text\n", 128)
+    done = _launch(arguments, home)
+    assert done.returncode == 3
+    (line,) = done.stderr.strip().splitlines()
+    assert "(exit 128: fatal: ?[31mred? text)" in line, line
+    assert "\x1b" not in done.stderr and "\x07" not in done.stderr

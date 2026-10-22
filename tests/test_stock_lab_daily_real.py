@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -31,7 +32,7 @@ from stock_lab_inference_helpers import (
 
 from stock_agent.health.model import HealthState
 from stock_agent.health.stock_lab import stock_lab_checks
-from stock_agent.stock_lab import evening, registry, synthetic
+from stock_agent.stock_lab import evening, monitoring, registry, synthetic
 from stock_agent.stock_lab.contracts import DataClass
 from stock_agent.stock_lab.evaluation import EvaluationConfig, evaluate
 from stock_agent.stock_lab.store import DB_NAME, StockLabStore
@@ -245,3 +246,88 @@ def test_a_dry_run_reports_the_evenings_and_records_nothing(lab, monkeypatch):
     code, text = _main(lab, "--dry-run")
     assert code == 0 and f"missed (latest 5): {next_day(AS_OF)}" in text
     assert store.path.read_bytes() == before
+
+
+# --- the read-only environment check (--check-environment) ------------------------------
+
+
+def _check_environment(lab, model_id: str) -> tuple[int, str]:
+    store = lab[0]
+    out = io.StringIO()
+    code = daily.main(
+        ["--check-environment", "--model", model_id], store_factory=lambda: store, out=out
+    )
+    return code, out.getvalue()
+
+
+def _row(key: str, frozen: str, here: str, verdict: str) -> str:
+    return (
+        rf"\n  {re.escape(key)}\s+frozen {re.escape(frozen)}\s+here {re.escape(here)}\s+{verdict}\n"
+    )
+
+
+def test_the_environment_check_shows_the_frozen_versions_beside_this_pythons(
+    lab, tmp_path, monkeypatch
+):
+    store, _, model, _, _ = lab
+    # No override: a fall-through to the real job would write under this HOME.
+    monkeypatch.delenv(monitoring.HOME_ENV)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    runs = store.job_runs()
+    code, text = _check_environment(lab, model["model_id"][:16])
+    assert code == 0, text
+    assert set(model["environment"]) == {"python", "numpy", "pandas", "scikit-learn"}
+    for key, version in model["environment"].items():
+        assert re.search(_row(key, version, version, "same"), text), key
+    assert text.rstrip().endswith("same: the evening can load this model with this Python")
+    # Read-only: no run recorded, no forecast, no health input anywhere.
+    assert store.job_runs() == runs and all(store.forecasts(t) == () for t in SOURCES)
+    assert not (tmp_path / "home").exists()
+
+
+def test_a_different_environment_is_named_with_what_the_evening_needs(lab, monkeypatch):
+    _, _, model, _, _ = lab
+    frozen = model["environment"]
+    here = {**frozen, "python": "3.13", "numpy": "0.0.1"}
+    monkeypatch.setattr(registry, "environment", lambda: here)
+    code, text = _check_environment(lab, model["model_id"])
+    assert code == 1
+    assert re.search(_row("numpy", frozen["numpy"], "0.0.1", "DIFFERS"), text)
+    assert re.search(_row("python", frozen["python"], "3.13", "DIFFERS"), text)
+    assert re.search(_row("pandas", frozen["pandas"], frozen["pandas"], "same"), text)
+    assert "the evening would refuse this model (environment_mismatch)" in text
+    assert (
+        f"It needs a venv made from Python {frozen['python']} with exactly "
+        f"numpy=={frozen['numpy']}, never newer versions" in text
+    )
+
+
+def test_a_package_that_cannot_load_is_reported_not_raised(lab, monkeypatch):
+    def missing():
+        raise registry.metadata.PackageNotFoundError("scikit-learn")
+
+    monkeypatch.setattr(registry, "environment", missing)
+    code, text = _check_environment(lab, lab[2]["model_id"])
+    assert code == 1 and "cannot load the model" in text and "scikit-learn" in text
+
+
+@pytest.mark.parametrize("model_id", ["f" * 16, None])
+def test_the_environment_check_needs_one_registered_model(lab, model_id):
+    store = lab[0]
+    out = io.StringIO()
+    argv = ["--check-environment", *(["--model", model_id] if model_id else [])]
+    assert daily.main(argv, store_factory=lambda: store, out=out) == 2
+    assert "--model must name one registered real frozen model" in out.getvalue()
+
+
+def test_the_environment_check_is_its_own_mode(lab):
+    with pytest.raises(SystemExit) as stopped:
+        daily.main(["--check-environment", "--record-real", "--model", lab[2]["model_id"]])
+    assert stopped.value.code == 2
+    store, runs = lab[0], lab[0].job_runs()
+    for other in (["--demo-replay", "3"], ["--authorized"], ["--inference-window"]):
+        out = io.StringIO()
+        argv = ["--check-environment", "--model", lab[2]["model_id"], *other]
+        assert daily.main(argv, store_factory=lambda: store, out=out) == 2, other
+        assert "--check-environment takes --model ID only" in out.getvalue()
+    assert store.job_runs() == runs  # nothing ran

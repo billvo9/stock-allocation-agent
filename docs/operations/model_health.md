@@ -165,7 +165,12 @@ reports `insufficient_evidence` until an input exists. Worked examples:
 `stock_agent.health.fixtures`.
 
 **Location.** Producers write `reports/health_inputs/<artifact>/<run_id>.json`
-(ignored by Git). The local monitor reads the newest file per artifact by
+(ignored by Git). The Stock Lab's real daily job is the exception (since
+2026-10-21): it writes `~/stock-agent-private/health_inputs/stock_lab_monitor/`,
+outside every checkout, because its evening runs from a runner clone outside
+`~/Desktop` (runbook, "The runner checkout"). The local monitor reads the
+Stock Lab files from there once that folder holds a monitor file, else from
+`reports/health_inputs/`. The local monitor reads the newest file per artifact by
 `generated_at` (backtest summaries: the newest per `policy`, so every policy a
 run writes is judged); unreadable files beside a readable one are named and
 make the check at least degraded. CI reads only the synthetic fixtures.
@@ -240,7 +245,9 @@ Other inputs the local monitor reads where their producers write them:
   owner's kept copy of its head hash (`--ledger-head-backup`: a file whose
   first line is the hash the job printed after its last append).
 - **The Stock Lab's monitor files** (`stock_lab_monitor`), written by
-  `scripts/stock_lab_daily.py`: the job's status, each watched stock's
+  `scripts/stock_lab_daily.py` to `~/stock-agent-private/health_inputs/`
+  (`--stock-lab-inputs`, default that folder once it holds a monitor file,
+  else `--health-inputs`): the job's status, each watched stock's
   freshness, the rolling scores beside the baseline, input drift, trap
   outcomes, the ledger's verification and the lineage, and `symbols`, each
   watched ticker's latest provider-listing status

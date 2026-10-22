@@ -7,7 +7,19 @@ input (agreed envelope v1.0: artifact, schema_version, generated_at,
 code_sha, synthetic, run_id) with the fields `stock_agent.health.stock_lab`
 reads. `write_monitor` writes it once to
 `<health_inputs>/stock_lab_monitor/<run_id>.json` (exclusive create, strict
-JSON). Health recomputes nothing: every number here is measured by the job.
+JSON, mode 0600, in folders created with mode 0700). Health recomputes
+nothing: every number here is measured by the job.
+
+Where. The real job writes under `shared_inputs()`,
+~/stock-agent-private/health_inputs (since 2026-10-21): outside every
+checkout, so the evening run from a runner clone outside ~/Desktop and Model
+Health run from the owner's own checkout read the same files. Before, it
+wrote under the checkout it ran from (`reports/health_inputs/`), which the
+synthetic demo replay still uses. STOCK_AGENT_STOCK_LAB_HEALTH_INPUTS moves
+this writer's default only: the tests point it at a temporary folder, so no
+test can write into the owner's. Model Health does not follow it (read such
+a folder with `scripts/health_check.py local --stock-lab-inputs`), and the
+evening's run.sh passes the folder explicitly, with no variable reaching it.
 
 `symbols` (each watched ticker's listing status) is an optional, additive
 field, added 2026-10-17. `outcomes` (the real job's scoring counts: scored,
@@ -39,6 +51,10 @@ import numpy as np
 import pandas as pd
 
 ARTIFACT = "stock_lab_monitor"
+PRIVATE_FOLDER = "stock-agent-private"  # in the home folder: every private store and output
+SHARED_INPUTS = "health_inputs"
+HOME_ENV = "STOCK_AGENT_STOCK_LAB_HEALTH_INPUTS"  # moves shared_inputs() (module docstring)
+PRIVATE_MODE = 0o700  # every folder the writer creates
 SCHEMA_VERSION = "1.0"
 RECENT = 63
 DRIFT_FEATURES = ("ewma_vol", "ret_20", "rel_dollar_volume", "band_over_vol")
@@ -160,11 +176,38 @@ def monitor_document(
     )
 
 
+def shared_inputs(home: Path | None = None) -> Path:
+    """
+    The real job's health-inputs root: <home>/stock-agent-private/health_inputs
+    for a given `home`; otherwise HOME_ENV when set, else under the user's home
+    folder (module docstring). `stock_agent.health.stock_lab` and the
+    evening's run.sh name the same folder (tested equal).
+    """
+
+    if home is None:
+        configured = os.environ.get(HOME_ENV, "").strip()
+        if configured:
+            return Path(configured).expanduser()
+    return (home or Path.home()) / PRIVATE_FOLDER / SHARED_INPUTS
+
+
 def write_monitor(directory: Path, document: Mapping) -> Path:
-    """Write the document once to <directory>/stock_lab_monitor/<run_id>.json."""
+    """
+    Write the document once to <directory>/stock_lab_monitor/<run_id>.json
+    (mode 0600). Every missing folder on the way, `directory` included, is
+    created with mode 0700 whatever the umask; an existing one is never
+    changed.
+    """
 
     target = directory / ARTIFACT
-    target.mkdir(parents=True, exist_ok=True, mode=0o700)
+    missing = []
+    folder = target
+    while not folder.exists():
+        missing.append(folder)
+        folder = folder.parent
+    for folder in reversed(missing):
+        folder.mkdir(mode=PRIVATE_MODE)
+        os.chmod(folder, PRIVATE_MODE)  # mkdir's mode is masked by the umask
     path = target / f"{document['run_id']}.json"
     text = json.dumps(document, sort_keys=True, indent=1, allow_nan=False)
     descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)

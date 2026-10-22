@@ -548,8 +548,10 @@ How the ledger works:
 
 **Model Health** (`monitoring`, `stock_agent.health.stock_lab`):
 
-- The job writes `reports/health_inputs/stock_lab_monitor/<run_id>.json`
-  (envelope v1.0, write-once) with the fields Health reads.
+- The job writes `~/stock-agent-private/health_inputs/stock_lab_monitor/<run_id>.json`
+  (envelope v1.0, write-once; outside every checkout since 2026-10-21, so the
+  evening can run from a runner clone; the synthetic demo replay writes to
+  `reports/health_inputs/`) with the fields Health reads.
 - Five checks join the private monitor:
   - `data.stock_lab_freshness`;
   - `forecast.stock_lab_job`;

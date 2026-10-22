@@ -5,6 +5,16 @@ Stock Lab health from the daily job's monitor files (artifact
 producer (`stock_agent.stock_lab.monitoring`); this module only judges what
 the file records and recomputes nothing.
 
+Where (`inputs_root`). The real job writes under
+~/stock-agent-private/health_inputs/ (since 2026-10-21), outside every
+checkout, so its evening can run from a runner clone outside ~/Desktop while
+Model Health runs from another checkout. Until that folder holds a monitor
+file (`stock_lab_monitor/*.json`), the checkout's own health inputs are read,
+where the job wrote before: an empty folder never hides the last file there
+(an overdue job stays overdue). The writer's test override
+(STOCK_AGENT_STOCK_LAB_HEALTH_INPUTS) is not followed here; the local
+script's --stock-lab-inputs reads another folder.
+
 Fields besides the envelope (`inputs`):
 
     job          {status: ok | partial | failed | skipped, started_at,
@@ -98,6 +108,9 @@ from stock_agent.health.inputs import (
 from stock_agent.health.model import Area, Better, Check, HealthState, parse_timestamp
 
 ARTIFACT = "stock_lab_monitor"
+# The real job's shared root under the home folder (stock_lab.monitoring.shared_inputs, tested
+# equal; health imports nothing from the Stock Lab).
+SHARED_INPUTS = ("stock-agent-private", "health_inputs")
 JOB_STATUSES = frozenset({"ok", "partial", "failed", "skipped"})
 NOT_AUTHORIZED = "not_authorized"
 KEPT_STATES = frozenset(
@@ -363,6 +376,17 @@ def _evening_text(evenings: dict | None) -> str:
         f"evenings since {evenings['since']}: {evenings['recorded']} of {evenings['due']} "
         f"recorded; missed (latest 5): {shown}; "
     )
+
+
+def inputs_root(home: Path, checkout_inputs: Path | None) -> Path | None:
+    """
+    The root the Stock Lab checks read (module docstring): the shared folder
+    under `home` once its `stock_lab_monitor` folder holds a `*.json` file,
+    else `checkout_inputs`. Only names are listed here; nothing is read.
+    """
+
+    shared = home.joinpath(*SHARED_INPUTS)
+    return shared if any((shared / ARTIFACT).glob("*.json")) else checkout_inputs
 
 
 def stock_lab_checks(

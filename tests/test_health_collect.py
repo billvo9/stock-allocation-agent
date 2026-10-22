@@ -7,6 +7,7 @@ secrets), the code state, and scripts/health_check.py's exit codes.
 
 from __future__ import annotations
 
+import dataclasses
 import importlib.util
 import json
 import os
@@ -21,6 +22,7 @@ import pytest
 from stock_agent.data.funds.adapter import SYNTHETIC_FUND_IDS, SyntheticFundAdapter
 from stock_agent.data.funds.ingest import ingest_batch
 from stock_agent.health import collect, fixtures, forecast
+from stock_agent.health import stock_lab as health_stock_lab
 from stock_agent.health.context import code_state, run_context
 from stock_agent.health.model import AlertKind, Condition, HealthState, Scope, read_summary
 
@@ -608,6 +610,56 @@ def test_the_local_script_wires_the_private_inputs(root, tmp_path):
     assert summary.overall_state is HealthState.INSUFFICIENT_EVIDENCE
 
 
+def _stock_lab_file(inputs: Path, run_id: str) -> None:
+    document = fixtures.stock_lab_monitor()
+    document["run_id"] = run_id
+    fixtures.write_input(inputs, document)
+
+
+def test_the_local_script_reads_the_stock_labs_shared_inputs_once_its_job_writes_there(
+    root, tmp_path
+):
+    # The evening runs from a runner clone outside ~/Desktop and writes its monitor files to
+    # ~/stock-agent-private/health_inputs, while Model Health runs from another checkout.
+    script = _script()
+    home = tmp_path / "home"
+    checkout = tmp_path / "inputs"  # this checkout's reports/health_inputs: older files
+    _stock_lab_file(checkout, "job-from-the-desktop-checkout")
+    machine = dataclasses.replace(environment(root), home=home)
+    runs = iter(range(10))
+
+    def evidence(*extra: str) -> dict[str, str | None]:
+        out = tmp_path / f"out-{next(runs)}"
+        arguments = ["local", "--output-dir", str(out), "--health-inputs", str(checkout)]
+        assert script.main([*arguments, *extra], machine) in (0, 1)
+        summary = read_summary(out / "latest.json")
+        return {check.check_id: check.evidence for check in summary.checks}
+
+    before = evidence()
+    assert before["forecast.stock_lab_job"] == str(checkout / "stock_lab_monitor")
+    shared = home / "stock-agent-private" / "health_inputs"
+    (shared / "stock_lab_monitor").mkdir(parents=True)  # empty: still the checkout's files
+    assert evidence()["forecast.stock_lab_job"] == str(checkout / "stock_lab_monitor")
+    _stock_lab_file(shared, "job-from-the-runner")
+    after = evidence()
+    for check_id in health_stock_lab.TITLES:
+        assert after[check_id] == str(shared / "stock_lab_monitor"), check_id
+    # The other producers' inputs are still read from --health-inputs.
+    assert after["training.health"] == before["training.health"]
+    other = tmp_path / "elsewhere"
+    given = evidence("--stock-lab-inputs", str(other))
+    assert given["forecast.stock_lab_job"] == str(other / "stock_lab_monitor")
+
+
+def test_only_the_stock_lab_monitor_files_move_to_their_own_root(tmp_path):
+    inputs = collect.PrivateInputs(health_inputs=tmp_path / "a", stock_lab_inputs=tmp_path / "b")
+    assert inputs.artifact_directory("stock_lab_monitor") == tmp_path / "b" / "stock_lab_monitor"
+    assert inputs.artifact_directory("rl_training_health") == tmp_path / "a" / "rl_training_health"
+    unset = collect.PrivateInputs(health_inputs=tmp_path / "a")
+    assert unset.artifact_directory("stock_lab_monitor") == tmp_path / "a" / "stock_lab_monitor"
+    assert collect.PrivateInputs().artifact_directory("stock_lab_monitor") is None
+
+
 def test_the_script_refuses_both_github_and_a_run_list(root, tmp_path):
     with pytest.raises(SystemExit) as stopped:
         _script().main(
@@ -674,6 +726,7 @@ def test_the_ci_run_never_reads_a_private_path(root, tmp_path, monkeypatch):
         private / "health" / "latest.json",
         private / "stock_lab" / "stock_lab.sqlite3",
         private / "stock_lab" / "stock_lab_ledger_head",
+        private / "health_inputs" / "stock_lab_monitor" / "planted.json",
         private / "ledger_head.txt",
         private / "fund_store" / "batches.json",
         private / "prospective_store" / "batches.json",
@@ -697,9 +750,12 @@ def test_the_ci_run_never_reads_a_private_path(root, tmp_path, monkeypatch):
         home=home,
     )
     output = tmp_path / "out"
+    script = _script()  # loaded before the hook records: its own files are the repository's
     _opened = []
     try:
         summary, _ = collect.run_ci(env, output, verify=collect.run_verify(env, public=True))
+        # The script's ci command too: it must never resolve a private input either.
+        assert script.main(["ci", "--output-dir", str(tmp_path / "script-out")], env) in (0, 1)
     finally:
         touched, _opened = _opened, None
     assert summary.scope is Scope.SYNTHETIC and ids(summary) == PUBLIC_CHECKS

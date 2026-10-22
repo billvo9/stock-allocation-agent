@@ -19,10 +19,13 @@ Modes
         4. forecasts for stocks whose newest close is the expected session
            (decision A4), never for a stale one;
         5. the job run, the ledger and the `stock_lab_monitor` health input
-           (written to --health-inputs, default reports/health_inputs/), with
-           the kept ledger head check (stock_lab.job): the head hash is kept
-           in --ledger-head-backup, by default stock_lab_ledger_head beside
-           the store (a copy kept elsewhere is stronger).
+           (written to --health-inputs, default
+           ~/stock-agent-private/health_inputs/: outside every checkout, so
+           Model Health reads it whichever checkout runs; the demo replay's
+           synthetic files go to reports/health_inputs/), with the kept
+           ledger head check (stock_lab.job): the head hash is kept in
+           --ledger-head-backup, by default stock_lab_ledger_head beside the
+           store (a copy kept elsewhere is stronger).
        Without --record-real the job does steps 1, 3 and 5, records itself as
        skipped and not yet authorized (Model Health reads that as not
        activated, never as a degraded job; a run that stops still shows as
@@ -48,6 +51,14 @@ Modes
                       owner activated that model (decision A4:
                       evening.ACTIVATED_MODELS, only the models the owner
                       explicitly activated).
+    --check-environment --model ID
+                      read-only: this Python's minor version, numpy, pandas
+                      and scikit-learn beside the frozen model ID's recorded
+                      environment, which the real path requires exactly (it
+                      refuses the model otherwise). Run it with the venv that
+                      runs the evening, before the evening (docs/operations/
+                      runbook.md, "The runner checkout"). Exit 0 the same,
+                      1 different, 2 no such model.
 
 Scheduling: the unattended evening (`scripts/stock_lab_schedule.py`, which
 prints the launchd agent and its run.sh) runs
@@ -60,6 +71,7 @@ Usage:
     .venv/bin/python scripts/stock_lab_daily.py
     .venv/bin/python scripts/stock_lab_daily.py --dry-run --model ID
     .venv/bin/python scripts/stock_lab_daily.py --record-real --model ID   # after A4
+    .venv/bin/python scripts/stock_lab_daily.py --check-environment --model ID
 """
 
 from __future__ import annotations
@@ -79,6 +91,7 @@ from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
 from stock_agent.stock_lab import scoring
 from stock_agent.stock_lab.contracts import DataClass
 from stock_agent.stock_lab.job import NOT_AUTHORIZED, evening_record, record_run
+from stock_agent.stock_lab.monitoring import shared_inputs
 from stock_agent.stock_lab.replay import ReplayRefused, run_replay
 from stock_agent.stock_lab.store import StockLabStore, stamp, utc_now
 from stock_agent.stock_lab.synthetic import DEMO_IDS
@@ -87,7 +100,9 @@ REPLAY_CALENDAR = "synthetic_weekdays"
 KEPT_HEAD_NAME = "stock_lab_ledger_head"
 
 PROJECT = Path(__file__).resolve().parents[1]
-DEFAULT_HEALTH_INPUTS = PROJECT / "reports" / "health_inputs"
+# The synthetic demo's health inputs stay in this checkout; the real job's go to
+# monitoring.shared_inputs() (module docstring).
+DEMO_HEALTH_INPUTS = PROJECT / "reports" / "health_inputs"
 AVAILABILITY = "20:00"  # America/New_York: the job's earliest run time for a session's close
 
 
@@ -159,6 +174,66 @@ def _percent(row: dict) -> str:
         f"{label} {row[key]:.0%}"
         for label, key in (("Incr.", "p_increase"), ("Stab.", "p_stable"), ("Decr.", "p_decrease"))
     )
+
+
+def health_inputs(args: argparse.Namespace) -> Path:
+    """--health-inputs when given, else the demo's folder in this checkout or the shared one."""
+
+    if args.health_inputs is not None:
+        return args.health_inputs
+    return DEMO_HEALTH_INPUTS if args.demo_replay is not None else shared_inputs()
+
+
+def check_environment(store: StockLabStore, text: str | None, out: TextIO) -> int:
+    """--check-environment (module docstring): reads the store's frozen model only."""
+
+    record = _resolve_model(store, text)
+    if record is None:
+        print(
+            "refused: --model must name one registered real frozen model (its id, or an "
+            "unambiguous prefix of at least 16 characters)",
+            file=out,
+        )
+        return 2
+    try:
+        from stock_agent.stock_lab import registry  # the reviewed real path (decision A4)
+
+        here = registry.environment()
+    except ImportError as error:  # a package missing, or one that cannot load (metadata too)
+        print(f"differs: this Python ({sys.executable}) cannot load the model: {error}", file=out)
+        return 1
+    frozen = record["environment"]  # always present: the store re-checks every record
+    print(
+        f"frozen model {record['model_id'][:16]}: its environment beside this Python "
+        f"({sys.executable})",
+        file=out,
+    )
+    differ = []
+    for key in sorted(set(frozen) | set(here), key=lambda name: (name != "python", name)):
+        same = frozen.get(key) == here.get(key)
+        if not same:
+            differ.append(key)
+        print(
+            f"  {key:<13} frozen {frozen.get(key, 'not recorded'):<10} here "
+            f"{here.get(key, 'not checked'):<10} {'same' if same else 'DIFFERS'}",
+            file=out,
+        )
+    if not differ:
+        print("same: the evening can load this model with this Python", file=out)
+        return 0
+    needs = []
+    if "python" in differ:
+        needs.append(f"a venv made from Python {frozen.get('python', '(not recorded)')}")
+    pins = " ".join(f"{key}=={frozen[key]}" for key in differ if key != "python" and key in frozen)
+    if pins:
+        needs.append(f"exactly {pins}")
+    print(
+        f"differs: {', '.join(differ)}; the evening would refuse this model "
+        f"(environment_mismatch). It needs {' with '.join(needs) or 'the frozen environment'}, "
+        "never newer versions; or re-freeze the model",
+        file=out,
+    )
+    return 1
 
 
 def _real(args, *, store, clock, started, out, inference_path, calendar, calendar_id, kept_head):
@@ -305,11 +380,18 @@ def main(
     real = parser.add_mutually_exclusive_group()
     real.add_argument("--record-real", action="store_true")
     real.add_argument("--dry-run", action="store_true")
+    real.add_argument("--check-environment", action="store_true")
     parser.add_argument("--model", metavar="ID")
-    parser.add_argument("--health-inputs", type=Path, default=DEFAULT_HEALTH_INPUTS)
+    parser.add_argument("--health-inputs", type=Path, default=None)
     parser.add_argument("--ledger-head-backup", type=Path, default=None)
     args = parser.parse_args(argv)
     store = store_factory()
+    if args.check_environment:
+        if args.demo_replay is not None or args.authorized or args.inference_window:
+            print("refused: --check-environment takes --model ID only", file=out)
+            return 2
+        return check_environment(store, args.model, out)
+    args.health_inputs = health_inputs(args)
     started = clock()
     kept_head = args.ledger_head_backup or store.path.with_name(KEPT_HEAD_NAME)
 

@@ -17,15 +17,16 @@ run_local
     sources the private script passes in, `health.prospective`), the model
     registry and the latest ML experiment run, the prospective forecast
     ledger, the producers' health inputs (training health, the registry
-    export, backtest summaries under `reports/health_inputs/` by default) and
-    the newest RL evaluation report, each only when it exists (otherwise
-    insufficient_evidence). The scope is `private`; evidence paths are
-    absolute. It refuses to run inside GitHub Actions, and refuses an output
-    directory inside the repository unless Git ignores it, so a private
-    summary cannot be committed by accident. It keeps `latest.json`, a
-    write-once `history/` and per-run evidence, and compares each run with
-    the previous `latest.json` for deterioration alerts. It never deletes
-    anything.
+    export, backtest summaries under `reports/health_inputs/` by default; the
+    Stock Lab's monitor files under ~/stock-agent-private/health_inputs/
+    once its daily job writes there) and the newest RL evaluation report,
+    each only when it exists (otherwise insufficient_evidence). The scope is
+    `private`; evidence paths are absolute. It refuses to run inside GitHub
+    Actions, and refuses an output directory inside the repository unless
+    Git ignores it, so a private summary cannot be committed by accident. It
+    keeps `latest.json`, a write-once `history/` and per-run evidence, and
+    compares each run with the previous `latest.json` for deterioration
+    alerts. It never deletes anything.
 
 Clock, environment, subprocess runner and installed-version lookup are
 injected, so tests run without touching the real machine.
@@ -293,6 +294,9 @@ class PrivateInputs:
     # Producers' health inputs: <health_inputs>/<artifact>/<run_id>.json
     # (reports/health_inputs/ by agreement), the newest per artifact.
     health_inputs: Path | None = None
+    # The Stock Lab monitor files' root, when it differs from health_inputs
+    # (the shared ~/stock-agent-private/health_inputs: stock_lab.inputs_root).
+    stock_lab_inputs: Path | None = None
     registry: Path | None = None  # the registry root (reports/ml/registry)
     ml_artifacts: Path | None = None  # its artifacts root; default: the root's parent
     ml_root: Path | None = None  # the experiment runner's root (reports/ml): ledger.jsonl
@@ -305,7 +309,10 @@ class PrivateInputs:
     prospective: ProspectiveSources | None = None
 
     def artifact_directory(self, artifact: str) -> Path | None:
-        return None if self.health_inputs is None else self.health_inputs / artifact
+        root = self.health_inputs
+        if artifact == stock_lab.ARTIFACT and self.stock_lab_inputs is not None:
+            root = self.stock_lab_inputs
+        return None if root is None else root / artifact
 
 
 def check_private_output(environment: Environment, output_dir: Path) -> None:
