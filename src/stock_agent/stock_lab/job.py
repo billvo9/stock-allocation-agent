@@ -143,6 +143,21 @@ def symbol_status(store: StockLabStore, tickers: Sequence[str]) -> dict:
     return {"tickers": rows}
 
 
+def recorded_evenings(store: StockLabStore) -> set[str]:
+    """
+    The as-of sessions (YYYY-MM-DD) with a real forecast of any stock: the evenings recorded.
+    ForecastRefused or StoreRefused when a stored forecast no longer verifies. The morning
+    check (stock_lab.morning) reads the same set.
+    """
+
+    return {
+        record["as_of_session"]
+        for symbol in store.forecast_symbols(DataClass.REAL)
+        for record in store.forecasts(symbol)
+        if record["data_class"] == DataClass.REAL.value
+    }
+
+
 def evening_record(
     store: StockLabStore,
     *,
@@ -158,12 +173,7 @@ def evening_record(
     """
 
     try:
-        made = {
-            record["as_of_session"]
-            for symbol in store.forecast_symbols(DataClass.REAL)
-            for record in store.forecasts(symbol)
-            if record["data_class"] == DataClass.REAL.value
-        }
+        made = recorded_evenings(store)
     except (ForecastRefused, StoreRefused):
         return None
     if not made:

@@ -22,9 +22,12 @@ Modes
                           --record-real --model ID: that evening's forecasts.
                      A failed step 1 stops the run with its exit status: no
                      forecast is recorded that evening and none is backfilled
-                     later. The job takes its session from the wall clock and
-                     skips holidays from the NYSE calendar, so a run on a
-                     holiday records nothing new rather than inventing a session.
+                     later. A refusal, a failed step 1 or a failed step 2 shows
+                     one local notification (/usr/bin/osascript; a fixed notice,
+                     never a value), which never changes the exit status. The
+                     job takes its session from the wall clock and skips
+                     holidays from the NYSE calendar, so a run on a holiday
+                     records nothing new rather than inventing a session.
     --briefing       the premarket briefing: 08:30 New York time on weekdays,
                      scripts/stock_lab_briefing.py --preview, which writes the
                      briefing's files into the private briefing folder once
@@ -34,6 +37,14 @@ Modes
                      labelled late preview, never that day's delivery. An
                      optional wake five minutes earlier is printed as a note
                      on standard error, never run.
+    --morning-check [--time HH:MM]
+                     the optional morning check: at HH:MM New York time (08:00
+                     by default, before the 09:30 open) on weekdays,
+                     scripts/stock_lab_morning_check.py, which shows a local
+                     notification when last evening has no recorded forecast
+                     while it can still be recorded (it skips weekends and
+                     holidays itself). How to allow and test the notifications
+                     is printed as a note on standard error.
     --email-dry-run  what an email adapter for the briefing would do, and what
                      the owner must approve first. No email code exists.
 
@@ -56,10 +67,12 @@ To install, after reading the printed files and approving the installation
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.stock-lab.daily.plist
     .venv/bin/python scripts/stock_lab_schedule.py --briefing > ~/Library/LaunchAgents/local.stock-lab.briefing.plist
     launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.stock-lab.briefing.plist
+    .venv/bin/python scripts/stock_lab_schedule.py --morning-check > ~/Library/LaunchAgents/local.stock-lab.morning-check.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.stock-lab.morning-check.plist
 To remove one: launchctl bootout gui/$(id -u)/<label>, then delete its file.
 
 Logs go to ~/stock-agent-private/stock_lab/logs/ (private, outside Git) and
-keep each run's printed text; both agents write with a private umask (files
+keep each run's printed text; every agent writes with a private umask (files
 0600). An agent installed from an earlier printout keeps its old settings
 until it is printed again, booted out and bootstrapped. When the Mac is asleep
 at the scheduled time, launchd runs the job when it next wakes, so a sleeping
@@ -70,6 +83,7 @@ Usage:
     .venv/bin/python scripts/stock_lab_schedule.py [--zone America/Los_Angeles]
     .venv/bin/python scripts/stock_lab_schedule.py --run-sh --model ID
     .venv/bin/python scripts/stock_lab_schedule.py --briefing [--zone America/Chicago]
+    .venv/bin/python scripts/stock_lab_schedule.py --morning-check [--time 07:45]
     .venv/bin/python scripts/stock_lab_schedule.py --email-dry-run
 """
 
@@ -101,7 +115,28 @@ WAKE_TIME = (8, 25)  # an optional wake, five minutes before
 PMSET_DAYS = "MTWRFSU"  # pmset's weekday letters, Monday first
 KEYCHAIN_SERVICE = "stock-agent-briefing-email"
 KEYCHAIN_ACCOUNT = "stock-lab-briefing"  # a generic label, never the address
-PRIVATE_UMASK = 0o077  # both agents' files and logs: readable by the owner only
+PRIVATE_UMASK = 0o077  # every agent's files and logs: readable by the owner only
+MORNING_LABEL = "local.stock-lab.morning-check"
+MORNING_TIME = (8, 0)  # the morning check's default New York time
+OPEN_TIME = (9, 30)  # New York: after the open, last evening can no longer be recorded
+# The local notifications, as stock_agent.stock_lab.notify shows them (a test keeps the two
+# identical; this printer imports the standard library only). The notice is the run
+# handler's one argument, never part of the script.
+OSASCRIPT = "/usr/bin/osascript"
+NOTIFY_TIMEOUT = 10  # seconds a notifier may take before run.sh stops it (as notify.TIMEOUT)
+APPLESCRIPT = (
+    "on run argv",
+    'display notification (item 1 of argv) with title "Stock Lab"',
+    "end run",
+)
+# run.sh's notices: fixed, short and plain ASCII, so no value, price or key can reach one.
+EVENING_NOTICES = {
+    "refused": "tonight's run was refused by the checkout check - see the logs before 09:30",
+    "fetch_refused": "tonight's price update was refused before any request - see the logs "
+    "before 09:30",
+    "fetch_failed": "tonight's run failed (price update) - see the logs before 09:30",
+    "record_failed": "tonight's run failed (forecasts) - see the logs before 09:30",
+}
 
 
 def fixed_local_time(zone: str, new_york_time: tuple[int, int]) -> tuple[int, int, int]:
@@ -204,6 +239,48 @@ def briefing_plist(zone: str = "America/New_York", home: Path | None = None) -> 
     return _plist(BRIEFING_LABEL, when, [str(python), str(script), "--preview"], "briefing", home)
 
 
+def morning_time(text: str) -> tuple[int, int]:
+    """`text` as (hour, minute): HH:MM in ASCII digits, before OPEN_TIME; ValueError otherwise."""
+
+    digits = set("0123456789")
+    if len(text) != 5 or text[2] != ":" or not set(text[:2] + text[3:]) <= digits:
+        raise ValueError(f"--time takes HH:MM, New York time (for example 08:00), not {text!r}")
+    hour, minute = int(text[:2]), int(text[3:])
+    if hour > 23 or minute > 59:
+        raise ValueError(f"{text} is not a time of day")
+    if (hour, minute) >= OPEN_TIME:
+        raise ValueError(
+            f"the morning check must run before the 09:30 New York open (not {text}): after "
+            "it, last evening can no longer be recorded"
+        )
+    return hour, minute
+
+
+def morning_check_plist(
+    zone: str = "America/New_York", home: Path | None = None, at: tuple[int, int] = MORNING_TIME
+) -> str:
+    """The optional morning check's agent: `at` New York (08:00) on weekdays."""
+
+    python = PROJECT / ".venv" / "bin" / "python"
+    script = PROJECT / "scripts" / "stock_lab_morning_check.py"
+    when = fixed_local_time(zone, at)
+    return _plist(MORNING_LABEL, when, [str(python), str(script)], "morning-check", home)
+
+
+def morning_note() -> str:
+    """How to allow and test the morning check's notifications, as text (never run)."""
+
+    return (
+        "note: the morning check shows a local notification (osascript, which macOS lists as "
+        "Script Editor) only when last evening has no recorded forecast: before the 09:30 New "
+        "York open it can still be recorded. Allow notifications for Script Editor in System "
+        "Settings > Notifications (the Alerts style keeps each one on screen until dismissed), "
+        "then show the test notice once: .venv/bin/python scripts/stock_lab_morning_check.py "
+        "--test-notification. A check missed while the Mac sleeps runs at the next wake; keep "
+        "the evening agent's wake, since a missed evening cannot be recorded later.\n"
+    )
+
+
 def _pmset(zone: str, wake: tuple[int, int]) -> str:
     hour, minute, shift = fixed_local_time(zone, wake)
     days = "".join(PMSET_DAYS[(day + shift) % 7] for day in range(5))
@@ -248,16 +325,20 @@ def _quoted(text: str) -> str:
     return "'" + text.replace("'", "'\\''") + "'"
 
 
-def render_run_sh(model: str, project: Path = PROJECT) -> str:
+def render_run_sh(model: str, project: Path = PROJECT, notifier: str = OSASCRIPT) -> str:
     """
     The evening agent's run.sh for the activated `model` (its full 64-hex id). ValueError for
-    anything else; whether the model is activated is checked when the job runs.
+    anything else; whether the model is activated is checked when the job runs. `notifier`
+    shows its notices (osascript; a test passes a fake).
     """
 
     if len(model) != 64 or not set(model) <= HEX:
         raise ValueError("--model takes the activated model's full id (64 lowercase hex)")
     kept = " ".join(f'"{name}=${{{name}:-}}"' for name in KEPT_VARIABLES)
+    polls = NOTIFY_TIMEOUT * 5  # the notifier is checked every 0.2 seconds
     stamp = "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)"
+    shown = " ".join(f"-e {_quoted(line)}" for line in APPLESCRIPT)
+    notice = {key: _quoted(text) for key, text in EVENING_NOTICES.items()}
     return f"""#!/bin/zsh -f
 # Stock Lab: the unattended evening, started by launchd at 20:30 New York on weekdays
 # ({LABEL}). Printed by scripts/stock_lab_schedule.py --run-sh: to change it, print it
@@ -270,6 +351,9 @@ def render_run_sh(model: str, project: Path = PROJECT) -> str:
 # A failed step 1 stops the run with its exit status and a dated reason on stderr: no
 # forecast is recorded that evening, and none is backfilled later. Model Health shows a
 # stopped job (job_overdue) and, after the next evening, the missed one (evening_missed).
+# A refusal or a failed step also shows one local notification ({OSASCRIPT}): a fixed
+# notice, never a value, price or key, and it never changes the exit status. A run that
+# never starts cannot notify; the optional morning check (--morning-check) covers that.
 # zsh -f reads none of the user's startup files, and env -i passes each step only the
 # variables named below, so nothing exported in a profile or set in launchd's own
 # environment reaches either step.
@@ -279,14 +363,32 @@ repo={_quoted(str(project))}
 git=/usr/bin/git
 python="$repo/.venv/bin/python"
 model={model}
+notifier={_quoted(notifier)}
+plain=(/usr/bin/env -i {kept} PATH={SYSTEM_PATH})
+clean=(/usr/bin/env -i {kept} PATH={SYSTEM_PATH} "PYTHONPATH=$repo/src")
 say() {{
   print -u2 -r -- "{stamp} stock lab evening $1"
 }}
+# One local notification of a fixed notice, in a stripped environment (no PYTHONPATH),
+# never waiting for input, and stopped after {NOTIFY_TIMEOUT} seconds. A notifier that
+# fails, hangs or is missing is ignored, so the exit status stays the run's and the run
+# always ends.
+notify() {{
+  "${{plain[@]}}" "$notifier" {shown} "$1" </dev/null >/dev/null 2>&1 &
+  local shown=$! polls=0
+  while kill -0 $shown 2>/dev/null && (( polls < {polls} )); do
+    /bin/sleep 0.2
+    (( polls += 1 ))
+  done
+  kill $shown 2>/dev/null
+  wait $shown 2>/dev/null
+  return 0
+}}
 refuse() {{
   say "refused: $1; nothing was run"
+  notify {notice["refused"]}
   exit {REFUSED_EXIT}
 }}
-clean=(/usr/bin/env -i {kept} PATH={SYSTEM_PATH} "PYTHONPATH=$repo/src")
 # Only a clean main checkout runs: the job is unattended and reads the Tiingo key, so it
 # never executes a worktree, a feature branch or uncommitted code. Git runs in the same
 # stripped environment (no GIT_DIR or GIT_WORK_TREE from launchd), and lists every
@@ -299,7 +401,7 @@ changes=$("${{clean[@]}}" "$git" -C "$repo" status --porcelain --untracked-files
   --ignore-submodules=none) || refuse "git status failed in $repo"
 [[ -z "$changes" ]] || refuse "$repo has uncommitted or untracked changes (git status --porcelain)"
 cd "$repo" || refuse "cannot enter $repo"
-# Keep the Mac from idle sleep until this script, and the step it becomes, has exited.
+# Keep the Mac from idle sleep until this script, and each step it runs, has exited.
 if [[ -x /usr/bin/caffeinate ]]; then
   /usr/bin/caffeinate -i -w $$ </dev/null >/dev/null 2>&1 &!
 fi
@@ -307,9 +409,20 @@ fi
 fetched=$?
 if (( fetched != 0 )); then
   say "stopped: the price update failed (exit $fetched); no forecast was recorded tonight"
+  if (( fetched == 2 )); then
+    notify {notice["fetch_refused"]}
+  else
+    notify {notice["fetch_failed"]}
+  fi
   exit $fetched
 fi
-exec "${{clean[@]}}" "$python" scripts/stock_lab_daily.py --record-real --model "$model"
+"${{clean[@]}}" "$python" scripts/stock_lab_daily.py --record-real --model "$model"
+recorded=$?
+if (( recorded != 0 )); then
+  say "failed: the forecast step exited $recorded; see daily.out.log"
+  notify {notice["record_failed"]}
+fi
+exit $recorded
 """
 
 
@@ -389,11 +502,16 @@ def main(
     choice.add_argument("--briefing", action="store_true")
     choice.add_argument("--email-dry-run", action="store_true")
     choice.add_argument("--run-sh", action="store_true")
+    choice.add_argument("--morning-check", action="store_true")
     parser.add_argument("--zone", default="America/New_York")
     parser.add_argument("--model", metavar="ID")
+    parser.add_argument("--time", metavar="HH:MM")
     args = parser.parse_args(argv)
     if (args.model is not None) != args.run_sh:
         print("refused: --run-sh needs --model ID, and --model is for --run-sh only", file=err)
+        return 2
+    if args.time is not None and not args.morning_check:
+        print("refused: --time is for --morning-check only", file=err)
         return 2
     if args.email_dry_run:
         out.write(EMAIL_DRY_RUN)
@@ -404,6 +522,9 @@ def main(
             return 0
         if args.briefing:
             printed, note = briefing_plist(args.zone), wake_note(args.zone)
+        elif args.morning_check:
+            at = MORNING_TIME if args.time is None else morning_time(args.time)
+            printed, note = morning_check_plist(args.zone, at=at), morning_note()
         else:
             printed, note = plist(args.zone), evening_wake_note(args.zone)
     except ZoneInfoNotFoundError:

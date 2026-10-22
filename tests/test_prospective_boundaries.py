@@ -70,6 +70,10 @@ SCRIPT_CONSUMERS = {
     # is for, and the weekends and holidays before it), passed to the Stock Lab's briefing
     # modules, which never import it.
     "scripts/stock_lab_briefing.py",
+    # The Stock Lab's morning check: the rules calendar only (whether this morning is a
+    # session's, and which session's evening is still open), passed to the Stock Lab's
+    # morning module, which never imports it.
+    "scripts/stock_lab_morning_check.py",
 }
 CONSUMER_NAMES = {
     "stock_agent.data.prospective.inference": {
