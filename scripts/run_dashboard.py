@@ -2,8 +2,10 @@
 Launch the read-only diagnostics dashboard on this machine only.
 
 The server binds to 127.0.0.1 (Streamlit otherwise listens on all
-interfaces) and usage statistics are off. The dashboard reads saved runs
-under --root (default reports/), which must contain runs/<run_id>/.
+interfaces) and answers only to the host names 127.0.0.1 and localhost, so
+a web page whose name is rebound to this machine cannot read it. Usage
+statistics are off. The dashboard reads saved runs under --root (default
+reports/), which must contain runs/<run_id>/.
 
 Usage:
     .venv/bin/python scripts/run_dashboard.py [--root reports] [--port 8501]
@@ -31,6 +33,12 @@ def command(port: int) -> list[str]:
         str(APP),
         "--server.address",
         "127.0.0.1",
+        # DNS-rebinding protection: Streamlit accepts the app's WebSocket under
+        # any Host header unless this list names the ones the server answers to.
+        "--server.allowedHosts",
+        "127.0.0.1",
+        "--server.allowedHosts",
+        "localhost",
         "--server.port",
         str(port),
         "--server.headless",

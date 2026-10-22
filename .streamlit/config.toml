@@ -4,6 +4,9 @@
 # anywhere else.
 [server]
 address = "127.0.0.1"
+# DNS-rebinding protection: Streamlit accepts the app's WebSocket under any
+# Host header unless this list names the ones the server answers to.
+allowedHosts = ["127.0.0.1", "localhost"]
 headless = true
 
 [browser]

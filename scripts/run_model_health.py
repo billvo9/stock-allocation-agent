@@ -2,7 +2,9 @@
 Launch the Model Health page on this machine only.
 
 The server binds to 127.0.0.1 (Streamlit otherwise listens on all
-interfaces) and usage statistics are off. The page reads two summaries:
+interfaces) and answers only to the host names 127.0.0.1 and localhost, so
+a web page whose name is rebound to this machine cannot read it. Usage
+statistics are off. The page reads two summaries:
 
     --ci-summary     a summary downloaded from the daily health workflow;
                      default: the newest reports/health/ci/*/health_summary.json
@@ -49,6 +51,12 @@ def command(port: int) -> list[str]:
         str(APP),
         "--server.address",
         "127.0.0.1",
+        # DNS-rebinding protection: Streamlit accepts the app's WebSocket under
+        # any Host header unless this list names the ones the server answers to.
+        "--server.allowedHosts",
+        "127.0.0.1",
+        "--server.allowedHosts",
+        "localhost",
         "--server.port",
         str(port),
         "--server.headless",
