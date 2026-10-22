@@ -2,9 +2,11 @@
 Launch the Portfolio Lab (the product app) on this machine only.
 
 The server binds to 127.0.0.1 (Streamlit otherwise listens on all
-interfaces) and usage statistics are off. The lab runs in synthetic demo
-mode: every fund is synthetic demo data, not real fund performance, and the
-metrics are the approved descriptive calculations (OD8 group A).
+interfaces) and answers only to the host names 127.0.0.1 and localhost, so
+a web page whose name is rebound to this machine cannot read it. Usage
+statistics are off. The lab runs in synthetic demo mode: every fund is
+synthetic demo data, not real fund performance, and the metrics are the
+approved descriptive calculations (OD8 group A).
 
 The Lab's editorial theme (light and dark variants), its bundled fonts and
 static file serving come from the script-level config next to the app
@@ -56,6 +58,12 @@ def command(port: int) -> list[str]:
         str(APP),
         "--server.address",
         "127.0.0.1",
+        # DNS-rebinding protection: Streamlit accepts the app's WebSocket under
+        # any Host header unless this list names the ones the server answers to.
+        "--server.allowedHosts",
+        "127.0.0.1",
+        "--server.allowedHosts",
+        "localhost",
         "--server.port",
         str(port),
         "--server.headless",

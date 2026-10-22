@@ -24,8 +24,11 @@ presentation layer only.
 
 The launcher reads runs from `reports/runs/` (override with `--root`). It
 binds Streamlit to `127.0.0.1`: Streamlit otherwise listens on every
-network interface. Usage statistics are off. `.streamlit/config.toml`
-repeats these settings for launches from the repository root.
+network interface. It accepts only the host names `127.0.0.1` and
+`localhost` (`server.allowedHosts`), so a web page whose name is rebound to
+this machine (DNS rebinding) cannot open the app. Usage statistics are off.
+`.streamlit/config.toml` repeats these settings for launches from the
+repository root.
 
 
 ## Guarantees and how they are enforced

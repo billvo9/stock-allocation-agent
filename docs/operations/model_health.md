@@ -451,7 +451,9 @@ third shows a summary built from the synthetic fixtures (two synthetic
 registry versions), with local paths shortened to `~/demo`.
 
 **The technical page** (`.venv/bin/python scripts/run_model_health.py`)
-binds to 127.0.0.1 with usage statistics off and has two tabs, the
+binds to 127.0.0.1, answers only to the host names 127.0.0.1 and
+localhost (DNS-rebinding protection, as the Portfolio Lab and the research
+dashboard do), keeps usage statistics off and has two tabs, the
 downloaded CI summary (`--ci-summary`) and the local monitor's
 `latest.json` (`--local-summary`), with every field of every check.
 
