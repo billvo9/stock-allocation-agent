@@ -23,7 +23,8 @@ Rules for every entry:
 ## Where to look
 
 1. **Portfolio Lab, Model Health** (`.venv/bin/python
-   scripts/run_portfolio_lab.py`): the overall state, the next step, each
+   scripts/run_portfolio_lab.py`, or the Portfolio Lab app; see
+   [`portfolio_lab_app.md`](portfolio_lab_app.md)): the overall state, the next step, each
    area's worst state, and each check's exact value, threshold, reason code,
    evidence and runbook link (under "Exact measurements").
 2. **The private summary** (`PRIVATE` = `~/stock-agent-private/health`):
