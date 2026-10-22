@@ -10,10 +10,12 @@ gh or home directory is touched.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import io
 import os
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -72,9 +74,10 @@ def fake(
     now=NOW,
     branch="main",
     git="/usr/bin/git",
+    place="repo",
 ):
-    repo = tmp_path / "repo"
-    repo.mkdir(exist_ok=True)
+    repo = tmp_path / place
+    repo.mkdir(parents=True, exist_ok=True)
     if venv:
         (repo / ".venv" / "bin").mkdir(parents=True, exist_ok=True)
         (repo / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
@@ -238,20 +241,25 @@ def test_the_run_script_starts_clean_and_passes_only_named_variables(tmp_path):
     assert "set -u" in lines and "umask 077" in lines
     assert f"repo={machine.repo}" in lines and "git=/usr/bin/git" in lines
     health = machine.home / "stock-agent-private" / "health"
+    # One stripped environment, for git and for the monitor.
     assert (
-        'exec /usr/bin/env -i HOME="${HOME:-}" USER="${USER:-}" LOGNAME="${LOGNAME:-}" '
-        'TMPDIR="${TMPDIR:-}" \\\n'
-        f"  PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin PYTHONPATH={machine.repo / 'src'}"
-        " \\\n"
-        f"  {machine.repo / '.venv/bin/python'} scripts/health_check.py local \\\n"
-        f"  --output-dir {health} \\\n  --run-verify \\\n  --github\n"
+        'clean=(/usr/bin/env -i "HOME=${HOME:-}" "USER=${USER:-}" "LOGNAME=${LOGNAME:-}" '
+        '"TMPDIR=${TMPDIR:-}" PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin '
+        f"PYTHONPATH={machine.repo / 'src'})"
+    ) in lines
+    assert (
+        f'exec "${{clean[@]}}" {machine.repo / ".venv/bin/python"} scripts/health_check.py local'
+        f" \\\n  --output-dir {health} \\\n  --run-verify \\\n  --github\n"
     ) in script
     commands = [line for line in lines if not line.startswith("#")]
     assert not [line for line in commands if "export " in line]  # nothing exported to the job
     assert not [line for line in commands if "launchctl" in line]
     # The guard comes before anything runs from the checkout.
     assert script.index("refuse() {") < script.index('cd "$repo"') < script.index("exec ")
-    assert '[[ "$branch" == main ]] || refuse' in script and "status --porcelain" in script
+    assert '[[ "$branch" == main ]] || refuse' in script
+    # git never runs in launchd's environment: both calls are stripped.
+    assert script.count('"$git" -C') == script.count('"${clean[@]}" "$git" -C "$repo" ') == 2
+    assert "status --porcelain --untracked-files=all \\\n  --ignore-submodules=none" in script
 
 
 def test_relative_path_entries_never_reach_the_job(tmp_path, monkeypatch):
@@ -381,6 +389,7 @@ def test_write_never_follows_or_replaces_a_symlink(tmp_path):
         ({"venv": False}, "does not exist: create the project venv first"),
         ({"version": "3.11.9"}, "the venv is Python 3.11.9, not 3.12"),
         ({"platform": "linux"}, "launchd is macOS only"),
+        ({"place": "home/Desktop/OMSA/repo"}, "is inside ~/Desktop. macOS privacy protection"),
     ],
 )
 def test_write_refuses_a_place_the_job_could_not_run_from(tmp_path, capsys, setting, refusal):
@@ -398,6 +407,69 @@ def test_a_worktree_names_its_main_checkout(tmp_path):
     machine, _ = fake(tmp_path, worktree=True)
     assert setup.main_checkout(machine.repo) == tmp_path / "main"
     assert f"main checkout ({tmp_path / 'main'})" in plan_of(machine).refusals[0]
+
+
+def test_a_worktree_of_a_checkout_launchd_cannot_read_points_at_the_monitor_clone(tmp_path):
+    machine, _ = fake(tmp_path, worktree=True)
+    main = machine.home / "Desktop" / "OMSA" / "stock-allocation-agent"
+    (machine.repo / ".git").write_text(f"gitdir: {main}/.git/worktrees/x\n", encoding="utf-8")
+    (refusal,) = plan_of(machine).refusals
+    assert refusal.endswith("schedule the monitor from a clone such as ~/stock-agent-monitor")
+    assert str(main) not in refusal
+
+
+# --- checkouts launchd jobs cannot read --------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "place, folder",
+    [
+        ("home/Desktop/OMSA/stock-allocation-agent", "Desktop"),
+        ("home/Documents/repo", "Documents"),
+        ("home/Downloads/repo", "Downloads"),
+        ("home/desktop/repo", "Desktop"),  # macOS's default file system ignores case
+        ("home/stock-agent-monitor", None),
+        ("home/Desktop-runner/repo", None),
+        ("home/Projects/Desktop/repo", None),  # only the home folder's own Desktop
+        ("Desktop/repo", None),  # another folder's Desktop
+    ],
+)
+def test_a_checkout_launchd_jobs_cannot_read_is_refused_for_write(tmp_path, place, folder):
+    machine, _ = fake(tmp_path, place=place)
+    refusals = plan_of(machine).refusals
+    if folder is None:
+        assert refusals == ()
+        return
+    (refusal,) = refusals
+    assert refusal.startswith(f"this checkout ({machine.repo}) is inside ~/{folder}. ")
+    assert "this job would be refused every time it runs (git: Operation not permitted)" in refusal
+    assert "for example ~/stock-agent-monitor" in refusal and "Activate the scheduler" in refusal
+
+
+def test_the_dry_run_from_a_checkout_launchd_cannot_read_says_why_and_writes_nothing(tmp_path):
+    machine, launchctl = fake(tmp_path, place="home/Desktop/OMSA/stock-allocation-agent")
+    before = tree(tmp_path)
+    code, out = run(machine)
+    assert code == 0 and tree(tmp_path) == before and launchctl.calls == []
+    assert f"! --write would refuse: this checkout ({machine.repo}) is inside ~/Desktop." in out
+
+
+def test_a_home_folder_given_through_a_link_is_recognized_too(tmp_path):
+    real = tmp_path / "real home"
+    real.mkdir()
+    machine, _ = fake(tmp_path, place="real home/Desktop/repo")
+    link = tmp_path / "home link"
+    link.symlink_to(real)
+    machine = setup.Machine(**{**vars(machine), "repo": machine.repo.resolve(), "home": link})
+    assert setup.protected_folder(machine.repo, link) == "Desktop"
+    assert any("is inside ~/Desktop" in refusal for refusal in plan_of(machine).refusals)
+
+
+def test_the_protected_folders_are_the_stock_labs_word_for_word():
+    # A copy, since this script imports no other script: the two never drift apart.
+    schedule = _load("stock_lab_schedule")
+    assert setup.PROTECTED_FOLDERS == schedule.PROTECTED_FOLDERS
+    assert inspect.getsource(setup.protected_folder) == inspect.getsource(schedule.protected_folder)
 
 
 def test_the_only_launchctl_call_in_the_script_is_print():
@@ -534,6 +606,27 @@ needs_shell = pytest.mark.skipif(
 )
 # Stands in for the venv's Python: prints the environment it was given and its arguments.
 FAKE_PYTHON = '#!/bin/sh\n/usr/bin/env\necho "argv: $*"\n'
+# Stands in for git (as in tests/test_stock_lab_schedule.py): the real git, except for the git
+# command named in $HOME/git-fails (symbolic-ref or status), which prints $HOME/git-message on
+# stderr and exits with $HOME/git-exit, as git does when it cannot read the checkout; an exit
+# of 0 prints the message, then runs the real git (a warning on success).
+FAKE_GIT = """#!/bin/sh
+if [ -f "$HOME/git-fails" ] && [ "$3" = "$(cat "$HOME/git-fails")" ]; then
+  cat "$HOME/git-message" >&2
+  status=$(cat "$HOME/git-exit")
+  [ "$status" = 0 ] || exit "$status"
+fi
+exec {git} "$@"
+"""
+GIT_PROGRAM = "git's folder/git"  # the fake, in the test's home: its quoting is run too
+# What git printed on 2026-10-21, when launchd ran the Stock Lab's evening from ~/Desktop.
+PRIVACY_REFUSAL = "fatal: Unable to read current working directory: Operation not permitted"
+PRIVACY_CAUSE = (
+    "macOS privacy protection blocks launchd jobs from ~/Desktop, ~/Documents and ~/Downloads: "
+    "set the job up from a clone outside them"
+)
+DIRTY = "has uncommitted or untracked changes, or git warned (git status --porcelain: "
+STAMP = r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ health job refused: "
 SECRET = "planted-secret-value"
 # Variables a POSIX shell sets for itself when the fake Python starts.
 SHELL_OWN = {"PWD", "OLDPWD", "SHLVL", "_"}
@@ -570,29 +663,40 @@ def job(tmp_path):
     (home / ".zshenv").write_text(
         f"touch {marker}\nexport FROM_ZSHENV={SECRET}\n", encoding="utf-8"
     )
+    (home / GIT_PROGRAM).parent.mkdir()
+    (home / GIT_PROGRAM).write_text(FAKE_GIT.format(git=shlex.quote(GIT)), encoding="utf-8")
+    (home / GIT_PROGRAM).chmod(0o755)
+    return repo, home, _install(repo, home), marker
+
+
+def _install(repo: Path, home: Path) -> list[str]:
+    """
+    Write the job's run.sh for `repo`, reading the checkout with the fake git (the real one
+    unless told); the plist's command.
+    """
+
     machine = setup.Machine(
         repo=repo,
         home=home,
         env={},
         uid=UID,
         platform="darwin",
-        which={"gh": None, "git": GIT}.get,
+        which={"gh": None, "git": str(home / GIT_PROGRAM)}.get,
         runner=Launchctl(),
         now=lambda: NOW,
     )
     plan = plan_of(machine)
     where = setup.places(machine)
-    where.health.mkdir(parents=True)
+    where.health.mkdir(parents=True, exist_ok=True)
     where.run_sh.write_text(setup.render_run_sh(plan), encoding="utf-8")
     where.run_sh.chmod(0o700)
-    arguments = plistlib.loads(setup.render_plist(plan))["ProgramArguments"]
-    return repo, home, arguments, marker
+    return plistlib.loads(setup.render_plist(plan))["ProgramArguments"]
 
 
-def _launch(arguments, home: Path) -> subprocess.CompletedProcess:
+def _launch(arguments, home: Path, **extra: str) -> subprocess.CompletedProcess:
     """The plist's command with a launchd-like environment and a secret set for the job."""
 
-    environment = {
+    environment = extra | {
         "HOME": str(home),
         "USER": "someone",
         "LOGNAME": "someone",
@@ -629,11 +733,11 @@ def test_the_job_reads_no_profile_and_passes_only_the_named_variables(job):
         (lambda repo: _git(repo, "checkout", "-q", "--detach"), "has a detached HEAD"),
         (
             lambda repo: (repo / "conftest.py").write_text("print('hi')\n", encoding="utf-8"),
-            "has uncommitted or untracked changes",
+            DIRTY + "?? conftest.py)",
         ),
         (
             lambda repo: (repo / "README").write_text("edited\n", encoding="utf-8"),
-            "has uncommitted or untracked changes",
+            DIRTY + " M README)",
         ),
     ],
     ids=["feature-branch", "detached", "untracked-file", "modified-file"],
@@ -652,6 +756,128 @@ def test_the_job_refuses_anything_but_a_clean_main_and_runs_nothing(job, change,
     ), line
 
 
+def _git_fails(home: Path, command: str, message: str, status: int) -> None:
+    """Make the fake git fail `command` with `message` on stderr and exit `status`."""
+
+    (home / "git-fails").write_text(f"{command}\n", encoding="utf-8")
+    (home / "git-message").write_text(message, encoding="utf-8")
+    (home / "git-exit").write_text(f"{status}\n", encoding="utf-8")
+
+
+def _refusal(done: subprocess.CompletedProcess) -> str:
+    """The job's one dated stderr line, once it is known to have refused and run nothing."""
+
+    assert done.returncode == setup.REFUSED_EXIT, done.stderr
+    assert "argv:" not in done.stdout  # the monitor never started
+    (line,) = done.stderr.strip().splitlines()
+    assert re.match(STAMP, line), line
+    return line
+
+
+@needs_shell
+@pytest.mark.parametrize("command", ["symbolic-ref", "status"])
+def test_a_checkout_launchd_cannot_read_is_refused_with_gits_message_and_its_cause(job, command):
+    # As the Stock Lab's evening was on 2026-10-21, when its run.sh said "detached HEAD".
+    repo, home, arguments, _ = job
+    _git_fails(home, command, PRIVACY_REFUSAL + "\n", 128)
+    line = _refusal(_launch(arguments, home))
+    assert line.endswith(
+        f"refused: git cannot read the checkout {repo} (exit 128: {PRIVACY_REFUSAL}); "
+        f"{PRIVACY_CAUSE}; nothing was run"
+    ), line
+    assert "detached" not in line and "uncommitted" not in line
+
+
+@needs_shell
+@pytest.mark.parametrize(
+    "command, message, status",
+    [
+        # /usr/bin/git without the developer tools exits 1, like a detached HEAD, but says so.
+        ("symbolic-ref", "xcrun: error: invalid active developer path\nmore detail\n", 1),
+        ("symbolic-ref", "", 128),
+        ("status", "fatal: index file corrupt\n", 128),
+    ],
+    ids=["exit-1-with-a-message", "no-message", "status-error"],
+)
+def test_any_other_git_error_is_reported_as_gits_own_never_as_a_detached_head(
+    job, command, message, status
+):
+    repo, home, arguments, _ = job
+    _git_fails(home, command, message, status)
+    line = _refusal(_launch(arguments, home))  # only git's first line, on one dated line
+    first = message.splitlines()[0] if message else "no message"
+    assert line.endswith(
+        f"refused: git cannot read the checkout {repo} (exit {status}: {first}); see git's "
+        "message; nothing was run"
+    ), line
+    assert "detached" not in line and "privacy" not in line
+
+
+@needs_shell
+@pytest.mark.parametrize("present", [True, False], ids=["plain-folder", "moved-away"])
+def test_a_folder_that_is_not_a_checkout_is_named_with_the_real_gits_message(
+    job, tmp_path, present
+):
+    _, home, _, _ = job
+    folder = tmp_path / "not a checkout"
+    if present:
+        folder.mkdir()
+    line = _refusal(_launch(_install(folder, home), home))
+    assert f"refused: git cannot read the checkout {folder} (exit 128: fatal: " in line, line
+    if present:
+        assert "not a git repository" in line and "; the folder is not a Git checkout;" in line
+    else:
+        assert "cannot change to" in line and "; see git's message;" in line
+    assert "detached" not in line
+
+
+@needs_shell
+@pytest.mark.parametrize("command", ["symbolic-ref", "status"])
+def test_a_warning_from_git_on_success_still_keeps_the_job_from_starting(job, command):
+    repo, home, arguments, _ = job
+    _git_fails(home, command, "warning: unable to access a configuration file\n", 0)
+    line = _refusal(_launch(arguments, home))  # one dated line, git's warning on it
+    if command == "symbolic-ref":
+        assert "(exit 0: warning: unable to access a configuration file)" in line, line
+    else:  # anything git status prints is not a clean tree; its first line is shown
+        assert line.endswith(
+            f"refused: {repo} has uncommitted or untracked changes, or git warned (git status "
+            "--porcelain: warning: unable to access a configuration file); nothing was run"
+        ), line
+    assert "detached" not in line
+
+
+@needs_shell
+@pytest.mark.parametrize("hidden_by", ["git-variables", "git-configuration"])
+def test_git_variables_and_configuration_cannot_hide_a_dirty_checkout(job, tmp_path, hidden_by):
+    repo, home, arguments, _ = job
+    (repo / "src").mkdir()
+    (repo / "src" / "sitecustomize.py").write_text("print('runs first')\n", encoding="utf-8")
+    extra = {}
+    if hidden_by == "git-variables":  # launchd's environment points git at a clean main
+        other = tmp_path / "other"
+        other.mkdir()
+        _git(other, "init", "-q", "-b", "main")
+        (other / "README").write_text("clean\n", encoding="utf-8")
+        _git(other, "add", ".")
+        _git(other, "commit", "-q", "-m", "start")
+        extra = {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other)}
+    else:
+        _git(repo, "config", "status.showUntrackedFiles", "no")  # would hide untracked files
+    line = _refusal(_launch(arguments, home, **extra))
+    # Every untracked file is listed, not only its folder (src/).
+    assert line.endswith("(git status --porcelain: ?? src/sitecustomize.py); nothing was run"), line
+
+
+@needs_shell
+def test_control_characters_in_gits_message_never_reach_the_log(job):
+    _, home, arguments, _ = job
+    _git_fails(home, "symbolic-ref", "fatal: \x1b[31mred\x07 text\n", 128)
+    done = _launch(arguments, home)
+    assert "(exit 128: fatal: ?[31mred? text)" in _refusal(done)
+    assert "\x1b" not in done.stderr and "\x07" not in done.stderr
+
+
 def test_status_explains_a_refused_run(tmp_path):
     printed = PRINTED.replace("last exit code = 0", "last exit code = 3")
     machine, _ = fake(tmp_path, launchctl=Launchctl(loaded=True, text=printed))
@@ -664,5 +890,8 @@ def test_status_explains_a_refused_run(tmp_path):
     )
     code, out = run(machine, "--status")
     assert code == 1
-    assert "last exit 3: refused: the checkout is not a clean main" in out
+    assert (
+        "last exit 3: refused: the checkout is not a clean main, or git cannot read it (see the "
+        "stderr log)"
+    ) in out
     assert "summary   stale" in out and "is on branch x, not main" in out

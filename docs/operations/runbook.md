@@ -80,17 +80,84 @@ deletion, and fails.)
 
 The private monitor runs once a day under launchd, on the owner's Mac only.
 `scripts/setup_health_schedule.py` prepares it; installing it is the
-owner's step. Run every command from the main checkout, never from a
-worktree: the script refuses to write from a linked worktree.
+owner's step. Run every command from the **monitor clone**,
+`~/stock-agent-monitor` (below), never from a worktree or from a checkout in
+`~/Desktop`, `~/Documents` or `~/Downloads`, such as your own checkout.
+macOS privacy protection keeps launchd jobs out of those folders, so a job
+set up from one would be refused every morning (git: `Operation not
+permitted`; "The runner checkout" explains why). The script refuses to write
+from a linked worktree or from those folders, and its dry run says why.
 
 **The job runs only a clean `main`.** It runs unattended and uses `gh`'s
 sign-in, so before anything from the checkout runs, `run.sh` checks the
-branch and `git status --porcelain`. On a feature branch, a detached HEAD or
-with any uncommitted or untracked file, it runs nothing and exits 3 with a
-dated line on stderr: `health job refused: <reason>; nothing was run`.
-Before the scheduled time, keep the main checkout on `main` with nothing
-uncommitted or untracked (commit, remove, or add to `.gitignore`); work on
-branches in worktrees. The dry run warns when the checkout is not on main.
+branch and `git status --porcelain --untracked-files=all`, with git in the
+same stripped environment as the monitor. On a feature branch, a detached
+HEAD, with any uncommitted or untracked file, or when git prints a warning,
+it runs nothing and exits 3 with a dated line on stderr: `health job
+refused: <reason>; nothing was run`. The reason names the first change.
+When git cannot read the checkout at all, the reason is git's own message
+and its likely cause, never "detached HEAD": `git cannot read the checkout
+<repo> (exit 128: fatal: Unable to read current working directory:
+Operation not permitted); macOS privacy protection blocks launchd jobs from
+~/Desktop, ~/Documents and ~/Downloads: set the job up from a clone outside
+them`. Keep the monitor clone a clean `main`: never edit files, switch
+branches or commit in it. The dry run warns when the checkout is not on
+main.
+
+**The monitor clone (create once).** These steps are yours to run; they use
+the network (GitHub and the package index). It is set up like the Stock
+Lab's runner ("The runner checkout", which explains each step), without the
+frozen-model check.
+
+1. Clone the repository directly in your home folder:
+
+   ```bash
+   git clone https://github.com/billvo9/stock-allocation-agent.git ~/stock-agent-monitor
+   ```
+
+2. Make its venv from the same Python as your checkout's `.venv`. From your
+   checkout:
+
+   ```bash
+   "$(sed -n 's/^home = //p' .venv/pyvenv.cfg)/python3.12" -m venv ~/stock-agent-monitor/.venv
+   ```
+
+3. Install the requirements under the versions your checkout's gates
+   verified, from wheels only, then check them. Record the versions from
+   your checkout:
+
+   ```bash
+   .venv/bin/python -m pip freeze --exclude-editable > ~/stock-agent-private/monitor-constraints.txt
+   ```
+
+   ```bash
+   ~/stock-agent-monitor/.venv/bin/python -m pip install --only-binary=:all: -r ~/stock-agent-monitor/requirements.txt -c ~/stock-agent-private/monitor-constraints.txt
+   ```
+
+   ```bash
+   ~/stock-agent-monitor/.venv/bin/python -m pip check
+   ```
+
+   The project itself is not installed into this venv: the commands below
+   and the job import it from the clone's `src` (`PYTHONPATH`).
+4. Confirm that the clone holds the reviewed `main`. After `git fetch` in
+   your checkout, these two commands must print the same commit:
+
+   ```bash
+   git -C ~/stock-agent-monitor rev-parse HEAD
+   ```
+
+   ```bash
+   git rev-parse origin/main
+   ```
+
+**Update the monitor clone** (it follows `main`; for example after each
+merge): only `git -C ~/stock-agent-monitor pull --ff-only`. A pull that is
+not a fast-forward stops rather than merging. When a merged change adds or
+changes a requirement, install only that package, at the exact version your
+checkout's verified venv has, with `--only-binary=:all:`. Write the job's
+files again ("To change the job", below) only when the change touched
+`scripts/setup_health_schedule.py`.
 
 **Its environment.** launchd starts `/bin/zsh -f run.sh`: `-f` reads none of
 your zsh startup files, so nothing in `~/.zshenv` runs or is exported.
@@ -102,13 +169,15 @@ a profile or `launchctl setenv` (for example `TIINGO_API_KEY`) reaches
 1. **Dry run.** Nothing is written:
 
    ```bash
-   .venv/bin/python scripts/setup_health_schedule.py
+   cd ~/stock-agent-monitor && PYTHONPATH=src .venv/bin/python scripts/setup_health_schedule.py
    ```
 
    It prints the repository, the venv, `gh`, the schedule (07:30 local time
    by default, `--at HH:MM`), each health option it passes or leaves out
    with the reason, the inputs read from fixed places, the Stock Lab's
    store, kept head and daily agent, and then the exact `run.sh` and plist.
+   It ends with each reason `--write` would refuse, for example `! --write
+   would refuse: this checkout (...) is inside ~/Desktop.`
 2. **Review.** Read both files. Name an input kept elsewhere
    (`--fund-store`, `--prospective-store`, `--ledger-head-backup`,
    `--anchors`, `--ledger`) or leave a step out (`--no-verify`,
@@ -118,7 +187,7 @@ a profile or `launchctl setenv` (for example `TIINGO_API_KEY`) reaches
 3. **Write.** The same command with `--write`:
 
    ```bash
-   .venv/bin/python scripts/setup_health_schedule.py --write
+   cd ~/stock-agent-monitor && PYTHONPATH=src .venv/bin/python scripts/setup_health_schedule.py --write
    ```
 
    It creates `~/stock-agent-private/health/run.sh` (mode 700) and
@@ -156,14 +225,16 @@ a profile or `launchctl setenv` (for example `TIINGO_API_KEY`) reaches
    | 0 | The run finished; the overall state is not failed | Nothing |
    | 1 | The run finished; the overall state is failed | Open the Lab page's first failed check and its runbook entry |
    | 2 | `health_check.py` refused (for example an output directory Git would track) | Read the last stderr line |
-   | 3 | Refused: the checkout is not a clean `main`; nothing ran | Switch the main checkout to `main` and clean it, then `launchctl kickstart -k gui/$(id -u)/local.stock-agent.health` |
+   | 3 | Refused: the checkout is not a clean `main`, or git cannot read it (git's message is in the reason); nothing ran | Make the monitor clone a clean `main` again (`git -C ~/stock-agent-monitor status`); for `Operation not permitted`, set the job up from `~/stock-agent-monitor` (outside `~/Desktop`). Then `launchctl kickstart -k gui/$(id -u)/local.stock-agent.health` |
 
    ```bash
-   .venv/bin/python scripts/setup_health_schedule.py --status
+   cd ~/stock-agent-monitor && PYTHONPATH=src .venv/bin/python scripts/setup_health_schedule.py --status
    ```
 
-6. **View.** `.venv/bin/python scripts/run_portfolio_lab.py`, Model Health:
-   the page reads `latest.json` and names each check's condition.
+6. **View.** From your own checkout, as usual: `.venv/bin/python
+   scripts/run_portfolio_lab.py`, Model Health. The page reads
+   `~/stock-agent-private/health/latest.json`, outside every checkout, and
+   names each check's condition.
 
 To change the job, unload it (`launchctl bootout
 gui/$(id -u)/local.stock-agent.health`), move `run.sh` or the plist aside,
