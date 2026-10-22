@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Portfolio Lab mark: the simplified icon (portfolio-lab-icon-small.svg) on a
+  rounded square, for places that do not round it themselves, such as the
+  browser tab (src/stock_agent/app/static/portfolio-lab-icon.png). Original artwork.
+
+  The rounded square is a superellipse (|x|^5 + |y|^5 = 1), close to the macOS
+  icon shape, drawn as eight cubic curves, one per half corner.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Portfolio Lab</title>
+  <defs>
+    <linearGradient id="surface" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#352D26"/>
+      <stop offset="1" stop-color="#13110F"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="778" cy="482" r="572" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DE8C66" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#DE8C66" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="band-outer" x1="592" y1="0" x2="1064" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DE8C66" stop-opacity="0.62"/>
+      <stop offset="1" stop-color="#DE8C66" stop-opacity="0.22"/>
+    </linearGradient>
+    <linearGradient id="band-inner" x1="592" y1="0" x2="1064" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F2BC72" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#F2BC72" stop-opacity="0.34"/>
+    </linearGradient>
+    <clipPath id="tile">
+      <path d="M1024,512 C1024,755.6 1029.8,885.7 957.7,957.7 C885.7,1029.8 755.6,1024 512,1024
+               C268.4,1024 138.3,1029.8 66.3,957.7 C-5.8,885.7 0,755.6 0,512
+               C0,268.4 -5.8,138.3 66.3,66.3 C138.3,-5.8 268.4,0 512,0
+               C755.6,0 885.7,-5.8 957.7,66.3 C1029.8,138.3 1024,268.4 1024,512 Z"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="1024" height="1024" fill="url(#surface)"/>
+    <rect width="1024" height="1024" fill="url(#glow)"/>
+    <path d="M592,532 Q592,352 1064,35 L1064,755 Q592,712 592,532 Z" fill="url(#band-outer)"/>
+    <path d="M592,532 Q592,445 1064,221 L1064,569 Q592,619 592,532 Z" fill="url(#band-inner)"/>
+    <circle cx="592" cy="532" r="149" fill="#DE8C66" fill-opacity="0.55"/>
+    <polyline points="137,770 323,572 435,671 592,532" fill="none"
+              stroke="#F6F1E9" stroke-width="124" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="592" cy="532" r="99" fill="#FFFDF8"/>
+  </g>
+</svg>

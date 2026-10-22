@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Portfolio Lab app icon, full detail (used from 64 pixels up). Original artwork.
+
+  A price line rises and falls up to a dashed vertical "now" line, the decision
+  time: nothing to its right is known yet. From there a forecast fan opens: an
+  outer and an inner probability band around a dashed median. Each band's edges
+  are quadratic curves whose half-width grows with the square root of the
+  horizon, the way forecast uncertainty usually grows.
+
+  Colours: the Portfolio Lab's dark scheme (src/stock_agent/ui/theme.py): a warm
+  near-black surface, ivory #F3EEE6, terracotta #DE8C66 and amber #F2BC72.
+
+  Full bleed on purpose: on macOS 27 (tested on a Retina display) the system
+  masks a full-bleed icon into its own rounded square, while a draft with
+  transparent margins was placed on a grey tile. portfolio-lab-icon-small.svg is
+  the simplified version for 16 and 32 pixels; portfolio-lab-mark.svg is the
+  rounded mark for the browser tab.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Portfolio Lab</title>
+  <defs>
+    <linearGradient id="surface" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#352D26"/>
+      <stop offset="1" stop-color="#13110F"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="778" cy="482" r="572" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DE8C66" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#DE8C66" stop-opacity="0"/>
+    </radialGradient>
+    <!-- The bands fade as the horizon lengthens. -->
+    <linearGradient id="band-outer" x1="592" y1="0" x2="1064" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DE8C66" stop-opacity="0.62"/>
+      <stop offset="1" stop-color="#DE8C66" stop-opacity="0.22"/>
+    </linearGradient>
+    <linearGradient id="band-inner" x1="592" y1="0" x2="1064" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F2BC72" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#F2BC72" stop-opacity="0.34"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Surface and the warm glow behind the forecast. -->
+  <rect width="1024" height="1024" fill="url(#surface)"/>
+  <rect width="1024" height="1024" fill="url(#glow)"/>
+
+  <!-- Chart grid. -->
+  <path d="M205,0 V1024 M0,205 H1024 M410,0 V1024 M0,410 H1024 M614,0 V1024 M0,614 H1024 M819,0 V1024 M0,819 H1024"
+        stroke="#F3EEE6" stroke-opacity="0.07" stroke-width="5"/>
+
+  <!-- Forecast bands from the "now" point (592,532): outer, inner, then the median. -->
+  <path d="M592,532 Q592,352 1064,35 L1064,755 Q592,712 592,532 Z" fill="url(#band-outer)"/>
+  <path d="M592,532 Q592,445 1064,221 L1064,569 Q592,619 592,532 Z" fill="url(#band-inner)"/>
+  <path d="M592,532 L1064,395" stroke="#FFF6EA" stroke-opacity="0.6" stroke-width="10"
+        stroke-dasharray="22 20" stroke-linecap="round"/>
+
+  <!-- "Now": the decision time. -->
+  <path d="M592,0 V1024" stroke="#F3EEE6" stroke-opacity="0.3" stroke-width="7" stroke-dasharray="20 20"/>
+
+  <!-- The observed price line over a glow, and the last observed price. -->
+  <circle cx="592" cy="532" r="70" fill="#DE8C66" fill-opacity="0.55"/>
+  <polyline points="97,778 186,671 256,723 355,572 430,629 517,482 592,532" fill="none"
+            stroke="#F6F1E9" stroke-width="45" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="592" cy="532" r="37" fill="#FFFDF8"/>
+</svg>

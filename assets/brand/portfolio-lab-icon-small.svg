@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Portfolio Lab app icon, simplified for 16 and 32 pixels. Original artwork.
+
+  The same mark as portfolio-lab-icon.svg with only what survives at a few
+  pixels: no grid, median or "now" line, a three-segment price line drawn about
+  three times as thick, and a larger last-price point. Full bleed, like the
+  large icon, so macOS masks it into its own rounded square.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Portfolio Lab</title>
+  <defs>
+    <linearGradient id="surface" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#352D26"/>
+      <stop offset="1" stop-color="#13110F"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="778" cy="482" r="572" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DE8C66" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#DE8C66" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="band-outer" x1="592" y1="0" x2="1064" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DE8C66" stop-opacity="0.62"/>
+      <stop offset="1" stop-color="#DE8C66" stop-opacity="0.22"/>
+    </linearGradient>
+    <linearGradient id="band-inner" x1="592" y1="0" x2="1064" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F2BC72" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#F2BC72" stop-opacity="0.34"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#surface)"/>
+  <rect width="1024" height="1024" fill="url(#glow)"/>
+  <path d="M592,532 Q592,352 1064,35 L1064,755 Q592,712 592,532 Z" fill="url(#band-outer)"/>
+  <path d="M592,532 Q592,445 1064,221 L1064,569 Q592,619 592,532 Z" fill="url(#band-inner)"/>
+  <circle cx="592" cy="532" r="149" fill="#DE8C66" fill-opacity="0.55"/>
+  <polyline points="137,770 323,572 435,671 592,532" fill="none"
+            stroke="#F6F1E9" stroke-width="124" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="592" cy="532" r="99" fill="#FFFDF8"/>
+</svg>
