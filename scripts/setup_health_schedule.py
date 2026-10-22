@@ -360,15 +360,18 @@ def _defaults(machine: Machine, options: Sequence[Option]) -> tuple[Found, ...]:
             "RL runs", repo / "models" / "rl", (repo / "models" / "rl").is_dir(), "policy checks"
         ),
     ]
-    for artifact, checks in (
-        (training.ARTIFACT, "training.health"),
-        (forecast.ARTIFACT, "forecast.coverage, forecast.calibration"),
-        (backtest.ARTIFACT, "portfolio.*"),
-        (stock_lab.ARTIFACT, "the Stock Lab checks (written by its daily job)"),
+    # The Stock Lab's files are read from the shared ~/stock-agent-private/health_inputs once
+    # its daily job writes there (health_check.py local does the same).
+    stock_lab_root = stock_lab.inputs_root(machine.home, inputs)
+    for artifact, root, checks in (
+        (training.ARTIFACT, inputs, "training.health"),
+        (forecast.ARTIFACT, inputs, "forecast.coverage, forecast.calibration"),
+        (backtest.ARTIFACT, inputs, "portfolio.*"),
+        (stock_lab.ARTIFACT, stock_lab_root, "the Stock Lab checks (written by its daily job)"),
     ):
-        count = _count(inputs / artifact)
+        count = _count(root / artifact)
         found.append(
-            Found(f"{artifact} inputs", inputs / artifact, count > 0, f"{checks}; {count} files")
+            Found(f"{artifact} inputs", root / artifact, count > 0, f"{checks}; {count} files")
         )
     if "--ledger" not in passed:
         path = repo / DEFAULT_LEDGER

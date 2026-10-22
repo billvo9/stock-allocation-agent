@@ -196,6 +196,10 @@ evening is therefore a permanent gap in the prospective record.
 `scripts/stock_lab_schedule.py` prints the agent and its `run.sh`. Installing
 them is the owner's step, and nothing here installs, loads or wakes anything.
 
+The evening runs from its own clone of the repository, the **runner
+checkout** `~/stock-agent-runner`, never from a checkout in `~/Desktop`,
+`~/Documents` or `~/Downloads` (see "The runner checkout" below).
+
 **Where the key is, and where it never is.** It is in one Keychain item:
 service `stock-agent-tiingo`, account `stock-lab`. It is never in Git, the
 plist, `run.sh`, an environment variable, a command-line argument (only the
@@ -214,11 +218,17 @@ command guard that refuses `security find-generic-password` to agents (a
 guardrail change).
 
 **What it runs.** launchd starts `/bin/zsh -f
-~/stock-agent-private/stock_lab/run.sh`. `run.sh` runs nothing unless the main
-checkout is a clean `main` (the same guard as the Model Health job, stricter in
-two ways). A linked worktree is refused, and git runs in the stripped
-environment and lists every untracked file whatever your git configuration
-hides. Otherwise it exits 3, with the reason on stderr.
+~/stock-agent-private/stock_lab/run.sh`. `run.sh` runs nothing unless the
+checkout it was printed from (the runner) is a clean `main` (the same guard as
+the Model Health job, stricter in two ways). A linked worktree is refused, and
+git runs in the stripped environment and lists every untracked file whatever
+your git configuration hides. Otherwise it exits 3, with the reason on stderr.
+When git cannot read the checkout at all, the reason is git's own message and
+its likely cause, never "detached HEAD". For example, a checkout in `~/Desktop`
+gives `git cannot read the checkout ... (exit 128: fatal: Unable to read
+current working directory: Operation not permitted); macOS privacy protection
+blocks launchd jobs from ~/Desktop, ~/Documents and ~/Downloads: run the
+evening from a runner checkout outside them`.
 Each step runs under `env -i` with only `HOME`, `USER`, `LOGNAME`, `TMPDIR`, a
 system `PATH` and `PYTHONPATH`. `caffeinate -i` keeps the Mac from idle sleep
 until the run ends. The two stores are the default private folders
@@ -226,6 +236,17 @@ until the run ends. The two stores are the default private folders
 `~/stock-agent-private/stock_lab_inference/`). Variables that move them
 (`STOCK_AGENT_STOCK_LAB_HOME`, `STOCK_AGENT_STOCK_LAB_INFERENCE_HOME`) never
 reach the job.
+
+**Where Model Health finds the evening.** The forecast step writes its Model
+Health input to `~/stock-agent-private/health_inputs/stock_lab_monitor/`
+(`run.sh` passes `--health-inputs` explicitly; folders 0700, files 0600).
+That folder is outside every checkout. `scripts/health_check.py local`, run from
+any checkout (your own included), reads the Stock Lab checks from there once
+it holds a monitor file. Until then it reads the checkout's own
+`reports/health_inputs/stock_lab_monitor/`, where the job wrote before
+2026-10-21. `--stock-lab-inputs DIR` names another folder. Every Stock Lab
+check names the folder it read in its details (`evidence`). The synthetic demo
+replay (`--demo-replay`) still writes to the checkout's `reports/health_inputs/`.
 
 **Notifications.** You learn of a failure from a local macOS notification,
 titled "Stock Lab", without reading the logs. `/usr/bin/osascript` shows it on
@@ -237,7 +258,7 @@ these notifications under Script Editor (osascript's host application).
 
 | Notice | Shown by | Do |
 |---|---|---|
-| tonight's run was refused by the checkout check | `run.sh`, exit 3 (the checkout is not a clean `main`, or git or `cd` failed) | Fix what `daily.err.log` names (usually: switch the main checkout to a clean `main`), then recover the evening (below) |
+| tonight's run was refused by the checkout check | `run.sh`, exit 3 (the checkout is not a clean `main`, git cannot read it, or `cd` failed) | Fix what `daily.err.log` names: usually, make the runner a clean `main` again; `Operation not permitted` means the checkout is in a protected folder (use the runner). Then recover the evening (below) |
 | tonight's price update was refused before any request | `run.sh`, exit 2 from the price update (for example the Keychain item) | Fix the reason in `daily.out.log`, then recover |
 | tonight's run failed (price update) | `run.sh`, any other non-zero exit from the price update | Read the last lines of both logs, then recover |
 | tonight's run failed (forecasts) | `run.sh`, a non-zero exit from the forecast step | Read `daily.out.log`, then recover |
@@ -259,14 +280,171 @@ whose run is still to come. A partial
 evening (some stocks recorded) exits 0 and raises no notice: Model Health
 shows it as `job_partial`.
 
+### The runner checkout
+
+**Why the evening needs its own checkout.** macOS privacy protection (TCC)
+keeps background jobs out of `~/Desktop`, `~/Documents` and `~/Downloads`
+(and iCloud Drive and removable or network volumes) unless each program is
+granted access. A launchd agent has no such grant. So a job started by
+launchd cannot read a checkout in those folders, while the same commands work
+from Terminal, which has the grant. On 2026-10-21 the first unattended evening
+was refused for that reason: git failed with `Unable to read current working
+directory: Operation not permitted`. The fix is a separate clone directly in
+your home folder, `~/stock-agent-runner`, that only runs the agents.
+
+| Place | Use | Changes |
+|---|---|---|
+| Your checkout (for example in `~/Desktop`) and its worktrees | Development, the Portfolio Lab, Model Health by hand | Constantly |
+| The runner, `~/stock-agent-runner` (a clean `main`) | The evening agent (and the briefing and morning-check agents, which also run checkout code) | Only through `git pull --ff-only` |
+
+`scripts/stock_lab_schedule.py --run-sh`, `--briefing` and `--morning-check`
+print a warning on stderr when the printing checkout is inside one of those
+folders. The printed file is the same; print it again from the runner.
+
+**Create the runner (once).** These steps are yours to run; they use the
+network (GitHub and the package index).
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/billvo9/stock-allocation-agent.git ~/stock-agent-runner
+   ```
+
+2. Make its venv from the same Python as your checkout's `.venv` (the
+   frozen model refuses another minor version). From your checkout:
+
+   ```bash
+   "$(sed -n 's/^home = //p' .venv/pyvenv.cfg)/python3.12" -m venv ~/stock-agent-runner/.venv
+   ```
+
+3. Check that your checkout's venv still has the frozen model's
+   environment. From your checkout:
+
+   ```bash
+   PYTHONPATH=src .venv/bin/python scripts/stock_lab_daily.py --check-environment --model 2b6cd0c1a52f5ecfc16d6c8e221956d6fd23093826618e895949ac62e7fa65e7
+   ```
+
+   It lists `python`, `numpy`, `pandas` and `scikit-learn` beside the
+   versions the model was frozen with, and must end with `same:`. If it
+   says `differs`, stop: your venv has changed since the freeze, and the
+   next step would copy the wrong versions. That is a decision to make
+   first (re-freeze, or install the three frozen versions it names).
+4. Record the exact package versions of your checkout's venv, the ones the
+   gates verified, in a private file outside the repository:
+
+   ```bash
+   .venv/bin/python -m pip freeze --exclude-editable > ~/stock-agent-private/runner-constraints.txt
+   ```
+
+5. Install the requirements into the runner under those versions, from
+   wheels only, then check that they are consistent:
+
+   ```bash
+   ~/stock-agent-runner/.venv/bin/python -m pip install --only-binary=:all: -r ~/stock-agent-runner/requirements.txt -c ~/stock-agent-private/runner-constraints.txt
+   ```
+
+   ```bash
+   ~/stock-agent-runner/.venv/bin/python -m pip check
+   ```
+
+   - **Why the constraints.** `requirements.txt` does not pin numpy and
+     pandas exactly (nor most other packages), so a plain install takes the
+     newest releases. The frozen model then refuses to load
+     (`environment_mismatch`), and the evening records nothing. The
+     constraints file pins every package, dependencies included, to the
+     versions the gates ran with.
+   - **Why wheels only.** No package's own code runs while it is installed.
+   - If pip stops (no wheel, or a version it cannot find), stop too. Do not
+     loosen the constraints.
+   - The project itself is not installed into the runner's venv. The evening
+     imports it from the runner's `src` (`PYTHONPATH`).
+6. Check the runner's venv against the frozen model:
+
+   ```bash
+   cd ~/stock-agent-runner && PYTHONPATH=src .venv/bin/python scripts/stock_lab_daily.py --check-environment --model 2b6cd0c1a52f5ecfc16d6c8e221956d6fd23093826618e895949ac62e7fa65e7
+   ```
+
+   It must end with `same: the evening can load this model with this
+   Python` (exit 0). It reads the store's frozen model only; it records
+   nothing.
+7. Confirm that the runner holds the reviewed `main`. After `git fetch` in
+   your checkout, these two commands must print the same commit:
+
+   ```bash
+   git -C ~/stock-agent-runner rev-parse HEAD
+   ```
+
+   ```bash
+   git rev-parse origin/main
+   ```
+
+8. Print the agents from the runner: owner steps 3, 4 and 8 below.
+
+**Update the runner (after a merge you want the evening to run).**
+
+```bash
+git -C ~/stock-agent-runner pull --ff-only
+```
+
+- Only this. Never edit files, switch branches, commit or merge in the
+  runner: `run.sh` refuses anything but a clean `main`, and a pull that is
+  not a fast-forward stops rather than merging.
+- Never reinstall or upgrade its packages (no `pip install -r
+  requirements.txt`, no `pip install -U`) unless you re-freeze the model.
+  If a merged change adds a package that the evening imports, install only
+  that package, at the exact version your checkout's verified venv has
+  (`.venv/bin/python -m pip show <package>`), with `--only-binary=:all:`.
+- After the pull, run the environment check (step 6) and the commit check
+  (step 7) again, before 20:30.
+- Print `run.sh` again (owner step 3, from the runner) only when the change
+  touched `scripts/stock_lab_schedule.py`. Its pull request says so.
+
+**Move to the runner (once, after the change that added this section).**
+
+1. Update the runner, then check it (steps 6 and 7 above):
+
+   ```bash
+   git -C ~/stock-agent-runner pull --ff-only
+   ```
+
+2. Print `run.sh` again from the runner (owner step 3: `run.sh.new`, `mv`,
+   `chmod 700`). The new one passes `--health-inputs
+   ~/stock-agent-private/health_inputs` and reports an unreadable checkout
+   honestly. The plist is unchanged, so nothing needs reloading.
+3. Model Health now reads the Stock Lab checks from
+   `~/stock-agent-private/health_inputs/stock_lab_monitor/` once it holds a
+   monitor file, which the evening writes on its next run. Until then it
+   reads your checkout's `reports/health_inputs/`, so an empty or missing
+   folder never hides the last file there. Optional: copy the runner's
+   earlier files there so that Model Health shows the latest run at once.
+   First check that there are some:
+
+   ```bash
+   ls ~/stock-agent-runner/reports/health_inputs/stock_lab_monitor/
+   ```
+
+   If it lists `.json` files:
+
+   ```bash
+   mkdir -m 700 ~/stock-agent-private/health_inputs ~/stock-agent-private/health_inputs/stock_lab_monitor
+   ```
+
+   ```bash
+   cp -p ~/stock-agent-runner/reports/health_inputs/stock_lab_monitor/*.json ~/stock-agent-private/health_inputs/stock_lab_monitor/
+   ```
+
+4. Refresh Model Health from your checkout as usual (`scripts/health_check.py
+   local`). The Stock Lab checks' details name
+   `~/stock-agent-private/health_inputs/stock_lab_monitor`.
+
 ### Owner steps
 
-Run every command from the main checkout, on `main`.
+Run every command from the runner checkout, `~/stock-agent-runner`, on
+`main`, unless a step says otherwise.
 
 1. **Prerequisites.**
-   - Make the checkout clean: `git status --porcelain` must print nothing.
-     Move an untracked file such as `.claude/launch.json`, or list it in
-     `.git/info/exclude`.
+   - Create the runner (above).
+   - Make the runner clean: `git status --porcelain` must print nothing.
    - Confirm that the stores are in their default folders:
      `echo "${STOCK_AGENT_STOCK_LAB_HOME-}${STOCK_AGENT_STOCK_LAB_INFERENCE_HOME-}"`
      must print an empty line.
@@ -285,7 +463,9 @@ Run every command from the main checkout, on `main`.
 
    By hand, `--keychain` now replaces `TIINGO_API_KEY`. Once the agent works,
    remove the variable from your shell profile.
-3. **Write the files.** Print the files, then read them:
+3. **Write the files.** Print the files in the runner (`cd ~/stock-agent-runner`
+   first), then read them. Printed from a checkout in `~/Desktop`, the
+   printer warns that launchd would refuse it every evening.
 
    ```bash
    mkdir -p -m 700 ~/stock-agent-private ~/stock-agent-private/stock_lab ~/stock-agent-private/stock_lab/logs
@@ -361,7 +541,8 @@ Run every command from the main checkout, on `main`.
        window has 252 sessions`;
      - then `model 2b6cd0c1a52f5ecf ... recorded`, each ticker `recorded`,
        `evenings since 2026-10-20: N of N closed evenings recorded; missed
-       (latest 5): none` and `ok; health input: ...`.
+       (latest 5): none` and `ok; health input:
+       /Users/<you>/stock-agent-private/health_inputs/stock_lab_monitor/job-....json`.
    - `~/stock-agent-private/stock_lab/logs/daily.err.log` has no `refused`
      or `stopped` line.
    - `pmset -g log | grep -i wake | tail -n 5` shows a wake shortly before
@@ -420,8 +601,8 @@ Run every command from the main checkout, on `main`.
 | 0 | Prices stored, and the evening recorded (or already recorded) | Nothing |
 | 1 | The price update refused a request, response or write (no forecast), or the record step failed | Read the last lines of both logs |
 | 2 | Refused: the Keychain item could not be read (before any request), or the record step refused the model (not activated or not registered) | Fix the reason the log names |
-| 3 | Refused: the checkout is not a clean `main`; nothing ran | Switch the main checkout to `main` and clean it |
-| 127 | The venv's Python is missing | Recreate `.venv` |
+| 3 | Refused: the checkout is not a clean `main`, or git cannot read it (git's message is in the reason); nothing ran | Make the runner a clean `main` again; for `Operation not permitted`, print `run.sh` from the runner (outside `~/Desktop`) |
+| 127 | The venv's Python is missing | Recreate the runner's `.venv` ("The runner checkout", steps 2-5) |
 
 **Recovering a failed evening.** Before the next 09:30 New York open, fix
 the cause and run `launchctl kickstart -k gui/$(id -u)/local.stock-lab.daily`
@@ -530,7 +711,7 @@ The scheduled private run (launchd steps, outputs, keeping it private) is in
 - **What it means.** Every `==` pin in `requirements.txt` (with its environment marker) is installed at exactly that version in the interpreter that ran the check. Unpinned requirements are listed, not judged.
 - **Likely causes.** A manual upgrade; a stale `.venv` after a pin changed; another interpreter.
 - **Diagnose.** `git log --oneline -5 -- requirements.txt`; the check's detail names the interpreter.
-- **Safe retry.** `.venv/bin/python -m pip install -r requirements.txt` (changes nothing in the repository), then re-run.
+- **Safe retry.** In your development checkout only (never the runner, "The runner checkout"): `.venv/bin/python -m pip install -r requirements.txt` (changes nothing in the repository), then re-run.
 - **Fallback.** Results from the mismatched environment are not reproducible evidence. Changing a pin is an owner approval gate.
 
 <a id="deps-pip-check"></a>
@@ -539,7 +720,7 @@ The scheduled private run (launchd steps, outputs, keeping it private) is in
 - **What it means.** `pip check` finds no package with unmet requirements. Failed when it reports any; unavailable when pip could not run.
 - **Likely causes.** An unpinned dependency released outside another's range; a partial install.
 - **Diagnose.** `.venv/bin/python -m pip check`.
-- **Safe retry.** After `.venv/bin/python -m pip install -r requirements.txt`.
+- **Safe retry.** After `.venv/bin/python -m pip install -r requirements.txt`, in your development checkout only (never the runner).
 - **Fallback.** Upgrade nothing without owner approval; report the conflicting pair.
 
 ## Artifact contracts
@@ -811,7 +992,7 @@ are never recomputed here.
 ### Stock Lab daily update (`forecast.stock_lab_job`)
 
 - **What it means.** The last daily-job run's status as recorded by the job: ok is healthy, partial or skipped degraded, failed failed. Until the owner records decisions A1, A2 and A4, a real run records itself as skipped and not yet authorized, with the reason. That reads as not activated (`not_authorized`, insufficient evidence), so the rest of the private Model Health is not shown as degraded. Failed (`job_overdue`) when the monitor runs more than 6 hours past the run the job said was next, authorized or not: the scheduled job may have stopped, and its last file would otherwise stay green. Degraded (`evening_missed`) when, among the last 10 closed evenings since the first real forecast, one recorded no forecast. An evening is closed once the next session has opened (09:30 New York), and after that its forecast can never be made, so a missed evening is a permanent gap in the prospective record. An older miss stays listed in the detail ("evenings since ...") without degrading the check.
-- **Likely causes.** Not activated: approvals pending. Skipped (degraded): a step the job could not run. Failed: a provider error, an unreadable store, a ledger that does not verify. A missed evening: the Mac was asleep, shut down or logged out from 20:30 until the next open; the evening agent refused (exit 3, not a clean `main`) or stopped at the price update (the Keychain item, a provider error); every stock was stale.
+- **Likely causes.** Not activated: approvals pending. Skipped (degraded): a step the job could not run. Failed: a provider error, an unreadable store, a ledger that does not verify. A missed evening: the Mac was asleep, shut down or logged out from 20:30 until the next open; the evening agent refused (exit 3: not a clean `main`, or a checkout launchd cannot read, such as one in `~/Desktop`) or stopped at the price update (the Keychain item, a provider error); every stock was stale. Overdue while the evening ran: Model Health read another folder than the one the job wrote; the details name the folder read, and the evening writes `~/stock-agent-private/health_inputs/stock_lab_monitor/` ("Stock Lab unattended evening").
 - **Diagnose.** The detail gives the last success, the next expected run and the evening record; the private store's job runs keep every run's reason; the evening agent's logs (`~/stock-agent-private/stock_lab/logs/daily.*.log`) and `launchctl print gui/$(id -u)/local.stock-lab.daily` say why an evening did not run ("Stock Lab unattended evening").
 - **Safe retry.** Re-run the job after fixing the cause; an evening can still be recorded before the next 09:30 New York open, never after.
 - **Fallback.** The last valid forecasts stay as they are, labelled stale; a missed evening is never backfilled.

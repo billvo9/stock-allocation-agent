@@ -163,6 +163,22 @@ def test_found_inputs_are_passed_and_missing_ones_say_why(tmp_path):
     assert f"#   --prospective-store: not found at {private / 'prospective_store'}" in script
 
 
+def test_the_stock_labs_monitor_files_are_listed_where_model_health_reads_them(tmp_path):
+    machine, _ = fake(tmp_path)
+    inputs = machine.repo / "reports" / "health_inputs"
+    before = {item.name: item for item in plan_of(machine).defaults}
+    assert before["stock_lab_monitor inputs"].path == inputs / "stock_lab_monitor"
+    # Once the daily job writes to the shared folder (from a runner clone), it is listed there.
+    shared = machine.home / "stock-agent-private" / "health_inputs" / "stock_lab_monitor"
+    shared.mkdir(parents=True)
+    (shared / "job-1.json").write_text("{}", encoding="utf-8")
+    after = {item.name: item for item in plan_of(machine).defaults}
+    listed = after["stock_lab_monitor inputs"]
+    assert listed.path == shared and listed.present and listed.note.endswith("; 1 files")
+    # The other producers' inputs stay in the checkout.
+    assert after["rl_training_health inputs"].path == inputs / "rl_training_health"
+
+
 def test_a_given_path_is_passed_even_before_it_exists(tmp_path):
     machine, _ = fake(tmp_path)
     missing = tmp_path / "elsewhere" / "prospective store"

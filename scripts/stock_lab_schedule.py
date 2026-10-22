@@ -13,13 +13,18 @@ Modes
                      the evening agent's run.sh, for the activated model ID (its
                      full 64-character id). It runs only from a clean checkout
                      of main (otherwise exit 3 and a dated reason on stderr,
-                     nothing run), then each step under `env -i` with only HOME,
-                     USER, LOGNAME, TMPDIR, a system PATH and PYTHONPATH:
+                     nothing run; when git cannot read the checkout at all, the
+                     reason is git's own message and its likely cause), then
+                     each step under `env -i` with only HOME, USER, LOGNAME,
+                     TMPDIR, a system PATH and PYTHONPATH:
                        1. scripts/stock_lab_fetch_recent.py --authorized --store
                           --keychain: the recent prices, with the Tiingo key
                           read from the macOS Keychain inside that process;
                        2. only when step 1 succeeds, scripts/stock_lab_daily.py
-                          --record-real --model ID: that evening's forecasts.
+                          --record-real --model ID --health-inputs
+                          ~/stock-agent-private/health_inputs: that evening's
+                          forecasts, and the Model Health input in the folder
+                          that every checkout's Model Health reads.
                      A failed step 1 stops the run with its exit status: no
                      forecast is recorded that evening and none is backfilled
                      later. A refusal, a failed step 1 or a failed step 2 shows
@@ -55,7 +60,13 @@ than New York's (or never) would fire an hour or more off for part of the
 year, at 09:30 for an 08:30 briefing, and is refused for both agents.
 
 The agents run the code of the checkout they were printed from: print them
-from the clean main checkout, never from a working branch or worktree.
+from a clean main checkout, never from a working branch or worktree, and
+outside ~/Desktop, ~/Documents and ~/Downloads. macOS privacy protection
+keeps launchd jobs out of those folders (git: "Operation not permitted"), so
+the evening runs from a runner checkout such as ~/stock-agent-runner
+(docs/operations/runbook.md, "The runner checkout"). --run-sh, --briefing and
+--morning-check print a warning on standard error when this checkout is
+inside one of them; the printed file is unchanged.
 
 To install, after reading the printed files and approving the installation
 (owner, once per agent; the Keychain item first, docs/operations/runbook.md,
@@ -103,6 +114,13 @@ LABEL = "local.stock-lab.daily"
 NEW_YORK_TIME = (20, 30)
 EVENING_WAKE = (20, 25)  # an optional wake, five minutes before the evening agent
 RUN_SH = "run.sh"  # the evening agent's script, in ~/stock-agent-private/stock_lab/
+# The evening's Model Health inputs, ~/stock-agent-private/health_inputs: the folder every
+# checkout's Model Health reads (stock_agent.stock_lab.monitoring.shared_inputs, tested equal).
+HEALTH_INPUTS = "health_inputs"
+# The folders of the home folder that macOS privacy protection (TCC) keeps launchd jobs out
+# of: a checkout inside one cannot run unattended.
+PROTECTED_FOLDERS = ("Desktop", "Documents", "Downloads")
+GIT = "/usr/bin/git"
 MAIN_BRANCH = "main"
 REFUSED_EXIT = 3  # run.sh's exit status when the checkout is not a clean main
 SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -169,6 +187,43 @@ def private_folder(home: Path | None = None) -> Path:
     """~/stock-agent-private/stock_lab: the store, the evening agent's run.sh and the logs."""
 
     return (home or Path.home()) / "stock-agent-private" / "stock_lab"
+
+
+def health_inputs(home: Path | None = None) -> Path:
+    """~/stock-agent-private/health_inputs: where the evening writes its Model Health input."""
+
+    return private_folder(home).parent / HEALTH_INPUTS
+
+
+def protected_folder(project: Path, home: Path) -> str | None:
+    """
+    The folder of `home` in PROTECTED_FOLDERS that holds `project`, else None.
+    Names compare without case, as macOS's default file system does, and the
+    home folder is taken both as given and with its links resolved.
+    """
+
+    inside = [part.casefold() for part in project.parts]
+    for name in PROTECTED_FOLDERS:
+        for folder in (home / name, (home / name).resolve()):
+            parts = [part.casefold() for part in folder.parts]
+            if inside[: len(parts)] == parts:
+                return name
+    return None
+
+
+def protected_note(project: Path, home: Path) -> str:
+    """The warning for an agent printed from a protected folder, as text; empty otherwise."""
+
+    name = protected_folder(project, home)
+    if name is None:
+        return ""
+    return (
+        f"warning: this checkout ({project}) is inside ~/{name}. macOS privacy protection "
+        "keeps launchd jobs out of the Desktop, Documents and Downloads folders, so this agent "
+        "would be refused every time it runs (git: Operation not permitted). Print it from a "
+        "runner checkout outside them, for example ~/stock-agent-runner "
+        '(docs/operations/runbook.md, "The runner checkout").\n'
+    )
 
 
 def _plist(
@@ -325,11 +380,18 @@ def _quoted(text: str) -> str:
     return "'" + text.replace("'", "'\\''") + "'"
 
 
-def render_run_sh(model: str, project: Path = PROJECT, notifier: str = OSASCRIPT) -> str:
+def render_run_sh(
+    model: str,
+    project: Path = PROJECT,
+    notifier: str = OSASCRIPT,
+    home: Path | None = None,
+    git: str = GIT,
+) -> str:
     """
     The evening agent's run.sh for the activated `model` (its full 64-hex id). ValueError for
     anything else; whether the model is activated is checked when the job runs. `notifier`
-    shows its notices (osascript; a test passes a fake).
+    shows its notices (osascript) and `git` reads the checkout (/usr/bin/git); a test passes
+    fakes. The Model Health input goes to `health_inputs(home)`.
     """
 
     if len(model) != 64 or not set(model) <= HEX:
@@ -347,7 +409,8 @@ def render_run_sh(model: str, project: Path = PROJECT, notifier: str = OSASCRIPT
 #      The Tiingo key is read from the macOS Keychain inside that process: never an
 #      environment variable, a command-line argument, this file or a log.
 #   2. Only when step 1 succeeds, the evening's real forecasts for the activated model:
-#      scripts/stock_lab_daily.py --record-real --model <id>.
+#      scripts/stock_lab_daily.py --record-real --model <id>, with its Model Health input
+#      in the shared folder every checkout's Model Health reads (--health-inputs).
 # A failed step 1 stops the run with its exit status and a dated reason on stderr: no
 # forecast is recorded that evening, and none is backfilled later. Model Health shows a
 # stopped job (job_overdue) and, after the next evening, the missed one (evening_missed).
@@ -360,9 +423,10 @@ def render_run_sh(model: str, project: Path = PROJECT, notifier: str = OSASCRIPT
 set -u
 umask 077
 repo={_quoted(str(project))}
-git=/usr/bin/git
+git={_quoted(git)}
 python="$repo/.venv/bin/python"
 model={model}
+inputs={_quoted(str(health_inputs(home)))}
 notifier={_quoted(notifier)}
 plain=(/usr/bin/env -i {kept} PATH={SYSTEM_PATH})
 clean=(/usr/bin/env -i {kept} PATH={SYSTEM_PATH} "PYTHONPATH=$repo/src")
@@ -389,17 +453,40 @@ refuse() {{
   notify {notice["refused"]}
   exit {REFUSED_EXIT}
 }}
+# When git cannot read the checkout at all: git's own message (its first line, control
+# characters shown as ?) and the likely cause, never a detached HEAD or a dirty tree. macOS privacy protection keeps
+# launchd jobs out of the Desktop, Documents and Downloads folders, which git reports as
+# "Operation not permitted".
+unreadable() {{
+  local first=${{1%%$'\\n'*}} cause="see git's message"
+  first=${{first//[[:cntrl:]]/?}}
+  case $1 in
+    *"Operation not permitted"*)
+      cause="macOS privacy protection blocks launchd jobs from ~/Desktop, ~/Documents"
+      cause+=" and ~/Downloads: run the evening from a runner checkout outside them" ;;
+    *"not a git repository"*)
+      cause="the folder is not a Git checkout" ;;
+  esac
+  refuse "git cannot read the checkout $repo (exit $2: ${{first:-no message}}); $cause"
+}}
 # Only a clean main checkout runs: the job is unattended and reads the Tiingo key, so it
 # never executes a worktree, a feature branch or uncommitted code. Git runs in the same
 # stripped environment (no GIT_DIR or GIT_WORK_TREE from launchd), and lists every
-# untracked file whatever the user's git configuration hides.
+# untracked file whatever the user's git configuration hides. Anything git prints, a
+# warning included, keeps the run from starting. A detached HEAD is symbolic-ref's exit 1
+# with nothing printed; any other failure is git's error.
+branch=$("${{clean[@]}}" "$git" -C "$repo" symbolic-ref --quiet --short HEAD 2>&1)
+exited=$?
+(( exited == 1 )) && [[ -z "$branch" ]] && refuse "$repo has a detached HEAD, not {MAIN_BRANCH}"
+(( exited == 0 )) || unreadable "$branch" $exited
+[[ "$branch" != *$'\\n'* ]] || unreadable "$branch" 0  # a warning beside the branch name
 [[ -d "$repo/.git" ]] || refuse "$repo is not the main checkout (.git is not a folder)"
-branch=$("${{clean[@]}}" "$git" -C "$repo" symbolic-ref --quiet --short HEAD) \\
-  || refuse "$repo has a detached HEAD, not {MAIN_BRANCH}"
 [[ "$branch" == {MAIN_BRANCH} ]] || refuse "$repo is on branch $branch, not {MAIN_BRANCH}"
 changes=$("${{clean[@]}}" "$git" -C "$repo" status --porcelain --untracked-files=all \\
-  --ignore-submodules=none) || refuse "git status failed in $repo"
-[[ -z "$changes" ]] || refuse "$repo has uncommitted or untracked changes (git status --porcelain)"
+  --ignore-submodules=none 2>&1) || unreadable "$changes" $?
+listed=${{${{changes%%$'\\n'*}}//[[:cntrl:]]/?}}  # the first line: a change, or git's warning
+[[ -z "$changes" ]] || refuse "$repo has uncommitted or untracked changes, or git warned \\
+(git status --porcelain: $listed)"
 cd "$repo" || refuse "cannot enter $repo"
 # Keep the Mac from idle sleep until this script, and each step it runs, has exited.
 if [[ -x /usr/bin/caffeinate ]]; then
@@ -416,7 +503,7 @@ if (( fetched != 0 )); then
   fi
   exit $fetched
 fi
-"${{clean[@]}}" "$python" scripts/stock_lab_daily.py --record-real --model "$model"
+"${{clean[@]}}" "$python" scripts/stock_lab_daily.py --record-real --model "$model" --health-inputs "$inputs"
 recorded=$?
 if (( recorded != 0 )); then
   say "failed: the forecast step exited $recorded; see daily.out.log"
@@ -495,7 +582,11 @@ Nothing above has run.
 
 
 def main(
-    argv: list[str] | None = None, *, out: TextIO = sys.stdout, err: TextIO = sys.stderr
+    argv: list[str] | None = None,
+    *,
+    out: TextIO = sys.stdout,
+    err: TextIO = sys.stderr,
+    home: Path | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1], allow_abbrev=False)
     choice = parser.add_mutually_exclusive_group()
@@ -517,16 +608,20 @@ def main(
         out.write(EMAIL_DRY_RUN)
         return 0
     try:
+        # The agents that run this checkout's code warn when it is in a protected folder.
         if args.run_sh:
-            out.write(render_run_sh(args.model))
+            out.write(render_run_sh(args.model, project=PROJECT, home=home))
+            err.write(protected_note(PROJECT, home or Path.home()))
             return 0
         if args.briefing:
-            printed, note = briefing_plist(args.zone), wake_note(args.zone)
+            printed = briefing_plist(args.zone, home)
+            note = wake_note(args.zone) + protected_note(PROJECT, home or Path.home())
         elif args.morning_check:
             at = MORNING_TIME if args.time is None else morning_time(args.time)
-            printed, note = morning_check_plist(args.zone, at=at), morning_note()
+            printed = morning_check_plist(args.zone, home, at=at)
+            note = morning_note() + protected_note(PROJECT, home or Path.home())
         else:
-            printed, note = plist(args.zone), evening_wake_note(args.zone)
+            printed, note = plist(args.zone, home), evening_wake_note(args.zone)
     except ZoneInfoNotFoundError:
         print(f"refused: {args.zone!r} is not an IANA time zone", file=err)
         return 2

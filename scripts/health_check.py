@@ -14,7 +14,11 @@ Two commands:
            Actions and refuses an output directory Git would track. With
            --github it records the latest GitHub Actions runs on main with
            `gh run list` (the only network step; without it, or without gh,
-           those checks are insufficient evidence).
+           those checks are insufficient evidence). The Stock Lab's monitor
+           files are read from ~/stock-agent-private/health_inputs/ once its
+           daily job has written a file there (shared by every checkout, so
+           the evening can run from a runner clone), else from
+           --health-inputs; --stock-lab-inputs names another root.
 
 Real data and real forecast monitoring run only through `local`, on the
 owner's machine, manually or on a schedule the owner installs
@@ -27,9 +31,9 @@ Usage:
     .venv/bin/python scripts/health_check.py ci --output-dir OUT [--run-verify | --verify-log F]
     .venv/bin/python scripts/health_check.py local [--output-dir DIR] [--run-verify |
         --verify-log F] [--github | --ci-runs F] [--fund-store DIR] [--health-inputs DIR]
-        [--registry DIR [--ml-artifacts DIR]] [--ml-root DIR] [--rl-runs DIR]
-        [--ledger FILE] [--ledger-head-backup FILE] [--prospective-store DIR]
-        [--anchors FILE]
+        [--stock-lab-inputs DIR] [--registry DIR [--ml-artifacts DIR]] [--ml-root DIR]
+        [--rl-runs DIR] [--ledger FILE] [--ledger-head-backup FILE]
+        [--prospective-store DIR] [--anchors FILE]
 """
 
 from __future__ import annotations
@@ -44,7 +48,7 @@ import pandas as pd
 
 from stock_agent.forecasting.prospective import ledger
 from stock_agent.forecasting.prospective.config import load_config
-from stock_agent.health import collect
+from stock_agent.health import collect, stock_lab
 from stock_agent.health.ledger import RulesCalendar
 from stock_agent.health.model import CONDITION_PRECEDENCE, Condition, HealthState
 from stock_agent.health.prospective import ProspectiveSources
@@ -79,6 +83,12 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=PROJECT_ROOT / "reports" / "health_inputs",
         help="producers' health inputs, <dir>/<artifact>/<run_id>.json (default reports/...)",
+    )
+    local.add_argument(
+        "--stock-lab-inputs",
+        type=Path,
+        help="the Stock Lab monitor files' root (default ~/stock-agent-private/health_inputs "
+        "once it holds a monitor file, else --health-inputs)",
     )
     local.add_argument(
         "--registry",
@@ -188,6 +198,8 @@ def main(argv: list[str] | None = None, environment: collect.Environment | None 
                 github=arguments.github,
                 fund_store=arguments.fund_store,
                 health_inputs=arguments.health_inputs,
+                stock_lab_inputs=arguments.stock_lab_inputs
+                or stock_lab.inputs_root(environment.home, arguments.health_inputs),
                 registry=arguments.registry,
                 ml_artifacts=arguments.ml_artifacts,
                 ml_root=arguments.ml_root,
