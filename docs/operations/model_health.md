@@ -351,15 +351,18 @@ step. `scripts/setup_health_schedule.py` prepares it and the runbook's
 "Activate the scheduler" gives the sequence: dry run, review, `--write`,
 the owner's `launchctl` commands, `--status`, then the Lab.
 
-- **Dry run (default).** Detects the repository (refusing a linked
-  worktree for `--write`, since worktrees are temporary), the venv and its
-  Python version (from `pyvenv.cfg`), `gh` on `PATH`, and which private
-  inputs exist: the fund store, the prospective store and the ETF ledger's
-  kept head under `~/stock-agent-private/`, the inputs read from fixed
-  places, and the Stock Lab's store, kept head and daily agent. It prints
-  every path, the schedule (07:30 local time by default, `--at HH:MM`),
-  each `health_check.py local` option it passes or leaves out with the
-  reason, and the exact `run.sh` and plist. It writes nothing.
+- **Dry run (default).** Detects the repository (refusing for `--write` a
+  linked worktree, since worktrees are temporary, and a checkout inside
+  `~/Desktop`, `~/Documents` or `~/Downloads`, which macOS privacy
+  protection keeps launchd jobs out of: the job runs from the monitor
+  clone `~/stock-agent-monitor`, runbook "Activate the scheduler"), the
+  venv and its Python version (from `pyvenv.cfg`), `gh` on `PATH`, and
+  which private inputs exist: the fund store, the prospective store and the
+  ETF ledger's kept head under `~/stock-agent-private/`, the inputs read
+  from fixed places, and the Stock Lab's store, kept head and daily agent.
+  It prints every path, the schedule (07:30 local time by default, `--at
+  HH:MM`), each `health_check.py local` option it passes or leaves out with
+  the reason, and the exact `run.sh` and plist. It writes nothing.
 - **What it writes (`--write`).** Each file is created only when absent; an
   identical file is left alone and a different file or a symlink is never
   replaced.
@@ -379,25 +382,33 @@ the owner's `launchctl` commands, `--status`, then the Lab.
   `LOGNAME`, `TMPDIR`, an absolute `PATH` (`gh`'s and `git`'s directories,
   then the system directories; a relative entry is never copied) and
   `PYTHONPATH` (this checkout's `src`: the venv's editable install may point
-  at another checkout). No secret exported in a profile or with `launchctl
-  setenv`, `TIINGO_API_KEY` for example, reaches `health_check.py`,
-  `verify.py` or pytest. `STOCK_AGENT_ANCHORS` and
+  at another checkout, or be absent, as in the monitor clone). No secret
+  exported in a profile or with `launchctl setenv`, `TIINGO_API_KEY` for
+  example, reaches `health_check.py`, `verify.py` or pytest.
+  `STOCK_AGENT_ANCHORS` and
   `STOCK_AGENT_PROSPECTIVE_LEDGER`, when set at setup, are therefore written
   out as `--anchors` and `--ledger`.
 - **Only a clean main runs.** The job is unattended and uses `gh`'s
   sign-in, so before anything from the checkout runs, `run.sh` asks git
-  for the branch and `git status --porcelain`. On a feature branch, a
-  detached HEAD, or with any uncommitted or untracked file (an untracked
-  `conftest.py` would run under pytest) it runs nothing and exits 3 with a
+  for the branch and `git status --porcelain --untracked-files=all
+  --ignore-submodules=none`, with git under the same `env -i` as the
+  monitor (no `GIT_DIR` from launchd, and no configuration hides an
+  untracked file). On a feature branch, a detached HEAD, with any
+  uncommitted or untracked file (an untracked `conftest.py` would run under
+  pytest), or when git prints a warning, it runs nothing and exits 3 with a
   dated `health job refused: <reason>; nothing was run` line on stderr
-  (`launchd.err.log`). It never skips silently: launchd records exit 3,
-  `--status` explains it and shows the line, and the Lab page shows the
-  previous summary as Stale once it is older than 26 hours. The dry run
-  warns when the checkout is not on main.
+  (`launchd.err.log`). When git cannot read the checkout at all, the reason
+  is git's own first line and its likely cause (`Operation not permitted`:
+  macOS privacy protection), never a detached HEAD, which is only
+  `symbolic-ref`'s exit 1 with nothing printed. It never skips silently:
+  launchd records exit 3, `--status` explains it and shows the line, and
+  the Lab page shows the previous summary as Stale once it is older than
+  26 hours. The dry run warns when the checkout is not on main.
 - **Never.** It never runs `launchctl bootstrap`, `kickstart` or `bootout`;
   it prints them for the owner. `--status` is read-only: `launchctl print`
   (the last exit code with its meaning: 0 ok, 1 the overall state is
-  failed, 2 `health_check.py` refused, 3 refused as not a clean main), the
+  failed, 2 `health_check.py` refused, 3 refused as not a clean main or
+  unreadable by git), the
   age of `latest.json` (fresh at most 26 hours, the same limit as the
   page, else stale; or missing), its overall state by condition and the
   last stderr line.

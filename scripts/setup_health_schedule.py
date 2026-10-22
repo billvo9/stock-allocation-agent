@@ -15,8 +15,12 @@ Modes
                (mode 644), each only when it is absent or already identical. A
                file that differs (or is a symlink) is never replaced: the run
                shows the difference and writes neither file. It refuses a
-               linked Git worktree (temporary), a missing venv or one that is
-               not Python 3.12. It prints the launchctl commands for the owner.
+               linked Git worktree (temporary), a checkout inside ~/Desktop,
+               ~/Documents or ~/Downloads (which launchd jobs cannot read: set
+               the job up from a clone outside them, such as
+               ~/stock-agent-monitor), a missing venv or one that is not
+               Python 3.12; the dry run names each refusal. It prints the
+               launchctl commands for the owner.
     --status   read-only: whether the job is loaded (`launchctl print`, the only
                launchctl call this script makes), its run count and last exit
                code with its meaning (EXIT_MEANINGS), when the last summary was
@@ -27,11 +31,13 @@ Modes
 What the job runs. launchd starts `/bin/zsh -f run.sh`: -f reads none of the
 user's zsh startup files, so nothing exported in ~/.zshenv reaches the job.
 run.sh refuses to run anything unless the checkout is a clean main (exit 3,
-with a dated reason on stderr), then runs `scripts/health_check.py local
---output-dir ~/stock-agent-private/health` under `env -i` with only HOME,
-USER, LOGNAME, TMPDIR, an absolute PATH and PYTHONPATH (this checkout's src:
-the venv's editable install may point at another checkout), so no variable
-from a shell profile or `launchctl setenv` reaches the monitor, verify.py or
+with a dated reason on stderr; when git cannot read the checkout at all, the
+reason is git's own message and its likely cause), then runs
+`scripts/health_check.py local --output-dir ~/stock-agent-private/health`.
+Git and the monitor run under `env -i` with only HOME, USER, LOGNAME, TMPDIR,
+an absolute PATH and PYTHONPATH (this checkout's src: the venv's editable
+install may point at another checkout, or be absent), so no variable from a
+shell profile or `launchctl setenv` reaches git, the monitor, verify.py or
 pytest. Its options:
     --run-verify            unless --no-verify (the full gates, several minutes)
     --github                when gh is on PATH, unless --no-github; gh's sign-in
@@ -55,11 +61,11 @@ identical; the status is loaded and fresh), 1 a file differs and nothing was
 written, or the status needs attention, 2 refused (wrong place, no usable venv,
 not macOS) or bad arguments.
 
-Usage:
-    .venv/bin/python scripts/setup_health_schedule.py [--at HH:MM] [--no-verify]
-        [--no-github] [--fund-store DIR] [--prospective-store DIR]
+Usage (from the monitor clone, ~/stock-agent-monitor):
+    PYTHONPATH=src .venv/bin/python scripts/setup_health_schedule.py [--at HH:MM]
+        [--no-verify] [--no-github] [--fund-store DIR] [--prospective-store DIR]
         [--ledger-head-backup FILE] [--anchors FILE] [--ledger FILE] [--write]
-    .venv/bin/python scripts/setup_health_schedule.py --status
+    PYTHONPATH=src .venv/bin/python scripts/setup_health_schedule.py --status
 """
 
 from __future__ import annotations
@@ -106,8 +112,10 @@ EXIT_MEANINGS = {
     "0": "ok",
     "1": "the summary's overall state is failed",
     "2": "health_check.py refused to run (see the stderr log)",
-    str(REFUSED_EXIT): "refused: the checkout is not a clean main (see the stderr log)",
+    str(REFUSED_EXIT): "refused: the checkout is not a clean main, or git cannot read it "
+    "(see the stderr log)",
 }
+MONITOR_CLONE = "stock-agent-monitor"  # ~/stock-agent-monitor: the clone the job runs from
 # Other modules' names, kept here so this script imports nothing from the prospective
 # side or another script (tests check each against its source).
 ANCHORS_ENV = "STOCK_AGENT_ANCHORS"
@@ -115,19 +123,51 @@ ANCHORS_DEFAULT = Path("data/raw/issuer_sources/anchors.csv")
 PROSPECTIVE_LEDGER_ENV = "STOCK_AGENT_PROSPECTIVE_LEDGER"
 STOCK_LAB_LABEL = "local.stock-lab.daily"
 STOCK_LAB_KEPT_HEAD = "stock_lab_ledger_head"
+# The folders of the home folder that macOS privacy protection (TCC) keeps launchd jobs out
+# of: a checkout inside one cannot run unattended. Copied with protected_folder below from
+# scripts/stock_lab_schedule.py (a test keeps the two equal).
+PROTECTED_FOLDERS = ("Desktop", "Documents", "Downloads")
 
-# run.sh's guard (zsh; `repo` and `git` are set above it): refuse, run nothing, exit
-# REFUSED_EXIT and say why on stderr, unless the checkout is a clean main.
+# run.sh's guard (zsh; `repo`, `git` and the job's stripped environment `clean` are set
+# above it): refuse, run nothing, exit REFUSED_EXIT and say why on stderr, unless the
+# checkout is a clean main. It reads the checkout as the Stock Lab's run.sh does
+# (scripts/stock_lab_schedule.py, render_run_sh).
 GUARD = """\
 refuse() {{
   print -u2 -r -- "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ) health job refused: $1; nothing was run"
   exit {code}
 }}
-branch=$("$git" -C "$repo" symbolic-ref --quiet --short HEAD) \\
-  || refuse "$repo has a detached HEAD, not {main}"
+# When git cannot read the checkout at all: git's own message (its first line, control
+# characters shown as ?) and the likely cause, never a detached HEAD or a dirty tree. macOS
+# privacy protection keeps launchd jobs out of the Desktop, Documents and Downloads folders,
+# which git reports as "Operation not permitted".
+unreadable() {{
+  local first=${{1%%$'\\n'*}} cause="see git's message"
+  first=${{first//[[:cntrl:]]/?}}
+  case $1 in
+    *"Operation not permitted"*)
+      cause="macOS privacy protection blocks launchd jobs from ~/Desktop, ~/Documents"
+      cause+=" and ~/Downloads: set the job up from a clone outside them" ;;
+    *"not a git repository"*)
+      cause="the folder is not a Git checkout" ;;
+  esac
+  refuse "git cannot read the checkout $repo (exit $2: ${{first:-no message}}); $cause"
+}}
+# Git runs in the job's stripped environment (no GIT_DIR or GIT_WORK_TREE from launchd),
+# and lists every untracked file whatever the user's git configuration hides. Anything git
+# prints, a warning included, keeps the job from starting. A detached HEAD is symbolic-ref's
+# exit 1 with nothing printed; any other failure is git's error.
+branch=$("${{clean[@]}}" "$git" -C "$repo" symbolic-ref --quiet --short HEAD 2>&1)
+exited=$?
+(( exited == 1 )) && [[ -z "$branch" ]] && refuse "$repo has a detached HEAD, not {main}"
+(( exited == 0 )) || unreadable "$branch" $exited
+[[ "$branch" != *$'\\n'* ]] || unreadable "$branch" 0  # a warning beside the branch name
 [[ "$branch" == {main} ]] || refuse "$repo is on branch $branch, not {main}"
-changes=$("$git" -C "$repo" status --porcelain) || refuse "git status failed in $repo"
-[[ -z "$changes" ]] || refuse "$repo has uncommitted or untracked changes (git status --porcelain)"
+changes=$("${{clean[@]}}" "$git" -C "$repo" status --porcelain --untracked-files=all \\
+  --ignore-submodules=none 2>&1) || unreadable "$changes" $?
+listed=${{${{changes%%$'\\n'*}}//[[:cntrl:]]/?}}  # the first line: a change, or git's warning
+[[ -z "$changes" ]] || refuse "$repo has uncommitted or untracked changes, or git warned \\
+(git status --porcelain: $listed)"
 cd "$repo" || refuse "cannot enter $repo"
 """
 
@@ -332,6 +372,22 @@ def main_checkout(repo: Path) -> Path | None:
     return gitdir.parent.parent.parent
 
 
+def protected_folder(project: Path, home: Path) -> str | None:
+    """
+    The folder of `home` in PROTECTED_FOLDERS that holds `project`, else None.
+    Names compare without case, as macOS's default file system does, and the
+    home folder is taken both as given and with its links resolved.
+    """
+
+    inside = [part.casefold() for part in project.parts]
+    for name in PROTECTED_FOLDERS:
+        for folder in (home / name, (home / name).resolve()):
+            parts = [part.casefold() for part in folder.parts]
+            if inside[: len(parts)] == parts:
+                return name
+    return None
+
+
 def _count(directory: Path) -> int:
     try:
         return sum(1 for item in directory.glob("*.json") if item.is_file())
@@ -492,9 +548,20 @@ def detect(machine: Machine, arguments: argparse.Namespace) -> Plan:
     refusals = []
     if worktree:
         main = main_checkout(repo)
+        # Never point at a main checkout that launchd jobs cannot read either.
+        readable = main is not None and protected_folder(main, machine.home) is None
         refusals.append(
-            f"{repo} is a linked Git worktree, which is temporary: schedule the monitor from the "
-            "main checkout" + (f" ({main})" if main else "")
+            f"{repo} is a linked Git worktree, which is temporary: schedule the monitor from "
+            + (f"the main checkout ({main})" if readable else f"a clone such as ~/{MONITOR_CLONE}")
+        )
+    folder = protected_folder(repo, machine.home)
+    if folder is not None:
+        refusals.append(
+            f"this checkout ({repo}) is inside ~/{folder}. macOS privacy protection keeps launchd "
+            "jobs out of the Desktop, Documents and Downloads folders, so this job would be "
+            "refused every time it runs (git: Operation not permitted). Set it up from a clone "
+            f'outside them, for example ~/{MONITOR_CLONE} (docs/operations/runbook.md, "Activate '
+            'the scheduler")'
         )
     if not python.exists():
         refusals.append(f"{python} does not exist: create the project venv first")
@@ -554,25 +621,27 @@ def render_run_sh(plan: Plan) -> str:
     if omitted:
         lines.append("# Options left out:")
         lines += [f"#   {option.flag}: {option.reason.split(':')[0]}" for option in omitted]
-    kept = [f'{name}="${{{name}:-}}"' for name in KEPT_VARIABLES]
-    environment = [
-        "/usr/bin/env -i " + " ".join(kept),
-        f"PATH={q(':'.join(plan.path_dirs))} PYTHONPATH={q(str(repo / 'src'))}",
-    ]
+    kept = " ".join(f'"{name}=${{{name}:-}}"' for name in KEPT_VARIABLES)
+    environment = (
+        f"/usr/bin/env -i {kept} PATH={q(':'.join(plan.path_dirs))} "
+        f"PYTHONPATH={q(str(repo / 'src'))}"
+    )
     lines += [
         "# zsh -f reads none of the user's startup files (~/.zshenv and the others), and",
-        "# env -i passes the monitor only the variables named below, so no secret exported",
-        "# in a shell profile or with launchctl setenv reaches it, verify.py or pytest.",
+        "# env -i passes git and the monitor only the variables named in `clean`, so no",
+        "# secret exported in a shell profile or with launchctl setenv reaches git, the",
+        "# monitor, verify.py or pytest.",
         "set -u",
         "umask 077",
         f"repo={q(str(repo))}",
         f"git={q(plan.git)}",
+        f"clean=({environment})",
         "# Only a clean main checkout runs: the job is unattended and uses gh's sign-in, so",
         "# it never executes a feature branch or uncommitted code. A refusal runs nothing,",
         f"# exits {REFUSED_EXIT} and writes the reason to stderr (launchd.err.log), which",
         "# scripts/setup_health_schedule.py --status shows.",
         GUARD.format(main=MAIN_BRANCH, code=REFUSED_EXIT).rstrip("\n"),
-        "exec " + " \\\n  ".join([*environment, *parts]),
+        'exec "${clean[@]}" ' + " \\\n  ".join(parts),
     ]
     return "\n".join(lines) + "\n"
 
@@ -641,7 +710,7 @@ def owner_commands(plan: Plan) -> list[tuple[str, str]]:
             f"launchctl kickstart -k {service}",
         ),
         ("see its state, runs and last exit code", f"launchctl print {service}"),
-        ("check the summary is fresh", f".venv/bin/python {script} --status"),
+        ("check the summary is fresh", f"PYTHONPATH=src .venv/bin/python {script} --status"),
         ("view it", ".venv/bin/python scripts/run_portfolio_lab.py  (Model Health)"),
         ("remove it later", f"launchctl bootout {service}"),
     ]
