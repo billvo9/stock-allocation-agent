@@ -120,7 +120,8 @@ TEXT_PAIRS = [
 ]
 # Marks that carry meaning beside their words: 3:1 (WCAG non-text contrast).
 MARK_PAIRS = [
-    *[(fg, bg) for fg in ("up", "down", "line-ink") for bg in SURFACES],
+    *[(fg, bg) for fg in ("up", "down", "line-ink", "fc", "note") for bg in SURFACES],
+    ("fc", "fc-flat"),  # the outlook bar's Up and Down segments beside its Flat one
     ("ok", "surface"),
     ("warn", "warn-bg"),
     ("bad", "bad-bg"),
@@ -151,9 +152,15 @@ def test_every_mark_is_visible(theme):
 
 def test_outlooks_are_never_green_or_red():
     for tokens in (DARK, LIGHT):
-        assert tokens["fc"] not in (tokens["up"], tokens["down"])
+        assert {tokens["fc"], tokens["fc-flat"]}.isdisjoint({tokens["up"], tokens["down"]})
     rules = re.findall(r"([^{}]*\.fc[^{}]*)\{([^}]*)\}", STYLE)
     assert rules and all("--up" not in body and "--down" not in body for _, body in rules)
+    # The detail's outlook bars, their legend, each day's row and the meter.
+    outlook = re.findall(
+        r"([^{}]*(?:\.seg|\.hatch|\.obar|\.olegend|\.five|\.meter)[^{}]*)\{([^}]*)\}", STYLE
+    )
+    assert len(outlook) >= 10
+    assert all("--up" not in body and "--down" not in body for _, body in outlook)
 
 
 def _blend(colour: str, behind: str, share: float) -> str:
@@ -179,3 +186,21 @@ def test_the_move_reads_on_its_own_tinted_pill(theme):
         share = int(rule.group(1)) / 100
         pill = _blend(tokens[direction], tokens["bg"], share)
         assert contrast(tokens[direction], pill) >= 4.5, (theme, direction, share)
+
+
+def test_the_chart_and_the_bars_are_drawn_without_inline_style():
+    # Shapes are SVG drawn to the measured width of their box, so the strict policy holds.
+    assert "new ResizeObserver(" in CODE and "setAttribute(" in CODE
+    assert "preserveAspectRatio" not in CODE
+
+
+def test_the_detail_is_reached_only_through_the_checked_route():
+    # The page asks for one stock by a ticker it read from the address, checked against the
+    # server's own name rule, and never builds any other request from data.
+    assert re.findall(r"fetch\(([^,]+),", CODE) == ["path"]
+    assert re.findall(r"await ask\((.+?)\);", CODE) == [
+        '"/api/home"',
+        "`/api/stock/${encodeURIComponent(ticker)}`",
+    ]
+    assert r"const TICKER = /^#stock\/([A-Z0-9][A-Z0-9_-]{0,19})$/;" in CODE
+    assert server.NAME.pattern == "[A-Z0-9][A-Z0-9_-]{0,19}"
