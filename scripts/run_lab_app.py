@@ -30,7 +30,7 @@ Stop it with Control-C.
 from __future__ import annotations
 
 import argparse
-import os
+import signal
 import sys
 import tempfile
 import webbrowser
@@ -39,6 +39,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TextIO
+from urllib.parse import urlsplit
 
 import numpy as np
 import pandas as pd
@@ -66,6 +67,27 @@ def observed(symbol: str, *, count: int, retrieved_by: pd.Timestamp):
     except Exception as error:  # noqa: BLE001 - one stock's prices never stop the app
         print(f"lab app: {symbol} prices failed ({type(error).__name__})", file=sys.stderr)
         return SimpleNamespace(state="unreadable", reason=type(error).__name__, sessions=())
+
+
+def local_url(text: str) -> bool:
+    """Whether `text` is a plain http address on this Mac: 127.0.0.1 or localhost, a port."""
+
+    if any(c.isspace() or c == "\\" or not c.isprintable() for c in text):
+        return False
+    try:
+        parts = urlsplit(text)
+        port = parts.port
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "http"
+        and parts.hostname in ("127.0.0.1", "localhost")
+        and parts.username is None
+        and parts.password is None
+        and "@" not in parts.netloc
+        and port is not None
+        and 0 < port < 65536
+    )
 
 
 def _moment(text: str | None, clock: Callable[[], pd.Timestamp]) -> datetime:
@@ -235,9 +257,7 @@ def main(
     parser.add_argument("--research-url", metavar="URL")
     parser.add_argument("--open", action="store_true")
     args = parser.parse_args(argv)
-    if args.research_url and not args.research_url.startswith(
-        ("http://127.0.0.1:", "http://localhost:")
-    ):
+    if args.research_url and not local_url(args.research_url):
         print("refused: --research-url must be a page on this Mac (http://127.0.0.1:...)", file=out)
         return 2
     if args.demo is not None and not 2 <= args.demo <= 60:
@@ -262,7 +282,6 @@ def main(
             )
             return _serve(app, server, api, args, serve=serve, out=out)
         with tempfile.TemporaryDirectory(prefix="lab-app-demo-") as home_dir:
-            os.chmod(home_dir, 0o700)
             api = demo_api(Path(home_dir), args.demo, args.at, args.research_url)
             return _serve(app, server, api, args, serve=serve, out=out)
     except ValueError as error:
@@ -271,5 +290,10 @@ def main(
         return 2
 
 
+def _stop(signum, frame) -> None:
+    raise KeyboardInterrupt  # a polite stop (SIGTERM) ends like Control-C: the demo store goes too
+
+
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _stop)
     raise SystemExit(main())

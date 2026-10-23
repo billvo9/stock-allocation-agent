@@ -10,8 +10,11 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
+import signal
 import socket
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -160,6 +163,11 @@ def test_a_busy_port_is_refused_plainly():
     ("argv", "words"),
     [
         (["--research-url", "https://example.com/"], "a page on this Mac"),
+        (["--research-url", "http://127.0.0.1:@evil.example/"], "a page on this Mac"),
+        (["--research-url", "http://localhost:x@evil.example/"], "a page on this Mac"),
+        (["--research-url", "http://127.0.0.1:99999/"], "a page on this Mac"),
+        (["--research-url", "http://127.0.0.1:8502/ x"], "a page on this Mac"),
+        (["--research-url", "http://127.0.0.1/"], "a page on this Mac"),
         (["--at", "2026-10-22T07:40"], "needs a time zone"),
         (["--demo", "1"], "2 to 60 sessions"),
     ],
@@ -168,3 +176,29 @@ def test_bad_options_are_refused(argv, words):
     out = io.StringIO()
     assert launcher.main(argv, serve=Ask(), out=out) == 2
     assert words in out.getvalue()
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:8502/", "http://localhost:8502/research"])
+def test_a_research_url_on_this_mac_is_accepted(url):
+    assert launcher.local_url(url)
+
+
+def test_a_polite_stop_removes_the_demo_store_like_control_c(tmp_path):
+    script = REPO / "scripts" / "run_lab_app.py"
+    env = {**os.environ, "PYTHONPATH": str(REPO / "src"), "TMPDIR": str(tmp_path)}
+    run = subprocess.Popen(
+        [sys.executable, "-B", str(script), "--demo", "2", "--port", "0"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        env=env,
+    )
+    try:
+        assert "Lab app: http://127.0.0.1:" in run.stdout.readline()
+        assert [p.name for p in tmp_path.iterdir() if p.name.startswith("lab-app-demo-")]
+        run.send_signal(signal.SIGTERM)
+        assert run.wait(timeout=60) == 0
+    finally:
+        if run.poll() is None:
+            run.kill()
+    assert not [p for p in tmp_path.iterdir() if p.name.startswith("lab-app-demo-")]

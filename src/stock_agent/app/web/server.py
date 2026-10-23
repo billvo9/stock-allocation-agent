@@ -7,9 +7,13 @@ only, read-only.
   `127.0.0.1:<port>` or `localhost:<port>` (one Host header, any letter case)
   gets 421 and no content, so a web page whose name an attacker rebinds to
   this machine can read nothing.
-- Only GET and HEAD (405 otherwise); fixed routes; the static files are read
-  once at start from a fixed list, so no part of a request reaches the file
-  system.
+- Only GET and HEAD (405 otherwise), over HTTP/1.0 or 1.1, with a path
+  target (400 otherwise); fixed routes; the static files are read once at start
+  from a fixed list, so no part of a request reaches the file system.
+- A request another website starts in the background (by its Fetch metadata or
+  Origin) gets 403 before any work; only a top-level visit to the page may come
+  from a link elsewhere.
+- A connection that sends nothing is dropped after 15 seconds.
 - Every response carries the same strict headers (`SECURITY_HEADERS`): the
   page may load only its own script, stylesheet, font and data, and may not
   be framed. No cookies, no CORS, nothing cached.
@@ -28,7 +32,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlsplit
 
 HOST = "127.0.0.1"
 LOCAL_NAMES = ("127.0.0.1", "localhost")
@@ -98,12 +101,40 @@ class LabApp:
             return False
         return host.lower() in {f"{name}:{self.port}" for name in LOCAL_NAMES}
 
-    def handle(self, method: str, target: str, host: str | None) -> Response:
+    def cross_site(self, path: str, headers: Mapping[str, str]) -> bool:
+        """
+        A request another website started in the background (an image, a script, a
+        fetch), by its Fetch metadata or its Origin: refused before any work. Only a
+        top-level visit to the page itself may come from elsewhere (a link).
+        """
+
+        if path == "/" and headers.get("sec-fetch-mode") == "navigate":
+            return False
+        site = headers.get("sec-fetch-site")
+        if site is not None and site not in ("same-origin", "none"):
+            return True
+        origin = headers.get("origin")
+        own = {f"http://{name}:{self.port}" for name in LOCAL_NAMES}
+        return origin is not None and origin.lower() not in own
+
+    def handle(
+        self,
+        method: str,
+        target: str,
+        host: str | None,
+        headers: Mapping[str, str] | None = None,
+    ) -> Response:
+        """`headers`: the request's other headers, by lower-case name."""
+
         if not self.allowed(host):
             return Response(421, TEXT, b"")
         if method not in ("GET", "HEAD"):
             return Response(405, TEXT, b"", (("Allow", "GET, HEAD"),))
-        path = urlsplit(target).path
+        if not target.startswith("/"):  # a full URL, "*" or anything else: not a path here
+            return Response(400, TEXT, b"Bad request")
+        path = target.split("?", 1)[0].split("#", 1)[0]
+        if self.cross_site(path, headers or {}):
+            return Response(403, TEXT, b"")
         if path in self.static:
             body, kind = self.static[path]
             return Response(200, kind, body)
@@ -123,15 +154,20 @@ class LabApp:
 class _Handler(BaseHTTPRequestHandler):
     server_version = "PortfolioLab"
     sys_version = ""
+    timeout = 15  # seconds: a connection that sends nothing does not hold a thread forever
 
     def _serve(self) -> None:
+        if self.request_version not in ("HTTP/1.0", "HTTP/1.1"):
+            self.close_connection = True  # HTTP/0.9 has no headers to carry: nothing is sent
+            return
         hosts = self.headers.get_all("Host") or []
         host = hosts[0] if len(hosts) == 1 else None
-        response = self.server.app.handle(self.command, self.path, host)
+        others = {name.lower(): value for name, value in self.headers.items()}
+        response = self.server.app.handle(self.command, self.path, host, others)
         self.send_response(response.status)
         self.send_header("Content-Type", response.content_type)
         self.send_header("Content-Length", str(len(response.body)))
-        for name, value in (*SECURITY_HEADERS, *response.headers):
+        for name, value in response.headers:
             self.send_header(name, value)
         self.end_headers()
         if self.command != "HEAD":
@@ -140,6 +176,13 @@ class _Handler(BaseHTTPRequestHandler):
     do_GET = do_HEAD = do_POST = do_PUT = do_DELETE = do_PATCH = _serve
     do_OPTIONS = do_TRACE = do_CONNECT = _serve
 
+    def end_headers(self) -> None:
+        # Every response, the base class's own errors included (an unknown method,
+        # a malformed request line), carries the same strict headers.
+        for name, value in SECURITY_HEADERS:
+            self.send_header(name, value)
+        super().end_headers()
+
 
 class _Server(ThreadingHTTPServer):
     daemon_threads = True
@@ -147,6 +190,10 @@ class _Server(ThreadingHTTPServer):
     def __init__(self, address, app: LabApp) -> None:
         self.app = app
         super().__init__(address, _Handler)
+
+    def handle_error(self, request, client_address) -> None:
+        # The error's type only: no traceback, so no path reaches the log.
+        print(f"lab app: a request failed ({sys.exc_info()[0].__name__})", file=sys.stderr)
 
 
 def make_server(app: LabApp, *, host: str = HOST) -> ThreadingHTTPServer:

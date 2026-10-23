@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import socket
 import threading
 
 import pytest
@@ -51,6 +52,38 @@ def test_only_reading_is_allowed(method):
 def test_unknown_paths_are_not_found_and_never_reach_the_file_system():
     for target in ("/nowhere", "/static/../server.py", "/api/home/", "/static/", "//"):
         assert app().handle("GET", target, "127.0.0.1:8510").status == 404
+
+
+@pytest.mark.parametrize("target", ["http://evil.example/api/home", "http://[/", "x://[a/", "*"])
+def test_a_target_that_is_not_a_path_is_refused_without_crashing(target):
+    response = app().handle("GET", target, "127.0.0.1:8510")
+    assert response.status == 400
+
+
+@pytest.mark.parametrize(
+    ("path", "headers", "status"),
+    [
+        ("/api/home", {"sec-fetch-site": "cross-site"}, 403),
+        ("/api/home", {"sec-fetch-site": "same-site"}, 403),
+        ("/static/app.js", {"sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors"}, 403),
+        ("/api/home", {"origin": "http://evil.example"}, 403),
+        ("/api/home", {"sec-fetch-site": "same-origin"}, 200),
+        ("/api/home", {"sec-fetch-site": "none"}, 200),
+        ("/api/home", {"origin": "http://127.0.0.1:8510"}, 200),
+        ("/", {"sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate"}, 200),
+        ("/", {"sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors"}, 403),
+    ],
+)
+def test_requests_other_websites_start_are_refused_before_any_work(path, headers, status):
+    calls = []
+
+    def home():
+        calls.append(1)
+        return {}
+
+    response = app({"/api/home": home}).handle("GET", path, "127.0.0.1:8510", headers)
+    assert response.status == status
+    assert calls == ([1] if status == 200 and path == "/api/home" else [])
 
 
 def test_the_query_string_does_not_change_the_route():
@@ -133,3 +166,30 @@ def test_the_real_server_serves_the_page_and_the_api(running):
     status, headers, body = fetch(running, "HEAD", "/api/home", f"localhost:{running}")
     assert status == 200 and body == b"" and int(headers["Content-Length"]) > 0
     assert fetch(running, "GET", "/", "rebound.example")[0] == 421
+
+
+def test_the_base_servers_own_errors_carry_the_security_headers(running):
+    connection = http.client.HTTPConnection("127.0.0.1", running, timeout=10)
+    try:
+        connection.request("BREW", "/", headers={"Host": f"127.0.0.1:{running}"})
+        response = connection.getresponse()
+        response.read()
+        assert response.status == 501
+        for name, value in server.SECURITY_HEADERS:
+            assert response.getheader(name) == value, name
+    finally:
+        connection.close()
+
+
+def test_an_http_0_9_request_gets_nothing(running):
+    with socket.create_connection(("127.0.0.1", running), timeout=10) as raw:
+        raw.sendall(f"GET /api/home\r\nHost: 127.0.0.1:{running}\r\n\r\n".encode())
+        assert raw.recv(4096) == b""
+
+
+def test_a_silent_connection_is_dropped_after_a_while():
+    httpd = server.make_server(app(port=0))
+    try:
+        assert httpd.RequestHandlerClass.timeout == 15
+    finally:
+        httpd.server_close()
