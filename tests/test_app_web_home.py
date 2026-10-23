@@ -265,6 +265,10 @@ def test_a_weekend_names_the_day_of_the_last_update(lab):
         "words": "Updated Friday, 8:32 PM",
         "details": found["status"]["details"],
     }
+    assert found["status"]["details"][:2] == [
+        "Last successful update: Friday, 8:32 PM.",
+        "Latest run: finished, Friday, 8:32 PM.",
+    ]
     assert only(found)["outlook"]["day"] == "Mon"
 
 
@@ -411,3 +415,28 @@ def test_a_synthetic_view_says_it_is_a_demo(lab):
     )
     assert found["demo"] and "made-up" in found["demo"].lower()
     assert only(found)["outlook"]["state"] == "fresh"
+
+
+def test_a_stock_whose_close_is_older_than_the_others_is_marked(lab):
+    class Mixed(Prices):
+        def __call__(self, symbol, *, count, retrieved_by):
+            self.rows = (
+                [row(TUESDAY, 1.0, 0.01)] if symbol == "OLD" else [row(WEDNESDAY, 2.0, 0.02)]
+            )
+            return super().__call__(symbol, count=count, retrieved_by=retrieved_by)
+
+    found = home.build_home(
+        ReadOnlyRecords(lab.path),
+        now=at(THURSDAY, "07:40"),
+        calendar=nyse_sessions,
+        calendar_id="test_nyse_rules",
+        data_class="real",
+        recent=Mixed(),
+        local_zone=NEW_YORK,
+        tickers=[T, "OLD"],
+        names={"OLD": "An older stock"},
+    )
+    prices = {s["ticker"]: s["price"] for s in found["stocks"]}
+    assert not prices[T]["older"] and prices["OLD"]["older"]
+    assert found["prices_note"] == "Closing prices from Wed, Oct 21."
+    assert {s["ticker"]: s["name"] for s in found["stocks"]} == {T: None, "OLD": "An older stock"}

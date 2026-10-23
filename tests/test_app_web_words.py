@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from datetime import UTC, date, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -10,6 +14,7 @@ import pytest
 from stock_agent.app.web import words
 
 NEW_YORK = ZoneInfo("America/New_York")
+SOURCE = Path(__file__).resolve().parents[1] / "src"
 LONDON = ZoneInfo("Europe/London")
 
 
@@ -76,3 +81,22 @@ def test_company_names_cover_the_watchlist():
         "MU": "Micron Technology",
         "NVDA": "NVIDIA",
     }
+
+
+@pytest.mark.parametrize(("zone", "named"), [("America/New_York", False), ("Europe/London", True)])
+def test_this_macs_own_zone_uses_the_offset_in_force_at_each_moment(zone, named):
+    # A winter moment read in summer: a fixed offset captured "now" would name
+    # the zone for a Mac in New York. The process's own zone (None) must not.
+    script = (
+        "from datetime import datetime\n"
+        "from zoneinfo import ZoneInfo\n"
+        "from stock_agent.app.web import words\n"
+        "ny = ZoneInfo('America/New_York')\n"
+        "now = datetime(2026, 12, 2, 7, 40, tzinfo=ny)\n"
+        "print(words.when('2026-12-02T01:31:00.000000Z', now=now, local_zone=None))\n"
+    )
+    env = {**os.environ, "TZ": zone, "PYTHONPATH": str(SOURCE)}
+    done = subprocess.run(
+        [sys.executable, "-c", script], env=env, capture_output=True, text=True, check=True
+    )
+    assert done.stdout.strip() == "last night, 8:31 PM" + (" ET" if named else "")

@@ -67,9 +67,10 @@ def build_home(
     calendar_id: str,
     data_class: DataClass | str,
     recent: Callable[..., object],
-    local_zone: tzinfo,
+    local_zone: tzinfo | None,
     tickers: Sequence[str] | None = None,
     excluded: Collection[str] = (),
+    names: Mapping[str, str] | None = None,
 ) -> dict:
     """
     Home at `now` (timezone-aware). `recent(symbol, count=, retrieved_by=)` is the
@@ -105,6 +106,7 @@ def build_home(
         tickers=listed,
         data_class=kind,
         problem=problem,
+        names=names,
     )
 
 
@@ -122,13 +124,18 @@ def home_view(
     prices: Mapping[str, object],
     *,
     now: datetime,
-    local_zone: tzinfo,
+    local_zone: tzinfo | None,
     tickers: Sequence[str],
     data_class: str,
     problem: str | None = None,
+    names: Mapping[str, str] | None = None,
 ) -> dict:
-    """The Home view from a prepared briefing (None when it could not be prepared)."""
+    """
+    The Home view from a prepared briefing (None when it could not be prepared).
+    `names` are the stocks' display names (default: the watchlist's company names).
+    """
 
+    names = words.NAMES if names is None else names
     by_symbol = {} if briefing is None else {s.symbol: s for s in briefing.stocks}
     stocks = []
     for symbol in tickers:
@@ -136,12 +143,15 @@ def home_view(
         stocks.append(
             {
                 "ticker": symbol,
-                "name": words.NAMES.get(symbol),
+                "name": names.get(symbol),
                 "price": _price(symbol, prices.get(symbol)),
                 "outlook": _outlook(symbol, stock, briefing, now, local_zone),
             }
         )
     sessions = [s["price"]["session"] for s in stocks if s["price"]["available"]]
+    for stock in stocks:  # a close older than the others names its own day
+        price = stock["price"]
+        price["older"] = price["available"] and price["session"] != max(sessions)
     bands = [
         StableBand(s.lineage.band).words()[1:]
         for s in by_symbol.values()
@@ -185,7 +195,8 @@ def _status(briefing: Briefing | None, problem: str | None, now, zone) -> dict:
         else words.NO_SUCCESS
     ]
     if update.last_run_at:
-        details.append(f"Latest run: {update.last_status}, {when(update.last_run_at)}.")
+        ran = words.RUN_WORDS.get(update.last_status, update.last_status)
+        details.append(f"Latest run: {ran}, {when(update.last_run_at)}.")
     if briefing.gap_note:
         details.append(briefing.gap_note)
     stocks = briefing.stocks

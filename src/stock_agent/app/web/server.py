@@ -54,12 +54,13 @@ FAILED = {"error": "The app couldn't prepare this screen."}
 
 STATIC = Path(__file__).with_name("static")
 FONT = Path(__file__).parents[1] / "static" / "fonts" / "SourceSans3VF-Upright.woff2"
+MARK = Path(__file__).parents[4] / "assets" / "brand" / "portfolio-lab-mark.svg"  # the logo
 # Route -> (file, content type): the only files the server can send.
 FILES = {
     "/": (STATIC / "index.html", "text/html; charset=utf-8"),
     "/static/app.css": (STATIC / "app.css", "text/css; charset=utf-8"),
     "/static/app.js": (STATIC / "app.js", "text/javascript; charset=utf-8"),
-    "/static/mark.svg": (STATIC / "mark.svg", "image/svg+xml"),
+    "/static/mark.svg": (MARK, "image/svg+xml"),
     "/static/source-sans-3.woff2": (FONT, "font/woff2"),
 }
 

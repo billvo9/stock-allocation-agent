@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <title>Portfolio Lab</title>
+  <link rel="icon" href="/static/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="ribbon" id="ribbon" role="note" hidden></div>
+  <div class="app">
+    <header class="top">
+      <div class="brand">
+        <img src="/static/mark.svg" alt="" width="30" height="30">
+        <span>Portfolio Lab</span>
+      </div>
+      <button class="icon-btn" id="theme-btn" type="button" aria-label="Switch to light mode">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-sun"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>
+      </button>
+    </header>
+
+    <nav class="tabs" aria-label="Main">
+      <button type="button" data-tab="home" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-line"><path d="M3.5 10.5 12 4l8.5 6.5V20a1 1 0 0 1-1 1h-5v-6h-5v6h-5a1 1 0 0 1-1-1z"/></svg>
+        <span>Home</span>
+      </button>
+      <button type="button" data-tab="more">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-fill"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+        <span>More</span>
+      </button>
+    </nav>
+
+    <main id="screen" tabindex="-1">
+      <p class="loading">Loading…</p>
+      <noscript><p class="loading">The Portfolio Lab needs JavaScript, which runs only on this Mac.</p></noscript>
+    </main>
+  </div>
+
+  <div class="scrim" id="scrim" hidden></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden></div>
+</body>
+</html>

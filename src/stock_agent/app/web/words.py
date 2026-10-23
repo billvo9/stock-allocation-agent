@@ -82,11 +82,12 @@ def clock(moment: datetime) -> str:
     return f"{moment:%I:%M %p}".lstrip("0")
 
 
-def when(stamp: str, *, now: datetime, local_zone: tzinfo) -> str:
+def when(stamp: str, *, now: datetime, local_zone: tzinfo | None) -> str:
     """
     A stored UTC stamp as a reader would say it, in New York time: 'last night,
     8:31 PM', 'tonight, 8:31 PM', 'this morning, 6:02 AM', 'Friday, 8:31 PM' or
-    'Oct 9, 8:31 PM'; with ' ET' when this Mac's zone is not New York's.
+    'Oct 9, 8:31 PM'; with ' ET' when this Mac's zone is not New York's
+    (`local_zone` None: this Mac's own zone, with the offset in force at `now`).
     """
 
     moment = pd.Timestamp(stamp).tz_convert(NEW_YORK).to_pydatetime()
@@ -105,7 +106,7 @@ def when(stamp: str, *, now: datetime, local_zone: tzinfo) -> str:
     return text + (" ET" if _elsewhere(now, local_zone) else "")
 
 
-def _elsewhere(now: datetime, local_zone: tzinfo) -> bool:
+def _elsewhere(now: datetime, local_zone: tzinfo | None) -> bool:
     """Whether this Mac's clock reads differently from New York's at `now`."""
 
     return now.astimezone(local_zone).utcoffset() != now.astimezone(NEW_YORK).utcoffset()
@@ -125,6 +126,13 @@ RUN_PROBLEM = {
     "skipped": "The last update recorded nothing ({when}).",
 }
 RUN_PROBLEM_OTHER = "The last update ended as {status} ({when})."
+# The daily job's run statuses, in words, for the update details.
+RUN_WORDS = {
+    "ok": "finished",
+    "partial": "only partly done",
+    "failed": "didn't finish",
+    "skipped": "recorded nothing",
+}
 
 
 def updated(when_words: str) -> str:
