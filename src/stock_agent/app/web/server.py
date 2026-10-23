@@ -10,6 +10,9 @@ only, read-only.
 - Only GET and HEAD (405 otherwise), over HTTP/1.0 or 1.1, with a path
   target (400 otherwise); fixed routes; the static files are read once at start
   from a fixed list, so no part of a request reaches the file system.
+- One stock's screen is named in its path (`/api/stock/NVDA`): only a name
+  that fits NAME reaches its view, as a lookup key, and the view answers None
+  (404) for a stock it does not list.
 - A request another website starts in the background (by its Fetch metadata or
   Origin) gets 403 before any work; only a top-level visit to the page may come
   from a link elsewhere.
@@ -27,9 +30,11 @@ directly; the handler only copies a request in and a response out.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -54,6 +59,7 @@ SECURITY_HEADERS = (
 TEXT = "text/plain; charset=utf-8"
 JSON = "application/json; charset=utf-8"
 FAILED = {"error": "The app couldn't prepare this screen."}
+NAME = re.compile(r"[A-Z0-9][A-Z0-9_-]{0,19}")  # a ticker, or a synthetic demo stock's id
 
 STATIC = Path(__file__).with_name("static")
 FONT = Path(__file__).parents[1] / "static" / "fonts" / "SourceSans3VF-Upright.woff2"
@@ -82,8 +88,16 @@ class Response:
     headers: tuple[tuple[str, str], ...] = ()
 
 
+NOT_FOUND = Response(404, TEXT, b"Not found")
+
+
 class LabApp:
-    """The routes: `api` maps a path to a function returning JSON-ready data."""
+    """
+    The routes: `api` maps a path to a function returning JSON-ready data, and
+    `items` maps a path prefix to a function of one name (a ticker) returning the
+    data, or None for a name it does not know (404). Only a name made of capital
+    letters, digits, "_" and "-" (at most 20) reaches that function.
+    """
 
     def __init__(
         self,
@@ -91,10 +105,12 @@ class LabApp:
         port: int,
         api: Mapping[str, Callable[[], Mapping]],
         static: Mapping[str, tuple[bytes, str]],
+        items: Mapping[str, Callable[[str], Mapping | None]] | None = None,
     ) -> None:
         self.port = port
         self.api = dict(api)
         self.static = dict(static)
+        self.items = dict(items or {})
 
     def allowed(self, host: str | None) -> bool:
         if not host:
@@ -139,16 +155,21 @@ class LabApp:
             body, kind = self.static[path]
             return Response(200, kind, body)
         if path in self.api:
-            return self._api(path)
-        return Response(404, TEXT, b"Not found")
+            return self._json(path, self.api[path])
+        for prefix, find in self.items.items():
+            name = path[len(prefix) :] if path.startswith(prefix) else None
+            if name is not None and NAME.fullmatch(name):
+                return self._json(prefix, partial(find, name))
+        return NOT_FOUND
 
-    def _api(self, path: str) -> Response:
+    def _json(self, route: str, produce: Callable[[], Mapping | None]) -> Response:
         try:
-            body = json.dumps(self.api[path](), allow_nan=False, ensure_ascii=False)
+            data = produce()
+            body = None if data is None else json.dumps(data, allow_nan=False, ensure_ascii=False)
         except Exception as error:  # noqa: BLE001 - one failing screen never stops the app
-            print(f"lab app: {path} failed ({type(error).__name__})", file=sys.stderr)
+            print(f"lab app: {route} failed ({type(error).__name__})", file=sys.stderr)
             return Response(500, JSON, json.dumps(FAILED).encode())
-        return Response(200, JSON, body.encode())
+        return NOT_FOUND if body is None else Response(200, JSON, body.encode())
 
 
 class _Handler(BaseHTTPRequestHandler):

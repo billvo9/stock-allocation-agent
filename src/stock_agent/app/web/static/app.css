@@ -23,6 +23,9 @@
   --up: #3FD68B;
   --down: #FF7262;
   --fc: #AFC3D6;
+  --fc-flat: #6C665E;
+  --ember: #DE8C66;
+  --note: #97CAD7;
   --ok: #8FD3A0;
   --warn: #F2BC72;
   --bad: #F4A7AE;
@@ -50,6 +53,9 @@
   --up: #0B7A41;
   --down: #C8352A;
   --fc: #3E5A75;
+  --fc-flat: #B9B0A4;
+  --ember: #9A4325;
+  --note: #26505D;
   --ok: #1E6633;
   --warn: #8A4B0F;
   --bad: #99202C;
@@ -81,6 +87,8 @@ button { font: inherit; color: inherit; }
 }
 .num { font-variant-numeric: tabular-nums; }
 :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; border-radius: 8px; }
+/* Focused only to move the reading position (a new screen, a stock that opened). */
+#screen:focus, h1[tabindex="-1"]:focus { outline: none; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
@@ -122,12 +130,15 @@ button { font: inherit; color: inherit; }
 .eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--subtle); font-weight: 600; margin: 26px 2px 4px; }
 h1.screen { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 22px 0 4px; letter-spacing: -0.01em; }
 
-/* --- the watchlist --- */
+/* --- the watchlist: each row opens its stock; the outlook chip explains itself --- */
 .list { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
-.row {
+.row { padding: 8px 0 16px; border-bottom: 1px solid var(--line); }
+.row-main {
   display: grid; grid-template-columns: minmax(0, 1fr) 96px minmax(92px, auto); align-items: center;
-  column-gap: 14px; row-gap: 2px; padding: 16px 4px; border-bottom: 1px solid var(--line);
+  column-gap: 14px; row-gap: 2px; padding: 8px 4px; margin: 0 -4px; border-radius: 12px;
+  color: inherit; text-decoration: none;
 }
+.row-main:hover { background: var(--surface); }
 .row .tk { font-size: 18px; font-weight: 700; letter-spacing: 0.01em; }
 .row .nm { color: var(--subtle); font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row .spark { grid-row: span 2; width: 96px; height: 38px; }
@@ -135,7 +146,7 @@ h1.screen { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 22px 0
 .row .px.none { grid-column: 2 / -1; color: var(--subtle); font-weight: 400; font-size: 14px; }
 .row .chg { justify-self: end; font-size: 13.5px; font-weight: 650; padding: 2px 8px; border-radius: 8px; }
 .row .when { grid-column: 3; justify-self: end; color: var(--subtle); font-size: 12px; }
-.row .look { grid-column: 1 / -1; margin-top: 8px; }
+.row .look { margin: 4px 0 0; }
 .chg.up { color: var(--up); background: color-mix(in srgb, var(--up) 14%, transparent); }
 .chg.down { color: var(--down); background: color-mix(in srgb, var(--down) 14%, transparent); }
 /* Light: a fainter tint keeps the move's text at 4.5:1 on its pill (tested). */
@@ -157,11 +168,101 @@ h1.screen { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 22px 0
 .chip .info { font-size: 12px; }
 .chip .fc { color: var(--fc); font-weight: 650; }
 .chip.empty { color: var(--muted); }
+.chip.empty.warn .info, .chip.empty.bad .info { color: var(--muted); } /* 4.5:1 on the tints */
 .chip.empty.warn { background: var(--warn-bg); border-color: transparent; }
 .chip.empty.bad { background: var(--bad-bg); border-color: transparent; }
 
 .foot { color: var(--subtle); font-size: 13px; margin: 18px 2px 0; max-width: 60ch; }
 .textbtn { background: none; border: 0; padding: 0; color: var(--muted); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; font-size: inherit; }
+
+/* --- Stock detail --- */
+.back {
+  display: inline-flex; align-items: center; gap: 2px; background: none; border: 0; padding: 10px 0 4px;
+  color: var(--muted); font-size: 15px; cursor: pointer;
+}
+.d-head { margin-top: 4px; }
+.d-tk { font-size: 15px; color: var(--muted); font-weight: 600; margin: 0; }
+.d-px { font-size: 46px; font-weight: 700; line-height: 1.05; letter-spacing: -0.02em; margin: 4px 0 6px; }
+/* Two lines held, so a day with notes never moves the chart under the finger. */
+.d-chg { font-size: 15px; font-weight: 650; margin: 0; color: var(--muted); min-height: 2.9em; }
+.d-chg.up { color: var(--up); }
+.d-chg.down { color: var(--down); }
+.d-chg .when { color: var(--subtle); font-weight: 400; }
+
+/* The chart: an SVG drawn to the box's own width (no inline style). */
+.chart { position: relative; height: 230px; margin: 14px -4px 6px; touch-action: pan-y; cursor: crosshair; border-radius: 8px; }
+.chart svg { display: block; overflow: visible; }
+.chart-line { fill: none; stroke: var(--line-ink); stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
+.fill-top { stop-color: var(--line-ink); stop-opacity: 0.10; }
+.fill-bottom { stop-color: var(--line-ink); stop-opacity: 0; }
+.chart-cursor { stroke: var(--subtle); stroke-width: 1; }
+.chart-point { fill: var(--line-ink); stroke: var(--bg); stroke-width: 2; }
+.chart-tag { fill: var(--muted); font-size: 12px; font-family: var(--font); }
+.chart-glow { fill: var(--ember); fill-opacity: 0.32; }
+.chart-now { fill: var(--line-ink); }
+.chart .off { display: none; }
+.ranges { display: flex; gap: 6px; margin: 4px 0 6px; }
+.ranges button {
+  flex: 1; padding: 8px 0; border-radius: 10px; border: 0; background: none; color: var(--muted);
+  font-weight: 650; font-size: 14px; cursor: pointer;
+}
+.ranges button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+.range-note { color: var(--subtle); font-size: 13px; margin: 0 2px; }
+
+.card h2 { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: var(--r-pill);
+  font-size: 12px; font-weight: 650; letter-spacing: 0.02em; color: var(--muted);
+  background: var(--raised); border: 1px solid var(--line); cursor: pointer;
+}
+.card .sub + .obar { margin-top: 16px; }
+.obar { height: 14px; margin: 10px 0; }
+.obar svg { display: block; }
+.seg.up { fill: var(--fc); }
+.seg.flat { fill: var(--fc-flat); }
+.seg.down { stroke: var(--fc); stroke-width: 1.5; }
+.hatch { fill: var(--fc); }
+.olegend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.olegend div { display: flex; flex-direction: column; }
+.olegend div:nth-child(2) { text-align: center; }
+.olegend div:nth-child(3) { text-align: right; }
+.olegend .k { color: var(--subtle); font-size: 13px; }
+.olegend .v { font-size: 26px; font-weight: 700; }
+.def { color: var(--muted); font-size: 14px; margin: 10px 0 0; }
+.note { color: var(--subtle); font-size: 13.5px; margin: 8px 0 0; }
+.empty-card h2 { font-size: 17px; }
+.empty-card p { color: var(--muted); margin: 6px 0 4px; }
+.empty-card.warn { background: var(--warn-bg); border-color: transparent; }
+.empty-card.bad { background: var(--bad-bg); border-color: transparent; }
+
+.more-btn {
+  display: inline-flex; gap: 2px; align-items: center; margin-top: 8px; padding: 6px 0; border: 0;
+  background: none; color: var(--muted); font-weight: 650; font-size: 14px; cursor: pointer;
+}
+.five { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.five .r { display: grid; grid-template-columns: 64px minmax(0, 1fr) 92px; gap: 12px; align-items: center; font-size: 14.5px; }
+.five .day { color: var(--muted); }
+.five .obar { height: 10px; margin: 0; }
+.five .nums { text-align: right; color: var(--muted); }
+.five .nums b { color: var(--text); font-weight: 650; }
+
+.rel { display: grid; gap: 12px; margin-top: 12px; }
+.rel p { margin: 0; }
+.rel .big { font-size: 17px; line-height: 1.4; }
+.rel .meta { color: var(--subtle); font-size: 13.5px; margin-top: 6px; }
+.rel .live { padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14.5px; }
+.flag {
+  display: inline-block; margin-bottom: 6px; padding: 2px 9px; border-radius: var(--r-pill);
+  font-size: 12px; font-weight: 650; color: var(--muted); background: var(--raised);
+}
+.meter { height: 6px; margin: 10px 0 0; }
+.meter svg { display: block; }
+.meter-bar { fill: var(--raised); }
+.meter-done { fill: var(--note); }
+
+.ctx { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.link .t { display: block; font-weight: 650; }
+.link .s { display: block; color: var(--subtle); font-size: 13.5px; font-weight: 400; margin-top: 2px; }
 
 /* --- cards (More) --- */
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 18px; margin-top: 14px; }

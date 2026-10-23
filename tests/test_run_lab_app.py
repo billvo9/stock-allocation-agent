@@ -41,17 +41,28 @@ launcher = _launcher()
 
 
 class Ask:
-    """A stand-in for serving: one GET of the Home API, then the server is closed."""
+    """
+    A stand-in for serving: one GET of the Home API and one of the first listed stock's
+    detail, then the server is closed.
+    """
 
     def __init__(self):
-        self.home = None
+        self.home = self.detail = None
+        self.missing = None  # the status of a stock that is not listed
 
     def __call__(self, server):
         app = server.app
+        host = f"127.0.0.1:{app.port}"
         try:
-            response = app.handle("GET", "/api/home", f"127.0.0.1:{app.port}")
+            response = app.handle("GET", "/api/home", host)
             assert response.status == 200, response.body
             self.home = json.loads(response.body)
+            stocks = self.home.get("stocks") or []
+            if stocks:
+                response = app.handle("GET", f"/api/stock/{stocks[0]['ticker']}", host)
+                assert response.status == 200, response.body
+                self.detail = json.loads(response.body)
+            self.missing = app.handle("GET", "/api/stock/ZZZZ", host).status
         finally:
             server.server_close()
 
@@ -105,6 +116,16 @@ def test_the_demo_serves_synthetic_stocks_reads_nothing_real_and_writes_nothing_
     assert all(s["price"]["available"] and s["price"]["line"] for s in home["stocks"])
     assert all(s["outlook"]["state"] == "fresh" for s in home["stocks"])
     assert home["status"]["level"] == "ok" and home["research_url"] is None
+    detail = ask.detail
+    assert detail["ticker"] == "DEMO_CALM" and detail["data_class"] == "synthetic"
+    assert detail["outlook"]["state"] == "fresh" and detail["demo"]
+    assert detail["chart"]["available"] and len(detail["chart"]["points"]) == 252
+    assert detail["learning"]["url"] is None and ask.missing == 404
+    # The replay records the run only, so the demo shows no other context chip.
+    assert {chip["key"] for chip in detail["lately"]["chips"]} <= {"run"}
+    development = detail["reliable"]["development"]
+    assert development["state"] == "ok"
+    assert "synthetic demo stocks" in " ".join(development["sheet"]["paragraphs"])
     assert "http://127.0.0.1:" in out.getvalue() and "synthetic demo" in out.getvalue()
     assert seen["local_zone"] is None and seen["data_class"] == DataClass.SYNTHETIC
     assert _changed_files() == before
@@ -142,6 +163,40 @@ def test_the_real_app_wires_the_rules_calendar_the_reader_and_the_exclusions(tmp
     assert ask.home["research_url"] == "http://127.0.0.1:8502/"
 
 
+def test_the_real_detail_wires_the_rules_calendar_the_reader_and_the_exclusions(
+    tmp_path, monkeypatch
+):
+    lab = Lab(tmp_path)
+    lab.watch(REAL_TEST_TICKER, "SKHY", at=ny("2026-10-21", "12:00"))
+    seen = {}
+
+    def spy(records, **options):
+        seen.update(options)
+        return {"ticker": options["symbol"]}
+
+    monkeypatch.setattr(launcher, "build_detail", spy)
+    ask = Ask()
+    launcher.main(
+        [
+            "--port",
+            "0",
+            "--at",
+            "2026-10-22T07:40-04:00",
+            "--research-url",
+            "http://127.0.0.1:8502/",
+        ],
+        records_factory=lambda: ReadOnlyRecords(lab.path),
+        serve=ask,
+        out=io.StringIO(),
+    )
+    assert ask.detail == {"ticker": REAL_TEST_TICKER}
+    assert seen["calendar"] is sessions and seen["calendar_id"] == CALENDAR_ID
+    assert seen["data_class"] == DataClass.REAL and seen["recent"] is launcher.observed
+    assert seen["excluded"] == ("SKHY", "SNDK") and seen["local_zone"] is None
+    assert seen["now"].isoformat() == "2026-10-22T11:40:00+00:00"
+    assert seen["research_url"] == "http://127.0.0.1:8502/" and "tickers" not in seen
+
+
 def test_the_real_app_end_to_end_on_fixture_records(tmp_path):
     lab = Lab(tmp_path)
     lab.watch(REAL_TEST_TICKER, "SNDK", at=ny("2026-10-21", "12:00"))
@@ -163,10 +218,13 @@ def test_the_real_app_end_to_end_on_fixture_records(tmp_path):
         out=io.StringIO(),
     )
     (stock,) = ask.home["stocks"]
-    assert stock["ticker"] == REAL_TEST_TICKER and calls == [(REAL_TEST_TICKER, 22)]
+    assert stock["ticker"] == REAL_TEST_TICKER
+    assert calls == [(REAL_TEST_TICKER, 22), (REAL_TEST_TICKER, 252)]  # Home, then the detail
     assert (
         stock["outlook"]["state"] == "fresh" and stock["price"]["words"] == "No prices stored yet."
     )
+    assert ask.detail["outlook"]["state"] == "fresh" and ask.detail["chart"]["available"] is False
+    assert ask.missing == 404
 
 
 def test_a_failing_price_read_is_shown_as_unreadable(monkeypatch, capsys):
@@ -264,3 +322,29 @@ def test_a_polite_stop_removes_the_demo_store_like_control_c(tmp_path):
         if run.poll() is None:
             run.kill()
     assert not [p for p in tmp_path.iterdir() if p.name.startswith("lab-app-demo-")]
+
+
+def test_a_detail_whose_store_cannot_be_read_answers_with_the_plain_error(tmp_path, capsys):
+    # Not "not on the watchlist": the store's watchlist itself could not be read.
+    broken = tmp_path / "lab.sqlite3"
+    broken.write_text("not a database")
+    seen = {}
+
+    def ask(server):
+        app = server.app
+        try:
+            seen["status"] = app.handle("GET", "/api/stock/NVDA", f"127.0.0.1:{app.port}")
+        finally:
+            server.server_close()
+
+    launcher.main(
+        ["--port", "0", "--at", "2026-10-22T07:40-04:00"],
+        records_factory=lambda: ReadOnlyRecords(broken),
+        recent=lambda *args, **kwargs: pytest.fail("prices were read for an unverified stock"),
+        serve=ask,
+        out=io.StringIO(),
+    )
+    response = seen["status"]
+    assert response.status == 500
+    assert json.loads(response.body) == {"error": "The app couldn't prepare this screen."}
+    assert "/api/stock/ failed" in capsys.readouterr().err

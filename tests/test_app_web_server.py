@@ -218,3 +218,109 @@ def test_no_cookie_and_no_cross_origin_permission_is_ever_sent(running):
         _, headers, _ = fetch(running, "GET", path, f"127.0.0.1:{running}")
         assert "Set-Cookie" not in headers
         assert not [name for name in headers if name.lower().startswith("access-control-")]
+
+
+# --- one stock's screen, by its ticker ---
+
+
+LONGEST = "A" * 20  # the longest name the route accepts
+
+
+def stocks(calls, known=("NVDA", "DEMO_CALM", "BRK-B", LONGEST)):
+    def find(name):
+        calls.append(name)
+        return {"ticker": name} if name in known else None
+
+    return server.LabApp(port=PORT, api={}, static={}, items={"/api/stock/": find})
+
+
+@pytest.mark.parametrize("name", ["NVDA", "DEMO_CALM", "BRK-B", LONGEST])
+def test_a_stock_on_the_list_is_served_by_its_ticker(name):
+    calls = []
+    response = stocks(calls).handle("GET", f"/api/stock/{name}?x=1", "127.0.0.1:8510")
+    assert response.status == 200 and json.loads(response.body) == {"ticker": name}
+    assert response.content_type == "application/json; charset=utf-8" and calls == [name]
+
+
+def test_a_ticker_the_view_does_not_know_is_not_found():
+    calls = []
+    response = stocks(calls).handle("GET", "/api/stock/AMD", "127.0.0.1:8510")
+    assert (response.status, response.body, calls) == (404, b"Not found", ["AMD"])
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "/api/stock/",
+        "/api/stock/nvda",
+        "/api/stock/NVDA/",
+        "/api/stock/NVDA/x",
+        "/api/stock/../home",
+        "/api/stock/%2E%2E",
+        "/api/stock/NV%44A",
+        "/api/stock/-NVDA",
+        "/api/stock/_NVDA",
+        "/api/stock/NVDA.",
+        "/api/stock/NV DA",
+        "/api/stock/NVDA%0A",
+        "/api/stock/" + "A" * 21,
+        "/api/stockNVDA",
+        "/api/stocks/NVDA",
+    ],
+)
+def test_a_name_that_is_not_a_ticker_never_reaches_the_view(target):
+    calls = []
+    assert stocks(calls).handle("GET", target, "127.0.0.1:8510").status == 404
+    assert calls == []
+
+
+def test_a_stock_request_another_website_starts_is_refused_before_any_work():
+    calls = []
+    headers = {"sec-fetch-site": "cross-site", "sec-fetch-mode": "cors"}
+    response = stocks(calls).handle("GET", "/api/stock/NVDA", "127.0.0.1:8510", headers)
+    assert response.status == 403 and calls == []
+    for other in (
+        {"sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate"},  # only "/" may be visited
+        {"origin": "http://evil.example"},  # no Fetch metadata (an older browser)
+    ):
+        assert stocks(calls).handle("GET", "/api/stock/NVDA", "127.0.0.1:8510", other).status == 403
+    assert stocks(calls).handle("GET", "/api/stock/NVDA", "evil.example:8510").status == 421
+    assert stocks(calls).handle("POST", "/api/stock/NVDA", "127.0.0.1:8510").status == 405
+    assert calls == []
+
+
+def test_a_failing_stock_screen_says_so_plainly(capsys):
+    def broken(name):
+        raise RuntimeError(f"/Users/someone/secret/{name} exploded")
+
+    lab = server.LabApp(port=PORT, api={}, static={}, items={"/api/stock/": broken})
+    response = lab.handle("GET", "/api/stock/NVDA", "127.0.0.1:8510")
+    assert response.status == 500
+    assert json.loads(response.body) == {"error": "The app couldn't prepare this screen."}
+    err = capsys.readouterr().err
+    assert "/api/stock/ failed (RuntimeError)" in err and "secret" not in err and "NVDA" not in err
+
+
+def test_the_real_server_serves_one_stock():
+    calls = []
+    lab = stocks(calls)
+    lab.port = 0
+    httpd = server.make_server(lab)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = httpd.server_address[1]
+        status, headers, body = fetch(port, "GET", "/api/stock/NVDA", f"127.0.0.1:{port}")
+        assert status == 200 and json.loads(body) == {"ticker": "NVDA"}
+        for name, value in server.SECURITY_HEADERS:
+            assert headers.get(name) == value, name
+        assert fetch(port, "GET", "/api/stock/AMD", f"127.0.0.1:{port}")[0] == 404
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_head_on_a_stock_answers_like_get_without_a_body_at_the_socket():
+    calls = []
+    response = stocks(calls).handle("HEAD", "/api/stock/NVDA", "127.0.0.1:8510")
+    assert response.status == 200 and calls == ["NVDA"]  # the handler drops the body for HEAD

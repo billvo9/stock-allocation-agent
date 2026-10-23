@@ -372,7 +372,8 @@ def test_nothing_is_derived_from_the_prices(lab):
     # them is among them, so a value the view computed from two prices would show.
     rows = [row(TUESDAY, 103.0, 0.0101, level=57.0), row(WEDNESDAY, 211.0, -0.0202, level=61.0)]
     stock = only(view(lab, at(THURSDAY, "07:40"), prices=Prices(rows)))
-    assert set(stock) == {"ticker", "name", "price", "outlook"}
+    assert set(stock) == {"ticker", "name", "price", "outlook", "open_label"}
+    assert stock["open_label"] == f"{T}: $211.00, −2.02% on Wed, Oct 21. Open details."
     assert stock["price"] == {
         "available": True,
         "close": 211.0,

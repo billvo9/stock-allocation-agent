@@ -5,8 +5,9 @@ It serves the Lab app (src/stock_agent/app/web; docs/product/lab_app_design.md)
 from Python's standard-library web server on 127.0.0.1, read-only: it opens
 the Stock Lab's store read-only, reads each stock's recent observed prices
 through the isolated descriptive reader (decision A6), and passes both, with
-the NYSE rules calendar, to the app's Home view. It never runs the evening
-job, writes nothing, sends nothing anywhere and reads no credential.
+the NYSE rules calendar, to the app's Home and Stock detail views. It never
+runs the evening job, writes nothing, sends nothing anywhere and reads no
+credential.
 
 Modes
     (default)   the real Stock Lab
@@ -44,6 +45,7 @@ from urllib.parse import urlsplit
 import numpy as np
 import pandas as pd
 
+from stock_agent.app.web.detail import build_detail
 from stock_agent.app.web.home import build_home
 from stock_agent.app.web.server import HOST, LabApp, make_server, static_files
 from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
@@ -57,6 +59,7 @@ DEFAULT_PORT = 8510
 EXCLUDED = ("SKHY", "SNDK")  # the owner's choice: kept off the watchlist views
 DEMO_SESSIONS = 30
 DEMO_CALENDAR = "synthetic_weekdays"
+STOCK_ROUTE = "/api/stock/"  # one stock's detail: /api/stock/NVDA
 
 
 def observed(symbol: str, *, count: int, retrieved_by: pd.Timestamp):
@@ -103,7 +106,9 @@ def real_api(
     clock: Callable[[], datetime],
     recent: Callable,
     research_url: str | None,
-) -> dict:
+) -> tuple[dict, dict]:
+    """The routes (Home) and the named routes (one stock's detail, by its ticker)."""
+
     def home() -> dict:
         view = build_home(
             records_factory(),
@@ -117,7 +122,21 @@ def real_api(
         )
         return {**view, "research_url": research_url}
 
-    return {"/api/home": home}
+    def stock(symbol: str) -> dict | None:
+        return build_detail(
+            records_factory(),
+            symbol=symbol,
+            now=clock(),
+            calendar=sessions,
+            calendar_id=CALENDAR_ID,
+            data_class=DataClass.REAL,
+            recent=recent,
+            local_zone=None,
+            excluded=EXCLUDED,
+            research_url=research_url,
+        )
+
+    return {"/api/home": home}, {STOCK_ROUTE: stock}
 
 
 # --- the synthetic demo ---
@@ -153,7 +172,7 @@ def demo_prices(records: ReadOnlyRecords) -> Callable:
 
 
 def demo_api(home_dir: Path, sessions_count: int, at: str | None, research_url: str | None):
-    """Replay synthetic sessions into `home_dir`; the API and the moment it is shown as of."""
+    """Replay synthetic sessions into `home_dir`; the routes and the named routes."""
 
     from stock_agent.stock_lab.job import record_run
     from stock_agent.stock_lab.replay import run_replay  # research side: the demo only
@@ -200,7 +219,22 @@ def demo_api(home_dir: Path, sessions_count: int, at: str | None, research_url: 
         )
         return {**view, "research_url": research_url}
 
-    return {"/api/home": home}
+    def stock(symbol: str) -> dict | None:
+        return build_detail(
+            records,
+            symbol=symbol,
+            now=now,
+            calendar=weekdays,
+            calendar_id=DEMO_CALENDAR,
+            data_class=DataClass.SYNTHETIC,
+            recent=demo_prices(records),
+            local_zone=None,
+            tickers=list(DEMO_IDS),
+            names=names,
+            research_url=research_url,
+        )
+
+    return {"/api/home": home}, {STOCK_ROUTE: stock}
 
 
 # --- serving ---
@@ -231,8 +265,9 @@ def _bind(port: int, out: TextIO):
         return None
 
 
-def _serve(app: LabApp, server, api: dict, args, *, serve: Callable, out: TextIO) -> int:
-    app.api = dict(api)
+def _serve(app: LabApp, server, routes, args, *, serve: Callable, out: TextIO) -> int:
+    api, items = routes
+    app.api, app.items = dict(api), dict(items)
     url = f"http://{HOST}:{app.port}/"
     kind = "a synthetic demo" if args.demo is not None else "this Mac's Stock Lab, read-only"
     print(f"Lab app: {url} ({kind}). Press Control-C to stop.", file=out, flush=True)
@@ -275,16 +310,16 @@ def main(
     app, server = bound
     try:
         if args.demo is None:
-            api = real_api(
+            routes = real_api(
                 records_factory=records_factory,
                 clock=(lambda: fixed) if fixed else (lambda: _moment(None, clock)),
                 recent=recent,
                 research_url=args.research_url,
             )
-            return _serve(app, server, api, args, serve=serve, out=out)
+            return _serve(app, server, routes, args, serve=serve, out=out)
         with tempfile.TemporaryDirectory(prefix="lab-app-demo-") as home_dir:
-            api = demo_api(Path(home_dir), args.demo, args.at, args.research_url)
-            return _serve(app, server, api, args, serve=serve, out=out)
+            routes = demo_api(Path(home_dir), args.demo, args.at, args.research_url)
+            return _serve(app, server, routes, args, serve=serve, out=out)
     except ValueError as error:
         server.server_close()
         print(f"refused: {error}", file=out)

@@ -120,6 +120,52 @@ forecast's as-of close and when it was recorded, and the briefing's own explanat
   yet", "Prices can't be read") and shows no number.
 - A close older than the other stocks' names its own day ("on Tue, Oct 20").
 
+### Stock detail in detail (PR 2)
+
+Tapping a Home row opens the stock's screen at `#stock/<TICKER>` (the browser's Back returns to
+Home, with the row focused). Its data comes from `GET /api/stock/<TICKER>`, prepared at the
+request time like Home. A ticker that is not on Home's watchlist gets 404.
+
+**Header and chart** (the recent-prices reader, `read_recent(count=252)`, decision A6):
+- The latest served close, and that session's change in green or red, exactly as the reader
+  gives them.
+- The chart draws the reader's split-consistent `level`; a gap stays a gap. Ranges: 1W, 1M, 3M
+  (the default) and 1Y, that is 6, 22, 64 and up to 252 closes. When fewer days are stored, the
+  range says so ("Only 30 trading days are stored: ...").
+- Dragging across the chart, or the arrow keys (it is a slider for screen readers), shows that
+  day's close, that day's change and the reader's notes (ex-dividend day, share split, no price
+  served, large move, revised by the provider).
+- Nothing is added up: no change over the period, no high or low. "Why no total for the
+  period?" explains this.
+
+**Outlook** (the briefing's fresh outlook, exactly as recorded):
+- "Thursday's outlook": an Up / Flat / Down bar in the mist hue (Down hatched), the three
+  chances, and the band in words from the record ("more than 0.5%").
+- "Next 5 trading days": the recorded five-session total, with its own recorded band (about
+  1.12%). "Each day on its own" opens the five recorded sessions, each against the day before.
+- Any other state shows Home's empty state for that stock ("No outlook for Thursday", "Friday's
+  outlook comes tonight", "Outlook can't be verified", ...), with its sheet. No probability is
+  shown without a fresh outlook.
+
+**How reliable has this been?**
+- Development: the stored evaluation's bucket that holds the recorded chance of Up, pooled over
+  the evaluation's stocks: "When the model said about 40–50% for Up, the stock went up 47% of the
+  time", with n, the distinct dates and the 90% Jeffreys range, read as stored. A bucket with too
+  few dates shows "Not enough data yet" and no frequency. "How to read this" lists Up, Flat and
+  Down.
+- Live: the briefing's prospective record (every stock together) against Model Health's minimum
+  of 50 settled sessions and 250 scored targets, with a meter. "Not enough data yet" until then.
+
+**Lately** (the context chips):
+- Only what the evening job recorded with the forecast (`signals`): the current run ("3 rising
+  days in a row"), the 20-session change ("Past 4 weeks +4.21%") and the regime ("Calm swings").
+  They are labelled with the forecast's as-of close.
+- A context the briefing computed from stored prices (synthetic or pre-2025 stocks) is never
+  shown here, so the synthetic demo shows the run only.
+
+**For learning:** a link to the Stock Probability research page (`<research URL>/stock-probability`)
+when the launcher has `--research-url`; otherwise a sentence saying where the research pages open.
+
 ## 4. Data and point-in-time rules
 
 - **One source of truth for status and outlooks:** `stock_lab.briefing.report.build_briefing`,
@@ -128,8 +174,9 @@ forecast's as-of close and when it was recorded, and the briefing's own explanat
   - It counts only the records that existed by then.
   - It never recomputes a probability.
   - It gives fresh, stale or unavailable per stock, with reasons.
-- **Prices:** `stock_lab.inference.recent.read_recent(symbol, count=22, retrieved_by=now)`.
-  It shows observed closes only, opened read-only (decision A6).
+- **Prices:** `stock_lab.inference.recent.read_recent(symbol, count=22, retrieved_by=now)`
+  for Home, and `count=252` for a stock's chart. It shows observed closes only, opened
+  read-only (decision A6).
 - **No new calculation on 2025+ prices.** Context (streak, past 4 weeks, swings) comes from
   the forecast record's `signals`, as the frozen job recorded it. The chart adds nothing up.
   The mockup's "Why no total for the period?" sheet explains this.
@@ -146,7 +193,7 @@ possible later decision):
 
 | Piece | Where | Role |
 |---|---|---|
-| View models | `src/stock_agent/app/web/home.py` (later `detail.py`, `history.py`, `health.py`) | Pure functions from the briefing and the prices to JSON-ready dicts of display-ready words and the raw recorded values |
+| View models | `src/stock_agent/app/web/home.py`, `detail.py` (later `history.py`, `health.py`) | Pure functions from the briefing and the prices to JSON-ready dicts of display-ready words and the raw recorded values |
 | Copy and formatting | `src/stock_agent/app/web/words.py` | Every user-facing sentence, time words, percentages |
 | Server | `src/stock_agent/app/web/server.py` | Standard-library `ThreadingHTTPServer`, read-only routes, security headers |
 | Front end | `src/stock_agent/app/web/static/` | `index.html`, `app.css`, `app.js`, the mark; the bundled Source Sans 3 is served from `app/static/fonts/` |
@@ -169,6 +216,9 @@ possible later decision):
 - GET and HEAD only (405 otherwise), over HTTP/1.0 or 1.1, with a path as the request target
   (400 otherwise). Fixed routes; static files from a fixed allowlist (no path from the request
   reaches the file system).
+- One named route, `/api/stock/<TICKER>`: only a name of capital letters, digits, "_" and "-"
+  (at most 20) reaches the view, which answers only for a stock on Home's watchlist (404
+  otherwise). The name is a lookup key; it never reaches the file system.
 - A request another website starts in the background gets 403 before any work. The app
   tells by the browser's Fetch metadata (`Sec-Fetch-Site`) or a foreign `Origin`. Only a
   top-level visit to the page may come from a link elsewhere.
@@ -181,7 +231,8 @@ possible later decision):
   - `Cache-Control: no-store`
 - No CORS headers, no cookies, no credentials, no secrets in the environment.
 - The page builds its DOM with `textContent` and CSSOM (no `innerHTML` of data, no inline
-  styles), so the strict policy holds.
+  styles), so the strict policy holds. The chart, the outlook bars and the meter are SVG drawn
+  to their box's measured width, with attributes only.
 - Errors return a short JSON message; no traceback, no path.
 
 **Mac app and the Desktop prompt** (a later PR):
@@ -232,6 +283,10 @@ test and security reviewers:
 - View models: pytest on fixture stores built with the existing helpers. This covers every
   status-line rule and chip state, the A6 rule (no value derived from prices), exact
   probabilities, the time words (last night, tonight, weekday, ET), and empty states.
+  - The detail's A6 test uses sentinel prices and checks that every number in the view is a
+    served value, a recorded value or a count.
+  - Its point-in-time test adds a recalculation, a score and the next evening after the request
+    time, proves the view is unchanged, and then that each shows once it existed.
 - Server: request handling without sockets (Host check, methods, routes, headers, errors);
   one end-to-end test on a free loopback port, as `tests/test_local_server_hosts.py` does.
 - Static files: no external URL, no inline script or style, no `innerHTML` of data, no advice
@@ -265,7 +320,45 @@ Calls made while building PR 1, for the owner to check:
     when its window comes back into focus.
   - "Not yet proven" no longer names a start date in the page itself.
 
+Calls made while building PR 2 (Stock detail), for the owner to check:
+- The detail is addressed as `#stock/<TICKER>`, so the browser's Back and Forward work and a
+  detail can be reopened by its address. Leaving it through a tab clears the address.
+- The context chips show only the forecast record's own `signals`. The synthetic demo's
+  replay does not record the 4-week change or the regime, so its detail shows the run only.
+- "How reliable" names the evaluation's stocks and its last year ("on AMD, MRVL, MU and NVDA
+  together, through 2024"). The mockup's first year (2003) is not in the stored record, so it is
+  not shown. The live record's start date is not shown either, for the same reason.
+- The live record counts every stock's scored outlooks together, as Model Health does.
+- The chart's readout shows each day's raw close as served (after a split, earlier closes are
+  not adjusted), and the line uses the split-consistent level, as the reader gives both.
+- When fewer days are stored than a range asks for, the range shows every stored day and
+  says so. The buttons stay, so the layout does not jump.
+- The mockup's "They barely change: the model stays close to its usual mix" under "Each day on
+  its own" became a statement of what the numbers are ("each day on its own, against the day
+  before; not a path to the five-day total"), since the app does not check that claim.
+- "Why no total for the period?" was reworded after the frontend review. It now says what the
+  price reader does (each day's close, its move from the day before, a split-consistent level)
+  and that nothing more is worked out from recent prices (2025 on) outside the evening job. It
+  mentions the 4-week change only when that chip is shown.
+- If the store's watchlist itself cannot be read, a stock's screen answers with the app's plain
+  error, not "not on the watchlist", and reads no prices.
+- A range always reaches back from the latest served close, even when the newest stored days
+  are gaps.
+- When the window comes back into view, an unchanged stock screen is left as it is. A changed
+  one is redrawn with the focus kept on the same control. Opening a stock moves focus to its
+  name and names it in the window title.
+- A fix to PR 1's page: ARIA states (`aria-pressed`, `aria-expanded`) are now always written as
+  "true" or "false". Before, More's Dark / Light buttons showed neither as chosen until one was
+  pressed.
+
 ## 10. Open for later PRs
+
+- **Flat's colour in light mode (owner decision; PR 2).** The approved Flat colour (`#B9B0A4`)
+  is 2.1:1 against a light card, below the 3:1 asked of a meaningful mark. Up and Down pass
+  (6:1 or more), Flat is 3.4:1 against them, and every chance is also printed under its bar.
+  - Options: keep it (today), or darken light Flat to about `#958C80`. That is 3.3:1 on the
+    card but 2.2:1 against Up and Down, so the 3 px gaps and Down's hatching would then carry
+    the segments apart.
 
 - **The one-month lines' scale (owner decision; frontend review, 2026-10-23).** Each line is
   scaled to its own lowest and highest close, as in the approved mockup. So a calm stock
@@ -274,6 +367,18 @@ Calls made while building PR 1, for the owner to check:
     last close).
   - Either is drawing only, with no value computed from prices. Today's behaviour stays
     until the owner chooses.
+  - **The detail chart has the same question (frontend review, PR 2).** Each range is scaled
+    to its own lowest and highest level, with no axis labels, so a 1% week fills the chart as a
+    40% year does. One answer should cover both.
+
+- **Requests from other pages and programs (security review, PR 2; low).**
+  - A browser without Fetch metadata (for example Safari before 16.4) lets a cross-site
+    `<img>` reach `/api/stock/<TICKER>`. Timing could tell a listed stock (a full briefing)
+    from an unlisted one (one watchlist read).
+  - Proposed with the per-launch secret below: the page's data requests carry a header (or
+    the token) that a cross-site request cannot set.
+  - The server also has no cap on concurrent work. Each request is one bounded unit, and a
+    cap (for example four at a time, 503 above it) can come with that change.
 
 - **A per-launch secret (owner decision; security review, 2026-10-23).** Any program or
   macOS account on this Mac can read the app's loopback address, while the stores

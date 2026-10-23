@@ -82,7 +82,7 @@ def build_home(
     briefing, problem, previous = None, None, None
     try:
         plan = briefing_timing(now, calendar)
-        previous = _session_before(calendar, plan.prior_session)
+        previous = session_before(calendar, plan.prior_session)
         briefing = build_briefing(
             records,
             timing=plan,
@@ -95,7 +95,7 @@ def build_home(
         listed = tuple(stock.symbol for stock in briefing.stocks)
     except ValueError as error:  # the store, the timing or the calendar refused
         problem = type(error).__name__
-        listed = _listed(records, tickers, excluded)
+        listed = watchlist(records, tickers, excluded)
     moment = pd.Timestamp(now)
     prices = {
         symbol: recent(symbol, count=SPARK_SESSIONS, retrieved_by=moment) for symbol in listed
@@ -113,7 +113,7 @@ def build_home(
     )
 
 
-def _session_before(calendar: Callable, day: date) -> str | None:
+def session_before(calendar: Callable, day: date) -> str | None:
     """The session before `day` on `calendar` (ISO date), or None within two weeks."""
 
     found = sorted(
@@ -123,7 +123,9 @@ def _session_before(calendar: Callable, day: date) -> str | None:
     return found[-1].isoformat() if found else None
 
 
-def _listed(records, tickers, excluded) -> tuple[str, ...]:
+def watchlist(records, tickers, excluded) -> tuple[str, ...]:
+    """The stocks shown: `tickers`, or the store's watchlist, minus `excluded`."""
+
     if tickers is None:
         try:
             tickers = records.watched()
@@ -160,14 +162,15 @@ def home_view(
             {
                 "ticker": symbol,
                 "name": names.get(symbol),
-                "price": _price(symbol, prices.get(symbol)),
-                "outlook": _outlook(symbol, stock, briefing, now, local_zone),
+                "price": price_now(symbol, prices.get(symbol)),
+                "outlook": outlook(symbol, stock, briefing, now, local_zone),
             }
         )
     sessions = [s["price"]["session"] for s in stocks if s["price"]["available"]]
     for stock in stocks:  # a close older than the others names its own day
         price = stock["price"]
         price["older"] = price["available"] and price["session"] != max(sessions)
+        stock["open_label"] = words.open_label(stock["ticker"], stock["name"], price)
     bands = [
         StableBand(s.lineage.band).words()[1:]
         for s in by_symbol.values()
@@ -274,7 +277,9 @@ def _pending(stock: StockBriefing, briefing: Briefing) -> bool:
 # --- the outlook chip ---
 
 
-def _outlook(symbol, stock: StockBriefing | None, briefing, now, zone) -> dict:
+def outlook(symbol, stock: StockBriefing | None, briefing, now, zone) -> dict:
+    """A stock's next-session outlook: fresh as recorded, or its honest empty state."""
+
     if stock is not None and stock.status == FRESH and stock.next_session is not None:
         return _fresh(symbol, stock, now, zone)
     market = None if briefing is None else briefing.market_date
@@ -407,14 +412,35 @@ def _fresh(symbol: str, stock: StockBriefing, now, zone) -> dict:
 # --- the price, as the reader gave it ---
 
 
-def _number(value) -> float | None:
+def finite(value) -> float | None:
+    """A served number, or None when it is missing or not finite."""
+
     if value is None:
         return None
     number = float(value)
     return number if math.isfinite(number) else None
 
 
-def _price(symbol: str, found) -> dict:
+def direction(change: float | None) -> str:
+    """Which way a served change went: up, down, flat, or none when there is no change."""
+
+    if change is None:
+        return "none"
+    return "up" if change > 0 else "down" if change < 0 else "flat"
+
+
+def prices_words(symbol: str, found) -> str | None:
+    """Why no price is shown (None when the reader served observed prices)."""
+
+    state = getattr(found, "state", None)
+    if state == OBSERVED:
+        return None
+    return words.NO_PRICES.get(state, words.PRICES_UNREADABLE).format(ticker=symbol)
+
+
+def price_now(symbol: str, found) -> dict:
+    """The latest served close and that session's change, exactly as the reader gave them."""
+
     empty = {
         "available": False,
         "close": None,
@@ -426,19 +452,14 @@ def _price(symbol: str, found) -> dict:
         "direction": "none",
         "line": [],
     }
-    state = getattr(found, "state", None)
-    if state != OBSERVED:
-        text = words.NO_PRICES.get(state, words.PRICES_UNREADABLE).format(ticker=symbol)
-        return {**empty, "words": text}
-    served = [row for row in found.sessions if _number(row.close) is not None]
+    missing = prices_words(symbol, found)
+    if missing is not None:
+        return {**empty, "words": missing}
+    served = [row for row in found.sessions if finite(row.close) is not None]
     if not served:
         return {**empty, "words": words.NO_CLOSE}
     latest = served[-1]
-    close, change = _number(latest.close), _number(latest.change)
-    if change is None:
-        direction = "none"
-    else:
-        direction = "up" if change > 0 else "down" if change < 0 else "flat"
+    close, change = finite(latest.close), finite(latest.change)
     return {
         "available": True,
         "close": close,
@@ -447,7 +468,7 @@ def _price(symbol: str, found) -> dict:
         "session_words": words.short_day(latest.session),
         "change": change,
         "change_words": words.signed_percent(change),
-        "direction": direction,
-        "line": [_number(row.level) for row in found.sessions],
+        "direction": direction(change),
+        "line": [finite(row.level) for row in found.sessions],
         "words": None,
     }

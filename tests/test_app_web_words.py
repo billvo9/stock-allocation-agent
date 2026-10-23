@@ -121,3 +121,59 @@ def test_new_york_days_decide_tonight_even_when_this_mac_is_already_in_tomorrow(
 def test_checked_names_the_time_the_app_read_the_records():
     assert words.checked(ny("2026-10-22T07:40"), NEW_YORK) == "Checked 7:40 AM"
     assert words.checked(ny("2026-10-22T07:40"), LONDON) == "Checked 7:40 AM ET"
+
+
+# --- Stock detail ---
+
+
+@pytest.mark.parametrize(
+    ("direction", "length", "text"),
+    [
+        ("increase", 3, "3 rising days in a row"),
+        ("decrease", 1, "1 falling day"),
+        ("stable", 2, "2 flat days in a row"),
+        (None, 0, "No streak after a gap"),
+        ("increase", 0, "No streak after a gap"),
+    ],
+)
+def test_a_run_in_words(direction, length, text):
+    assert words.run_chip(direction, length) == text
+
+
+def test_whose_past_tests():
+    assert words.stocks_words(["AMD", "MRVL", "MU", "NVDA"]) == "AMD, MRVL, MU and NVDA"
+    assert words.stocks_words(list("ABCDEF")) == "6 stocks"
+    assert words.development_scope(["AMD", "NVDA"], "2024-12-31", False) == (
+        " on AMD and NVDA together, through 2024"
+    )
+    assert words.development_scope(["AMD"], None, False) == ""
+    assert words.development_scope([], None, True) == " on the synthetic demo stocks"
+
+
+def test_ranges_of_chances_and_of_days():
+    assert words.about(0.4, 0.5) == "about 40–50%"
+    assert words.happened(0.4712, 0.4499, 0.4901) == "47% (likely 45–49%)"
+    assert words.range_note("2026-10-14", "2026-10-21", shown=6, asked=6) == (
+        "Daily closes from Wed, Oct 14 to Wed, Oct 21."
+    )
+    assert words.range_note("2026-10-19", "2026-10-21", shown=3, asked=64) == (
+        "Only 3 trading days are stored: Mon, Oct 19 to Wed, Oct 21."
+    )
+
+
+def test_a_day_of_the_chart_in_words():
+    assert words.point_when("2026-10-21", [], latest=True) == "on Wed, Oct 21 (latest close)"
+    assert words.point_label("2026-10-21", "$1.00", "—", ["split"]) == (
+        "Wed, Oct 21: closed at $1.00; split."
+    )
+    assert words.day_and_date("2026-10-26") == "Mon 26"
+    assert words.open_label(
+        "NVDA", None, {"available": False, "words": "No prices stored yet."}
+    ) == ("NVDA. No prices stored yet. Open details.")
+
+
+def test_each_range_names_its_visible_label_first():
+    # WCAG 2.5.3: the accessible name starts with the visible "1W", "1M", "3M" or "1Y".
+    for _key, label, _moves, name in words.RANGES:
+        assert name.startswith(f"{label}, ")
+    assert [moves for *_, moves, _name in words.RANGES] == [5, 21, 63, 251]
