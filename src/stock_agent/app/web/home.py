@@ -167,6 +167,9 @@ def home_view(
             }
         )
     sessions = [s["price"]["session"] for s in stocks if s["price"]["available"]]
+    # Lines the page can draw (two levels or more): only several of them share a scale.
+    drawn = [s for s in stocks if sum(v is not None and v > 0 for v in s["price"]["line"]) > 1]
+    shared = len(drawn) > 1
     for stock in stocks:  # a close older than the others names its own day
         price = stock["price"]
         price["older"] = price["available"] and price["session"] != max(sessions)
@@ -183,8 +186,10 @@ def home_view(
         "generated_at": pd.Timestamp(now).tz_convert("UTC").isoformat(),
         "status": _status(briefing, problem, now, local_zone, previous_session),
         "prices_note": words.prices_note(max(sessions)) if sessions else None,
-        "lines_note": words.LINES_NOTE if sessions else None,
-        "scale_note": words.SCALE_NOTE if len(sessions) > 1 else None,
+        "lines_note": (
+            None if not sessions else words.SHARED_LINES_NOTE if shared else words.LINES_NOTE
+        ),
+        "scale_note": words.SCALE_NOTE if shared else None,
         "checked": words.checked(now, local_zone),
         "stocks": stocks,
         "footer": words.FOOTER,

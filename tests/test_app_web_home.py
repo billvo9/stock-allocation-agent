@@ -362,8 +362,8 @@ def test_the_price_is_the_readers_close_and_change_unchanged(lab):
     assert price["direction"] == "up" and price["session_words"] == "Wed, Oct 21"
     assert price["line"] == [121.70, 127.65]
     assert found["prices_note"] == "Closing prices from Wed, Oct 21."
-    assert found["lines_note"].startswith("Lines show the past month on one shared scale")
-    assert found["scale_note"] is None  # one stock: nothing to compare
+    assert found["lines_note"].startswith("Lines show the past month;")
+    assert "shared" not in found["lines_note"] and found["scale_note"] is None  # one line
     assert found["checked"] == "Checked 7:40 AM"
     assert only(found)["name"] is None  # SYNTH has no company name
 
@@ -632,3 +632,13 @@ def test_several_lines_say_they_share_one_scale(lab):
     found = view(lab, at(THURSDAY, "07:40"), tickers=(T, OTHER))
     assert found["scale_note"] == "Same scale for all lines"
     assert "one shared scale" in found["lines_note"]
+
+
+def test_a_line_too_short_to_draw_shares_no_scale(lab):
+    class OneShort(Prices):
+        def __call__(self, symbol, *, count, retrieved_by):
+            self.rows = [row(WEDNESDAY, 2.0, 0.02)] if symbol == OTHER else Prices().rows
+            return super().__call__(symbol, count=count, retrieved_by=retrieved_by)
+
+    found = view(lab, at(THURSDAY, "07:40"), tickers=(T, OTHER), prices=OneShort())
+    assert found["scale_note"] is None and "shared" not in found["lines_note"]

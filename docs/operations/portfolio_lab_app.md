@@ -80,7 +80,7 @@ the app again after:
 - **Open again.** Each click on the Dock icon opens the Lab app in another
   browser tab; close extra tabs freely. It never starts a second copy.
 - **"Open Portfolio Lab from its app".** The page shows your numbers only when
-  the app opened it: each start makes a new private key (below). A bookmarked
+  the app opened it: each start makes new private keys (below). A bookmarked
   or copied address shows this message instead; click the Dock icon.
 - **The research pages.** More, then Research pages, opens them in a new tab.
   They start with the app and stop with it.
@@ -96,21 +96,29 @@ the app again after:
 - **Which code runs.** The app runs whatever the project folder has checked out:
   for the runner copy, `main`.
 
-## This launch's private key
+## This launch's private keys
 
 Your Mac's other accounts, and other programs, can reach any server on
-127.0.0.1. So each time Portfolio Lab starts, it makes a new random key. The
-Lab app shows numbers only to a page that has it. (Owner decision of
+127.0.0.1. So each time Portfolio Lab starts, it makes two new random keys, one
+for the Lab app and one for the research pages. Each shows your numbers, and
+lets anything be changed, only to a page that has its key. (Owner decision of
 2026-10-23.)
-- The key goes to the browser in the part of the address after `#`. Browsers
-  never send that part to a server, and the page removes it from the address at
-  once. The page then keeps the key for that browser tab only.
-- It is stored only in the app's owner-only record (`server.json`). It is
-  passed to the Lab app privately, and never printed or logged.
-- It ends when you quit Portfolio Lab.
-- One brief exposure remains: for an instant, the address with the key is handed
-  to macOS's `open` command. An account listing every running program at that
-  moment could see it, until the app quits.
+- The Lab app's key goes to the browser in the part of the address after `#`.
+  Browsers never send that part to a server, and the page removes it from the
+  address at once. The page then keeps the key for that browser tab only.
+- The research pages' key travels in the Lab app's link to them (More, then
+  Research pages). Those pages take it out of the address at once and remember
+  it for that browser session.
+- The keys are stored only in the app's owner-only record (`server.json`). They
+  are passed to the servers privately (never as a command's arguments, which
+  other accounts could list) and are never printed or logged.
+- Before your browser opens, the Lab app must prove it holds its key. So a
+  program that grabbed the port first is never shown to you as the Lab.
+- The keys end when you quit Portfolio Lab.
+- What stays on your own account: your browser's history may keep the keyed
+  addresses until you quit Portfolio Lab, and a tab you open from a link with
+  Cmd-click may say "Open Portfolio Lab from its app" (click the Dock icon). Both
+  are your account's own files, which can already read the record.
 
 ## When something goes wrong
 
@@ -123,7 +131,8 @@ The app shows a macOS dialog and quits; it never fails silently.
 | Python environment (.venv) is missing | The `.venv` was deleted | Recreate it as the evening runbook describes, then open the app again |
 | doesn't have the Lab's launcher, or a start script is missing | The project folder is older than this app | `git -C ~/stock-agent-runner pull --ff-only`, then open the app again |
 | couldn't start | A server did not start or stopped answering | Choose Show Logs, read `lab.log` or `research.log`, then open the app again |
-| The page says "Open Portfolio Lab from its app" | The tab wasn't opened by the app (bookmark, copied address) | Click the Dock icon |
+| The page says "Open Portfolio Lab from its app" | The tab wasn't opened by the app (bookmark, copied address, Cmd-click) | Click the Dock icon |
+| The research pages say "Open the research pages from Portfolio Lab" | They were opened without the Lab app's link | In the Lab app, choose More, then Research pages |
 | The app seems stuck, or you used Force Quit | The servers may still be running | Open Portfolio Lab again, then quit it normally |
 
 Only the "couldn't start" dialog has a Show Logs button. Quitting after it also
@@ -146,8 +155,8 @@ Everything the app writes is in `~/stock-agent-private/portfolio_lab_app/`
 - It never reads or passes the Tiingo key or any other credential.
   - Both servers get a short allowlist of variables (`HOME`, `USER`, `LOGNAME`,
     `LANG`, `LC_ALL`, `LC_CTYPE`, `TMPDIR`) and a system `PATH`, nothing else.
-  - The Lab app also gets its own project code (`PYTHONPATH`) and this launch's
-    key.
+  - Each also gets its own launch key; the Lab app also gets its own project
+    code (`PYTHONPATH`) and the research pages' key, for its link to them.
 - The app makes no network request beyond this Mac. The launcher's only
   requests are the servers' health checks, on 127.0.0.1, and the build makes
   none. (Streamlit itself behaves as it does when started from a terminal.)

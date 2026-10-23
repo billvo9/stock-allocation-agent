@@ -229,19 +229,31 @@ possible later decision):
   - `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`
   - `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin`
   - `Cache-Control: no-store`
-- **This launch's key** (owner decision of 2026-10-23, PR 3).
-  - Every data route needs the `X-Lab-Token` header to equal a random key made for this run,
-    compared in constant time; otherwise it gets 401. The page, its assets and `/health`
-    (which says only "ok", for the launcher) hold no data and need no key.
-  - The Mac app's launcher makes the key, keeps it in its owner-only record and passes it
-    to the Lab app in its environment, never on a command line. It opens the browser at
-    `/#key=...`.
-  - The page moves the key from the address's fragment (which browsers never send to a
-    server) into this tab's `sessionStorage`, at once and before routing.
-  - A page without the key says "Open Portfolio Lab from its app".
-  - Another website can't send the custom header without a CORS preflight, which this server
-    refuses. That also closes PR 2's note about browsers without Fetch metadata.
-  - One exposure is accepted: the keyed address is handed to macOS `open` for an instant.
+- **This launch's keys** (owner decision of 2026-10-23, PR 3).
+  - Each start makes two random keys, one for the Lab app and one for the research pages, so
+    a program posing as either server never learns the other's.
+  - **Lab app.** Every data route needs the `X-Lab-Token` header to equal its key, compared
+    in constant time; otherwise it gets 401. The page, its assets and `/health` hold no data
+    and need no key.
+    - `/health?nonce=...` answers HMAC-SHA256(key, nonce). The launcher checks it before it
+      opens the browser, so a program that took the port first is never shown as the Lab.
+  - **Research pages** (the Streamlit Lab, `app/run.py`). With PORTFOLIO_LAB_RESEARCH_KEY
+    set, they show and change nothing until a browser session brings `?key=...` through the
+    Lab app's link. They then remember it for that session and take it out of the address.
+    Started from a terminal, with no key, they open as before.
+  - **Delivery.** The launcher keeps both keys in its owner-only record and passes them in
+    the servers' environments, never on a command line.
+    - The browser opens at `/#key=...` through osascript's standard input (`open location`),
+      not as an argument, so no other account can list it.
+    - The page moves the key from the fragment (which browsers never send to a server) into
+      this tab's `sessionStorage`, at once, before routing, and sends only a well-formed one.
+    - A page without the key says "Open Portfolio Lab from its app", with no Retry and no
+      Back.
+  - Another website can't send the custom header without a CORS preflight, which this
+    server refuses. That also closes PR 2's note about browsers without Fetch metadata.
+  - **Accepted, on the owner's own account:**
+    - browser history and session restore may keep a keyed address until the app quits;
+    - a Cmd-clicked tab may open locked.
 - At most four screens are prepared at once; another request gets 503 with one plain
   sentence.
 - No CORS headers, no cookies, no vendor credentials in the environment.

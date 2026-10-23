@@ -64,9 +64,10 @@
   }
 
   // The watchlist's lines share one vertical scale (the owner's choice, 2026-10-23): each
-  // line is placed relative to its own latest level, and every row gets the widest line's
-  // span, so a calmer stock draws a flatter line. Drawing only: these ratios are pixel
-  // positions, never shown, kept or sent anywhere.
+  // line is placed by the logarithm of its levels against its own latest one, and every
+  // row gets the widest line's span, so a calmer stock draws a flatter line and a rise and
+  // an equal fall look the same size. Drawing only: these positions are never shown, kept
+  // or sent anywhere.
   const levels = (line) => line.filter((v) => typeof v === "number" && v > 0);
 
   function sharedSpan(stocks) {
@@ -74,7 +75,7 @@
     for (const stock of stocks) {
       const values = levels(stock.price.line || []);
       if (values.length < 2) continue;
-      span = Math.max(span, (Math.max(...values) - Math.min(...values)) / values[values.length - 1]);
+      span = Math.max(span, Math.log(Math.max(...values) / Math.min(...values)));
     }
     return span;
   }
@@ -87,10 +88,11 @@
     const values = levels(line);
     if (values.length < 2) return box;
     const latest = values[values.length - 1];
-    const lo = Math.min(...values) / latest, hi = Math.max(...values) / latest;
+    const at = (v) => Math.log(v / latest);  // drawing only: a height, never a number shown
+    const lo = at(Math.min(...values)), hi = at(Math.max(...values));
     const middle = (lo + hi) / 2, half = Math.max(span || 0, hi - lo) / 2;
     const x = (i) => pad + (i / (line.length - 1)) * (w - 2 * pad);
-    const y = (v) => pad + (half === 0 ? 0.5 : 0.5 - (v / latest - middle) / (2 * half)) * (h2 - 2 * pad);
+    const y = (v) => pad + (half === 0 ? 0.5 : 0.5 - (at(v) - middle) / (2 * half)) * (h2 - 2 * pad);
     let d = "", pen = false, last = null;
     line.forEach((v, i) => {
       if (typeof v !== "number" || v <= 0) { pen = false; return; }
@@ -562,7 +564,10 @@
   function screen() {
     if (state.tab === "more") return more(state.home);
     if (state.stock) {
-      if (state.detailProblem) return problem(state.detailProblem[0], state.detailProblem[1], true, state.detailProblem[2]);
+      if (state.detailProblem) {
+        const [title, text, final, noBack] = state.detailProblem;
+        return problem(title, text, !noBack, final);
+      }
       if (!state.detail) return [backButton(), h("p", { class: "loading" }, "Loading…")];
       return detail(state.detail);
     }
@@ -623,7 +628,9 @@
       history.replaceState(null, "", location.pathname + location.search);
       return;
     }
-    try { state.key = sessionStorage.getItem(KEY_STORE); } catch (error) { state.key = null; }
+    let kept = null;
+    try { kept = sessionStorage.getItem(KEY_STORE); } catch (error) { kept = null; }
+    state.key = kept && KEY.test(`#key=${kept}`) ? kept : null;  // only a well-formed key is sent
   }
 
   async function ask(path) {
@@ -647,6 +654,7 @@
     const asked = ++state.asked;  // an older answer arriving late is ignored
     const { gone, response, data } = await ask("/api/home");
     if (asked !== state.asked) return;
+    if (!gone && response.status === 401 && state.problem === LOCKED) return;  // said once is enough
     if (gone) state.problem = SILENT;
     else if (response.status === 401) state.problem = LOCKED;
     else if (!response.ok) {
@@ -669,8 +677,9 @@
     const { gone, response, data } = await ask(`/api/stock/${encodeURIComponent(ticker)}`);
     if (asked !== state.askedDetail || ticker !== state.stock) return;
     if (response && response.ok && state.detail && usableDetail(data, ticker) && same(state.detail, data)) return;
+    if (!gone && response.status === 401 && state.detailProblem && state.detailProblem[0] === LOCKED[0]) return;
     if (gone) state.detailProblem = SILENT;
-    else if (response.status === 401) state.detailProblem = [LOCKED[0], LOCKED[1], true];
+    else if (response.status === 401) state.detailProblem = [LOCKED[0], LOCKED[1], true, true];  // no Back: Home is locked too
     else if (response.status === 404) state.detailProblem = ["This stock isn't on the watchlist.", "Go back to see the stocks the Lab follows.", true];
     else if (!response.ok) {
       const said = data && typeof data.error === "string" ? data.error : "The Lab had a problem.";
@@ -772,7 +781,11 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && sheetOpen()) closeSheet();
     });
-    window.addEventListener("hashchange", () => { if (KEY.test(location.hash)) { takeKey(); load(); } else follow(); });
+    // A key that arrives while the app is open (a reused keyed address) replaces the
+    // address, so the screen follows it to Home, in step with the address and Back.
+    window.addEventListener("hashchange", () => {
+      if (KEY.test(location.hash)) { takeKey(); follow(); load(); } else follow();
+    });
     // Fresh words when the window comes back, never on a timer. Both events fire together.
     const refresh = () => {
       if (document.hidden || Date.now() - state.refreshed < 1500) return;

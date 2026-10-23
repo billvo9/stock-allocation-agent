@@ -218,3 +218,25 @@ def test_the_launch_key_stays_in_this_tab_and_leaves_the_address_at_once():
     start = CODE[CODE.index("function start()") :]
     assert start.index("takeKey();") < start.index("routed()")
     assert '"X-Lab-Token"' in CODE and server.KEY_HEADER == "X-Lab-Token".lower()
+
+
+def test_the_watchlist_draws_every_line_on_one_shared_scale():
+    # The page's drawing can't run here; these pin the wiring the shared scale needs.
+    assert "const span = sharedSpan(data.stocks);" in CODE
+    assert "stockRow(stock, span)" in CODE and "spark(p.line, p.direction, span)" in CODE
+    body = CODE[CODE.index("function spark(") :]
+    body = body[: body.index("\n  }\n")]
+    assert "Math.max(span || 0, hi - lo)" in body and "Math.log(v / latest)" in body
+    shared = CODE[CODE.index("function sharedSpan(") :]
+    assert (
+        "Math.log(Math.max(...values) / Math.min(...values))" in shared[: shared.index("\n  }\n")]
+    )
+
+
+def test_a_page_without_the_key_is_sent_back_to_the_app_with_no_retry_or_back():
+    assert re.search(r"const LOCKED = \[[^\]]*, false, true\];", CODE)  # no Back, final
+    assert "response.status === 401) state.problem = LOCKED" in CODE
+    assert "state.detailProblem = [LOCKED[0], LOCKED[1], true, true]" in CODE
+    change = CODE[CODE.index('window.addEventListener("hashchange"') :]
+    change = change[: change.index("});")]
+    assert change.index("takeKey();") < change.index("follow();")
