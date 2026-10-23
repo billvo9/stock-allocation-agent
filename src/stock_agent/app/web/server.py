@@ -19,7 +19,10 @@ only, read-only.
 - The data needs this launch's key (owner decision of 2026-10-23): a data route
   answers 401 unless the `X-Lab-Token` header equals the key the launcher made
   for this run, compared in constant time. The page, its assets and `/health`
-  (which says only "ok", for the launcher) hold no data and need no key. The
+  hold no data and need no key. `/health` says "ok"; asked with a nonce
+  (`/health?nonce=...`), it answers HMAC-SHA256(key, nonce), so the launcher
+  knows the server on the port is the one holding this launch's key before it
+  opens the browser. The
   key reaches the browser in the address's fragment, which is never sent to a
   server, and a custom header can't be sent by another website without a
   preflight, which this server refuses.
@@ -38,6 +41,7 @@ directly; the handler only copies a request in and a response out.
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import re
@@ -74,6 +78,7 @@ LOCKED = {"error": "Open Portfolio Lab from its app to see your numbers."}
 KEY_HEADER = "x-lab-token"
 KEY = re.compile(r"[A-Za-z0-9_-]{32,128}")  # what secrets.token_urlsafe gives
 HEALTH = "/health"
+NONCE = re.compile(r"nonce=([A-Za-z0-9_-]{16,64})")
 AT_ONCE = 4  # screens prepared at the same time; one person needs one or two
 BUSY = {"error": "The Lab is busy. Try again in a moment."}
 NAME = re.compile(r"[A-Z0-9][A-Z0-9_-]{0,19}")  # a ticker, or a synthetic demo stock's id
@@ -134,6 +139,16 @@ class LabApp:
         self.token = token
         self.working = threading.BoundedSemaphore(AT_ONCE)
 
+    def health(self, target: str) -> bytes:
+        """ "ok", or with a nonce and a key, HMAC-SHA256(key, nonce) in hex: proof of the key."""
+
+        query = target.partition("?")[2].partition("#")[0]
+        found = NONCE.fullmatch(query)
+        if self.token is None or found is None:
+            return b"ok"
+        digest = hmac.new(self.token.encode("ascii"), found[1].encode("ascii"), hashlib.sha256)
+        return digest.hexdigest().encode()
+
     def unlocked(self, headers: Mapping[str, str]) -> bool:
         """Whether the request carries this launch's key (always, when there is no key)."""
 
@@ -185,7 +200,7 @@ class LabApp:
             body, kind = self.static[path]
             return Response(200, kind, body)
         if path == HEALTH:
-            return Response(200, TEXT, b"ok")
+            return Response(200, TEXT, self.health(target))
         if not self.unlocked(headers or {}):
             return Response(401, JSON, json.dumps(LOCKED).encode())
         if path in self.api:

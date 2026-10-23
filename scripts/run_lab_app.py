@@ -27,6 +27,9 @@ run (`secrets.token_urlsafe`), or the one the Portfolio Lab app passes in
 LAB_APP_TOKEN. The key reaches the browser in the address's fragment
 (`#key=...`), which browsers never send to a server, and is never logged:
 --open opens the address with it, and only an interactive terminal prints it.
+The research pages have a key of their own (LAB_APP_RESEARCH_KEY, from the
+Portfolio Lab app): it is added to their link, which only a page holding this
+run's key is served.
 
 Usage:
     .venv/bin/python scripts/run_lab_app.py --demo --open
@@ -66,6 +69,7 @@ from stock_agent.stock_lab.store import DB_NAME, StockLabStore, utc_now
 
 DEFAULT_PORT = 8510
 KEY_VARIABLE = "LAB_APP_TOKEN"  # set by the Portfolio Lab app (scripts/portfolio_lab_app.py)
+LINK_KEY_VARIABLE = "LAB_APP_RESEARCH_KEY"  # the research pages' key, for the link to them
 KEY = re.compile(r"[A-Za-z0-9_-]{32,128}")
 EXCLUDED = ("SKHY", "SNDK")  # the owner's choice: kept off the watchlist views
 DEMO_SESSIONS = 30
@@ -325,9 +329,14 @@ def main(
         print(f"refused: {error}", file=out)
         return 2
     key = environ.get(KEY_VARIABLE) or make_key()
-    if not KEY.fullmatch(key):
-        print(f"refused: {KEY_VARIABLE} must be 32 to 128 URL-safe characters", file=out)
-        return 2
+    link_key = environ.get(LINK_KEY_VARIABLE)
+    for name, value in ((KEY_VARIABLE, key), (LINK_KEY_VARIABLE, link_key)):
+        if value is not None and not KEY.fullmatch(value):
+            print(f"refused: {name} must be 32 to 128 URL-safe characters", file=out)
+            return 2
+    research = args.research_url
+    if research and link_key:  # served only to a page that holds this run's key
+        research = f"{research}?key={link_key}"
     bound = _bind(args.port, key, out)
     if bound is None:
         return 2
@@ -338,11 +347,11 @@ def main(
                 records_factory=records_factory,
                 clock=(lambda: fixed) if fixed else (lambda: _moment(None, clock)),
                 recent=recent,
-                research_url=args.research_url,
+                research_url=research,
             )
             return _serve(app, server, routes, args, serve=serve, out=out)
         with tempfile.TemporaryDirectory(prefix="lab-app-demo-") as home_dir:
-            routes = demo_api(Path(home_dir), args.demo, args.at, args.research_url)
+            routes = demo_api(Path(home_dir), args.demo, args.at, research)
             return _serve(app, server, routes, args, serve=serve, out=out)
     except ValueError as error:
         server.server_close()

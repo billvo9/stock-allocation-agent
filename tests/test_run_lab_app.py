@@ -40,6 +40,14 @@ def _launcher():
 launcher = _launcher()
 
 
+@pytest.fixture(autouse=True)
+def no_keys_from_the_caller(monkeypatch):
+    """Tests that use the real environment never see a key set where they run."""
+
+    for name in ("LAB_APP_TOKEN", "LAB_APP_RESEARCH_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def get(app, path):
     """One GET with this run's key, as the page sends it."""
 
@@ -416,3 +424,29 @@ def test_open_takes_the_browser_to_the_keyed_address(monkeypatch):
 def test_only_a_terminal_is_shown_the_keyed_address():
     code, _, printed = keyed_run([], environ={"LAB_APP_TOKEN": "t" * 43}, out=Terminal())
     assert code == 0 and f"#key={'t' * 43}" in printed
+
+
+def test_the_research_link_carries_the_research_pages_own_key():
+    seen = {}
+
+    def ask(server):
+        response = get(server.app, "/api/home")
+        seen["research_url"] = json.loads(response.body)["research_url"]
+        server.server_close()
+
+    code = launcher.main(
+        ["--port", "0", "--research-url", "http://127.0.0.1:8502/"],
+        recent=lambda symbol, **_: launcher.SimpleNamespace(state="no_store", sessions=()),
+        serve=ask,
+        out=io.StringIO(),
+        environ={"LAB_APP_TOKEN": "l" * 43, "LAB_APP_RESEARCH_KEY": "p" * 43},
+    )
+    assert code == 0 and seen["research_url"] == f"http://127.0.0.1:8502/?key={'p' * 43}"
+
+
+def test_an_unusable_research_key_is_refused():
+    out = io.StringIO()
+    code = launcher.main(
+        ["--port", "0"], serve=pytest.fail, out=out, environ={"LAB_APP_RESEARCH_KEY": "short"}
+    )
+    assert code == 2 and "LAB_APP_RESEARCH_KEY must be" in out.getvalue()

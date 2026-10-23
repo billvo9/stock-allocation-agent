@@ -7,6 +7,8 @@ the real server on a free loopback port (nothing leaves the machine).
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import http.client
 import json
 import socket
@@ -409,3 +411,94 @@ def test_more_than_four_screens_at_once_get_a_plain_busy_answer():
             lab.working.release()
     after = lab.handle("GET", "/api/home", "127.0.0.1:8510", {"x-lab-token": KEY})
     assert after.status == 200
+
+
+def test_every_screen_gives_its_slot_back_even_when_it_fails():
+    calls = []
+
+    def failing():
+        calls.append(1)
+        raise RuntimeError("boom")
+
+    lab = keyed()
+    headers = {"x-lab-token": KEY}
+    for _ in range(server.AT_ONCE + 1):
+        assert lab.handle("GET", "/api/home", "127.0.0.1:8510", headers).status == 200
+    lab.api["/api/home"] = failing
+    for _ in range(server.AT_ONCE + 1):
+        assert lab.handle("GET", "/api/home", "127.0.0.1:8510", headers).status == 500
+    assert len(calls) == server.AT_ONCE + 1  # never refused as busy: each slot came back
+
+
+def test_a_stocks_screen_is_also_capped():
+    lab = keyed()
+    held = [lab.working.acquire(blocking=False) for _ in range(server.AT_ONCE)]
+    try:
+        found = lab.handle("GET", "/api/stock/NVDA", "127.0.0.1:8510", {"x-lab-token": KEY})
+        assert found.status == 503
+    finally:
+        for _ in held:
+            lab.working.release()
+
+
+@pytest.mark.parametrize("bad", ["k" * 129, "kéy" * 15])
+def test_a_key_too_long_or_not_plain_ascii_is_refused_at_start(bad):
+    with pytest.raises(ValueError, match="key"):
+        server.LabApp(port=PORT, api={}, static={}, token=bad)
+
+
+def test_the_health_check_proves_the_key_only_to_a_well_formed_nonce():
+    lab = keyed()
+    nonce = "a" * 32
+    proof = lab.handle("GET", f"/health?nonce={nonce}", "127.0.0.1:8510").body
+    expected = hmac.new(KEY.encode(), nonce.encode(), hashlib.sha256).hexdigest().encode()
+    assert proof == expected
+    for target in (
+        "/health",
+        "/health?nonce=short",
+        "/health?nonce=a%20b" + "a" * 30,
+        "/health?x=1",
+    ):
+        assert lab.handle("GET", target, "127.0.0.1:8510").body == b"ok"
+    assert app().handle("GET", f"/health?nonce={nonce}", "127.0.0.1:8510").body == b"ok"  # no key
+
+
+def test_a_key_header_that_is_not_ascii_gets_401_over_a_real_socket():
+    lab = keyed()
+    lab.port = 0
+    httpd = server.make_server(lab)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    port = httpd.server_address[1]
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        connection.putrequest("GET", "/api/home", skip_host=True)
+        connection.putheader("Host", f"127.0.0.1:{port}")
+        connection.putheader("X-Lab-Token", "kéy".encode("latin-1") * 15)
+        connection.endheaders()
+        assert connection.getresponse().status == 401
+        connection.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_a_preflight_from_another_site_is_refused_without_cors(running):
+    connection = http.client.HTTPConnection("127.0.0.1", running, timeout=10)
+    try:
+        connection.request(
+            "OPTIONS",
+            "/api/home",
+            headers={
+                "Host": f"127.0.0.1:{running}",
+                "Origin": "http://evil.example",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "x-lab-token",
+            },
+        )
+        response = connection.getresponse()
+        response.read()
+        assert response.status in (403, 405)
+        assert not [n for n, _ in response.getheaders() if n.lower().startswith("access-control-")]
+    finally:
+        connection.close()

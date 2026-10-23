@@ -21,16 +21,24 @@ The two servers, both on 127.0.0.1:
   process group is sent SIGTERM; SIGKILL follows only after 10 seconds.
 - status: say whether the Lab is running, and where.
 
-This launch's key (owner decision of 2026-10-23). Each start makes a new
-random key (`secrets.token_urlsafe`). The Lab app answers a data request only
-when it carries that key, so another account or program on this Mac that can
-reach 127.0.0.1 still sees no numbers. The key is kept in the owner-only
-record (server.json), passed to the Lab app in its environment (never on a
-command line, which other accounts can list) and given to the browser in the
-address's fragment (`#key=...`), which browsers never send to a server. It is
-never printed or logged. One known exposure: the address with the key is
-passed to macOS `open` for a moment, where another account listing processes
-at that instant could read it; the key ends with the run.
+This launch's keys (owner decision of 2026-10-23). Each start makes two new
+random keys (`secrets.token_urlsafe`): one for the Lab app and one for the
+research pages, so a program posing as either server never learns the
+other's. Each server shows its pages only to a browser that has its key, so
+another account or program on this Mac that can reach 127.0.0.1 sees no
+numbers and can change nothing.
+- The keys are kept in the owner-only record (server.json) and passed to the
+  servers in their environments, never on a command line, which other accounts
+  can list. The Lab app also gets the research pages' key, to build its link to
+  them.
+- The browser gets the Lab app's key in the address's fragment (`#key=...`),
+  which browsers never send to a server. The address goes to the browser through
+  osascript's standard input (`open location`, as Python's own webbrowser does
+  on macOS), not as an argument.
+- Before the browser opens, the Lab app must prove it holds the key: its health
+  check answers a fresh nonce with HMAC-SHA256(key, nonce). A program that took
+  the port first can't, so it is never shown as the Lab.
+- No key is ever printed or logged; a failure is reported without the address.
 
 What it never does:
 - read, pass or ask for a vendor key or other credential. The servers inherit
@@ -60,6 +68,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import hashlib
+import hmac
 import http.client
 import json
 import os
@@ -90,9 +100,11 @@ LOG_LIMIT = 5_000_000  # bytes; a larger server log is kept once as <name>.1
 # so no key (TIINGO_API_KEY among them) can reach the Lab through this launcher.
 PASSED_VARIABLES = ("HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR")
 SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
-KEY_VARIABLE = "LAB_APP_TOKEN"  # read by scripts/run_lab_app.py
+KEY_VARIABLE = "LAB_APP_TOKEN"  # the Lab app's key, read by scripts/run_lab_app.py
+RESEARCH_KEY_VARIABLE = "PORTFOLIO_LAB_RESEARCH_KEY"  # the research pages' (app/run.py)
+LINK_KEY_VARIABLE = "LAB_APP_RESEARCH_KEY"  # the same, for the Lab app's link to them
 KEY = re.compile(r"[A-Za-z0-9_-]{32,128}")
-KIND = "lab-app"  # the record's format: the Lab app, the research pages and this launch's key
+KIND = "lab-app"  # the record's format: the Lab app, the research pages and their keys
 # Files in the private folder are opened without following a symlink planted in their place.
 PRIVATE_FLAGS = os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
 
@@ -168,14 +180,17 @@ def is_free(port: int) -> bool:
     return True
 
 
-def answers(port: int, path: str, timeout: float = 1.0) -> bool:
-    """Whether the server on 127.0.0.1:port answers its health check (no proxy is consulted)."""
+def answers(port: int, path: str, expect: bytes = b"ok", timeout: float = 1.0) -> bool:
+    """
+    Whether the server on 127.0.0.1:port answers its health check with `expect` (no
+    proxy is consulted).
+    """
 
     connection = http.client.HTTPConnection(HOST, port, timeout=timeout)
     try:
         connection.request("GET", path)
         response = connection.getresponse()
-        return response.status == 200 and response.read(16).strip() == b"ok"
+        return response.status == 200 and response.read(128).strip() == expect
     except (OSError, http.client.HTTPException):
         return False
     finally:
@@ -246,10 +261,37 @@ def group_alive(group: int) -> bool:
     return True
 
 
-def open_url(url: str) -> None:
-    """Show url in the default browser (macOS `open`)."""
+LOCAL_ADDRESS = re.compile(r"http://127\.0\.0\.1:\d{1,5}/(#key=[A-Za-z0-9_-]{32,128})?")
+NO_BROWSER = (
+    "Portfolio Lab couldn't open your browser. The Lab is running: "
+    "open Portfolio Lab again to show it."
+)
 
-    subprocess.run(["/usr/bin/open", url], check=True, env={"PATH": SYSTEM_PATH})
+
+def open_url(url: str) -> None:
+    """
+    Show url in the default browser. The address goes to osascript on its standard
+    input (`open location`, as Python's webbrowser does on macOS), never as an argument
+    that another account could list, and a failure is reported without it: it holds
+    this launch's key.
+    """
+
+    if not LOCAL_ADDRESS.fullmatch(url):  # nothing else is ever quoted into the script
+        raise LabError(NO_BROWSER)
+    try:
+        result = subprocess.run(
+            ["/usr/bin/osascript", "-"],
+            input=f'open location "{url}"',
+            text=True,
+            capture_output=True,  # osascript may echo its script on an error
+            check=False,
+            timeout=30,
+            env={"PATH": SYSTEM_PATH},
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise LabError(NO_BROWSER) from None
+    if result.returncode != 0:
+        raise LabError(NO_BROWSER)
 
 
 def new_key() -> str:
@@ -260,12 +302,17 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def new_nonce() -> str:
+    return secrets.token_hex(16)
+
+
 @dataclass
 class System:
     """The operating-system seams; tests replace them with fakes."""
 
     is_free: Callable[[int], bool] = is_free
-    answers: Callable[[int, str], bool] = answers
+    answers: Callable[[int, str, bytes], bool] = answers
+    new_nonce: Callable[[], str] = new_nonce
     process_start: Callable[[int], str | None] = process_start
     spawn: Callable[[list[str], dict[str, str], Path, Path], int] = spawn
     signal_group: Callable[[int, int], None] = signal_group
@@ -298,13 +345,40 @@ def server_environment(source: Mapping[str, str] = os.environ) -> dict[str, str]
     return env
 
 
-def lab_environment(places: Places, key: str, source: Mapping[str, str] = os.environ) -> dict:
-    """The Lab app's environment: the same allowlist, this checkout's code and the key."""
+def lab_environment(
+    places: Places, key: str, research_key: str, source: Mapping[str, str] = os.environ
+) -> dict:
+    """
+    The Lab app's environment: the same allowlist, this checkout's code, its key and the
+    research pages' key (for its link to them).
+    """
 
     env = server_environment(source)
     env["PYTHONPATH"] = str(places.checkout / "src")  # this checkout's code, never another's
     env[KEY_VARIABLE] = key
+    env[LINK_KEY_VARIABLE] = research_key
     return env
+
+
+def research_environment(research_key: str, source: Mapping[str, str] = os.environ) -> dict:
+    """The research pages' environment: the same allowlist and their own key only."""
+
+    return {**server_environment(source), RESEARCH_KEY_VARIABLE: research_key}
+
+
+def proof(key: str, nonce: str) -> bytes:
+    """What the Lab app's health check answers for `nonce`: HMAC-SHA256(key, nonce), hex."""
+
+    return hmac.new(key.encode("ascii"), nonce.encode("ascii"), hashlib.sha256).hexdigest().encode()
+
+
+def health_check(server: Server, state: dict, system: System) -> tuple[str, bytes]:
+    """The path to ask and the answer that counts: the Lab app must prove it holds its key."""
+
+    if server.name != LAB.name:
+        return server.health, b"ok"
+    nonce = system.new_nonce()
+    return f"{server.health}?nonce={nonce}", proof(state["key"], nonce)
 
 
 def choose_port(server: Server, free: Callable[[int], bool] = is_free) -> int:
@@ -377,13 +451,16 @@ def _load(path: Path) -> dict | None:
 
 
 def read_state(path: Path) -> dict | None:
-    """The recorded pair of servers and its key, or None when there is none or it is unusable."""
+    """The recorded pair of servers and their keys, or None when there is none or it is unusable."""
 
     state = _load(path)
     if state is None or state.get("kind") != KIND:
         return None
-    key, servers = state.get("key"), state.get("servers")
-    if not (isinstance(key, str) and KEY.fullmatch(key)) or not isinstance(servers, dict):
+    servers = state.get("servers")
+    keys = (state.get("key"), state.get("research_key"))
+    if not all(isinstance(key, str) and KEY.fullmatch(key) for key in keys):
+        return None
+    if keys[0] == keys[1] or not isinstance(servers, dict):
         return None
     if set(servers) != {server.name for server in SERVERS}:
         return None
@@ -422,15 +499,17 @@ def still_ours(record: dict, system: System) -> bool:
     return system.process_start(record["pid"]) == record["started"]
 
 
-def wait_until_answering(record: dict, health: str, system: System, timeout: float) -> bool:
-    """Poll the health check until it answers (True), the process ends or time runs out."""
+def wait_until_answering(server: Server, state: dict, system: System, timeout: float) -> bool:
+    """Poll the server's health check until it answers (True), its process ends or time runs out."""
 
+    record = state["servers"][server.name]
     deadline = system.clock() + timeout
     while True:
         # Ours first: a server that failed to bind must not pass for one that answers.
         if not still_ours(record, system):
             return False
-        if system.answers(record["port"], health):
+        path, expect = health_check(server, state, system)
+        if system.answers(record["port"], path, expect):
             return True
         if system.clock() >= deadline:
             return False
@@ -516,20 +595,23 @@ def running(places: Places, system: System) -> dict | None:
     if state is None:
         retire_legacy(places, system, refuse_other=True)
         return None
+    alive = {s.name: still_ours(state["servers"][s.name], system) for s in SERVERS}
     if not same_checkout(state, places):
-        raise LabError(OTHER_BUILD)
-    if not all(still_ours(state["servers"][s.name], system) for s in SERVERS):
+        if any(alive.values()):
+            raise LabError(OTHER_BUILD)
+        places.state.unlink(missing_ok=True)  # another build's pair is gone: nothing to keep
+        note(places, system, "forgot another build's servers: no longer running")
+        return None
+    if not all(alive.values()):
         stopped = stop_ours(state, system)  # half a pair is restarted as a whole
         places.state.unlink(missing_ok=True)
         note(places, system, f"forgot the servers: not both running (stopped {stopped or 'none'})")
         return None
     for server in SERVERS:
-        if not wait_until_answering(
-            state["servers"][server.name], server.health, system, REUSE_TIMEOUT
-        ):
+        if not wait_until_answering(server, state, system, REUSE_TIMEOUT):
             raise LabError(
-                f"{server.title} is running but stopped answering. Portfolio Lab will stop it "
-                "now; open Portfolio Lab again to restart it."
+                f"{server.title} stopped answering, so Portfolio Lab will quit now. "
+                "Open Portfolio Lab again to restart it."
             )
     return state
 
@@ -539,13 +621,13 @@ def start(places: Places, system: System) -> dict:
 
     research_port = choose_port(RESEARCH, system.is_free)
     lab_port = choose_port(LAB, system.is_free)
-    key = system.new_key()
-    if not KEY.fullmatch(key):
-        raise LabError("Portfolio Lab could not make this launch's key.")
+    key, research_key = system.new_key(), system.new_key()
+    if not (KEY.fullmatch(key) and KEY.fullmatch(research_key)) or key == research_key:
+        raise LabError("Portfolio Lab could not make this launch's keys.")
     commands = {
         RESEARCH.name: (
             [str(places.python), str(places.script(RESEARCH)), "--port", str(research_port)],
-            server_environment(),
+            research_environment(research_key),
         ),
         LAB.name: (
             [
@@ -556,7 +638,7 @@ def start(places: Places, system: System) -> dict:
                 "--research-url",
                 lab_url(research_port),
             ],
-            lab_environment(places, key),
+            lab_environment(places, key, research_key),
         ),
     }
     state = {
@@ -564,6 +646,7 @@ def start(places: Places, system: System) -> dict:
         "checkout": str(places.checkout),
         "opened_at": system.now().isoformat(timespec="seconds"),
         "key": key,
+        "research_key": research_key,
         "servers": {},
     }
     ports = {RESEARCH.name: research_port, LAB.name: lab_port}
@@ -579,14 +662,14 @@ def start(places: Places, system: System) -> dict:
         if not record["started"]:
             _abandon(state, places, system)
             raise LabError(
-                f"{server.title} stopped as soon as it started. {SEE_LOG.format(log=server.log)}"
+                f"{server.title} stopped right after starting. {SEE_LOG.format(log=server.log)}"
             )
         state["servers"][server.name] = record
         note(places, system, f"started {server.name} pid {pid} on port {ports[server.name]}")
     write_state(places.state, state)  # once both run: a record always names a whole pair
     for server in SERVERS:
         record = state["servers"][server.name]
-        if wait_until_answering(record, server.health, system, START_TIMEOUT):
+        if wait_until_answering(server, state, system, START_TIMEOUT):
             continue
         gone = not still_ours(record, system)
         _abandon(state, places, system)
@@ -633,6 +716,8 @@ def stop_lab(places: Places, system: System) -> bool:
         if state is None:
             return retire_legacy(places, system, refuse_other=False)
         if not same_checkout(state, places):
+            if not any(still_ours(state["servers"][s.name], system) for s in SERVERS):
+                places.state.unlink(missing_ok=True)  # gone: nothing of it to keep
             return False  # a running Lab of another build is left alone
         stopped = stop_ours(state, system)
         note(places, system, f"stopped {', '.join(stopped) or 'nothing (already gone)'}")
