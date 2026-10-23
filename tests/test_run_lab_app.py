@@ -40,6 +40,12 @@ def _launcher():
 launcher = _launcher()
 
 
+def get(app, path):
+    """One GET with this run's key, as the page sends it."""
+
+    return app.handle("GET", path, f"127.0.0.1:{app.port}", {"x-lab-token": app.token})
+
+
 class Ask:
     """
     A stand-in for serving: one GET of the Home API and one of the first listed stock's
@@ -52,17 +58,16 @@ class Ask:
 
     def __call__(self, server):
         app = server.app
-        host = f"127.0.0.1:{app.port}"
         try:
-            response = app.handle("GET", "/api/home", host)
+            response = get(app, "/api/home")
             assert response.status == 200, response.body
             self.home = json.loads(response.body)
             stocks = self.home.get("stocks") or []
             if stocks:
-                response = app.handle("GET", f"/api/stock/{stocks[0]['ticker']}", host)
+                response = get(app, f"/api/stock/{stocks[0]['ticker']}")
                 assert response.status == 200, response.body
                 self.detail = json.loads(response.body)
-            self.missing = app.handle("GET", "/api/stock/ZZZZ", host).status
+            self.missing = get(app, "/api/stock/ZZZZ").status
         finally:
             server.server_close()
 
@@ -247,7 +252,7 @@ def test_without_at_the_clock_is_read_on_every_request(tmp_path):
         app = server.app
         try:
             for _ in range(2):
-                response = app.handle("GET", "/api/home", f"127.0.0.1:{app.port}")
+                response = get(app, "/api/home")
                 seen.append(json.loads(response.body)["generated_at"])
         finally:
             server.server_close()
@@ -333,7 +338,7 @@ def test_a_detail_whose_store_cannot_be_read_answers_with_the_plain_error(tmp_pa
     def ask(server):
         app = server.app
         try:
-            seen["status"] = app.handle("GET", "/api/stock/NVDA", f"127.0.0.1:{app.port}")
+            seen["status"] = get(app, "/api/stock/NVDA")
         finally:
             server.server_close()
 
@@ -348,3 +353,66 @@ def test_a_detail_whose_store_cannot_be_read_answers_with_the_plain_error(tmp_pa
     assert response.status == 500
     assert json.loads(response.body) == {"error": "The app couldn't prepare this screen."}
     assert "/api/stock/ failed" in capsys.readouterr().err
+
+
+# --- this run's key (owner decision of 2026-10-23) ---
+
+
+class Terminal(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def keyed_run(argv, **options):
+    seen = {}
+
+    def ask(server):
+        seen["app"] = server.app
+        seen["locked"] = server.app.handle("GET", "/api/home", f"127.0.0.1:{server.app.port}")
+        server.server_close()
+
+    options.setdefault("out", io.StringIO())
+    code = launcher.main(
+        ["--port", "0", *argv],
+        recent=lambda symbol, **_: launcher.SimpleNamespace(state="no_store", sessions=()),
+        serve=ask,
+        **options,
+    )
+    return code, seen, options["out"].getvalue()
+
+
+def test_the_key_the_mac_app_passes_locks_the_data_and_is_never_printed():
+    key = "m" * 43
+    code, seen, printed = keyed_run([], environ={"LAB_APP_TOKEN": key})
+    assert code == 0 and seen["app"].token == key
+    assert seen["locked"].status == 401
+    assert key not in printed
+
+
+def test_without_a_passed_key_each_run_makes_its_own():
+    keys = iter(["a" * 43, "b" * 43])
+    first = keyed_run([], environ={}, make_key=lambda: next(keys))[1]["app"].token
+    second = keyed_run([], environ={}, make_key=lambda: next(keys))[1]["app"].token
+    assert (first, second) == ("a" * 43, "b" * 43)
+    assert len(launcher.new_key()) >= 43 and launcher.new_key() != launcher.new_key()
+
+
+@pytest.mark.parametrize("bad", ["short", "x" * 40 + "#key", "x" * 40 + " ab"])
+def test_an_unusable_passed_key_is_refused(bad):
+    code, seen, printed = keyed_run([], environ={"LAB_APP_TOKEN": bad})
+    assert code == 2 and "LAB_APP_TOKEN must be" in printed and not seen
+
+
+def test_open_takes_the_browser_to_the_keyed_address(monkeypatch):
+    opened = []
+    monkeypatch.setattr(launcher.webbrowser, "open", opened.append)
+    code, seen, printed = keyed_run(["--open"], environ={"LAB_APP_TOKEN": "o" * 43})
+    assert code == 0
+    port = seen["app"].port
+    assert opened == [f"http://127.0.0.1:{port}/#key={'o' * 43}"]
+    assert "o" * 43 not in printed
+
+
+def test_only_a_terminal_is_shown_the_keyed_address():
+    code, _, printed = keyed_run([], environ={"LAB_APP_TOKEN": "t" * 43}, out=Terminal())
+    assert code == 0 and f"#key={'t' * 43}" in printed

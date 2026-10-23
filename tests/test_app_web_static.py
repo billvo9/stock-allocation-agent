@@ -204,3 +204,17 @@ def test_the_detail_is_reached_only_through_the_checked_route():
     ]
     assert r"const TICKER = /^#stock\/([A-Z0-9][A-Z0-9_-]{0,19})$/;" in CODE
     assert server.NAME.pattern == "[A-Z0-9][A-Z0-9_-]{0,19}"
+
+
+def test_the_launch_key_stays_in_this_tab_and_leaves_the_address_at_once():
+    # The key arrives in the fragment, is kept in sessionStorage only (this tab, never
+    # localStorage), is removed from the address before routing, and is sent in the
+    # header the server checks.
+    assert "sessionStorage.setItem(KEY_STORE" in CODE
+    assert "localStorage.setItem(KEY_STORE" not in CODE
+    take = CODE[CODE.index("function takeKey()") :]
+    take = take[: take.index("\n  }\n")]
+    assert "history.replaceState" in take
+    start = CODE[CODE.index("function start()") :]
+    assert start.index("takeKey();") < start.index("routed()")
+    assert '"X-Lab-Token"' in CODE and server.KEY_HEADER == "X-Lab-Token".lower()

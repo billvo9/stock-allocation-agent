@@ -128,6 +128,9 @@ button { font: inherit; color: inherit; }
 .status .chev { margin-left: auto; color: var(--subtle); }
 .asof { color: var(--subtle); font-size: 13px; margin: 8px 2px 0; }
 .eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--subtle); font-weight: 600; margin: 26px 2px 4px; }
+.eyebrow-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 26px 2px 4px; }
+.eyebrow-row .eyebrow { margin: 0; }
+.scale-note { color: var(--subtle); font-size: 12px; }
 h1.screen { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 22px 0 4px; letter-spacing: -0.01em; }
 
 /* --- the watchlist: each row opens its stock; the outlook chip explains itself --- */

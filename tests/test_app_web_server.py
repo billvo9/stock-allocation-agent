@@ -324,3 +324,88 @@ def test_head_on_a_stock_answers_like_get_without_a_body_at_the_socket():
     calls = []
     response = stocks(calls).handle("HEAD", "/api/stock/NVDA", "127.0.0.1:8510")
     assert response.status == 200 and calls == ["NVDA"]  # the handler drops the body for HEAD
+
+
+# --- the per-launch key (owner decision of 2026-10-23) ---
+
+KEY = "k" * 43
+
+
+def keyed():
+    return server.LabApp(
+        port=PORT,
+        api={"/api/home": lambda: {"hello": "world"}},
+        static={"/": PAGE},
+        items={"/api/stock/": lambda name: {"ticker": name}},
+        token=KEY,
+    )
+
+
+@pytest.mark.parametrize("given", [None, "", "k" * 42, "K" * 43, KEY + "x", "kéy" * 15])
+@pytest.mark.parametrize("target", ["/api/home", "/api/stock/NVDA"])
+def test_the_data_needs_this_launchs_key(given, target):
+    headers = {} if given is None else {"x-lab-token": given}
+    response = keyed().handle("GET", target, "127.0.0.1:8510", headers)
+    assert response.status == 401 and json.loads(response.body) == server.LOCKED
+
+
+def test_with_the_key_the_data_is_served():
+    found = keyed().handle("GET", "/api/stock/NVDA", "127.0.0.1:8510", {"x-lab-token": KEY})
+    assert found.status == 200 and json.loads(found.body) == {"ticker": "NVDA"}
+
+
+def test_the_page_and_the_health_check_need_no_key_and_hold_no_data():
+    assert keyed().handle("GET", "/", "127.0.0.1:8510").status == 200
+    health = keyed().handle("GET", "/health", "127.0.0.1:8510")
+    assert (health.status, health.body, health.content_type) == (200, b"ok", server.TEXT)
+
+
+def test_a_short_or_unusual_key_is_refused_at_start():
+    for bad in ("short", "x" * 31, "k" * 40 + "#ab", "k" * 40 + " ab"):
+        with pytest.raises(ValueError, match="key"):
+            server.LabApp(port=PORT, api={}, static={}, token=bad)
+
+
+def test_the_key_is_still_checked_after_the_host_and_site_checks():
+    other_site = {"x-lab-token": KEY, "sec-fetch-site": "cross-site"}
+    assert keyed().handle("GET", "/api/home", "evil.example:8510", other_site).status == 421
+    assert keyed().handle("GET", "/api/home", "127.0.0.1:8510", other_site).status == 403
+
+
+def test_the_real_server_answers_its_health_check_and_keeps_the_data_locked():
+    lab = keyed()
+    lab.port = 0
+    httpd = server.make_server(lab)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    port = httpd.server_address[1]
+    try:
+        assert fetch(port, "GET", "/health", f"127.0.0.1:{port}")[::2] == (200, b"ok")
+        assert fetch(port, "GET", "/api/home", f"127.0.0.1:{port}")[0] == 401
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        try:
+            connection.request(
+                "GET", "/api/home", headers={"Host": f"127.0.0.1:{port}", "X-Lab-Token": KEY}
+            )
+            response = connection.getresponse()
+            assert response.status == 200 and json.loads(response.read()) == {"hello": "world"}
+        finally:
+            connection.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_more_than_four_screens_at_once_get_a_plain_busy_answer():
+    lab = keyed()
+    held = [lab.working.acquire(blocking=False) for _ in range(server.AT_ONCE)]
+    try:
+        assert all(held)
+        busy = lab.handle("GET", "/api/home", "127.0.0.1:8510", {"x-lab-token": KEY})
+        assert busy.status == 503 and json.loads(busy.body) == server.BUSY
+        assert lab.handle("GET", "/health", "127.0.0.1:8510").status == 200  # never queued
+    finally:
+        for _ in held:
+            lab.working.release()
+    after = lab.handle("GET", "/api/home", "127.0.0.1:8510", {"x-lab-token": KEY})
+    assert after.status == 200

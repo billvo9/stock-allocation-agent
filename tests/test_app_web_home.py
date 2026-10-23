@@ -362,7 +362,8 @@ def test_the_price_is_the_readers_close_and_change_unchanged(lab):
     assert price["direction"] == "up" and price["session_words"] == "Wed, Oct 21"
     assert price["line"] == [121.70, 127.65]
     assert found["prices_note"] == "Closing prices from Wed, Oct 21."
-    assert found["lines_note"].startswith("Lines show the past month")
+    assert found["lines_note"].startswith("Lines show the past month on one shared scale")
+    assert found["scale_note"] is None  # one stock: nothing to compare
     assert found["checked"] == "Checked 7:40 AM"
     assert only(found)["name"] is None  # SYNTH has no company name
 
@@ -625,3 +626,9 @@ def test_the_real_recent_prices_reader_fits_the_view(lab, tmp_path):
     assert price["change"] == real.sessions[-1].change
     assert price["line"] == [row.level for row in real.sessions] and len(price["line"]) == 22
     assert only(found)["name"] == "NVIDIA"
+
+
+def test_several_lines_say_they_share_one_scale(lab):
+    found = view(lab, at(THURSDAY, "07:40"), tickers=(T, OTHER))
+    assert found["scale_note"] == "Same scale for all lines"
+    assert "one shared scale" in found["lines_note"]

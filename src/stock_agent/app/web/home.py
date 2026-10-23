@@ -184,6 +184,7 @@ def home_view(
         "status": _status(briefing, problem, now, local_zone, previous_session),
         "prices_note": words.prices_note(max(sessions)) if sessions else None,
         "lines_note": words.LINES_NOTE if sessions else None,
+        "scale_note": words.SCALE_NOTE if len(sessions) > 1 else None,
         "checked": words.checked(now, local_zone),
         "stocks": stocks,
         "footer": words.FOOTER,

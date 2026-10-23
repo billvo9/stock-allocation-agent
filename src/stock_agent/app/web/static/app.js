@@ -10,11 +10,14 @@
 (() => {
   const SVG = "http://www.w3.org/2000/svg";
   const THEME_KEY = "lab-theme";
+  const KEY_STORE = "lab-key";  // this launch's key, kept for this tab only (sessionStorage)
+  const KEY = /^#key=([A-Za-z0-9_-]{32,128})$/;
   const TICKER = /^#stock\/([A-Z0-9][A-Z0-9_-]{0,19})$/;  // the server's own name rule
   const state = {
     tab: "home", home: null, problem: null, lastFocus: null, dirty: false, asked: 0,
     stock: null, detail: null, detailProblem: null, askedDetail: 0,
     range: null, eachDay: false, fromHome: false, homeScroll: 0, lastFocusKey: null, refreshed: 0,
+    key: null,
   };
   let patterns = 0;  // unique ids for the Down segments' hatching
 
@@ -60,19 +63,37 @@
     return box;
   }
 
+  // The watchlist's lines share one vertical scale (the owner's choice, 2026-10-23): each
+  // line is placed relative to its own latest level, and every row gets the widest line's
+  // span, so a calmer stock draws a flatter line. Drawing only: these ratios are pixel
+  // positions, never shown, kept or sent anywhere.
+  const levels = (line) => line.filter((v) => typeof v === "number" && v > 0);
+
+  function sharedSpan(stocks) {
+    let span = 0;
+    for (const stock of stocks) {
+      const values = levels(stock.price.line || []);
+      if (values.length < 2) continue;
+      span = Math.max(span, (Math.max(...values) - Math.min(...values)) / values[values.length - 1]);
+    }
+    return span;
+  }
+
   // The one-month line: the reader's levels, broken at a gap, with a dot in the
-  // colour of the latest move. Drawing only: nothing is computed from prices.
-  function spark(line, direction) {
+  // colour of the latest move, on the watchlist's shared scale (`span`).
+  function spark(line, direction, span) {
     const w = 96, h2 = 38, pad = 5;
     const box = svg("svg", { class: "spark", viewBox: `0 0 ${w} ${h2}`, "aria-hidden": "true" });
-    const values = line.filter((v) => typeof v === "number");
+    const values = levels(line);
     if (values.length < 2) return box;
-    const lo = Math.min(...values), hi = Math.max(...values);
+    const latest = values[values.length - 1];
+    const lo = Math.min(...values) / latest, hi = Math.max(...values) / latest;
+    const middle = (lo + hi) / 2, half = Math.max(span || 0, hi - lo) / 2;
     const x = (i) => pad + (i / (line.length - 1)) * (w - 2 * pad);
-    const y = (v) => pad + (hi === lo ? (h2 - 2 * pad) / 2 : (1 - (v - lo) / (hi - lo)) * (h2 - 2 * pad));
+    const y = (v) => pad + (half === 0 ? 0.5 : 0.5 - (v / latest - middle) / (2 * half)) * (h2 - 2 * pad);
     let d = "", pen = false, last = null;
     line.forEach((v, i) => {
-      if (typeof v !== "number") { pen = false; return; }
+      if (typeof v !== "number" || v <= 0) { pen = false; return; }
       d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
       pen = true;
       last = [x(i), y(v)];
@@ -216,12 +237,12 @@
     return chip;
   }
 
-  function stockRow(stock) {
+  function stockRow(stock, span) {
     const p = stock.price;
     const cells = p.available
       ? [
           h("span", { class: "tk" }, stock.ticker),
-          spark(p.line, p.direction),
+          spark(p.line, p.direction, span),
           h("span", { class: "px num" }, p.close_words),
           h("span", { class: "nm" }, stock.name || ""),
           h("span", { class: `chg num ${p.direction}` }, h("span", { "aria-hidden": "true" }, arrow(p.direction)), p.change_words),
@@ -245,12 +266,15 @@
     const explain = h("button", { class: "textbtn", type: "button", "data-key": "explain" }, data.explain.title);
     explain.addEventListener("click", () => openSheet(data.explain));
     const notes = [data.prices_note, data.lines_note, data.checked].filter(Boolean).join(" ");
+    const span = sharedSpan(data.stocks);
     return [
       h("h1", { class: "sr-only" }, "Home"),
       statusLine(data.status),
       notes ? h("p", { class: "asof" }, notes) : null,
-      h("h2", { class: "eyebrow" }, "Watchlist"),
-      h("ul", { class: "list" }, data.stocks.map(stockRow)),
+      h("div", { class: "eyebrow-row" },
+        h("h2", { class: "eyebrow" }, "Watchlist"),
+        data.scale_note ? h("span", { class: "scale-note" }, data.scale_note) : null),
+      h("ul", { class: "list" }, data.stocks.map((stock) => stockRow(stock, span))),
       h("p", { class: "foot" }, data.footer, " ", explain),
     ];
   }
@@ -589,10 +613,24 @@
       && data.price && data.chart && data.outlook && data.reliable && data.lately && data.learning;
   }
 
+  // This launch's key arrives in the address's fragment (#key=...), which browsers never
+  // send to a server. It is kept for this tab only and taken out of the address at once.
+  function takeKey() {
+    const found = KEY.exec(location.hash);
+    if (found) {
+      state.key = found[1];
+      try { sessionStorage.setItem(KEY_STORE, state.key); } catch (error) { /* storage may be off */ }
+      history.replaceState(null, "", location.pathname + location.search);
+      return;
+    }
+    try { state.key = sessionStorage.getItem(KEY_STORE); } catch (error) { state.key = null; }
+  }
+
   async function ask(path) {
     let response;
     try {
-      response = await fetch(path, { cache: "no-store", credentials: "omit" });
+      const headers = state.key ? { "X-Lab-Token": state.key } : {};
+      response = await fetch(path, { cache: "no-store", credentials: "omit", headers });
     } catch (error) {
       return { gone: true };
     }
@@ -602,12 +640,15 @@
   }
 
   const SILENT = ["The Lab isn't answering.", "If you closed Portfolio Lab, open it again. Nothing has changed in your records."];
+  // A page opened without this launch's key (a bookmark, a copied address): the way back in.
+  const LOCKED = ["Open Portfolio Lab from its app.", "For your privacy, this page shows your numbers only when Portfolio Lab opens it. Click its icon in the Dock.", false, true];
 
   async function loadHome() {
     const asked = ++state.asked;  // an older answer arriving late is ignored
     const { gone, response, data } = await ask("/api/home");
     if (asked !== state.asked) return;
     if (gone) state.problem = SILENT;
+    else if (response.status === 401) state.problem = LOCKED;
     else if (!response.ok) {
       const said = data && typeof data.error === "string" ? data.error : "The Lab had a problem.";
       state.problem = [said, "Nothing has changed in your records."];
@@ -629,6 +670,7 @@
     if (asked !== state.askedDetail || ticker !== state.stock) return;
     if (response && response.ok && state.detail && usableDetail(data, ticker) && same(state.detail, data)) return;
     if (gone) state.detailProblem = SILENT;
+    else if (response.status === 401) state.detailProblem = [LOCKED[0], LOCKED[1], true];
     else if (response.status === 404) state.detailProblem = ["This stock isn't on the watchlist.", "Go back to see the stocks the Lab follows.", true];
     else if (!response.ok) {
       const said = data && typeof data.error === "string" ? data.error : "The Lab had a problem.";
@@ -730,7 +772,7 @@
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && sheetOpen()) closeSheet();
     });
-    window.addEventListener("hashchange", follow);
+    window.addEventListener("hashchange", () => { if (KEY.test(location.hash)) { takeKey(); load(); } else follow(); });
     // Fresh words when the window comes back, never on a timer. Both events fire together.
     const refresh = () => {
       if (document.hidden || Date.now() - state.refreshed < 1500) return;
@@ -739,6 +781,7 @@
     };
     document.addEventListener("visibilitychange", refresh);
     window.addEventListener("focus", refresh);
+    takeKey();  // before routing: the fragment may hold the key, not a stock
     state.stock = routed();
     load();
   }

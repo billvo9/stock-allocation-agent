@@ -22,6 +22,12 @@ Options
                         http://127.0.0.1:8502/ when the Streamlit Lab runs
     --open              open the app in the default browser
 
+This run's key. The data answers only requests that carry a key made for this
+run (`secrets.token_urlsafe`), or the one the Portfolio Lab app passes in
+LAB_APP_TOKEN. The key reaches the browser in the address's fragment
+(`#key=...`), which browsers never send to a server, and is never logged:
+--open opens the address with it, and only an interactive terminal prints it.
+
 Usage:
     .venv/bin/python scripts/run_lab_app.py --demo --open
     .venv/bin/python scripts/run_lab_app.py --open
@@ -31,11 +37,14 @@ Stop it with Control-C.
 from __future__ import annotations
 
 import argparse
+import os
+import re
+import secrets
 import signal
 import sys
 import tempfile
 import webbrowser
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,6 +65,8 @@ from stock_agent.stock_lab.prices import session_returns
 from stock_agent.stock_lab.store import DB_NAME, StockLabStore, utc_now
 
 DEFAULT_PORT = 8510
+KEY_VARIABLE = "LAB_APP_TOKEN"  # set by the Portfolio Lab app (scripts/portfolio_lab_app.py)
+KEY = re.compile(r"[A-Za-z0-9_-]{32,128}")
 EXCLUDED = ("SKHY", "SNDK")  # the owner's choice: kept off the watchlist views
 DEMO_SESSIONS = 30
 DEMO_CALENDAR = "synthetic_weekdays"
@@ -249,10 +260,14 @@ def serve_forever(server) -> None:
         server.server_close()
 
 
-def _bind(port: int, out: TextIO):
+def new_key() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _bind(port: int, key: str, out: TextIO):
     """The app and its bound server, before any slow work; None when the port is busy."""
 
-    app = LabApp(port=port, api={}, static=static_files())
+    app = LabApp(port=port, api={}, static=static_files(), token=key)
     try:
         return app, make_server(app)
     except (OSError, OverflowError) as error:  # busy, not allowed, or not a port at all
@@ -269,10 +284,13 @@ def _serve(app: LabApp, server, routes, args, *, serve: Callable, out: TextIO) -
     api, items = routes
     app.api, app.items = dict(api), dict(items)
     url = f"http://{HOST}:{app.port}/"
+    keyed = f"{url}#key={app.token}"
     kind = "a synthetic demo" if args.demo is not None else "this Mac's Stock Lab, read-only"
     print(f"Lab app: {url} ({kind}). Press Control-C to stop.", file=out, flush=True)
     if args.open:
-        webbrowser.open(url)
+        webbrowser.open(keyed)
+    elif out.isatty():  # never into a log: only a person at a terminal sees the key
+        print(f"Open this address, which holds this run's key: {keyed}", file=out, flush=True)
     serve(server)
     return 0
 
@@ -285,6 +303,8 @@ def main(
     recent: Callable = observed,
     serve: Callable = serve_forever,
     out: TextIO = sys.stdout,
+    environ: Mapping[str, str] = os.environ,
+    make_key: Callable[[], str] = new_key,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1], allow_abbrev=False)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -304,7 +324,11 @@ def main(
     except ValueError as error:
         print(f"refused: {error}", file=out)
         return 2
-    bound = _bind(args.port, out)
+    key = environ.get(KEY_VARIABLE) or make_key()
+    if not KEY.fullmatch(key):
+        print(f"refused: {KEY_VARIABLE} must be 32 to 128 URL-safe characters", file=out)
+        return 2
+    bound = _bind(args.port, key, out)
     if bound is None:
         return 2
     app, server = bound

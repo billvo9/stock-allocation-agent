@@ -131,7 +131,11 @@ NOTHING_CHANGED = "No unverified number is shown, and nothing was changed."
 TECHNICAL = "Technical detail: {detail}"
 UPDATES_TITLE = "Updates"
 SHEET_COLUMNS = ["What could happen", "Chance"]
-LINES_NOTE = "Lines show the past month; the dot's colour shows whether that day closed up or down."
+LINES_NOTE = (
+    "Lines show the past month on one shared scale, so a calmer stock draws a flatter line. "
+    "The dot's colour shows whether that day closed up or down."
+)
+SCALE_NOTE = "Same scale for all lines"
 
 
 def record_failed(symbols: list[str]) -> str:
