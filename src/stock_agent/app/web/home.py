@@ -180,6 +180,8 @@ def home_view(
         "generated_at": pd.Timestamp(now).tz_convert("UTC").isoformat(),
         "status": _status(briefing, problem, now, local_zone, previous_session),
         "prices_note": words.prices_note(max(sessions)) if sessions else None,
+        "lines_note": words.LINES_NOTE if sessions else None,
+        "checked": words.checked(now, local_zone),
         "stocks": stocks,
         "footer": words.FOOTER,
         "explain": {
@@ -198,7 +200,10 @@ def _status(briefing: Briefing | None, problem: str | None, now, zone, previous)
         return _line(
             "bad",
             words.RECORD_UNREADABLE,
-            [f"The Stock Lab's record could not be opened ({problem})."],
+            [
+                words.NOTHING_CHANGED,
+                words.TECHNICAL.format(detail=f"the record could not be opened ({problem})."),
+            ],
         )
     update = briefing.latest_update
 
@@ -217,9 +222,11 @@ def _status(briefing: Briefing | None, problem: str | None, now, zone, previous)
         details.append(briefing.gap_note)
     stocks = briefing.stocks
     if not briefing.ledger.verified:
-        return _line("bad", words.LEDGER_FAILED, [*details, f"Check: {briefing.ledger.problem}"])
-    if any(s.reason == "record_check_failed" for s in stocks):
-        return _line("bad", words.RECORD_FAILED, details)
+        technical = words.TECHNICAL.format(detail=briefing.ledger.problem)
+        return _line("bad", words.LEDGER_FAILED, [words.NOTHING_CHANGED, *details, technical])
+    failed = [s.symbol for s in stocks if s.reason == "record_check_failed"]
+    if failed:
+        return _line("bad", words.record_failed(failed), [words.NOTHING_CHANGED, *details])
     if update.activation == "not_authorized":
         return _line("neutral", words.NOT_STARTED, details)
     if update.last_run_at is None:
@@ -248,7 +255,7 @@ def _status(briefing: Briefing | None, problem: str | None, now, zone, previous)
 
 
 def _line(level: str, text: str, details: list[str]) -> dict:
-    return {"level": level, "words": text, "details": details}
+    return {"level": level, "words": text, "title": words.UPDATES_TITLE, "details": details}
 
 
 def _tonight_open(briefing: Briefing) -> bool:
@@ -288,18 +295,21 @@ def _outlook(symbol, stock: StockBriefing | None, briefing, now, zone) -> dict:
     day = None if market is None else words.weekday(market)
     level, chip, title, plain = _EMPTY[state]
     detail = stock.words if stock is not None else "The forecast record could not be opened."
+    text = chip.format(day=day)
     return {
         "state": state,
         "level": level,
         "chip": None,
-        "words": chip.format(day=day),
+        "words": text,
+        "label": f"{symbol}: {text}.",
         "day": day,
         "for_session": market,
         "recorded": None,
         "sheet": {
             "title": title.format(day=None if market is None else words.long_weekday(market)),
+            "columns": [],
             "rows": [],
-            "paragraphs": [plain.format(ticker=symbol), f"Details: {detail}"],
+            "paragraphs": [plain.format(ticker=symbol), words.TECHNICAL.format(detail=detail)],
         },
     }
 
@@ -366,11 +376,16 @@ def _fresh(symbol: str, stock: StockBriefing, now, zone) -> dict:
         "level": "plain",
         "chip": {"up": words.percent(p.increase), "down": words.percent(p.decrease)},
         "words": None,
+        "label": (
+            f"{words.long_weekday(first.session)}'s outlook for {symbol}: "
+            f"{words.percent(p.increase)} chance up, {words.percent(p.decrease)} chance down."
+        ),
         "day": words.weekday(first.session),
         "for_session": first.session,
         "recorded": {"increase": p.increase, "stable": p.stable, "decrease": p.decrease},
         "sheet": {
             "title": f"{symbol}: {words.long_weekday(first.session)}'s outlook",
+            "columns": words.SHEET_COLUMNS,
             "rows": [
                 [f"Up more than {band}", words.percent(p.increase)],
                 [f"Flat, within {band}", words.percent(p.stable)],

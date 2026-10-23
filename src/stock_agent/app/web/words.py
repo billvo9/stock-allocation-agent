@@ -35,9 +35,20 @@ def _finite(value: float | None) -> bool:
 
 
 def percent(p: float | None) -> str:
-    """A probability as a whole percentage, for display: 0.4712 -> '47%'."""
+    """
+    A probability as a whole percentage, for display: 0.4712 -> '47%'. A chance that
+    rounds to 0% or 100% without being exactly that reads '<1%' or '>99%', so the
+    app never shows a certainty that was not recorded.
+    """
 
-    return f"{p:.0%}" if _finite(p) else DASH
+    if not _finite(p):
+        return DASH
+    shown = f"{p:.0%}"
+    if shown == "0%" and p > 0:
+        return "<1%"
+    if shown == "100%" and p < 1:
+        return ">99%"
+    return shown
 
 
 def signed_percent(r: float | None) -> str:
@@ -115,8 +126,29 @@ def _elsewhere(now: datetime, local_zone: tzinfo | None) -> bool:
 # --- Home: the status line ---
 
 RECORD_UNREADABLE = "The forecast record can't be read."
-LEDGER_FAILED = "The forecast record didn't pass its check."
-RECORD_FAILED = "A forecast record didn't pass its check."
+LEDGER_FAILED = "The forecast record didn't pass its integrity check."
+NOTHING_CHANGED = "No unverified number is shown, and nothing was changed."
+TECHNICAL = "Technical detail: {detail}"
+UPDATES_TITLE = "Updates"
+SHEET_COLUMNS = ["What could happen", "Chance"]
+LINES_NOTE = "Lines show the past month; the dot's colour shows whether that day closed up or down."
+
+
+def record_failed(symbols: list[str]) -> str:
+    """'NVDA's forecast record didn't pass its check.' (one stock, or several)."""
+
+    if len(symbols) == 1:
+        return f"{symbols[0]}'s forecast record didn't pass its integrity check."
+    return f"{len(symbols)} stocks' forecast records didn't pass their integrity check."
+
+
+def checked(now: datetime, local_zone: tzinfo | None) -> str:
+    """When the app last read the records: 'Checked 7:40 AM'."""
+
+    text = f"Checked {clock(now.astimezone(NEW_YORK))}"
+    return text + (" ET" if _elsewhere(now, local_zone) else "")
+
+
 NOT_STARTED = "Outlooks haven't started yet."
 NO_RUN = "No update has run yet."
 NO_SUCCESS = "No update has finished yet."
@@ -179,8 +211,8 @@ PRICES_UNREADABLE = "Prices can't be read right now."
 NO_CLOSE = "No closing price stored yet."
 
 FOOTER = (
-    "Outlooks are experimental chances from a simple model, recorded each weekday evening. "
-    "They are not advice, and nothing here can be bought or sold."
+    "Outlooks are experimental chances from a simple model, recorded after each trading "
+    "day's close. They are not advice, and nothing here can be bought or sold."
 )
 EXPLAIN_TITLE = "What do the numbers mean?"
 DEMO = "Synthetic demo: made-up stocks and numbers, to try the app safely."
@@ -197,13 +229,13 @@ def explain(band: str | None) -> list[str]:
     return [
         (
             f"↑ is the recorded chance that the stock closes the next trading day more than "
-            f"{edge} higher. ↓ is the chance it closes more than {edge} lower. The rest is the "
-            f"chance it stays within {edge} (Flat)."
+            f"{edge} higher than its last close. ↓ is the chance it closes more than {edge} "
+            f"lower. The rest is the chance it stays within {edge} (Flat)."
         ),
         (
             "They come from a deliberately simple model, frozen so it can't change, that mostly "
-            "reflects how often each stock went up or down in the past. It is a baseline for "
-            "better ideas to beat."
+            "reflects how often each stock went up or down in the past. It is a starting point "
+            "that better ideas must beat."
         ),
         (
             "Each outlook is made after the close from closing prices, so it knows nothing about "

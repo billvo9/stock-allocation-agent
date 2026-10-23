@@ -256,8 +256,24 @@ Calls made while building PR 1, for the owner to check:
 - The launcher claims its port before the demo's replay, so a busy port is refused at once.
 - In the mockup's welcome sheet, "There is nothing to buy or sell here" became the Home
   footer's "Nothing here can be bought or sold", which passes the app's advice scan.
+- From the frontend review:
+  - A chance that would round to 0% or 100% reads "<1%" or ">99%".
+  - The footer says "after each trading day's close", since the update doesn't run on
+    market holidays.
+  - Research-style reasons in a sheet are labelled "Technical detail".
+  - The page shows when it last read the records ("Checked 7:40 AM") and reads them again
+    when its window comes back into focus.
+  - "Not yet proven" no longer names a start date in the page itself.
 
 ## 10. Open for later PRs
+
+- **The one-month lines' scale (owner decision; frontend review, 2026-10-23).** Each line is
+  scaled to its own lowest and highest close, as in the approved mockup. So a calm stock
+  that moved 2% in a month looks as jagged as one that moved 10%.
+  - Options: one shared scale for all rows, or a minimum height (for example ±2% around the
+    last close).
+  - Either is drawing only, with no value computed from prices. Today's behaviour stays
+    until the owner chooses.
 
 - **A per-launch secret (owner decision; security review, 2026-10-23).** Any program or
   macOS account on this Mac can read the app's loopback address, while the stores

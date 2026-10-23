@@ -141,6 +141,8 @@ def test_a_fresh_outlook_shows_the_recorded_probabilities_exactly(lab):
     }
     sheet = outlook["sheet"]
     assert sheet["title"] == f"{T}: Thursday's outlook"
+    assert sheet["columns"] == ["What could happen", "Chance"]
+    assert outlook["label"] == f"Thursday's outlook for {T}: 47% chance up, 42% chance down."
     assert sheet["rows"] == [
         ["Up more than 0.5%", "47%"],
         ["Flat, within 0.5%", "11%"],
@@ -174,11 +176,10 @@ def test_a_missed_evening_is_named_and_its_old_outlook_is_not_shown_as_today(lab
     assert outlook["state"] == "stale" and outlook["level"] == "warn"
     assert outlook["words"] == "Thu outlook not recorded"
     assert outlook["chip"] is None and outlook["recorded"] is None
-    assert found["status"] == {
-        "level": "warn",
-        "words": "Last night's update didn't run.",
-        "details": found["status"]["details"],
-    }
+    assert (found["status"]["level"], found["status"]["words"]) == (
+        "warn",
+        "Last night's update didn't run.",
+    )
 
 
 def test_an_evening_that_ran_but_left_a_stock_out_says_so(lab):
@@ -209,7 +210,10 @@ def test_a_failed_ledger_check_is_red_and_withholds_every_outlook(lab, monkeypat
     found = view(lab, at(THURSDAY, "07:40"))
     outlook = only(found)["outlook"]
     assert found["status"]["level"] == "bad"
-    assert found["status"]["words"] == "The forecast record didn't pass its check."
+    assert found["status"]["words"] == "The forecast record didn't pass its integrity check."
+    assert (
+        found["status"]["details"][0] == "No unverified number is shown, and nothing was changed."
+    )
     assert outlook["state"] == "unverified" and outlook["level"] == "bad"
     assert outlook["words"] == "Outlook can't be verified" and outlook["recorded"] is None
 
@@ -223,7 +227,7 @@ def test_a_record_that_fails_its_check_is_red(lab, monkeypatch):
     monkeypatch.setattr(ReadOnlyRecords, "forecasts", refuse)
     found = view(lab, at(THURSDAY, "07:40"))
     assert found["status"]["level"] == "bad"
-    assert found["status"]["words"] == "A forecast record didn't pass its check."
+    assert found["status"]["words"] == f"{T}'s forecast record didn't pass its integrity check."
     assert only(found)["outlook"]["state"] == "unverified"
 
 
@@ -279,11 +283,11 @@ def test_before_any_run_the_status_is_neutral(lab):
 def test_a_weekend_names_the_day_of_the_last_update(lab):
     evening(lab, "2026-10-16")
     found = view(lab, at("2026-10-18", "10:00"))
-    assert found["status"] == {
-        "level": "ok",
-        "words": "Updated Friday, 8:32 PM",
-        "details": found["status"]["details"],
-    }
+    assert (found["status"]["level"], found["status"]["words"]) == (
+        "ok",
+        "Updated Friday, 8:32 PM",
+    )
+    assert found["status"]["title"] == "Updates"
     assert found["status"]["details"][:2] == [
         "Last successful update: Friday, 8:32 PM.",
         "Latest run: finished, Friday, 8:32 PM.",
@@ -324,7 +328,9 @@ def test_every_missing_outlook_has_an_honest_state(lab, record, state, level, wo
     outlook = only(view(lab, at(THURSDAY, "07:40")))["outlook"]
     assert (outlook["state"], outlook["level"], outlook["words"]) == (state, level, words)
     assert outlook["chip"] is None and outlook["recorded"] is None
-    assert outlook["sheet"]["paragraphs"]  # the reason, in words
+    assert outlook["label"] == f"{T}: {words}."
+    plain, technical = outlook["sheet"]["paragraphs"]
+    assert T in plain and technical.startswith("Technical detail: ")
 
 
 def test_a_store_that_cannot_be_read_keeps_the_prices_and_withholds_the_outlooks(lab):
@@ -356,6 +362,8 @@ def test_the_price_is_the_readers_close_and_change_unchanged(lab):
     assert price["direction"] == "up" and price["session_words"] == "Wed, Oct 21"
     assert price["line"] == [121.70, 127.65]
     assert found["prices_note"] == "Closing prices from Wed, Oct 21."
+    assert found["lines_note"].startswith("Lines show the past month")
+    assert found["checked"] == "Checked 7:40 AM"
     assert only(found)["name"] is None  # SYNTH has no company name
 
 

@@ -154,3 +154,28 @@ def test_outlooks_are_never_green_or_red():
         assert tokens["fc"] not in (tokens["up"], tokens["down"])
     rules = re.findall(r"([^{}]*\.fc[^{}]*)\{([^}]*)\}", STYLE)
     assert rules and all("--up" not in body and "--down" not in body for _, body in rules)
+
+
+def _blend(colour: str, behind: str, share: float) -> str:
+    """`share` of `colour` over `behind` (what color-mix with transparent paints)."""
+
+    mixed = [
+        round(share * int(colour[i : i + 2], 16) + (1 - share) * int(behind[i : i + 2], 16))
+        for i in (1, 3, 5)
+    ]
+    return "#" + "".join(f"{c:02X}" for c in mixed)
+
+
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_the_move_reads_on_its_own_tinted_pill(theme):
+    tokens = DARK if theme == "dark" else LIGHT
+    scope = r":root\[data-theme=\"light\"\] " if theme == "light" else ""
+    for direction in ("up", "down"):
+        rule = re.search(
+            rf"(?m)^{scope}\.chg\.{direction} \{{[^}}]*color-mix\(in srgb, var\(--{direction}\) "
+            r"(\d+)%, transparent\)",
+            STYLE,
+        )
+        share = int(rule.group(1)) / 100
+        pill = _blend(tokens[direction], tokens["bg"], share)
+        assert contrast(tokens[direction], pill) >= 4.5, (theme, direction, share)

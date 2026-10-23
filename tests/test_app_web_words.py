@@ -28,7 +28,9 @@ def utc_stamp(moment: datetime) -> str:
 
 def test_percent_rounds_for_display_only():
     assert words.percent(0.4712) == "47%"
-    assert words.percent(0.0) == "0%"
+    assert words.percent(0.0) == "0%" and words.percent(1.0) == "100%"
+    assert words.percent(0.004) == "<1%" and words.percent(0.996) == ">99%"
+    assert words.percent(0.005) == "<1%" and words.percent(0.9951) == ">99%"
     assert words.percent(None) == "—"
     assert words.percent(float("nan")) == "—"
 
@@ -114,3 +116,8 @@ def test_new_york_days_decide_tonight_even_when_this_mac_is_already_in_tomorrow(
     assert words.when(stamp, now=ny("2026-10-22T21:00"), local_zone=LONDON) == (
         "tonight, 8:31 PM ET"
     )
+
+
+def test_checked_names_the_time_the_app_read_the_records():
+    assert words.checked(ny("2026-10-22T07:40"), NEW_YORK) == "Checked 7:40 AM"
+    assert words.checked(ny("2026-10-22T07:40"), LONDON) == "Checked 7:40 AM ET"
