@@ -1,0 +1,857 @@
+<!doctype html>
+<!--
+  The Lab app's clickable mockup, approved by the owner "as is" on 2026-10-23
+  (docs/product/lab_app_design.md). Every price and outlook in it is made up.
+  Open this file in a browser from the repository; it uses the bundled font.
+  The one change since approval: the welcome sheet's line about buying and
+  selling now uses the Home footer's approved words.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Portfolio Lab Mockup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+/* Layout: one calm, phone-width column, like an app rather than a web page: a
+   status line, the watchlist, and detail screens pushed on top. Tabs sit at the
+   bottom on a phone and under the header on a wide window. Dark by default,
+   Light on request. Boldness lives in one place: the ivory price line with its
+   warm "now" glow, taken from the Ember logo. */
+@font-face {
+  font-family: "SourceSans3";
+  src: url(../../../src/stock_agent/app/static/fonts/SourceSans3VF-Upright.woff2) format("woff2");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+}
+:root {
+  /* Ember, dark (the default) */
+  --bg: #121110;
+  --surface: #1C1A18;
+  --raised: #262320;
+  --line: #34302A;
+  --text: #F3EEE6;
+  --muted: #B9AFA2;
+  --subtle: #968C80;
+  --line-ink: #F6F1E9;    /* the price line: ivory, as in the logo */
+  --up: #3FD68B;          /* a price went up: a fact about the past, never a signal */
+  --down: #FF7262;        /* a price went down */
+  --ember: #DE8C66;       /* brand glow: the logo and the chart's "now" point only */
+  --fc: #AFC3D6;          /* outlooks: one calm mist hue, never green or red */
+  --fc-flat: #6C665E;
+  --ok: #8FD3A0;
+  --warn: #F2BC72;
+  --bad: #F4A7AE;
+  --note: #97CAD7;
+  --ok-bg: #1D3024;
+  --warn-bg: #35281A;
+  --bad-bg: #3C2023;
+  --mock: #CDB8EE;        /* the mockup ribbon: its own hue, outside the product palette */
+  --mock-bg: #2B2339;
+  --scrim: rgba(0, 0, 0, 0.55);
+  --font: "SourceSans3", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  --mono: "SF Mono", Menlo, Consolas, monospace;
+  --r-card: 18px;
+  --r-pill: 999px;
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #FBF8F3;
+  --surface: #FFFFFF;
+  --raised: #F3EEE6;
+  --line: #E5DDD0;
+  --text: #1D1B18;
+  --muted: #544E46;
+  --subtle: #6B6258;
+  --line-ink: #2A2622;
+  --up: #0B7A41;
+  --down: #C8352A;
+  --ember: #9A4325;
+  --fc: #3E5A75;
+  --fc-flat: #B9B0A4;
+  --ok: #1E6633;
+  --warn: #8A4B0F;
+  --bad: #99202C;
+  --note: #26505D;
+  --ok-bg: #E6F0E8;
+  --warn-bg: #FAEFDF;
+  --bad-bg: #F7E5E6;
+  --mock: #5B3A8C;
+  --mock-bg: #EFEAF6;
+  --scrim: rgba(29, 27, 24, 0.35);
+  color-scheme: light;
+}
+:root[data-theme="dark"] { color-scheme: dark; }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; }
+.num { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; border-radius: 8px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* --- the mockup ribbon (not part of the product) --- */
+.ribbon {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 30;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 12px;
+  padding: 7px 16px; background: var(--mock-bg); color: var(--mock);
+  font-size: 13px; border-bottom: 1px solid var(--line);
+}
+.ribbon strong { letter-spacing: 0.06em; text-transform: uppercase; font-size: 12px; }
+.ribbon label { display: inline-flex; align-items: center; gap: 6px; }
+.ribbon select {
+  font: inherit; font-size: 13px; color: var(--text); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px; max-width: 100%;
+}
+
+/* --- app shell --- */
+.app { max-width: 560px; margin: 0 auto; padding-inline: 16px; padding-block: 0 104px; }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-block: 18px 6px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; font-size: 17px; letter-spacing: 0.01em; }
+.brand svg { width: 30px; height: 30px; flex: none; }
+.icon-btn { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); display: grid; place-items: center; cursor: pointer; }
+.icon-btn svg { width: 18px; height: 18px; }
+
+.status {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  margin-block: 6px 2px; padding: 11px 14px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--line);
+  text-align: left; cursor: pointer; font-size: 15px;
+}
+.status .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.status.ok .dot { background: var(--ok); }
+.status.warn { background: var(--warn-bg); border-color: transparent; }
+.status.warn .dot { background: var(--warn); }
+.status.bad { background: var(--bad-bg); border-color: transparent; }
+.status.bad .dot { background: var(--bad); }
+.status .chev { margin-left: auto; color: var(--subtle); }
+.asof { color: var(--subtle); font-size: 13px; margin: 8px 2px 0; }
+
+h1.screen { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 22px 0 4px; letter-spacing: -0.01em; text-wrap: balance; }
+.lede { color: var(--muted); margin: 0 0 14px; max-width: 60ch; }
+.eyebrow { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--subtle); font-weight: 600; margin: 26px 2px 4px; }
+
+/* --- watchlist --- */
+.list { display: flex; flex-direction: column; }
+.row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 96px minmax(92px, auto); align-items: center;
+  column-gap: 14px; row-gap: 2px; padding: 16px 4px; border-bottom: 1px solid var(--line); cursor: pointer;
+}
+.row:hover { background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.row .tk { font-size: 18px; font-weight: 700; letter-spacing: 0.01em; }
+.row .nm { color: var(--subtle); font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .spark { grid-row: span 2; width: 96px; height: 38px; }
+.row .px { font-size: 18px; font-weight: 650; text-align: right; }
+.row .chg { justify-self: end; font-size: 13.5px; font-weight: 650; padding: 2px 8px; border-radius: 8px; }
+.chg.up { color: var(--up); background: color-mix(in srgb, var(--up) 14%, transparent); }
+.chg.down { color: var(--down); background: color-mix(in srgb, var(--down) 14%, transparent); }
+.chg.flat { color: var(--muted); background: var(--raised); }
+.row .look { grid-column: 1 / -1; margin-top: 8px; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: var(--r-pill);
+  background: var(--raised); border: 1px solid var(--line); font-size: 13.5px; color: var(--text); cursor: pointer;
+}
+.chip .lbl { color: var(--subtle); }
+.chip .info { color: var(--subtle); font-size: 12px; }
+.chip.empty { color: var(--muted); }
+.chip.empty.warn { background: var(--warn-bg); border-color: transparent; }
+.chip.empty.bad { background: var(--bad-bg); border-color: transparent; }
+.fc { color: var(--fc); font-weight: 650; }
+
+.foot { color: var(--subtle); font-size: 13px; margin: 18px 2px 0; max-width: 60ch; }
+.textbtn { background: none; border: 0; padding: 0; color: var(--muted); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; font-size: inherit; }
+
+/* --- detail --- */
+.back { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 8px 0; cursor: pointer; color: var(--muted); font-size: 15px; }
+.d-head { margin-top: 6px; min-height: 104px; }
+.d-tk { font-size: 15px; color: var(--muted); font-weight: 600; }
+.d-px { font-size: 46px; font-weight: 700; line-height: 1.05; letter-spacing: -0.02em; margin: 4px 0 6px; }
+.d-chg { font-size: 15px; font-weight: 650; }
+.d-chg.up { color: var(--up); } .d-chg.down { color: var(--down); } .d-chg.flat { color: var(--muted); }
+.d-chg .when { color: var(--subtle); font-weight: 400; }
+.chart { position: relative; margin: 14px -4px 6px; height: 230px; touch-action: pan-y; cursor: crosshair; }
+.chart svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.chart .cursor { position: absolute; top: 18px; bottom: 0; width: 1px; background: var(--subtle); opacity: 0.6; pointer-events: none; }
+.chart .now { position: absolute; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, color-mix(in srgb, var(--ember) 70%, transparent) 0 22%, color-mix(in srgb, var(--ember) 26%, transparent) 40%, transparent 70%); }
+.chart .now::after { content: ""; position: absolute; inset: 11px; border-radius: 50%; background: var(--line-ink); }
+.chart .pt { position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; border-radius: 50%; background: var(--line-ink); border: 2px solid var(--bg); pointer-events: none; }
+.chart .tag { position: absolute; top: -4px; transform: translateX(-50%); font-size: 12px; color: var(--muted); white-space: nowrap; pointer-events: none; }
+.wm { color: var(--mock); font-weight: 650; }
+.ranges { display: flex; gap: 6px; margin: 4px 0 6px; }
+.ranges button { flex: 1; padding: 8px 0; border-radius: 10px; border: 0; background: none; color: var(--muted); font-weight: 650; font-size: 14px; cursor: pointer; }
+.ranges button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+.range-note { color: var(--subtle); font-size: 12.5px; margin: 0 2px; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 18px; margin-top: 14px; }
+.card h2 { font-size: 19px; margin: 0; font-weight: 700; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; text-wrap: balance; }
+.card .sub { color: var(--subtle); font-size: 13.5px; margin: 4px 0 0; }
+.card p { margin: 10px 0 0; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 650; letter-spacing: 0.02em; padding: 3px 9px; border-radius: var(--r-pill); background: var(--raised); color: var(--muted); border: 1px solid var(--line); cursor: pointer; }
+
+.obar { display: flex; gap: 3px; height: 14px; margin: 16px 0 10px; }
+.obar .seg { border-radius: 4px; min-width: 6px; }
+.seg.up { background: var(--fc); }
+.seg.flat { background: var(--fc-flat); }
+.seg.down { background: repeating-linear-gradient(135deg, var(--fc) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1.5px var(--fc); }
+.olegend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.olegend div { display: flex; flex-direction: column; }
+.olegend .k { color: var(--subtle); font-size: 13px; }
+.olegend .v { font-size: 26px; font-weight: 700; color: var(--text); }
+.olegend div:nth-child(2) { text-align: center; } .olegend div:nth-child(3) { text-align: right; }
+.def { color: var(--muted); font-size: 14px; }
+.note { display: flex; gap: 8px; align-items: flex-start; color: var(--subtle); font-size: 13.5px; margin-top: 12px; }
+
+.more-btn { margin-top: 14px; display: inline-flex; gap: 6px; align-items: center; border: 0; background: none; padding: 0; color: var(--muted); font-weight: 650; cursor: pointer; font-size: 14px; }
+.five { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.five .r { display: grid; grid-template-columns: 70px minmax(0, 1fr) 92px; gap: 12px; align-items: center; font-size: 14.5px; }
+.five .day { color: var(--muted); }
+.five .obar { margin: 0; height: 10px; }
+.five .nums { text-align: right; color: var(--muted); }
+.five .nums b { color: var(--text); font-weight: 650; }
+
+.rel { display: grid; gap: 12px; margin-top: 14px; }
+.rel .big { font-size: 17px; line-height: 1.4; }
+.rel .big b { font-weight: 700; }
+.rel .meta { color: var(--subtle); font-size: 13px; }
+.rel .live { padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+.meter { height: 6px; border-radius: 3px; background: var(--raised); margin-top: 8px; overflow: hidden; }
+.meter span { display: block; height: 100%; background: var(--note); border-radius: 3px; }
+
+.ctx { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+
+.links { display: flex; flex-direction: column; margin-top: 8px; }
+.link { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 2px; border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left; cursor: pointer; width: 100%; }
+.link:last-child { border-bottom: 0; }
+.link .t { font-weight: 650; }
+.link .s { display: block; color: var(--subtle); font-size: 13.5px; font-weight: 400; }
+.link .chev { color: var(--subtle); }
+
+/* --- history --- */
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 6px; }
+.filters button { padding: 7px 14px; border-radius: var(--r-pill); border: 1px solid var(--line); background: var(--surface); color: var(--muted); font-weight: 650; font-size: 14px; cursor: pointer; }
+.filters button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+.tl { position: relative; margin-top: 10px; padding-left: 22px; }
+.tl::before { content: ""; position: absolute; left: 5px; top: 8px; bottom: 8px; width: 2px; background: var(--line); }
+.tl-day { position: relative; margin-top: 18px; }
+.tl-day::before { content: ""; position: absolute; left: -22px; top: 6px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--subtle); }
+.tl-day.pending::before { border-style: dashed; }
+.tl-day.missed::before { border-color: var(--warn); background: var(--warn); }
+.tl-h { font-weight: 700; font-size: 16px; }
+.tl-h .s { color: var(--subtle); font-weight: 400; font-size: 13.5px; display: block; }
+.tl-items { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.tl-item { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 11px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; font-size: 14.5px; }
+.tl-item .tk { font-weight: 700; }
+.tl-item .said { color: var(--muted); }
+.tl-item .res { text-align: right; font-weight: 650; white-space: nowrap; }
+.tl-item .res.wait { color: var(--subtle); font-weight: 400; font-style: italic; }
+.tl-item .res .gave { display: block; color: var(--subtle); font-weight: 400; font-size: 12.5px; }
+.tl-miss { margin-top: 8px; padding: 11px 12px; border-radius: 14px; background: var(--warn-bg); color: var(--text); font-size: 14.5px; }
+
+/* --- health --- */
+.hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 26px 8px 8px; }
+.ring { width: 132px; height: 132px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 18px; border: 6px solid; }
+.ring.ok { border-color: var(--ok); background: var(--ok-bg); color: var(--ok); }
+.ring.warn { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+.ring.bad { border-color: var(--bad); background: var(--bad-bg); color: var(--bad); }
+.ring svg { width: 50px; height: 50px; }
+.hero h1 { margin: 0; font-size: 30px; }
+.hero p { color: var(--muted); max-width: 40ch; margin: 8px 0 0; }
+.hero .aside { color: var(--subtle); font-size: 14px; }
+.disclose { margin: 18px auto 0; display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-pill); padding: 9px 16px; cursor: pointer; font-weight: 650; }
+.checks { display: flex; flex-direction: column; margin-top: 4px; }
+.check { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+.check:last-child { border-bottom: 0; }
+.check .i { font-weight: 700; }
+.check .i.ok { color: var(--ok); } .check .i.warn { color: var(--warn); } .check .i.bad { color: var(--bad); } .check .i.note { color: var(--note); }
+.check .t { font-weight: 650; }
+.check .s { color: var(--subtle); font-size: 13.5px; display: block; }
+.check code { font-family: var(--mono); font-size: 11.5px; color: var(--subtle); }
+
+/* --- more --- */
+.seg2 { display: inline-flex; padding: 3px; border-radius: 12px; background: var(--raised); gap: 3px; }
+.seg2 button { border: 0; padding: 7px 16px; border-radius: 9px; background: none; color: var(--muted); font-weight: 650; cursor: pointer; }
+.seg2 button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.about { padding-left: 18px; margin: 10px 0 0; color: var(--muted); }
+.about li { margin-top: 8px; }
+.about b { color: var(--text); }
+
+/* --- tabs --- */
+.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: flex; justify-content: center; gap: 4px;
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border-top: 1px solid var(--line);
+}
+.tabs button { flex: 1; max-width: 130px; display: flex; flex-direction: column; align-items: center; gap: 3px; background: none; border: 0; padding: 6px 0; color: var(--subtle); font-size: 12px; font-weight: 650; cursor: pointer; position: relative; }
+.tabs button svg { width: 23px; height: 23px; }
+.tabs button[aria-current="page"] { color: var(--text); }
+.tabs .badge { position: absolute; top: 4px; left: calc(50% + 8px); width: 8px; height: 8px; border-radius: 50%; }
+.badge.ok { background: var(--ok); } .badge.warn { background: var(--warn); } .badge.bad { background: var(--bad); }
+@media (min-width: 760px) {
+  .app { padding-block: 0 56px; }
+  .tabs { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 36px); bottom: auto; border-top: 0; border-bottom: 1px solid var(--line); padding: 6px 12px; }
+  .tabs button { flex-direction: row; justify-content: center; gap: 8px; font-size: 14px; padding: 9px 0; }
+  .tabs button svg { width: 18px; height: 18px; }
+  .tabs .badge { top: 8px; left: auto; right: 14px; }
+}
+
+/* --- sheet --- */
+.scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 40; }
+.sheet {
+  position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); z-index: 41;
+  width: min(560px, 100%); max-height: 86%; overflow-y: auto;
+  background: var(--surface); border-radius: 22px 22px 0 0; border: 1px solid var(--line); border-bottom: 0;
+  padding: 10px 20px calc(24px + env(safe-area-inset-bottom, 0px));
+  animation: rise 200ms cubic-bezier(0.2, 0, 0, 1);
+}
+@keyframes rise { from { transform: translate(-50%, 24px); opacity: 0.6; } to { transform: translate(-50%, 0); opacity: 1; } }
+.sheet .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line); margin: 0 auto 12px; }
+.sheet h3 { font-size: 21px; margin: 4px 0 8px; text-wrap: balance; }
+.sheet p { color: var(--muted); margin: 10px 0 0; max-width: 62ch; }
+.sheet p b { color: var(--text); }
+.sheet .close { margin-top: 20px; width: 100%; padding: 13px; border-radius: 14px; border: 0; background: var(--text); color: var(--bg); font-weight: 700; font-size: 16px; cursor: pointer; }
+.sheet table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14.5px; }
+.sheet td, .sheet th { text-align: left; padding: 8px 4px; border-bottom: 1px solid var(--line); }
+.sheet th { color: var(--subtle); font-weight: 600; font-size: 13px; }
+.sheet td.n { text-align: right; }
+
+.empty-card { text-align: center; padding: 26px 18px; color: var(--muted); }
+.empty-card b { display: block; color: var(--text); font-size: 17px; margin-bottom: 6px; }
+</style>
+
+<div class="ribbon" role="note">
+  <strong>Mockup</strong>
+  <span>Made-up prices and outlooks, only to judge the design.</span>
+  <label for="scenario">Show:
+    <select id="scenario">
+      <option value="normal">A normal morning</option>
+      <option value="first">The first launch</option>
+      <option value="missed">Last night's update missed</option>
+      <option value="month">A month from now</option>
+      <option value="broken">Something is wrong</option>
+    </select>
+  </label>
+</div>
+
+<div class="app">
+  <div class="top">
+    <div class="brand">
+      <svg viewBox="0 0 1024 1024" aria-hidden="true">
+        <defs>
+          <linearGradient id="lg-s" x1="0" y1="0" x2="0.35" y2="1"><stop offset="0" stop-color="#352D26"/><stop offset="1" stop-color="#13110F"/></linearGradient>
+          <radialGradient id="lg-g" cx="778" cy="482" r="572" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#DE8C66" stop-opacity="0.42"/><stop offset="1" stop-color="#DE8C66" stop-opacity="0"/></radialGradient>
+          <linearGradient id="lg-o" x1="592" y1="0" x2="1064" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#DE8C66" stop-opacity="0.62"/><stop offset="1" stop-color="#DE8C66" stop-opacity="0.22"/></linearGradient>
+          <linearGradient id="lg-i" x1="592" y1="0" x2="1064" y2="0" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#F2BC72" stop-opacity="0.8"/><stop offset="1" stop-color="#F2BC72" stop-opacity="0.34"/></linearGradient>
+          <clipPath id="lg-c"><path d="M1024,512 C1024,755.6 1029.8,885.7 957.7,957.7 C885.7,1029.8 755.6,1024 512,1024 C268.4,1024 138.3,1029.8 66.3,957.7 C-5.8,885.7 0,755.6 0,512 C0,268.4 -5.8,138.3 66.3,66.3 C138.3,-5.8 268.4,0 512,0 C755.6,0 885.7,-5.8 957.7,66.3 C1029.8,138.3 1024,268.4 1024,512 Z"/></clipPath>
+        </defs>
+        <g clip-path="url(#lg-c)">
+          <rect width="1024" height="1024" fill="url(#lg-s)"/><rect width="1024" height="1024" fill="url(#lg-g)"/>
+          <path d="M592,532 Q592,352 1064,35 L1064,755 Q592,712 592,532 Z" fill="url(#lg-o)"/>
+          <path d="M592,532 Q592,445 1064,221 L1064,569 Q592,619 592,532 Z" fill="url(#lg-i)"/>
+          <circle cx="592" cy="532" r="149" fill="#DE8C66" fill-opacity="0.55"/>
+          <polyline points="137,770 323,572 435,671 592,532" fill="none" stroke="#F6F1E9" stroke-width="124" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="592" cy="532" r="99" fill="#FFFDF8"/>
+        </g>
+      </svg>
+      <span>Portfolio Lab</span>
+    </div>
+    <button class="icon-btn" id="theme-btn" type="button" aria-label="Switch to light mode">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>
+    </button>
+  </div>
+
+  <nav class="tabs" aria-label="Main">
+    <button type="button" data-tab="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 10.5 12 4l8.5 6.5V20a1 1 0 0 1-1 1h-5v-6h-5v6h-5a1 1 0 0 1-1-1z"/></svg>Home</button>
+    <button type="button" data-tab="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>History</button>
+    <button type="button" data-tab="health"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></svg>Health<span class="badge" id="health-badge"></span></button>
+    <button type="button" data-tab="more"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>More</button>
+  </nav>
+
+  <main id="screen" tabindex="-1"></main>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" hidden></div>
+
+<script>
+"use strict";
+/* ---------------------------------------------------------------------- *
+ * MADE-UP DATA. Prices are a seeded random walk; outlooks sit near each
+ * stock's usual mix, as the real frozen model's do. The real app shows only
+ * what the Stock Lab stored: closes and each day's change from the recent-
+ * prices reader, and outlooks, context and results from the forecast record.
+ * Like the real app, this page never derives a return or category from
+ * 2025+ prices: the context chips come from the (here invented) record.
+ * ---------------------------------------------------------------------- */
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const DAYS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const LONG_DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const HOLIDAYS = new Set(["2025-11-27","2025-12-25","2026-01-01","2026-01-19","2026-02-16","2026-04-03","2026-05-25","2026-06-19","2026-07-03","2026-09-07","2026-11-26","2026-12-25"]);
+const iso = d => d.toISOString().slice(0, 10);
+const isSession = d => d.getUTCDay() > 0 && d.getUTCDay() < 6 && !HOLIDAYS.has(iso(d));
+function sessionsBack(endIso, n) {
+  const out = []; const d = new Date(endIso + "T12:00:00Z");
+  while (out.length < n) { if (isSession(d)) out.unshift(new Date(d)); d.setUTCDate(d.getUTCDate() - 1); }
+  return out;
+}
+function sessionsAfter(d0, n) {
+  const out = []; const d = new Date(d0);
+  while (out.length < n) { d.setUTCDate(d.getUTCDate() + 1); if (isSession(d)) out.push(new Date(d)); }
+  return out;
+}
+const short = d => `${DAYS[d.getUTCDay()]}, ${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+const dayOnly = d => DAYS[d.getUTCDay()];
+const longDay = d => LONG_DAYS[d.getUTCDay()];
+
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function gauss(r) { let u = 0, v = 0; while (u === 0) u = r(); while (v === 0) v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); }
+
+const BAND = 0.005;                 // the record's band: "±0.5%"
+const CUM_BAND_WORDS = "1.12%";     // the five-day total's band: 0.5% x sqrt(5)
+const DATES = sessionsBack("2026-11-18", 273);   // a year before Oct 21, through Nov 18
+const IDX = Object.fromEntries(DATES.map((d, i) => [iso(d), i]));
+const GO_LIVE = IDX["2026-10-20"];
+const STOCKS = [
+  { t: "AMD",  name: "Advanced Micro Devices", vol: 0.031, seed: 7,  usual: [0.468, 0.098, 0.434] },
+  { t: "MRVL", name: "Marvell Technology",     vol: 0.036, seed: 19, usual: [0.471, 0.081, 0.448] },
+  { t: "MU",   name: "Micron Technology",      vol: 0.033, seed: 23, usual: [0.466, 0.089, 0.445] },
+  { t: "NVDA", name: "NVIDIA",                 vol: 0.029, seed: 41, usual: [0.487, 0.097, 0.416] },
+];
+const START = { AMD: 118.2, MRVL: 64.1, MU: 92.6, NVDA: 141.3 };
+for (const s of STOCKS) {
+  const r = rng(s.seed);
+  s.closes = [START[s.t]];
+  for (let i = 1; i < DATES.length; i++) s.closes.push(Math.round(s.closes[i - 1] * Math.exp(0.0011 + s.vol * gauss(r)) * 100) / 100);
+  s.change = s.closes.map((v, i) => i ? v / s.closes[i - 1] - 1 : null);   // the reader gives this
+  s.notes = {};
+  if (s.t === "MU") s.notes[IDX["2026-09-29"]] = "ex-dividend";
+  // one invented record per evening, near the usual mix, with the context the job records
+  s.records = DATES.map((d, e) => {
+    const jit = () => (r() - 0.5);
+    const daily = Array.from({ length: 5 }, () => { const up = s.usual[0] + jit() * 0.03, fl = s.usual[1] + jit() * 0.012; return [up, fl, 1 - up - fl]; });
+    const upc = s.usual[0] + 0.01 + jit() * 0.03, flc = 0.11 + jit() * 0.02;
+    let len = 0, dirn = null;
+    for (let i = e; i > 0; i--) { const c = s.change[i]; const k = c > BAND ? "rising" : c < -BAND ? "falling" : "flat"; if (dirn === null) dirn = k; if (k !== dirn) break; len++; }
+    const ret20 = e >= 20 ? s.closes[e] / s.closes[e - 20] - 1 : null;
+    const regime = ["calm", "normal", "bigger"][Math.floor(r() * 3)];
+    return { daily, cum: [upc, flc, 1 - upc - flc], made: e === GO_LIVE ? "8:16 PM" : "8:31 PM", run: { dirn, len }, ret20, regime };
+  });
+  // the development record: pooled over all four stocks, 2003-2024
+  s.dev = { lo: 0.45, hi: 0.50, observed: 0.47, ciLo: 0.45, ciHi: 0.49, n: 4697 };
+}
+
+/* Today is Thursday morning, Oct 22 (or Thursday, Nov 19, for "a month from now"). */
+const SCENARIOS = {
+  normal: { asOf: IDX["2026-10-21"], prices: IDX["2026-10-21"], missed: [], health: "ok", record: true },
+  first:  { asOf: IDX["2026-10-21"], prices: IDX["2026-10-21"], missed: [], health: "ok", record: true, welcome: true },
+  missed: { asOf: IDX["2026-10-20"], prices: IDX["2026-10-20"], missed: [IDX["2026-10-21"]], health: "warn", record: true, lastNight: false },
+  month:  { asOf: IDX["2026-11-18"], prices: IDX["2026-11-18"], missed: [IDX["2026-11-05"]], health: "ok", record: true },
+  broken: { asOf: IDX["2026-10-21"], prices: IDX["2026-10-21"], missed: [], health: "bad", record: false },
+};
+const state = { scen: "normal", tab: "home", stock: null, range: "3M", hfilter: "All", details: false, eachDay: false };
+let SC = SCENARIOS.normal;
+
+/* --- formatting: values as recorded, rounded only for display --- */
+const MINUS = "−";
+const money = v => "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pct = (v, d = 0) => (v * 100).toFixed(d) + "%";
+const signedPct = v => (v > 0 ? "+" : v < 0 ? MINUS : "") + Math.abs(v * 100).toFixed(2) + "%";
+const dir = v => v > 0 ? "up" : v < 0 ? "down" : "flat";
+const arrow = v => v > 0 ? "▲" : v < 0 ? "▼" : "";
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+/* --- what the Lab knows in this scenario --- */
+const priceDay = () => DATES[SC.prices];
+const asOfDay = () => DATES[SC.asOf];
+const nextDay = () => sessionsAfter(DATES[SC.prices], 1)[0];
+const recordedEvenings = () => { const out = []; for (let e = GO_LIVE; e <= SC.asOf; e++) if (!SC.missed.includes(e)) out.push(e); return out; };
+const lastNightRecorded = () => SC.lastNight !== false;
+const latest = s => (SC.record && lastNightRecorded()) ? s.records[SC.asOf] : null;
+const scoredDays = () => recordedEvenings().filter(e => e < SC.prices).length;
+const s0 = e => STOCKS[0].records[e];
+
+/* --- small pieces --- */
+function spark(values, dayChange, w = 96, h = 38) {
+  const lo = Math.min(...values), hi = Math.max(...values), pad = 5;
+  const x = i => pad + (i / (values.length - 1)) * (w - 2 * pad);
+  const y = v => pad + (hi === lo ? (h - 2 * pad) / 2 : (1 - (v - lo) / (hi - lo)) * (h - 2 * pad));
+  const d = values.map((v, i) => (i ? "L" : "M") + x(i).toFixed(1) + "," + y(v).toFixed(1)).join("");
+  const col = dayChange > 0 ? "var(--up)" : dayChange < 0 ? "var(--down)" : "var(--muted)";
+  const ex = x(values.length - 1).toFixed(1), ey = y(values[values.length - 1]).toFixed(1);
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true">
+    <path d="${d}" stroke="var(--line-ink)" stroke-opacity="0.85" stroke-width="1.6" fill="none" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${ex}" cy="${ey}" r="5" fill="${col}" fill-opacity="0.28"/><circle cx="${ex}" cy="${ey}" r="2.6" fill="${col}"/></svg>`;
+}
+function obar(p) {
+  return `<div class="obar" role="img" aria-label="Up ${pct(p[0])}, Flat ${pct(p[1])}, Down ${pct(p[2])}">
+    <span class="seg up" style="flex:${p[0]}"></span><span class="seg flat" style="flex:${p[1]}"></span><span class="seg down" style="flex:${p[2]}"></span></div>`;
+}
+function legend(p) {
+  return `<div class="olegend num">
+    <div><span class="k">↑ Up</span><span class="v">${pct(p[0])}</span></div>
+    <div><span class="k">→ Flat</span><span class="v">${pct(p[1])}</span></div>
+    <div><span class="k">↓ Down</span><span class="v">${pct(p[2])}</span></div></div>`;
+}
+
+/* ================= screens ================= */
+function statusLine() {
+  if (SC.health === "bad") return `<button class="status bad" data-go="health" type="button"><span class="dot"></span><span>The forecast record can't be read. Tap for details.</span><span class="chev">›</span></button>`;
+  if (!lastNightRecorded()) return `<button class="status warn" data-go="health" type="button"><span class="dot"></span><span>Last night's update didn't run.</span><span class="chev">›</span></button>`;
+  return `<button class="status ok" data-go="health" type="button"><span class="dot"></span><span>Updated last night, ${s0(SC.asOf).made}</span><span class="chev">›</span></button>`;
+}
+
+function home() {
+  const nd = nextDay();
+  const rows = STOCKS.map(s => {
+    const last = s.closes[SC.prices], ch = s.change[SC.prices];
+    const rec = latest(s);
+    let look;
+    if (!SC.record) look = `<span class="chip empty bad" data-sheet="unreadable"><span class="lbl">${dayOnly(nd)} outlook</span> can't be read <span class="info">ⓘ</span></span>`;
+    else if (!rec) look = `<span class="chip empty warn" data-sheet="no-outlook"><span class="lbl">${dayOnly(nd)} outlook</span> not recorded <span class="info">ⓘ</span></span>`;
+    else look = `<span class="chip" data-sheet="outlook" data-t="${s.t}"><span class="lbl">${dayOnly(nd)}</span> <span class="fc num">↑ ${pct(rec.daily[0][0])}</span> <span class="lbl">·</span> <span class="fc num">↓ ${pct(rec.daily[0][2])}</span> <span class="info">ⓘ</span></span>`;
+    return `<div class="row" role="button" tabindex="0" data-open="${s.t}" aria-label="${s.t}, ${money(last)}, ${signedPct(ch)} on ${short(priceDay())}. Open details.">
+      <span class="tk">${s.t}</span>${spark(s.closes.slice(SC.prices - 21, SC.prices + 1), ch)}<span class="px num">${money(last)}</span>
+      <span class="nm">${esc(s.name)}</span><span class="chg num ${dir(ch)}">${arrow(ch)} ${signedPct(ch)}</span>
+      <span class="look">${look}</span></div>`;
+  }).join("");
+  return `${statusLine()}
+    <p class="asof">Closing prices from ${short(priceDay())}${lastNightRecorded() ? "" : ", one day old"}. Lines show the past month; the dot is that day's move.</p>
+    <div class="eyebrow">Watchlist</div>
+    <div class="list">${rows}</div>
+    <p class="foot">Outlooks are experimental chances from a simple model, recorded each weekday evening. Not advice, and nothing here can be bought or sold. <button class="textbtn" type="button" data-sheet="about-outlook">What do the numbers mean?</button></p>`;
+}
+
+function detail() {
+  const s = STOCKS.find(x => x.t === state.stock);
+  const nd = nextDay();
+  const rec = latest(s);
+  const lastRec = recordedEvenings().slice(-1)[0];
+  const ctxRec = SC.record ? s.records[lastRec] : null;
+  const ctxDay = SC.record ? DATES[lastRec] : null;
+  const five = sessionsAfter(DATES[SC.asOf], 5);
+
+  const outlookCards = rec ? `
+    <section class="card" aria-labelledby="o-h">
+      <h2 id="o-h">${longDay(nd)}'s outlook <button class="pill" type="button" data-sheet="experimental">Experimental</button></h2>
+      <p class="sub">For ${short(nd)}. Recorded ${longDay(asOfDay())} at ${rec.made}, after the close.</p>
+      ${obar(rec.daily[0])}${legend(rec.daily[0])}
+      <p class="def">Up means ${s.t} closes more than 0.5% above ${longDay(asOfDay())}'s close. Flat means it ends within 0.5% either way.</p>
+      <div class="note"><span aria-hidden="true">☾</span><span>Made from closing prices. It knows nothing about news since then.</span></div>
+    </section>
+    <section class="card" aria-labelledby="f-h">
+      <h2 id="f-h">Next 5 trading days</h2>
+      <p class="sub">Where ${s.t} closes on ${short(five[4])}, compared with ${longDay(asOfDay())}'s close.</p>
+      ${obar(rec.cum)}${legend(rec.cum)}
+      <p class="def">Over five days the line between Up and Flat is ${CUM_BAND_WORDS}, because prices drift further in five days than in one.</p>
+      <button class="more-btn" type="button" data-each aria-expanded="${state.eachDay}">${state.eachDay ? "Hide each day" : "Each day on its own"} <span aria-hidden="true">${state.eachDay ? "▴" : "▾"}</span></button>
+      ${state.eachDay ? `<div class="five">${five.map((d, i) => `<div class="r num"><span class="day">${dayOnly(d)} ${d.getUTCDate()}</span>${obar(rec.daily[i])}<span class="nums"><b>↑${pct(rec.daily[i][0])}</b> ↓${pct(rec.daily[i][2])}</span></div>`).join("")}</div>
+      <p class="def" style="margin-top:12px">The chance of an up, flat or down day on each date, each day on its own. They barely change: the model stays close to ${s.t}'s usual mix. <button class="pill" type="button" data-sheet="usual">Why?</button></p>` : ""}
+    </section>` : `
+    <section class="card empty-card">
+      <b>${SC.record ? "No outlook for " + longDay(nd) : "The outlook can't be read"}</b>
+      ${SC.record ? "Last night's update didn't run, so nothing was recorded. An older outlook is never shown in its place." : "The forecast record didn't open. Nothing is shown rather than a guess. The Health tab says what to do."}
+    </section>`;
+
+  const live = scoredDays();
+  const rel = `
+    <section class="card" aria-labelledby="r-h">
+      <h2 id="r-h">How reliable has this been?</h2>
+      <div class="rel">
+        ${rec ? `<div class="big">When the model said about <b>${pct(s.dev.lo)}–${pct(s.dev.hi)}</b> for Up, the stock went up <b>${pct(s.dev.observed)}</b> of the time.</div>
+        <div class="meta num">Past tests on all four stocks together, 2003–2024. ${s.dev.n.toLocaleString("en-US")} forecasts. Likely range ${pct(s.dev.ciLo)}–${pct(s.dev.ciHi)}. <button class="pill" type="button" data-sheet="reliability">How to read this</button></div>` : `<div class="meta">The past-test result appears next to an outlook.</div>`}
+        <div class="live">Live since Oct 20: <b class="num">${live}</b> of the 50 trading days it needs before the live record says anything.
+          <div class="meter" role="img" aria-label="${live} of 50 trading days"><span style="width:${Math.min(100, live / 50 * 100)}%"></span></div></div>
+      </div>
+    </section>`;
+
+  const runWords = r => r.len > 1 ? `${r.len} ${r.dirn} days in a row` : `1 ${r.dirn} day`;
+  const ctx = ctxRec ? `
+    <section class="card" aria-labelledby="c-h">
+      <h2 id="c-h">Lately</h2>
+      <p class="sub">As of ${short(ctxDay)} close, recorded with the outlook. Facts about the past, not predictions.</p>
+      <div class="ctx">
+        <button class="chip" type="button" data-sheet="streak">${runWords(ctxRec.run)}</button>
+        <button class="chip" type="button" data-sheet="momentum">Past 4 weeks <span class="num">${signedPct(ctxRec.ret20)}</span></button>
+        <button class="chip" type="button" data-sheet="volatility">${{ calm: "Calm swings", normal: "Normal swings", bigger: "Bigger swings" }[ctxRec.regime]}</button>
+      </div>
+    </section>` : "";
+
+  return `<button class="back" type="button" data-back>‹ Watchlist</button>
+    <div class="d-head">
+      <div class="d-tk">${s.t} · ${esc(s.name)}</div>
+      <div class="d-px num" id="d-px"></div>
+      <div class="d-chg num" id="d-chg"></div>
+    </div>
+    <div class="chart" id="chart" tabindex="0" role="img" aria-label="Price chart of daily closes. Use the left and right arrow keys to read each day."></div>
+    <div class="ranges" role="group" aria-label="Chart range">${["1W", "1M", "3M", "1Y"].map(k => `<button type="button" data-range="${k}" aria-pressed="${state.range === k}">${k}</button>`).join("")}</div>
+    <p class="range-note"><span class="wm">Made-up prices.</span> Daily closes, up to a year. Drag across to read any day. <button class="textbtn" type="button" data-sheet="no-total">Why no total for the period?</button></p>
+    ${outlookCards}
+    ${rel}
+    ${ctx}
+    <section class="card" aria-labelledby="m-h">
+      <h2 id="m-h">For learning</h2>
+      <div class="links">
+        <button class="link" type="button" data-sheet="advanced"><span class="t">Open ${s.t} in the research view<span class="s">Every probability, the model's details and its full test results</span></span><span class="chev">›</span></button>
+      </div>
+    </section>`;
+}
+
+const RANGE_N = { "1W": 5, "1M": 21, "3M": 63, "1Y": 251 };
+function drawChart() {
+  const el = document.getElementById("chart"); if (!el) return;
+  const s = STOCKS.find(x => x.t === state.stock);
+  const n = RANGE_N[state.range], end = SC.prices, from = end - n;
+  const vals = s.closes.slice(from, end + 1), dates = DATES.slice(from, end + 1), chg = s.change.slice(from, end + 1);
+  const W = 600, H = 230, top = 26, bot = 14;
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const x = i => (i / (vals.length - 1)) * W;
+  const y = v => top + (1 - (v - lo) / (hi - lo || 1)) * (H - top - bot);
+  const d = vals.map((v, i) => (i ? "L" : "M") + x(i).toFixed(2) + "," + y(v).toFixed(2)).join("");
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+      <defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--line-ink)" stop-opacity="0.10"/><stop offset="1" stop-color="var(--line-ink)" stop-opacity="0"/></linearGradient></defs>
+      <path d="${d}L${W},${H}L0,${H}Z" fill="url(#fill)"/>
+      <path d="${d}" stroke="var(--line-ink)" stroke-width="2.2" fill="none" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>
+    </svg><div class="cursor" hidden></div><div class="pt" hidden></div>
+    <div class="now" style="left:100%;top:${(y(vals[vals.length - 1]) / H * 100).toFixed(2)}%"></div>
+    <div class="tag" hidden></div>`;
+  const pxEl = document.getElementById("d-px"), chEl = document.getElementById("d-chg");
+  const cursor = el.querySelector(".cursor"), pt = el.querySelector(".pt"), tag = el.querySelector(".tag");
+  const show = i => {
+    const v = vals[i], c = chg[i], last = i === vals.length - 1;
+    pxEl.textContent = money(v);
+    chEl.className = "d-chg num " + dir(c);
+    const note = s.notes[from + i] ? ` · ${s.notes[from + i]}` : "";
+    chEl.innerHTML = `${arrow(c)} ${signedPct(c)} <span class="when">on ${short(dates[i])}${last ? " (latest close)" : ""}${note}</span>`;
+    const left = (x(i) / W * 100).toFixed(2) + "%";
+    cursor.hidden = pt.hidden = tag.hidden = last;
+    if (!last) { cursor.style.left = left; pt.style.left = left; pt.style.top = (y(v) / H * 100).toFixed(2) + "%"; tag.style.left = `clamp(44px, ${left}, calc(100% - 44px))`; tag.textContent = short(dates[i]); }
+  };
+  let cur = vals.length - 1; show(cur);
+  const at = ev => { const b = el.getBoundingClientRect(); return Math.max(0, Math.min(vals.length - 1, Math.round((ev.clientX - b.left) / b.width * (vals.length - 1)))); };
+  el.onpointermove = ev => { cur = at(ev); show(cur); };
+  el.onpointerleave = () => { cur = vals.length - 1; show(cur); };
+  el.onkeydown = ev => {
+    if (ev.key === "ArrowLeft") { cur = Math.max(0, cur - 1); show(cur); ev.preventDefault(); }
+    if (ev.key === "ArrowRight") { cur = Math.min(vals.length - 1, cur + 1); show(cur); ev.preventDefault(); }
+  };
+}
+
+function history() {
+  const tickers = state.hfilter === "All" ? STOCKS : STOCKS.filter(s => s.t === state.hfilter);
+  let body = "";
+  if (!SC.record) {
+    body = `<section class="card empty-card"><b>History can't be shown</b>The forecast record didn't open. Nothing is shown rather than a partial list. The Health tab says what to do.</section>`;
+  } else {
+    const top = Math.max(SC.asOf, ...SC.missed);
+    for (let e = top; e >= GO_LIVE; e--) {
+      const target = sessionsAfter(DATES[e], 1)[0];
+      if (SC.missed.includes(e)) {
+        body += `<div class="tl-day missed"><div class="tl-h">${short(target)}<span class="s">No outlook: the update on ${short(DATES[e])} didn't run</span></div><div class="tl-miss">A missed evening stays missed. It is never filled in later.</div></div>`;
+        continue;
+      }
+      const known = e < SC.prices;
+      const items = tickers.map(s => {
+        const p = s.records[e].daily[0];
+        let res;
+        if (!known) res = `<span class="res wait">${lastNightRecorded() ? "After " + dayOnly(target) + "'s close" : "No result yet"}</span>`;
+        else {
+          const r = s.change[e + 1];
+          const cat = r > BAND ? 0 : r < -BAND ? 2 : 1;
+          const word = ["Up", "Flat", "Down"][cat];
+          res = `<span class="res num"><span class="d-chg ${["up", "flat", "down"][cat]}">${word} ${signedPct(r)}</span><span class="gave">It gave ${word} ${pct(p[cat])}</span></span>`;
+        }
+        return `<div class="tl-item"><span class="tk">${s.t}</span><span class="said num">Said <span class="fc">↑${pct(p[0])}</span> · <span class="fc">↓${pct(p[2])}</span></span>${res}</div>`;
+      }).join("");
+      body += `<div class="tl-day ${known ? "" : "pending"}"><div class="tl-h">${short(target)}<span class="s">Outlook recorded ${short(DATES[e])}, ${s0(e).made}${known ? "" : " · waiting for the result"}</span></div><div class="tl-items">${items}</div></div>`;
+    }
+  }
+  const rec = recordedEvenings().length, missed = SC.missed.length, scored = scoredDays();
+  return `<h1 class="screen">History</h1>
+    <p class="lede">Each evening's outlook for the next day, and what happened.</p>
+    ${SC.record ? `<p class="asof">Since Oct 20: ${rec} evening${rec === 1 ? "" : "s"} recorded, ${scored} with a result, ${missed} missed.</p>` : ""}
+    <div class="filters" role="group" aria-label="Show stock">${["All", ...STOCKS.map(s => s.t)].map(k => `<button type="button" data-hf="${k}" aria-pressed="${state.hfilter === k}">${k}</button>`).join("")}</div>
+    <div class="note"><span aria-hidden="true">ℹ</span><span>One day can't show whether an outlook is any good. A 47% chance of Up isn't wrong when the stock goes down. <button class="textbtn" type="button" data-sheet="judge">How to judge it</button></span></div>
+    <div class="tl">${body}</div>`;
+}
+
+function healthScreen() {
+  const live = scoredDays();
+  const H = {
+    ok:   { title: "All good", line: `Last night's update ran at ${s0(SC.asOf).made}. Prices and outlooks are in.`, aside: `Still early: the live record has ${live} of the 50 trading days it needs.`, icon: '<path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' },
+    warn: { title: "Needs a look", line: "Last night's update didn't run, so there is no outlook for today and prices are a day old.", aside: "The usual cause is the Mac being asleep or offline at 8:30 PM.", icon: '<path d="M12 6.5v7M12 17.4v.1" stroke="currentColor" stroke-width="2.8" fill="none" stroke-linecap="round"/>' },
+    bad:  { title: "Something is wrong", line: "The forecast record can't be read. The app shows nothing rather than guess.", aside: "This app never changes your records. Model Health has the fix.", icon: '<path d="M7 7l10 10M17 7 7 17" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round"/>' },
+  }[SC.health];
+  const ok = lastNightRecorded();
+  const checks = [
+    [ok ? "ok" : "warn", "Evening update", ok ? `Ran ${longDay(asOfDay())} at ${s0(SC.asOf).made}.` : `Didn't run on ${short(DATES[SC.missed[0]])}.`, "forecast.stock_lab_job"],
+    [ok ? "ok" : "warn", "Prices up to date", ok ? `Through ${short(priceDay())} close.` : `Last close is ${short(priceDay())}, one day behind.`, "data.stock_lab_freshness"],
+    ["ok", "All four stocks", "AMD, MRVL, MU and NVDA each have prices and an outlook.", "data.stock_lab_tickers"],
+    [SC.health === "bad" ? "bad" : "ok", "Forecast record", SC.health === "bad" ? "Its integrity check failed, so it isn't read." : "Intact: every entry matches its fingerprint.", "forecast.stock_lab_ledger"],
+    ["ok", "Inputs look normal", "Recent prices behave like the ones the model was built on.", "forecast.stock_lab_drift"],
+    ["note", "Results so far", `Too early to judge: ${live} of 50 trading days.`, "forecast.stock_lab_scores"],
+  ];
+  const mark = { ok: "✓", warn: "!", bad: "✕", note: "…" };
+  const words = { ok: "Fine", warn: "Needs a look", bad: "Failing", note: "Too early" };
+  return `<div class="hero">
+      <div class="ring ${SC.health}"><svg viewBox="0 0 24 24" aria-hidden="true">${H.icon}</svg></div>
+      <h1>${H.title}</h1><p>${H.line}</p><p class="aside">${H.aside}</p>
+      <button class="disclose" type="button" data-details aria-expanded="${state.details}">${state.details ? "Hide details" : "Show details"} <span aria-hidden="true">${state.details ? "▴" : "▾"}</span></button>
+    </div>
+    ${state.details ? `<section class="card"><div class="checks">${checks.map(c => `<div class="check"><span class="i ${c[0]}" role="img" aria-label="${words[c[0]]}">${mark[c[0]]}</span><span><span class="t">${c[1]}</span><span class="s">${c[2]} <code>${c[3]}</code></span></span></div>`).join("")}</div>
+      <div class="links" style="margin-top:4px"><button class="link" type="button" data-sheet="advanced"><span class="t">Open the full Model Health page<span class="s">All 44 checks, including the ones outside the Stock Lab</span></span><span class="chev">›</span></button></div></section>` : ""}`;
+}
+
+function more() {
+  const theme = document.documentElement.dataset.theme || "dark";
+  const pages = [
+    ["Stock Probability", "Every probability, the five-day chart, reversals and the model's test results"],
+    ["Premarket Briefing", "The 8:30 AM briefing, as delivered"],
+    ["Model Health", "All 44 checks and what to do about each one"],
+    ["Experiments", "The ETF forecasts and the research experiments"],
+    ["Evidence", "What each result rests on, and how far it has been tested"],
+    ["Overview, Explore and Portfolio Builder", "The ETF portfolio pages"],
+  ];
+  return `<h1 class="screen">More</h1>
+    <section class="card"><h2>Appearance</h2>
+      <div style="margin-top:12px" class="seg2" role="group" aria-label="Appearance">
+        <button type="button" data-theme-set="dark" aria-pressed="${theme === "dark"}">Dark</button>
+        <button type="button" data-theme-set="light" aria-pressed="${theme === "light"}">Light</button>
+      </div></section>
+    <section class="card"><h2>Research pages</h2>
+      <p class="sub">Today's detailed pages, kept for learning. They use more technical words.</p>
+      <div class="links">${pages.map(p => `<button class="link" type="button" data-sheet="advanced"><span class="t">${p[0]}<span class="s">${p[1]}</span></span><span class="chev">›</span></button>`).join("")}</div>
+    </section>
+    <section class="card"><h2>About Portfolio Lab</h2>
+      <ul class="about">
+        <li><b>Private.</b> It runs only on this Mac and sends nothing anywhere.</li>
+        <li><b>Not a brokerage.</b> Nothing can be bought or sold here.</li>
+        <li><b>Not advice.</b> The outlooks are an experiment in measuring chances honestly.</li>
+        <li><b>Not yet proven.</b> Its live record started on Oct 20, 2026.</li>
+      </ul>
+      <div class="links" style="margin-top:6px"><button class="link" type="button" data-sheet="welcome"><span class="t">Show the welcome guide again</span><span class="chev">›</span></button></div>
+    </section>`;
+}
+
+/* ================= sheets: explanations a tap away ================= */
+function sheetContent(key, t) {
+  const s = STOCKS.find(x => x.t === t) || STOCKS[3];
+  const nd = nextDay();
+  switch (key) {
+    case "outlook": {
+      const rec = latest(s), p = rec.daily[0];
+      return `<h3>${s.t}: ${longDay(nd)}'s outlook</h3>
+        <p>The chances recorded for ${short(nd)}, compared with ${longDay(asOfDay())}'s close:</p>
+        <table class="num"><tr><th>What could happen</th><th style="text-align:right">Chance</th></tr>
+          <tr><td>↑ Up more than 0.5%</td><td class="n">${pct(p[0])}</td></tr>
+          <tr><td>→ Flat, within 0.5%</td><td class="n">${pct(p[1])}</td></tr>
+          <tr><td>↓ Down more than 0.5%</td><td class="n">${pct(p[2])}</td></tr></table>
+        <p>Recorded ${longDay(asOfDay())} at ${rec.made}, after the close. It knows nothing about news since then. Shown as whole numbers, so they may not add up to exactly 100%.</p>
+        <p><b>Experimental.</b> These chances stay close to how often ${s.t} usually goes up or down. They are not advice.</p>`;
+    }
+    case "no-outlook": return `<h3>No outlook for ${longDay(nd)}</h3><p>Last night's update didn't run, so nothing was recorded for ${short(nd)}. The Lab never fills a gap with an older or estimated outlook.</p><p>The Health tab shows what happened and what to do.</p>`;
+    case "unreadable": return `<h3>The outlook can't be read</h3><p>The forecast record failed its integrity check, so the app shows nothing rather than a number it can't vouch for.</p><p>The Health tab says what to do. This app only reads the record and never changes it.</p>`;
+    case "about-outlook": return `<h3>What do the numbers mean?</h3>
+        <p><b>↑ 47%</b> means the model gave a 47% chance that the stock closes the next trading day more than 0.5% higher. <b>↓ 42%</b> is the chance it closes more than 0.5% lower. The rest is the chance it stays within 0.5% (Flat).</p>
+        <p>They come from a deliberately simple model, frozen so it can't change, that mostly reflects how often each stock went up or down in the past. It is a baseline for better ideas to beat.</p>
+        <p>Green and red only ever mean a price went up or down. Outlooks are never green or red.</p>`;
+    case "experimental": return `<h3>Experimental</h3><p>This outlook isn't proven. It was tested on past data (2003–2024), and its live record only started on Oct 20, 2026. It takes months of results before anyone can tell whether it's any good.</p><p>Treat it as a measurement experiment, not a tip.</p>`;
+    case "usual": return `<h3>Why the numbers barely change</h3><p>The model starts from how often ${s.t} had up, flat and down days, and leans a little on recent months. So most days its numbers sit close to ${s.t}'s usual mix.</p><p>That is what a baseline is for. A cleverer model has to beat it before it's worth anything.</p>`;
+    case "reliability": return `<h3>How to read "how reliable"</h3><p>In past tests (2003–2024), we gathered every time the model said about ${pct(s.dev.lo)}–${pct(s.dev.hi)} for Up, on any of the four stocks, and counted how often the stock really went up: <b>${pct(s.dev.observed)}</b> of ${s.dev.n.toLocaleString("en-US")} times.</p><p>If it says about 47% and the thing happens about 47% of the time, its chances are honest. The likely range shows how far that could be off by luck alone.</p><p>Two reasons to stay cautious: these four stocks were picked knowing they did well, and past tests can flatter a model. Only the live record counts in the end.</p>`;
+    case "streak": return `<h3>Days in a row</h3><p>How many trading days in a row ${s.t} rose (or fell) by more than 0.5%, up to the outlook's close. Recorded with the outlook. Streaks don't tell you what happens next.</p>`;
+    case "momentum": return `<h3>Past 4 weeks</h3><p>The change in ${s.t}'s closing price over the 20 trading days up to the outlook's close, as recorded with it. A fact about the past, not a prediction.</p>`;
+    case "volatility": return `<h3>Swings</h3><p>How big ${s.t}'s daily moves have been lately, compared with its own past year: calm, normal or bigger. It says nothing about the direction.</p>`;
+    case "no-total": return `<h3>Why no total for the period?</h3><p>To keep its research fair, the Lab only calculates from this year's prices inside its evening job, and records the results with each outlook. This chart shows each day's close and that day's move, exactly as stored, but adds nothing up.</p><p>The 4-week change under "Lately" comes from the evening job.</p>`;
+    case "judge": return `<h3>How to judge an outlook</h3><p>One day tells you almost nothing. A fair test looks at many days: when it said about 47%, did it happen about 47% of the time?</p><p>That is what "How reliable has this been?" shows for each stock. The live version needs 50 trading days, about ten weeks.</p>`;
+    case "advanced": return `<h3>Research view</h3><p>In the real app this opens the existing research page, one level down from these simple screens.</p><p>It isn't part of this mockup.</p>`;
+    case "welcome": return `<h3>Welcome to Portfolio Lab</h3>
+        <p><b>Your private lab.</b> It runs only on this Mac.</p>
+        <p><b>Every weekday at 8:30 PM</b>, after the market closes, it records the next day's chances for AMD, MRVL, MU and NVDA.</p>
+        <p><b>An experiment, not advice.</b> Nothing here can be bought or sold. Green and red only ever mean a price went up or down.</p>
+        <p><b>If something goes wrong</b>, the line at the top and the Health tab say so in plain words.</p>`;
+  }
+  return "";
+}
+
+let lastFocus = null;
+function openSheet(key, t) {
+  const sh = document.getElementById("sheet"), scrim = document.getElementById("scrim");
+  lastFocus = document.activeElement;
+  sh.innerHTML = `<div class="grab"></div>${sheetContent(key, t).replace("<h3>", '<h3 id="sheet-title">')}<button class="close" type="button" data-close>${key === "welcome" ? "Get started" : "Got it"}</button>`;
+  sh.hidden = false; scrim.hidden = false;
+  sh.querySelector("[data-close]").focus();
+}
+function closeSheet() {
+  document.getElementById("sheet").hidden = true; document.getElementById("scrim").hidden = true;
+  if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
+}
+
+/* ================= render and events ================= */
+function render() {
+  const main = document.getElementById("screen");
+  if (state.tab === "home" && state.stock) main.innerHTML = detail();
+  else if (state.tab === "home") main.innerHTML = home();
+  else if (state.tab === "history") main.innerHTML = history();
+  else if (state.tab === "health") main.innerHTML = healthScreen();
+  else main.innerHTML = more();
+  document.querySelectorAll(".tabs button").forEach(b => b.removeAttribute("aria-current"));
+  document.querySelector(`.tabs [data-tab="${state.tab}"]`).setAttribute("aria-current", "page");
+  const badge = document.getElementById("health-badge"); badge.className = "badge " + SC.health;
+  badge.setAttribute("role", "img");
+  badge.setAttribute("aria-label", { ok: "all good", warn: "needs a look", bad: "something is wrong" }[SC.health]);
+  if (state.tab === "home" && state.stock) drawChart();
+}
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("pl-mock-theme", t); } catch (e) { /* storage may be blocked */ }
+  document.getElementById("theme-btn").setAttribute("aria-label", t === "dark" ? "Switch to light mode" : "Switch to dark mode");
+  render();
+}
+const openStock = t => { state.stock = t; state.eachDay = false; render(); window.scrollTo(0, 0); };
+document.addEventListener("click", ev => {
+  const el = ev.target.closest("button, [data-open], [data-sheet]"); if (!el) return;
+  if (el.dataset.close !== undefined) return closeSheet();
+  if (el.dataset.sheet) { ev.stopPropagation(); return openSheet(el.dataset.sheet, el.dataset.t || state.stock); }
+  if (el.dataset.open) return openStock(el.dataset.open);
+  if (el.dataset.back !== undefined) { state.stock = null; render(); return; }
+  if (el.dataset.tab) { state.tab = el.dataset.tab; state.stock = null; render(); window.scrollTo(0, 0); return; }
+  if (el.dataset.go) { state.tab = el.dataset.go; state.stock = null; render(); window.scrollTo(0, 0); return; }
+  if (el.dataset.range) { state.range = el.dataset.range; render(); return; }
+  if (el.dataset.hf) { state.hfilter = el.dataset.hf; render(); return; }
+  if (el.dataset.details !== undefined) { state.details = !state.details; render(); return; }
+  if (el.dataset.each !== undefined) { state.eachDay = !state.eachDay; render(); return; }
+  if (el.dataset.themeSet) { setTheme(el.dataset.themeSet); return; }
+  if (el.id === "theme-btn") { setTheme((document.documentElement.dataset.theme || "dark") === "dark" ? "light" : "dark"); return; }
+});
+document.getElementById("scrim").addEventListener("click", closeSheet);
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape" && !document.getElementById("sheet").hidden) return closeSheet();
+  const row = ev.target.closest && ev.target.closest("[data-open]");
+  if (row && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); openStock(row.dataset.open); }
+});
+document.getElementById("scenario").addEventListener("change", ev => {
+  state.scen = ev.target.value; SC = SCENARIOS[state.scen]; state.details = false; state.stock = null; state.tab = "home"; render();
+  if (SC.welcome) openSheet("welcome");
+});
+(function start() {
+  let t = "dark";
+  try { t = localStorage.getItem("pl-mock-theme") || "dark"; } catch (e) { /* storage may be blocked */ }
+  document.documentElement.dataset.theme = t;
+  document.getElementById("theme-btn").setAttribute("aria-label", t === "dark" ? "Switch to light mode" : "Switch to dark mode");
+  render();
+})();
+</script>
+
+</html>

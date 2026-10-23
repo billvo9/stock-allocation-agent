@@ -152,6 +152,26 @@ Everything the app writes is in `~/stock-agent-private/portfolio_lab_app/`
   iconset size and `iconutil` packs the `.icns`. Without it, the app keeps
   AppleScript's applet icon.
 
+## The new simple screens (the Lab app, in progress)
+
+The Lab app is the Portfolio Lab's simple, phone-style screens
+(`docs/product/lab_app_design.md`). Home comes first; the stock detail, History
+and Health screens follow in later changes, and then the Mac app will open it
+instead of the research pages. Until then it runs beside the Lab, on its own
+port (8510), from one command in the project folder:
+
+```bash
+.venv/bin/python scripts/run_lab_app.py --open
+```
+
+- It shows this Mac's Stock Lab, read-only. It writes nothing, fetches nothing,
+  and runs no job.
+- To try it with made-up stocks first, add `--demo`. That takes about a minute
+  to prepare, and a purple ribbon says the numbers are synthetic.
+- Stop it with Control-C in the terminal window that started it.
+- `--research-url http://127.0.0.1:8502/` makes More > Research pages open the
+  Lab's research pages while the Portfolio Lab app runs.
+
 ## Remove
 
 Quit the app, drag it out of the Dock, then drag `~/Applications/Portfolio

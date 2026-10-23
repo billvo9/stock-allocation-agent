@@ -40,6 +40,8 @@ Modules:
     briefing_wording  the Premarket Briefing page's copy
     navigation    the destinations' page scripts
     run           Streamlit entry point (launch with scripts/run_portfolio_lab.py)
+    web           the Lab app: the simple screens, on a standard-library local server
+                  (launch with scripts/run_lab_app.py; docs/product/lab_app_design.md)
 
 The Lab's theme is the script-level `.streamlit/config.toml` next to run.py
 (generated from `stock_agent.ui.theme`, with light and dark variants), with
