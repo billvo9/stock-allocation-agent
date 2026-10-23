@@ -230,7 +230,7 @@ Built on the existing tokens (`ui/theme.py`, `components.py`, `style.py`; moved 
 - **Colour.**
   - One accent: the existing slate teal.
   - Status colours only for status; Okabe-Ito and `CANDIDATE_COLOURS` (added by T4) for identity.
-  - Gains and losses stay neutral, carried by sign and words.
+  - Gains and losses stay neutral, carried by sign and words. Updated on 2026-10-23 at the owner's request for the Lab app (`lab_app_design.md`): there, green and red mark past price moves, and only those, always with ▲ / ▼ and a sign. Outlooks are never green or red.
 - **Motion.**
   - For state changes only (pending to available, a section revealed), 150–200 ms opacity or height.
   - Never tween a value; Plotly transitions stay off (exists).

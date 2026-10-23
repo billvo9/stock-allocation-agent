@@ -9,6 +9,7 @@ Status (2026-10-11): **direction approved by the owner on 2026-10-11** (OD1, OD2
 | [`roadmap.md`](roadmap.md) | The research and product tracks, their dependencies and acceptance gates |
 | [`ux_blueprint.md`](ux_blueprint.md) | The three modes, screen concepts, evidence labels, first-class states, uncertainty display and the design language |
 | [`risk_register.md`](risk_register.md) | Statistical, market-data, portfolio, legal and compliance, privacy and security, operations and deployment, and product-design risks |
+| [`lab_app_design.md`](lab_app_design.md) | The Lab app (2026-10-23): the simple, phone-style screens for the Stock Lab, their honesty rules, the approved mockup and the local, read-only server |
 
 ## How to read the capability tiers
 
