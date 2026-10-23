@@ -365,8 +365,8 @@ your home folder, `~/stock-agent-runner`, that only runs the agents.
 
 | Place | Use | Changes |
 |---|---|---|
-| Your checkout (for example in `~/Desktop`) and its worktrees | Development, the Portfolio Lab, Model Health by hand | Constantly |
-| The runner, `~/stock-agent-runner` (a clean `main`) | The evening agent (and the briefing and morning-check agents, which also run checkout code) | Only through `git pull --ff-only` |
+| Your checkout (for example in `~/Desktop`) and its worktrees | Development, Model Health by hand | Constantly |
+| The runner, `~/stock-agent-runner` (a clean `main`) | The evening agent (and the briefing and morning-check agents, which also run checkout code), and the Portfolio Lab Mac app, which reads it and writes nothing there (`docs/operations/portfolio_lab_app.md`) | Only through `git pull --ff-only` |
 
 `scripts/stock_lab_schedule.py --run-sh`, `--briefing` and `--morning-check`
 print a warning on stderr when the printing checkout is inside one of those
