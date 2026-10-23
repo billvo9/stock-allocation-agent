@@ -86,6 +86,10 @@ def test_requests_other_websites_start_are_refused_before_any_work(path, headers
     assert calls == ([1] if status == 200 and path == "/api/home" else [])
 
 
+def test_a_target_naming_another_host_is_not_served():
+    assert app().handle("GET", "//evil.example/api/home", "127.0.0.1:8510").status == 404
+
+
 def test_the_query_string_does_not_change_the_route():
     response = app().handle("GET", "/api/home?x=1", "127.0.0.1:8510")
     assert response.status == 200 and json.loads(response.body) == {"hello": "world"}
@@ -110,7 +114,8 @@ def test_a_failing_screen_says_so_plainly(capsys):
     body = json.loads(response.body)
     assert body == {"error": "The app couldn't prepare this screen."}
     assert "secret" not in response.body.decode() and "Traceback" not in response.body.decode()
-    assert "RuntimeError" in capsys.readouterr().err  # the type only, for the log
+    err = capsys.readouterr().err
+    assert "RuntimeError" in err and "secret" not in err  # the type only, for the log
 
 
 def test_the_server_binds_this_mac_only():
@@ -193,3 +198,23 @@ def test_a_silent_connection_is_dropped_after_a_while():
         assert httpd.RequestHandlerClass.timeout == 15
     finally:
         httpd.server_close()
+
+
+def test_two_host_headers_get_nothing(running):
+    connection = http.client.HTTPConnection("127.0.0.1", running, timeout=10)
+    try:
+        connection.putrequest("GET", "/api/home", skip_host=True)
+        connection.putheader("Host", f"127.0.0.1:{running}")
+        connection.putheader("Host", "evil.example")
+        connection.endheaders()
+        response = connection.getresponse()
+        assert response.status == 421 and response.read() == b""
+    finally:
+        connection.close()
+
+
+def test_no_cookie_and_no_cross_origin_permission_is_ever_sent(running):
+    for path in ("/", "/api/home", "/static/app.js", "/nowhere"):
+        _, headers, _ = fetch(running, "GET", path, f"127.0.0.1:{running}")
+        assert "Set-Cookie" not in headers
+        assert not [name for name in headers if name.lower().startswith("access-control-")]

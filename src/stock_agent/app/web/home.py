@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Collection, Mapping, Sequence
-from datetime import datetime, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 
 import pandas as pd
 
@@ -79,11 +79,13 @@ def build_home(
     """
 
     kind = DataClass(data_class).value
-    briefing, problem = None, None
+    briefing, problem, previous = None, None, None
     try:
+        plan = briefing_timing(now, calendar)
+        previous = _session_before(calendar, plan.prior_session)
         briefing = build_briefing(
             records,
-            timing=briefing_timing(now, calendar),
+            timing=plan,
             calendar=calendar,
             calendar_id=calendar_id,
             data_class=kind,
@@ -107,7 +109,18 @@ def build_home(
         data_class=kind,
         problem=problem,
         names=names,
+        previous_session=previous,
     )
+
+
+def _session_before(calendar: Callable, day: date) -> str | None:
+    """The session before `day` on `calendar` (ISO date), or None within two weeks."""
+
+    found = sorted(
+        pd.Timestamp(d).date() for d in calendar(day - timedelta(days=14), day - timedelta(days=1))
+    )
+    found = [d for d in found if d < day]
+    return found[-1].isoformat() if found else None
 
 
 def _listed(records, tickers, excluded) -> tuple[str, ...]:
@@ -129,10 +142,13 @@ def home_view(
     data_class: str,
     problem: str | None = None,
     names: Mapping[str, str] | None = None,
+    previous_session: str | None = None,
 ) -> dict:
     """
     The Home view from a prepared briefing (None when it could not be prepared).
-    `names` are the stocks' display names (default: the watchlist's company names).
+    `names` are the stocks' display names (default: the watchlist's company names);
+    `previous_session` is the session before the briefing's prior session (it names
+    last night's evening while tonight's update is still open).
     """
 
     names = words.NAMES if names is None else names
@@ -162,7 +178,7 @@ def home_view(
         "version": VERSION,
         "data_class": data_class,
         "generated_at": pd.Timestamp(now).tz_convert("UTC").isoformat(),
-        "status": _status(briefing, problem, now, local_zone),
+        "status": _status(briefing, problem, now, local_zone, previous_session),
         "prices_note": words.prices_note(max(sessions)) if sessions else None,
         "stocks": stocks,
         "footer": words.FOOTER,
@@ -177,7 +193,7 @@ def home_view(
 # --- the status line ---
 
 
-def _status(briefing: Briefing | None, problem: str | None, now, zone) -> dict:
+def _status(briefing: Briefing | None, problem: str | None, now, zone, previous) -> dict:
     if briefing is None:
         return _line(
             "bad",
@@ -216,18 +232,18 @@ def _status(briefing: Briefing | None, problem: str | None, now, zone) -> dict:
         return _line("warn", text, details)
     late = [s for s in stocks if s.status == STALE and not _pending(s, briefing)]
     if late:
-        prior = pd.Timestamp(briefing.prior_session).date()
-        evening = pd.Timestamp.combine(prior, CLOSE_AVAILABLE).tz_localize(words.NEW_YORK)
+        # The newest evening that is due: tonight's only once its run has finished.
+        due = previous if _tonight_open(briefing) and previous else briefing.prior_session
+        day = date.fromisoformat(due)
+        evening = pd.Timestamp.combine(day, CLOSE_AVAILABLE).tz_localize(words.NEW_YORK)
         ran = pd.Timestamp(update.last_run_at) >= evening
         text = words.missed(
-            words.evening_name(prior, now), ran=ran, missing=len(late), total=len(stocks)
+            words.evening_name(day, now), ran=ran, missing=len(late), total=len(stocks)
         )
         return _line("warn", text, details)
     withheld = [s for s in stocks if s.reason in WITHHELD]
     if withheld:
         return _line("warn", words.withheld(len(withheld)), details)
-    if update.last_success_at is None:
-        return _line("neutral", words.NO_SUCCESS, details)
     return _line("ok", words.updated(when(update.last_success_at)), details)
 
 
@@ -235,13 +251,17 @@ def _line(level: str, text: str, details: list[str]) -> dict:
     return {"level": level, "words": text, "details": details}
 
 
-def _pending(stock: StockBriefing, briefing: Briefing) -> bool:
+def _tonight_open(briefing: Briefing) -> bool:
+    """From 20:00 on a session day, until a run for tonight's session has finished."""
+
     return (
         briefing.state == ADVANCE
-        and stock.status == STALE
-        and stock.sessions_behind == 1
         and briefing.latest_update.expected_session != briefing.prior_session
     )
+
+
+def _pending(stock: StockBriefing, briefing: Briefing) -> bool:
+    return _tonight_open(briefing) and stock.status == STALE and stock.sessions_behind == 1
 
 
 # --- the outlook chip ---
@@ -251,11 +271,12 @@ def _outlook(symbol, stock: StockBriefing | None, briefing, now, zone) -> dict:
     if stock is not None and stock.status == FRESH and stock.next_session is not None:
         return _fresh(symbol, stock, now, zone)
     market = None if briefing is None else briefing.market_date
-    day = None if market is None else words.weekday(market)
     if stock is None:
         state = "unverified"
     elif stock.status == STALE:
         state = "pending" if _pending(stock, briefing) else "stale"
+        if state == "stale" and _tonight_open(briefing):
+            market = briefing.prior_session  # the outlook last night's update should have made
     elif stock.reason in UNVERIFIED:
         state = "unverified"
     elif stock.reason == "refused":
@@ -264,6 +285,7 @@ def _outlook(symbol, stock: StockBriefing | None, briefing, now, zone) -> dict:
         state = "withheld"
     else:
         state = "none"
+    day = None if market is None else words.weekday(market)
     level, chip, title, plain = _EMPTY[state]
     detail = stock.words if stock is not None else "The forecast record could not be opened."
     return {

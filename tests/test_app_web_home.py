@@ -28,7 +28,10 @@ from stock_agent.stock_lab.store import StoreRefused
 NEW_YORK = ZoneInfo("America/New_York")
 T = REAL_TEST_TICKER
 TUESDAY, WEDNESDAY, THURSDAY = "2026-10-20", "2026-10-21", "2026-10-22"
-P = (0.42, 0.11, 0.47)  # Decrease, Stable, Increase (the helper's order)
+# Decrease, Stable, Increase (the helper's order), with more digits than any display, so a
+# rounded or renormalized value could not pass for the recorded one.
+P = (0.42137, 0.10931, 0.46932)
+OTHER = "SYNTQ"  # a second made-up real-class ticker
 
 
 def at(day: str, hhmm: str) -> datetime:
@@ -87,16 +90,31 @@ def evening(lab, as_of, *, p=P, status="ok", ran=None, **forecast):
     return record
 
 
-def view(lab, now, *, prices=None, local_zone=NEW_YORK, records=None, data_class="real"):
-    return home.build_home(
-        records or ReadOnlyRecords(lab.path),
-        now=now,
-        calendar=nyse_sessions,
-        calendar_id="test_nyse_rules",
-        data_class=data_class,
-        recent=prices or Prices(),
-        local_zone=local_zone,
-        tickers=[T],
+def checked(found: dict) -> dict:
+    """
+    Every view, in every test: strict JSON, no advice words, and no green status line
+    above an amber or red chip.
+    """
+
+    text = json.dumps(found, allow_nan=False)
+    scan_for_advice(text)
+    if any(s["outlook"]["level"] in ("warn", "bad") for s in found["stocks"]):
+        assert found["status"]["level"] != "ok", found["status"]
+    return found
+
+
+def view(lab, now, *, prices=None, local_zone=NEW_YORK, records=None, tickers=(T,)):
+    return checked(
+        home.build_home(
+            records or ReadOnlyRecords(lab.path),
+            now=now,
+            calendar=nyse_sessions,
+            calendar_id="test_nyse_rules",
+            data_class="real",
+            recent=prices or Prices(),
+            local_zone=local_zone,
+            tickers=list(tickers),
+        )
     )
 
 
@@ -115,6 +133,7 @@ def test_a_fresh_outlook_shows_the_recorded_probabilities_exactly(lab):
     assert outlook["state"] == "fresh" and outlook["level"] == "plain"
     assert outlook["day"] == "Thu" and outlook["for_session"] == THURSDAY
     assert outlook["chip"] == {"up": "47%", "down": "42%"}
+    assert outlook["recorded"]["increase"] == 0.46932
     assert outlook["recorded"] == {
         "increase": stored["p_increase"],
         "stable": stored["p_stable"],
@@ -269,6 +288,7 @@ def test_a_weekend_names_the_day_of_the_last_update(lab):
         "Last successful update: Friday, 8:32 PM.",
         "Latest run: finished, Friday, 8:32 PM.",
     ]
+    assert found["status"]["details"][2].startswith("The latest data is the close of Friday")
     assert only(found)["outlook"]["day"] == "Mon"
 
 
@@ -340,14 +360,24 @@ def test_the_price_is_the_readers_close_and_change_unchanged(lab):
 
 
 def test_nothing_is_derived_from_the_prices(lab):
-    # Sentinels: these changes do not match the closes, so any value the view
-    # computed from two prices would differ from every value the reader gave.
-    rows = [row(TUESDAY, 100.0, 0.0101, level=50.0), row(WEDNESDAY, 200.0, -0.0202, level=60.0)]
-    price = only(view(lab, at(THURSDAY, "07:40"), prices=Prices(rows)))["price"]
-    given = {100.0, 0.0101, 50.0, 200.0, -0.0202, 60.0}
-    numbers = {v for v in price.values() if isinstance(v, float)} | set(price["line"])
-    assert numbers <= given
-    assert price["direction"] == "down" and price["change_words"] == "−2.02%"
+    # Sentinels: these changes do not match the closes, and no difference or ratio of
+    # them is among them, so a value the view computed from two prices would show.
+    rows = [row(TUESDAY, 103.0, 0.0101, level=57.0), row(WEDNESDAY, 211.0, -0.0202, level=61.0)]
+    stock = only(view(lab, at(THURSDAY, "07:40"), prices=Prices(rows)))
+    assert set(stock) == {"ticker", "name", "price", "outlook"}
+    assert stock["price"] == {
+        "available": True,
+        "close": 211.0,
+        "close_words": "$211.00",
+        "session": WEDNESDAY,
+        "session_words": "Wed, Oct 21",
+        "change": -0.0202,
+        "change_words": "\u22122.02%",
+        "direction": "down",
+        "line": [57.0, 61.0],
+        "words": None,
+        "older": False,
+    }
 
 
 def test_a_newest_session_without_a_close_shows_the_last_served_close_and_a_gap(lab):
@@ -401,6 +431,115 @@ def test_the_view_is_strict_json_with_no_advice(lab):
     assert found["explain"]["paragraphs"]
 
 
+def test_a_value_that_is_not_a_number_is_shown_as_missing(lab):
+    nan = float("nan")
+    rows = [row(TUESDAY, 121.70, -0.0032), row(WEDNESDAY, nan, nan, level=nan)]
+    price = only(view(lab, at(THURSDAY, "07:40"), prices=Prices(rows)))["price"]
+    assert (price["close"], price["session"]) == (121.70, TUESDAY)
+    assert price["line"] == [121.70, None]
+
+
+def test_records_made_after_the_request_time_are_ignored(lab):
+    evening(lab, WEDNESDAY)
+    now = at(THURSDAY, "20:33")
+    before = view(lab, now)
+    # Created before `now` but stored after it, then tonight's runs: none were known at `now`.
+    lab.forecast(T, THURSDAY, created_at=ny(THURSDAY, "20:31"), recorded_at=ny(THURSDAY, "20:35"))
+    lab.job(at=ny(THURSDAY, "20:36"), expected=THURSDAY, status="ok", activation=None)
+    lab.job(at=ny(THURSDAY, "20:50"), expected=THURSDAY, status="failed", activation=None)
+    assert view(lab, now) == before
+    assert only(before)["outlook"]["state"] == "pending"
+    assert before["status"]["words"] == "Updated last night, 8:32 PM"
+    assert only(view(lab, at(THURSDAY, "20:40")))["outlook"]["state"] == "fresh"
+
+
+def test_eight_in_the_evening_is_when_the_outlook_moves_to_the_next_day(lab):
+    evening(lab, WEDNESDAY)
+    before = only(view(lab, at(THURSDAY, "19:59")))["outlook"]
+    after = only(view(lab, at(THURSDAY, "20:00")))["outlook"]
+    assert (before["state"], before["for_session"]) == ("fresh", THURSDAY)
+    assert (after["state"], after["for_session"]) == ("pending", "2026-10-23")
+
+
+@pytest.mark.parametrize(
+    ("ran_wednesday", "words"),
+    [
+        (False, "Last night's update didn't run."),
+        (True, "Last night's update didn't record 1 of 1 stocks."),
+    ],
+)
+def test_after_eight_a_stock_two_evenings_behind_names_last_nights_update(
+    lab, ran_wednesday, words
+):
+    evening(lab, TUESDAY)
+    if ran_wednesday:
+        lab.job(at=ny(WEDNESDAY, "20:32"), expected=WEDNESDAY, status="ok", activation=None)
+    found = view(lab, at(THURSDAY, "20:15"))
+    outlook = only(found)["outlook"]
+    assert (found["status"]["level"], found["status"]["words"]) == ("warn", words)
+    # The outlook that update should have made, for Thursday: Friday's is not due yet.
+    assert outlook["state"] == "stale" and outlook["words"] == "Thu outlook not recorded"
+    assert outlook["for_session"] == THURSDAY
+
+
+def test_a_missed_friday_is_named_on_monday_morning(lab):
+    evening(lab, "2026-10-15")
+    found = view(lab, at("2026-10-19", "07:40"))
+    assert found["status"]["words"] == "Friday's update didn't run."
+    assert only(found)["outlook"]["words"] == "Mon outlook not recorded"
+
+
+def test_one_stock_left_out_of_several_is_counted(lab):
+    lab.forecast(OTHER, TUESDAY, created_at=ny(TUESDAY, "20:31"), p=P)
+    evening(lab, WEDNESDAY)  # Wednesday's update records T only
+    found = view(lab, at(THURSDAY, "07:40"), tickers=(T, OTHER))
+    assert found["status"]["words"] == "Last night's update didn't record 1 of 2 stocks."
+
+
+def test_a_forecast_not_as_of_the_prior_session_is_withheld(lab):
+    lab.forecast(T, "2026-10-17", created_at=ny("2026-10-17", "20:31"), p=P)  # a Saturday
+    lab.job(at=ny("2026-10-17", "20:32"), expected="2026-10-16", status="ok", activation=None)
+    found = view(lab, at("2026-10-19", "07:40"))
+    outlook = only(found)["outlook"]
+    assert (outlook["state"], outlook["words"]) == ("withheld", "Outlook withheld")
+    assert (found["status"]["level"], found["status"]["words"]) == (
+        "warn",
+        "1 outlook was withheld.",
+    )
+
+
+def test_several_withheld_outlooks_are_counted(lab):
+    targets = ["2026-10-23", "2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29"]
+    for symbol in (T, OTHER):
+        lab.forecast(symbol, WEDNESDAY, created_at=ny(WEDNESDAY, "20:31"), targets=targets, p=P)
+    lab.job(at=ny(WEDNESDAY, "20:32"), expected=WEDNESDAY, status="ok", activation=None)
+    found = view(lab, at(THURSDAY, "07:40"), tickers=(T, OTHER))
+    assert found["status"]["words"] == "2 outlooks were withheld."
+
+
+def test_a_failed_first_run_and_an_unknown_run_status_are_amber(lab):
+    lab.job(at=ny(WEDNESDAY, "20:32"), expected=WEDNESDAY, status="failed", activation=None)
+    found = view(lab, at(THURSDAY, "07:40"))
+    assert found["status"]["words"] == "The last update didn't finish (last night, 8:32 PM)."
+    assert found["status"]["details"][0] == "No update has finished yet."
+    briefing = SimpleNamespace(
+        stocks=(),
+        ledger=SimpleNamespace(verified=True, problem=None),
+        gap_note=None,
+        latest_update=SimpleNamespace(
+            last_success_at=None,
+            last_run_at="2026-10-22T00:32:00.000000Z",
+            last_status="interrupted",
+            activation=None,
+            expected_session=WEDNESDAY,
+        ),
+    )
+    status = home.home_view(
+        briefing, {}, now=at(THURSDAY, "07:40"), local_zone=NEW_YORK, tickers=(), data_class="real"
+    )["status"]
+    assert status["words"] == "The last update ended as interrupted (last night, 8:32 PM)."
+
+
 def test_a_synthetic_view_says_it_is_a_demo(lab):
     lab.forecast("DEMO_CALM", WEDNESDAY, created_at=ny(WEDNESDAY, "20:31"), p=P)
     found = home.build_home(
@@ -440,3 +579,40 @@ def test_a_stock_whose_close_is_older_than_the_others_is_marked(lab):
     assert not prices[T]["older"] and prices["OLD"]["older"]
     assert found["prices_note"] == "Closing prices from Wed, Oct 21."
     assert {s["ticker"]: s["name"] for s in found["stocks"]} == {T: None, "OLD": "An older stock"}
+
+
+def test_the_real_recent_prices_reader_fits_the_view(lab, tmp_path):
+    # The stand-in above must keep the real reader's shape: one run through the real one.
+    from functools import partial
+
+    from stock_lab_inference_helpers import AS_OF, make_bars, next_day, open_store, record
+    from stock_lab_inference_helpers import ny as ny_utc
+
+    from stock_agent.stock_lab.inference.recent import read_recent
+
+    store, clock = open_store(tmp_path / "inference")
+    record(store, clock, "2026-07-01", AS_OF, retrieved_at=ny_utc(AS_OF, "20:30"))
+    now = ny_utc(next_day(AS_OF), "07:40").to_pydatetime()
+    found = checked(
+        home.build_home(
+            ReadOnlyRecords(lab.path),
+            now=now,
+            calendar=nyse_sessions,
+            calendar_id="test_nyse_rules",
+            data_class="real",
+            recent=partial(read_recent, path=store.path),
+            local_zone=NEW_YORK,
+            tickers=["NVDA"],
+        )
+    )
+    price = only(found)["price"]
+    real = read_recent("NVDA", path=store.path, count=home.SPARK_SESSIONS)
+    assert price["available"] and price["session"] == AS_OF
+    assert (
+        price["close"]
+        == real.sessions[-1].close
+        == pytest.approx(make_bars("2026-07-01", AS_OF)["close"].iloc[-1])
+    )
+    assert price["change"] == real.sessions[-1].change
+    assert price["line"] == [row.level for row in real.sessions] and len(price["line"]) == 22
+    assert only(found)["name"] == "NVIDIA"

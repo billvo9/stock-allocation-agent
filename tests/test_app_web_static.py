@@ -34,6 +34,13 @@ def test_the_server_sends_exactly_these_files():
     assert all(body for body, _ in files.values())
     assert files["/static/source-sans-3.woff2"][0][:4] == b"wOF2"
     assert files["/static/mark.svg"][0].lstrip().startswith(b"<?xml")
+    assert {route: kind for route, (_, kind) in files.items()} == {
+        "/": "text/html; charset=utf-8",
+        "/static/app.css": "text/css; charset=utf-8",
+        "/static/app.js": "text/javascript; charset=utf-8",
+        "/static/mark.svg": "image/svg+xml",
+        "/static/source-sans-3.woff2": "font/woff2",
+    }
 
 
 def test_nothing_comes_from_another_host():
@@ -46,8 +53,10 @@ def test_nothing_comes_from_another_host():
 
 def test_the_page_keeps_to_its_content_security_policy():
     # No inline script or style, so "script-src 'self'; style-src 'self'" holds.
-    for script in re.findall(r"<script([^>]*)>(.*?)</script>", PAGE, flags=re.DOTALL):
-        assert 'src="/static/app.js"' in script[0] and not script[1].strip()
+    scripts = re.findall(r"<script([^>]*)>(.*?)</script>", PAGE, flags=re.DOTALL)
+    assert len(scripts) == 1 and PAGE.count("<script") == 1
+    ((attributes, body),) = scripts
+    assert 'src="/static/app.js"' in attributes and not body.strip()
     assert "<style" not in PAGE and not re.search(r"\sstyle=", PAGE)
     assert not re.search(r"\son[a-z]+=", PAGE)
 

@@ -11,12 +11,14 @@ import importlib.util
 import io
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from stock_lab_briefing_helpers import REAL_TEST_TICKER, Lab, ny
 
@@ -54,18 +56,45 @@ class Ask:
             server.server_close()
 
 
+BYTECODE = re.compile(r"(^|/)__pycache__/[^/]+\.pyc$")  # the interpreter's own cache only
+# Folders other tools fill while tests run (the environment, linters, test caches).
+NOT_OURS = (".venv", ".ruff_cache", ".pytest_cache", ".mypy_cache")
+
+
 def _changed_files() -> set[str]:
     done = subprocess.run(
-        ["git", "status", "--porcelain", "--ignored", "--untracked-files=all"],
+        [
+            "git",
+            "status",
+            "--porcelain",
+            "--ignored",
+            "--untracked-files=all",
+            "--",
+            ".",
+            *[f":(exclude){folder}" for folder in NOT_OURS],
+        ],
         cwd=REPO,
         capture_output=True,
         text=True,
         check=True,
     )
-    return {line for line in done.stdout.splitlines() if "__pycache__" not in line}
+    return {line for line in done.stdout.splitlines() if not BYTECODE.search(line[3:])}
 
 
-def test_the_demo_serves_synthetic_stocks_and_writes_nothing_here():
+def test_the_demo_serves_synthetic_stocks_reads_nothing_real_and_writes_nothing_here(
+    monkeypatch,
+):
+    def refuse(*args, **kwargs):
+        raise AssertionError("the demo read real recent prices")
+
+    monkeypatch.setattr(launcher, "read_recent", refuse)
+    seen, real_build = {}, launcher.build_home
+
+    def spy(records, **options):
+        seen.update(options)
+        return real_build(records, **options)
+
+    monkeypatch.setattr(launcher, "build_home", spy)
     before = _changed_files()
     ask, out = Ask(), io.StringIO()
     assert launcher.main(["--demo", "2", "--port", "0"], serve=ask, out=out) == 0
@@ -77,6 +106,7 @@ def test_the_demo_serves_synthetic_stocks_and_writes_nothing_here():
     assert all(s["outlook"]["state"] == "fresh" for s in home["stocks"])
     assert home["status"]["level"] == "ok" and home["research_url"] is None
     assert "http://127.0.0.1:" in out.getvalue() and "synthetic demo" in out.getvalue()
+    assert seen["local_zone"] is None and seen["data_class"] == DataClass.SYNTHETIC
     assert _changed_files() == before
 
 
@@ -101,7 +131,6 @@ def test_the_real_app_wires_the_rules_calendar_the_reader_and_the_exclusions(tmp
             "http://127.0.0.1:8502/",
         ],
         records_factory=lambda: ReadOnlyRecords(lab.path),
-        recent=launcher.observed,
         serve=ask,
         out=io.StringIO(),
     )
@@ -122,6 +151,7 @@ def test_the_real_app_end_to_end_on_fixture_records(tmp_path):
 
     def recent(symbol, *, count, retrieved_by):
         calls.append((symbol, count))
+        assert retrieved_by == pd.Timestamp("2026-10-22T11:40Z")
         return launcher.SimpleNamespace(state="no_store", reason=None, sessions=())
 
     ask = Ask()
@@ -146,10 +176,40 @@ def test_a_failing_price_read_is_shown_as_unreadable(monkeypatch, capsys):
     monkeypatch.setattr(launcher, "read_recent", broken)
     found = launcher.observed("NVDA", count=22, retrieved_by=None)
     assert found.state == "unreadable" and found.sessions == ()
-    assert "OSError" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "OSError" in err and "stock-agent-private" not in err
 
 
-def test_a_busy_port_is_refused_plainly():
+def test_without_at_the_clock_is_read_on_every_request(tmp_path):
+    lab = Lab(tmp_path)
+    moments = iter(pd.Timestamp("2026-10-22T11:40Z") + pd.Timedelta(minutes=k) for k in range(9))
+    seen = []
+
+    def twice(server):
+        app = server.app
+        try:
+            for _ in range(2):
+                response = app.handle("GET", "/api/home", f"127.0.0.1:{app.port}")
+                seen.append(json.loads(response.body)["generated_at"])
+        finally:
+            server.server_close()
+
+    launcher.main(
+        ["--port", "0"],
+        records_factory=lambda: ReadOnlyRecords(lab.path),
+        clock=lambda: next(moments),
+        recent=lambda symbol, **_: launcher.SimpleNamespace(state="no_store", sessions=()),
+        serve=twice,
+        out=io.StringIO(),
+    )
+    assert seen == ["2026-10-22T11:40:00+00:00", "2026-10-22T11:41:00+00:00"]
+
+
+def test_a_busy_port_is_refused_plainly(monkeypatch):
+    def replay(*args, **kwargs):
+        raise AssertionError("the demo replay ran before the port was claimed")
+
+    monkeypatch.setattr(launcher, "demo_api", replay)
     with socket.socket() as taken:
         taken.bind(("127.0.0.1", 0))
         taken.listen()
@@ -162,6 +222,8 @@ def test_a_busy_port_is_refused_plainly():
 @pytest.mark.parametrize(
     ("argv", "words"),
     [
+        (["--port", "70000"], "port 70000 can't be used"),
+        (["--demo", "61"], "2 to 60 sessions"),
         (["--research-url", "https://example.com/"], "a page on this Mac"),
         (["--research-url", "http://127.0.0.1:@evil.example/"], "a page on this Mac"),
         (["--research-url", "http://localhost:x@evil.example/"], "a page on this Mac"),

@@ -83,20 +83,34 @@ def test_company_names_cover_the_watchlist():
     }
 
 
+@pytest.mark.parametrize(
+    ("moment", "stamp"),
+    [
+        ("2026, 12, 2, 7, 40", "2026-12-02T01:31:00.000000Z"),  # winter: 8:31 PM is 01:31 UTC
+        ("2026, 7, 2, 7, 40", "2026-07-02T00:31:00.000000Z"),  # summer: 8:31 PM is 00:31 UTC
+    ],
+)
 @pytest.mark.parametrize(("zone", "named"), [("America/New_York", False), ("Europe/London", True)])
-def test_this_macs_own_zone_uses_the_offset_in_force_at_each_moment(zone, named):
-    # A winter moment read in summer: a fixed offset captured "now" would name
-    # the zone for a Mac in New York. The process's own zone (None) must not.
+def test_this_macs_own_zone_uses_the_offset_in_force_at_each_moment(zone, named, moment, stamp):
+    # Whatever the season the test runs in, one of these moments is in the other season, so
+    # a fixed offset captured "now" would name the zone for a Mac in New York. None must not.
     script = (
         "from datetime import datetime\n"
         "from zoneinfo import ZoneInfo\n"
         "from stock_agent.app.web import words\n"
         "ny = ZoneInfo('America/New_York')\n"
-        "now = datetime(2026, 12, 2, 7, 40, tzinfo=ny)\n"
-        "print(words.when('2026-12-02T01:31:00.000000Z', now=now, local_zone=None))\n"
+        f"now = datetime({moment}, tzinfo=ny)\n"
+        f"print(words.when('{stamp}', now=now, local_zone=None))\n"
     )
     env = {**os.environ, "TZ": zone, "PYTHONPATH": str(SOURCE)}
     done = subprocess.run(
         [sys.executable, "-c", script], env=env, capture_output=True, text=True, check=True
     )
     assert done.stdout.strip() == "last night, 8:31 PM" + (" ET" if named else "")
+
+
+def test_new_york_days_decide_tonight_even_when_this_mac_is_already_in_tomorrow():
+    stamp = utc_stamp(ny("2026-10-22T20:31"))
+    assert words.when(stamp, now=ny("2026-10-22T21:00"), local_zone=LONDON) == (
+        "tonight, 8:31 PM ET"
+    )

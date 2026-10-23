@@ -166,8 +166,14 @@ possible later decision):
 - Binds 127.0.0.1 only; refuses to start on any other address.
 - DNS-rebinding protection: a request whose Host header is not `127.0.0.1:<port>` or
   `localhost:<port>` gets 421 and no content.
-- GET and HEAD only (405 otherwise). Fixed routes; static files from a fixed allowlist (no
-  path from the request reaches the file system).
+- GET and HEAD only (405 otherwise), over HTTP/1.0 or 1.1, with a path as the request target
+  (400 otherwise). Fixed routes; static files from a fixed allowlist (no path from the request
+  reaches the file system).
+- A request another website starts in the background gets 403 before any work. The app
+  tells by the browser's Fetch metadata (`Sec-Fetch-Site`) or a foreign `Origin`. Only a
+  top-level visit to the page may come from a link elsewhere.
+- A connection that sends nothing is dropped after 15 seconds. A failed request logs only
+  its error type.
 - Headers on every response:
   - `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
   - `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`
@@ -252,6 +258,14 @@ Calls made while building PR 1, for the owner to check:
   footer's "Nothing here can be bought or sold", which passes the app's advice scan.
 
 ## 10. Open for later PRs
+
+- **A per-launch secret (owner decision; security review, 2026-10-23).** Any program or
+  macOS account on this Mac can read the app's loopback address, while the stores
+  themselves are readable by the owner only. The data is low in sensitivity, and the app
+  has one user.
+  - Proposed for PR 4: the Mac app opens the page with a fresh token, which the page sends
+    with each data request.
+  - That replaces this design's "no cookies, no credentials" only if the owner agrees.
 
 - **Health (PR 3).** The Home status line is live, but Model Health's summary is written
   once a day (07:30), and two Stock Lab checks (input drift, the ticker check) exist only

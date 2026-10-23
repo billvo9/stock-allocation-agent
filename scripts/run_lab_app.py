@@ -221,9 +221,10 @@ def _bind(port: int, out: TextIO):
     app = LabApp(port=port, api={}, static=static_files())
     try:
         return app, make_server(app)
-    except OSError as error:
+    except (OSError, OverflowError) as error:  # busy, not allowed, or not a port at all
         print(
-            f"refused: port {port} can't be used ({error.strerror or type(error).__name__}); "
+            f"refused: port {port} can't be used "
+            f"({getattr(error, 'strerror', None) or type(error).__name__}); "
             "is the Lab app already open? Pass --port to use another.",
             file=out,
         )
