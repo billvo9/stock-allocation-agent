@@ -67,6 +67,12 @@ SCRIPT_CONSUMERS = {
     "scripts/stock_lab_briefing.py": {
         f"{INFERENCE}.recent": {"read_recent"},
     },
+    # The Lab app's launcher (owner decision of 2026-10-23, option B): each stock's recent
+    # observed prices (decision A6), as stored by the request time, passed into the app's
+    # Home view, which never reads the store itself.
+    "scripts/run_lab_app.py": {
+        f"{INFERENCE}.recent": {"read_recent"},
+    },
 }
 # Text that reaches the store without an import statement: the module path (for
 # importlib), the file and directory names, the environment variable, the header id.

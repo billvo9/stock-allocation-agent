@@ -74,6 +74,10 @@ SCRIPT_CONSUMERS = {
     # session's, and which session's evening is still open), passed to the Stock Lab's
     # morning module, which never imports it.
     "scripts/stock_lab_morning_check.py",
+    # The Lab app's launcher (owner decision of 2026-10-23, option B): the rules calendar
+    # only (which session the Home screen's briefing is for), passed to the app's Home
+    # view and the briefing modules, which never import it.
+    "scripts/run_lab_app.py",
 }
 CONSUMER_NAMES = {
     "stock_agent.data.prospective.inference": {
