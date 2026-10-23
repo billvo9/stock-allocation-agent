@@ -14,9 +14,17 @@ dependency), kept open while the Lab runs:
 - when the launcher fails, a dialog shows its message (with Show Logs) and the
   app quits, which also stops a server that started but does not answer.
 
-The checkout is the repository's main working tree (the one with the .venv),
-even when this script runs from a linked worktree; --checkout picks another.
-Its path is recorded in the app, so rebuild after moving the project folder.
+The checkout. By default the runner checkout, ~/stock-agent-runner, when it
+exists: the clean copy of main the evening job already runs from (owner
+decision of 2026-10-23). It lies outside Desktop, Documents and Downloads, so
+macOS never asks the app for folder access. Without it, the repository's main
+working tree (the one with the .venv), even when this script runs from a linked
+worktree; --checkout picks another. A checkout in Desktop, Documents or
+Downloads gets a warning: macOS asks for access, again after each rebuild. The
+app opens the Lab app and starts the research pages beside it
+(scripts/portfolio_lab_app.py); both run from the checkout and write nothing
+into it. Its path is recorded in the app, so rebuild after moving the project
+folder.
 
 The icon. When assets/brand/portfolio-lab-icon.svg exists, `sips` renders it
 (and portfolio-lab-icon-small.svg for 16 and 32 pixels) at every iconset size
@@ -53,7 +61,11 @@ BUNDLE_ID = "local.stock-agent.portfolio-lab"
 DEFAULT_DEST = Path.home() / "Applications"
 PRIVATE_DIR = Path.home() / "stock-agent-private" / "portfolio_lab_app"
 LAUNCHER = Path("scripts") / "portfolio_lab_app.py"
-LAB_SCRIPT = Path("scripts") / "run_portfolio_lab.py"
+LAB_SCRIPT = Path("scripts") / "run_portfolio_lab.py"  # the research pages (Streamlit)
+LAB_APP_SCRIPT = Path("scripts") / "run_lab_app.py"  # the Lab app the app opens
+RUNNER = Path.home() / "stock-agent-runner"  # the evening job's clean copy of main
+# Folders macOS protects: an app reading a project folder in one of them must ask first.
+PROTECTED = ("Desktop", "Documents", "Downloads")
 VENV_PYTHON = Path(".venv") / "bin" / "python"
 BRAND = Path("assets") / "brand"
 ICON_SVG, SMALL_ICON_SVG = "portfolio-lab-icon.svg", "portfolio-lab-icon-small.svg"
@@ -114,6 +126,20 @@ def main_worktree(start: Path = REPO) -> Path:
     return Path(result.stdout.strip()).resolve().parent
 
 
+def default_checkout(runner: Path = RUNNER, start: Path = REPO) -> Path:
+    """The runner checkout when it exists, else the repository's main working tree."""
+
+    return runner if (runner / ".git").exists() else main_worktree(start)
+
+
+def protected(checkout: Path, home: Path | None = None) -> bool:
+    """Whether macOS will ask the app for access to read `checkout`."""
+
+    home = (home or Path.home()).resolve()
+    resolved = checkout.expanduser().resolve()
+    return any(resolved.is_relative_to(home / folder) for folder in PROTECTED)
+
+
 def commit_of(checkout: Path) -> str:
     result = subprocess.run(
         [GIT, "-C", str(checkout), "rev-parse", "--short", "HEAD"],
@@ -136,11 +162,11 @@ def check_checkout(checkout: Path) -> None:
             "Create it (python3.12 -m venv .venv, then .venv/bin/pip install -r "
             "requirements.txt) and build again."
         )
-    for part in (LAUNCHER, LAB_SCRIPT):
+    for part in (LAUNCHER, LAB_SCRIPT, LAB_APP_SCRIPT):
         if not (checkout / part).is_file():
             raise BuildRefused(
                 f"{checkout} has no {part}. Update it to the latest main "
-                "(git pull), or pass --checkout, and build again."
+                f"(git -C {checkout} pull --ff-only), or pass --checkout, and build again."
             )
 
 
@@ -194,8 +220,8 @@ MISSING = {
     "launcher": (
         f"This project folder doesn't have the Lab's launcher ({LAUNCHER.as_posix()}) yet:\n\n",
         (
-            "\n\nUpdate it to the latest main (in Terminal, in the project folder: git pull), "
-            "then open Portfolio Lab again."
+            "\n\nUpdate it to the latest main (in Terminal, in the project folder: git pull "
+            "--ff-only), then open Portfolio Lab again."
         ),
     ),
 }
@@ -448,7 +474,7 @@ def main(argv: list[str] | None = None) -> int:
     if sys.platform != "darwin":
         print("The Portfolio Lab app is built on macOS only.", file=sys.stderr)
         return 2
-    checkout = args.checkout or main_worktree()
+    checkout = args.checkout or default_checkout()
     try:
         target = build(checkout, args.dest)
     except BuildRefused as reason:
@@ -456,6 +482,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(f"Built {target}")
     print(f"It runs the Lab from {checkout.expanduser().resolve()}.")
+    if protected(checkout):
+        print(
+            "macOS will ask Portfolio Lab for access to that folder, and again after each "
+            f"rebuild. To avoid it, build from the runner checkout ({RUNNER}).",
+            file=sys.stderr,
+        )
+    else:
+        print("That folder is outside Desktop, Documents and Downloads, so macOS won't ask.")
     print(
         "Open it with Spotlight (Cmd-Space, type Portfolio Lab, press Return). To keep it in "
         "the Dock, Control-click its Dock icon while it runs and choose Options, then Keep in Dock."

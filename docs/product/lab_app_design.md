@@ -229,17 +229,53 @@ possible later decision):
   - `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`
   - `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Resource-Policy: same-origin`
   - `Cache-Control: no-store`
-- No CORS headers, no cookies, no credentials, no secrets in the environment.
+- **This launch's keys** (owner decision of 2026-10-23, PR 3).
+  - Each start makes two random keys, one for the Lab app and one for the research pages, so
+    a program posing as either server never learns the other's.
+  - **Lab app.** Every data route needs the `X-Lab-Token` header to equal its key, compared
+    in constant time; otherwise it gets 401. The page, its assets and `/health` hold no data
+    and need no key.
+    - `/health?nonce=...` answers HMAC-SHA256(key, nonce). The launcher checks it before it
+      opens the browser, so a program that took the port first is never shown as the Lab.
+  - **Research pages** (the Streamlit Lab, `app/run.py`). With PORTFOLIO_LAB_RESEARCH_KEY
+    set, they show and change nothing until a browser session brings `?key=...` through the
+    Lab app's link. They then remember it for that session and take it out of the address.
+    Started from a terminal, with no key, they open as before.
+  - **Delivery.** The launcher keeps both keys in its owner-only record and passes them in
+    the servers' environments, never on a command line.
+    - The browser opens at `/#key=...` through osascript's standard input (`open location`),
+      not as an argument, so no other account can list it.
+    - The page moves the key from the fragment (which browsers never send to a server) into
+      this tab's `sessionStorage`, at once, before routing, and sends only a well-formed one.
+    - A page without the key says "Open Portfolio Lab from its app", with no Retry and no
+      Back.
+  - Another website can't send the custom header without a CORS preflight, which this
+    server refuses. That also closes PR 2's note about browsers without Fetch metadata.
+  - **Accepted, on the owner's own account:**
+    - browser history and session restore may keep a keyed address until the app quits;
+    - a Cmd-clicked tab may open locked.
+- At most four screens are prepared at once; another request gets 503 with one plain
+  sentence.
+- No CORS headers, no cookies, no vendor credentials in the environment.
 - The page builds its DOM with `textContent` and CSSOM (no `innerHTML` of data, no inline
   styles), so the strict policy holds. The chart, the outlook bars and the meter are SVG drawn
   to their box's measured width, with attributes only.
 - Errors return a short JSON message; no traceback, no path.
 
-**Mac app and the Desktop prompt** (a later PR):
-- The launcher (`scripts/portfolio_lab_app.py`) will start the Lab app, plus the research
-  pages on a second port.
-- The app will be built with `--checkout ~/stock-agent-runner`. The runner copy is outside
-  Desktop, so macOS asks nothing, and it already has every package the app needs.
+**Mac app and the Desktop prompt** (PR 3):
+- The launcher (`scripts/portfolio_lab_app.py`) starts two servers: the Lab app (port 8510,
+  or the next free one up to 8599) and the research pages (the Streamlit Lab, 8502 up to 8509).
+  - The Lab app's More screen links to the research pages.
+  - Both start together, are recorded together with this launch's key, and stop together.
+    Half a pair is restarted as a whole.
+  - A record left by the earlier single-server app is retired: its server is stopped when it
+    is this checkout's.
+- The Lab app gets `PYTHONPATH=<checkout>/src`, because the runner's environment does not
+  install the project as a package.
+- `scripts/build_mac_app.py` builds from `~/stock-agent-runner` by default when it exists.
+  - The runner copy is outside Desktop, so macOS asks nothing, and it already has every
+    package the app needs (it installs `requirements.txt`).
+  - A checkout in Desktop, Documents or Downloads gets a warning.
 - The app writes nothing into the runner copy (tested). Its evening job already refuses a
   dirty checkout, so a stray write would show as a missed evening, never a wrong forecast.
 
@@ -274,9 +310,9 @@ test and security reviewers:
 1. **Home.** The server, the Home view model, the static front end (Home and More), the
    launcher with `--demo`, the boundary additions, this document and the mockup.
 2. **Stock detail.**
-3. **History and Health.**
-4. **Mac app.** The launcher starts the Lab app and the research pages; build from the runner
-   copy; runbook steps for the owner.
+3. **Mac app.** The launcher starts the Lab app and the research pages, with this launch's
+   key; build from the runner copy; the watchlist's shared scale; runbook steps for the owner.
+4. **History and Health.**
 
 ## 8. Testing
 
@@ -297,7 +333,7 @@ test and security reviewers:
 
 ## 9. Left to the builder, and the calls made in PR 1
 
-- The transition port (the Streamlit Lab keeps 8502 until PR 4): 8510.
+- The Lab app's port: 8510 (the research pages keep 8502).
 - Exact JSON field names, the module split inside `app/web/`, and the JavaScript structure,
   as long as the page stays a thin renderer of server-prepared words.
 - Home re-fetches when the window comes back into view. It never polls.
@@ -360,18 +396,19 @@ Calls made while building PR 2 (Stock detail), for the owner to check:
     card but 2.2:1 against Up and Down, so the 3 px gaps and Down's hatching would then carry
     the segments apart.
 
-- **The one-month lines' scale (owner decision; frontend review, 2026-10-23).** Each line is
-  scaled to its own lowest and highest close, as in the approved mockup. So a calm stock
-  that moved 2% in a month looks as jagged as one that moved 10%.
-  - Options: one shared scale for all rows, or a minimum height (for example ±2% around the
-    last close).
-  - Either is drawing only, with no value computed from prices. Today's behaviour stays
-    until the owner chooses.
-  - **The detail chart has the same question (frontend review, PR 2).** Each range is scaled
-    to its own lowest and highest level, with no axis labels, so a 1% week fills the chart as a
-    40% year does. One answer should cover both.
+- **The one-month lines' scale: decided (owner, 2026-10-23: "okay let's do the shared
+  scale"; built in PR 3).**
+  - The watchlist's lines share one vertical scale. Each line is placed relative to its own
+    latest level, and every row gets the widest line's span, so a calmer stock draws a flatter
+    line.
+  - "Same scale for all lines" sits beside the Watchlist heading, and the line note says so.
+  - It is drawing only: the ratios are pixel positions, never shown or kept.
+  - **The detail chart is still open (frontend review, PR 2).** Each range is scaled to its
+    own lowest and highest level, with no axis labels, so a 1% week fills the chart as a 40%
+    year does. The owner's answer covered the watchlist's lines.
 
-- **Requests from other pages and programs (security review, PR 2; low).**
+- **Requests from other pages and programs (security review, PR 2; low): done in PR 3**,
+  with this launch's key and a cap of four screens at once. The original note:
   - A browser without Fetch metadata (for example Safari before 16.4) lets a cross-site
     `<img>` reach `/api/stock/<TICKER>`. Timing could tell a listed stock (a full briefing)
     from an unlisted one (one watchlist read).
@@ -380,15 +417,10 @@ Calls made while building PR 2 (Stock detail), for the owner to check:
   - The server also has no cap on concurrent work. Each request is one bounded unit, and a
     cap (for example four at a time, 503 above it) can come with that change.
 
-- **A per-launch secret (owner decision; security review, 2026-10-23).** Any program or
-  macOS account on this Mac can read the app's loopback address, while the stores
-  themselves are readable by the owner only. The data is low in sensitivity, and the app
-  has one user.
-  - Proposed for PR 4: the Mac app opens the page with a fresh token, which the page sends
-    with each data request.
-  - That replaces this design's "no cookies, no credentials" only if the owner agrees.
+- **A per-launch secret: decided (owner, 2026-10-23: "yes"; built in PR 3).** See
+  "This launch's key" under Security.
 
-- **Health (PR 3).** The Home status line is live, but Model Health's summary is written
+- **Health (PR 4).** The Home status line is live, but Model Health's summary is written
   once a day (07:30), and two Stock Lab checks (input drift, the ticker check) exist only
   there.
   - Proposed: Health's headline follows the same live rules as the status line, so the two
@@ -396,7 +428,7 @@ Calls made while building PR 2 (Stock detail), for the owner to check:
   - The summary's checks are shown below it as details, with the summary's time. A missing
     summary, or one more than 26 hours old, is named as such.
   - The app keeps importing only `health.model` and `health.view`.
-- **History (PR 3).** History needs every evening's forecast, its stored score and the
+- **History (PR 4).** History needs every evening's forecast, its stored score and the
   missed evenings. Today those rules live in `briefing.report` (private helpers) and
   `stock_lab.job` (outside the app's allowed imports).
   - Proposed: a small public, read-only history reader in `stock_lab.briefing`, reusing
