@@ -1,8 +1,9 @@
-// The Lab app's page: a thin renderer of /api/home and /api/stock/<ticker>.
-// Every number, and every sentence about the data (status, outlooks, the
-// chart's days, explanations), comes from the server already worded; only the
-// page's own fixed labels (the tabs, More, About, the back button and the error
-// messages) are written here. It builds elements with textContent (never
+// The Lab app's page: a thin renderer of /api/home, /api/stock/<ticker>,
+// /api/history and /api/health. Every number, and every sentence about the data
+// (status, outlooks, the chart's days, results, checks, explanations), comes from
+// the server already worded; only the page's own fixed labels (the tabs, More,
+// About, the back button, the Health badge's words and the error messages) are
+// written here. It builds elements with textContent (never
 // innerHTML) and sets no inline style: shapes are SVG drawn to their box's
 // measured size, so the page's strict content security policy holds.
 "use strict";
@@ -18,6 +19,9 @@
     stock: null, detail: null, detailProblem: null, askedDetail: 0,
     range: null, eachDay: false, fromHome: false, homeScroll: 0, lastFocusKey: null, refreshed: 0,
     key: null,
+    // History and Health: their data, their problem, and the latest request for each.
+    history: null, health: null, problems: { history: null, health: null }, askedTab: { history: 0, health: 0 },
+    hfilter: "All", details: false,
   };
   let patterns = 0;  // unique ids for the Down segments' hatching
 
@@ -276,7 +280,7 @@
       h("div", { class: "eyebrow-row" },
         h("h2", { class: "eyebrow" }, "Watchlist"),
         data.scale_note ? h("span", { class: "scale-note" }, data.scale_note) : null),
-      h("ul", { class: "list" }, data.stocks.map((stock) => stockRow(stock, span))),
+      h("ul", { class: "list", role: "list" }, data.stocks.map((stock) => stockRow(stock, span))),
       h("p", { class: "foot" }, data.footer, " ", explain),
     ];
   }
@@ -513,6 +517,127 @@
     ];
   }
 
+  // --- History ----------------------------------------------------------------
+
+  // A small button that shows one line's technical detail in a sheet, named by its stock and day.
+  function detailButton(x, e) {
+    const title = `${x.ticker}, ${e.title}`;
+    const button = h("button", { class: "tech", type: "button", "aria-label": `Technical detail, ${title}`, "data-key": `tech-${e.as_of}-${x.ticker}` }, "ⓘ");
+    button.addEventListener("click", () => openSheet({ title, paragraphs: [x.technical] }));
+    return button;
+  }
+
+  // One stock's line in an evening: what it said (never coloured) and what happened (the
+  // move's direction only). Screen readers get the server's whole sentence instead.
+  function historyItem(x, e) {
+    const tech = x.technical ? detailButton(x, e) : null;
+    const said = x.said
+      ? h("span", { class: "said num", "aria-hidden": "true" }, x.said.lead, " ",
+          h("span", { class: "fc" }, `↑${x.said.up}`), " · ", h("span", { class: "fc" }, `↓${x.said.down}`))
+      : h("span", { class: "said quiet" }, h("span", { "aria-hidden": "true" }, x.said_words), tech);
+    let result = null;
+    if (x.result) {
+      result = h("span", { class: "res num", "aria-hidden": "true" },
+        h("span", { class: `mv ${x.result.direction}` }, x.result.words), h("span", { class: "gave" }, x.result.gave));
+    } else if (x.result_words) {
+      result = h("span", { class: "res wait" }, h("span", { "aria-hidden": "true" }, x.result_words), x.said ? tech : null);
+    }
+    return h("li", { class: x.said ? "tl-item" : "tl-item quiet" },
+      h("span", { class: "sr-only" }, x.label),
+      h("span", { class: "tk", "aria-hidden": "true" }, x.ticker), said, result);
+  }
+
+  // An evening: its heading names the day the outlook was for; the line below it says when it
+  // was recorded (or that it was missed).
+  function evening(e, chosen) {
+    const head = [h("h2", { class: "tl-h" }, e.title), h("p", { class: "tl-s" }, e.sub)];
+    if (e.state === "missed") return h("li", { class: "tl-day missed" }, head, h("p", { class: "tl-miss" }, e.missed_words));
+    const items = e.items.filter((x) => chosen === "All" || x.ticker === chosen);
+    return h("li", { class: `tl-day ${e.state}` }, head,
+      h("ul", { class: "tl-items", role: "list" }, items.map((x) => historyItem(x, e))));
+  }
+
+  function historyScreen(data) {
+    const parts = [h("h1", { class: "screen" }, data.title), h("p", { class: "lede" }, data.lede)];
+    if (data.problem) {
+      parts.push(h("section", { class: "card empty-card bad" },
+        h("h2", null, data.problem.title), h("p", null, data.problem.words), h("p", { class: "note" }, data.problem.technical)),
+        h("p", { class: "asof" }, data.checked));
+      return parts;
+    }
+    const asof = [data.counts, data.checked].filter(Boolean).join(" ");
+    if (asof) parts.push(h("p", { class: "asof" }, asof));
+    const chosen = data.filters.includes(state.hfilter) ? state.hfilter : "All";
+    if (data.filters.length > 2) {  // "All" and two stocks or more
+      parts.push(h("div", { class: "filters", role: "group", "aria-label": "Show stock" },
+        data.filters.map((name) => {
+          const button = h("button", { type: "button", "aria-pressed": name === chosen, "data-key": `filter-${name}` }, name);
+          button.addEventListener("click", () => { state.hfilter = name; render(); });
+          return button;
+        })));
+    }
+    parts.push(h("p", { class: "hnote" }, h("span", { "aria-hidden": "true" }, "ℹ"),
+      h("span", null, data.note.words, " ", sheetButton("textbtn", data.note.button, data.note.sheet, "judge"))));
+    if (data.empty) parts.push(h("section", { class: "card empty-card" }, h("p", null, data.empty)));
+    if (data.evenings.length) {
+      parts.push(h("ol", { class: "tl", role: "list", "aria-label": "Evenings, newest first" }, data.evenings.map((e) => evening(e, chosen))));
+    }
+    if (data.more) parts.push(h("p", { class: "foot" }, data.more));
+    return parts;
+  }
+
+  // --- Health -----------------------------------------------------------------
+
+  const RING = {
+    ok: "M5 12.5l4.5 4.5L19 7.5",
+    warn: "M12 6.5v7M12 17.4v.1",
+    bad: "M7 7l10 10M17 7 7 17",
+    neutral: "M7 12h.1M12 12h.1M17 12h.1",
+  };
+  const MARK = { ok: "✓", note: "…", warn: "!", bad: "✕" };
+
+  function check(c) {
+    return h("div", { class: "check" },
+      h("span", { class: `i ${c.mark}`, role: "img", "aria-label": c.state_word }, MARK[c.mark] || "!"),
+      h("span", null, h("span", { class: "t" }, c.title),
+        h("span", { class: "s" }, c.words, " ", h("code", null, c.check_id))));
+  }
+
+  function healthScreen(data) {
+    const level = RING[data.level] ? data.level : "neutral";
+    const icon = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" });
+    icon.append(svg("path", { d: RING[level] }));
+    const toggle = h("button", { class: "disclose", type: "button", "aria-expanded": state.details, "aria-controls": "health-details", "data-key": "details" },
+      data.toggle[state.details ? 1 : 0], h("span", { "aria-hidden": "true" }, state.details ? " ▴" : " ▾"));
+    toggle.addEventListener("click", () => { state.details = !state.details; render(); });
+    const link = data.link && localUrl(data.link.url)
+      ? h("a", { class: "link", href: data.link.url, target: "_blank", rel: "noopener noreferrer", "data-key": "model-health" },
+          h("span", null, h("span", { class: "t" }, data.link.words), h("span", { class: "s" }, data.link.sub),
+            h("span", { class: "sr-only" }, " (opens in a new tab)")),
+          h("span", { class: "chev", "aria-hidden": "true" }, "›"))
+      : h("p", { class: "sub" }, data.elsewhere);
+    const details = h("section", { class: "card", id: "health-details" },
+      h("h2", null, data.updates.title),
+      h("ul", { class: "updates" }, data.updates.lines.map((line) => h("li", null, line))),
+      h("h2", { class: "next" }, data.checks.title),
+      h("p", { class: "sub" }, data.checks.note),
+      data.checks.technical ? h("p", { class: "note" }, data.checks.technical) : null,
+      data.checks.items.length ? h("div", { class: "checks" }, data.checks.items.map(check)) : null,
+      link);
+    details.hidden = !state.details;
+    return [
+      h("div", { class: "hero" },
+        h("div", { class: `ring ${level}` }, icon),
+        h("h1", null, data.title),
+        h("p", null, data.line),
+        data.aside ? h("p", { class: "aside" }, data.aside) : null,
+        data.flagged ? h("p", { class: "flagged" }, data.flagged) : null,
+        h("p", { class: "asof" }, data.checked),
+        toggle),
+      details,
+    ];
+  }
+
   // --- More -------------------------------------------------------------------
 
   function localUrl(text) {
@@ -561,8 +686,17 @@
       h("div", { class: "problem", role: "alert" }, h("b", null, title), text, retry ? [h("br"), retry] : null)];
   }
 
+  function tabScreen(name, draw) {
+    const said = state.problems[name];
+    if (said) return problem(...said);
+    if (!state[name]) return [h("p", { class: "loading" }, "Loading…")];
+    return draw(state[name]);
+  }
+
   function screen() {
     if (state.tab === "more") return more(state.home);
+    if (state.tab === "history") return tabScreen("history", historyScreen);
+    if (state.tab === "health") return tabScreen("health", healthScreen);
     if (state.stock) {
       if (state.detailProblem) {
         const [title, text, final, noBack] = state.detailProblem;
@@ -595,11 +729,23 @@
     main.replaceChildren(...parts.filter(Boolean));
     const again = keyed(focused);
     if (again) again.focus({ preventScroll: true });
-    document.title = state.stock && state.detail ? `${state.detail.title} · Portfolio Lab` : "Portfolio Lab";
+    const named = { history: "History", health: "Health", more: "More" }[state.tab];
+    document.title = state.stock && state.detail ? `${state.detail.title} · Portfolio Lab`
+      : named ? `${named} · Portfolio Lab` : "Portfolio Lab";
     for (const tab of document.querySelectorAll(".tabs [data-tab]")) {
       if (tab.dataset.tab === state.tab) tab.setAttribute("aria-current", "page");
       else tab.removeAttribute("aria-current");
     }
+    // Health's headline is Home's status line (the same rules), so Home's status marks the tab:
+    // only when it needs a look or something is wrong, with a shape as well as a colour.
+    const status = state.home && state.home.status;
+    const level = status && (status.level === "warn" || status.level === "bad") ? status.level : null;
+    const badge = document.getElementById("health-badge");
+    badge.hidden = !level;
+    badge.className = level ? `badge ${level}` : "badge";
+    badge.textContent = level ? MARK[level] : "";
+    if (level) badge.setAttribute("aria-label", status.badge);
+    else badge.removeAttribute("aria-label");
     const demo = (state.home && state.home.demo) || (state.detail && state.detail.demo);
     const ribbon = document.getElementById("ribbon");
     ribbon.textContent = demo || "";
@@ -612,6 +758,14 @@
     return data && data.schema === "lab_app_home" && data.version === 1 && Array.isArray(data.stocks)
       && data.status && data.explain;
   }
+
+  const USABLE = {
+    history: (d) => d && d.schema === "lab_app_history" && d.version === 1 && Array.isArray(d.evenings)
+      && Array.isArray(d.filters) && d.note && typeof d.title === "string",
+    health: (d) => d && d.schema === "lab_app_health" && d.version === 1 && typeof d.level === "string"
+      && d.updates && Array.isArray(d.updates.lines) && d.checks && Array.isArray(d.checks.items)
+      && Array.isArray(d.toggle),
+  };
 
   function usableDetail(data, ticker) {
     return data && data.schema === "lab_app_stock" && data.version === 1 && data.ticker === ticker
@@ -676,7 +830,7 @@
     const arriving = !state.detail;
     const { gone, response, data } = await ask(`/api/stock/${encodeURIComponent(ticker)}`);
     if (asked !== state.askedDetail || ticker !== state.stock) return;
-    if (response && response.ok && state.detail && usableDetail(data, ticker) && same(state.detail, data)) return;
+    if (response && response.ok && state.detail && !state.detailProblem && usableDetail(data, ticker) && same(state.detail, data)) return;
     if (!gone && response.status === 401 && state.detailProblem && state.detailProblem[0] === LOCKED[0]) return;
     if (gone) state.detailProblem = SILENT;
     else if (response.status === 401) state.detailProblem = [LOCKED[0], LOCKED[1], true, true];  // no Back: Home is locked too
@@ -697,12 +851,36 @@
     }
   }
 
+  // History or Health: the screen's own data, kept in place while it is asked again.
+  async function loadTab(name) {
+    const asked = ++state.askedTab[name];  // an older answer arriving late is ignored
+    const { gone, response, data } = await ask(`/api/${name}`);
+    if (asked !== state.askedTab[name]) return;
+    if (response && response.ok && state[name] && !state.problems[name] && USABLE[name](data) && same(state[name], data)) return;
+    if (!gone && response.status === 401 && state.problems[name] === LOCKED) return;
+    if (gone) state.problems[name] = SILENT;
+    else if (response.status === 401) state.problems[name] = LOCKED;
+    else if (!response.ok) {
+      const said = data && typeof data.error === "string" ? data.error : "The Lab had a problem.";
+      state.problems[name] = [said, "Nothing has changed in your records."];
+    } else if (!USABLE[name](data)) {
+      state.problems[name] = ["The Lab sent something this page doesn't understand.", "Reload the page after updating Portfolio Lab."];
+    } else {
+      state[name] = data;
+      state.problems[name] = null;
+    }
+    if (state.tab === name) render();
+  }
+
   // The same screen as before, apart from when it was prepared.
   const same = (a, b) => JSON.stringify({ ...a, generated_at: null }) === JSON.stringify({ ...b, generated_at: null });
+
+  const TABS = ["history", "health"];  // the screens with data of their own
 
   function load() {
     loadHome();
     if (state.stock) loadDetail();
+    if (TABS.includes(state.tab)) loadTab(state.tab);
   }
 
   function routed() {
@@ -772,6 +950,7 @@
         render();
         window.scrollTo(0, 0);
         document.getElementById("screen").focus({ preventScroll: true });
+        if (TABS.includes(state.tab)) loadTab(state.tab);
       });
     }
     document.getElementById("scrim").addEventListener("click", closeSheet);

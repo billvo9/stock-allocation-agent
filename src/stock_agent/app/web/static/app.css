@@ -280,6 +280,81 @@ h1.screen { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 22px 0
 .link { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 2px 2px; color: var(--text); text-decoration: none; font-weight: 650; }
 .link .chev { color: var(--subtle); }
 
+/* --- History: a timeline, newest first; a result's move is the only colour --- */
+.lede { color: var(--muted); margin: 4px 2px 0; max-width: 60ch; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 4px; }
+.filters button {
+  padding: 7px 14px; border-radius: var(--r-pill); border: 1px solid var(--line);
+  background: var(--surface); color: var(--muted); font-weight: 650; font-size: 14px; cursor: pointer;
+}
+.filters button[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+.hnote { display: flex; gap: 8px; align-items: baseline; color: var(--subtle); font-size: 13.5px; margin: 12px 2px 0; }
+.hnote .textbtn { color: var(--muted); }
+.tl { position: relative; list-style: none; margin: 6px 0 0; padding: 0 0 0 22px; }
+.tl::before { content: ""; position: absolute; left: 5px; top: 26px; bottom: 8px; width: 2px; background: var(--line); }
+.tl-day { position: relative; margin-top: 18px; }
+.tl-day::before {
+  content: ""; position: absolute; left: -22px; top: 6px; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--bg); border: 2px solid var(--subtle);
+}
+.tl-day.pending::before { border-style: dashed; }
+.tl-day.missed::before { border-color: var(--warn); background: var(--warn); }
+.tl-h { font-weight: 700; font-size: 16px; margin: 0; }
+.tl-s { color: var(--subtle); font-size: 13.5px; margin: 0; }
+.tl-items { display: flex; flex-direction: column; gap: 8px; list-style: none; margin: 8px 0 0; padding: 0; }
+.tl-item {
+  display: grid; grid-template-columns: minmax(56px, max-content) minmax(0, 1fr) auto; gap: 10px;
+  align-items: center; padding: 11px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; font-size: 14.5px;
+}
+.tl-item .tk { font-weight: 700; }
+.tl-item .said { color: var(--muted); }
+.tl-item .said .fc { color: var(--fc); font-weight: 650; }
+.tl-item.quiet .said { grid-column: 2 / -1; color: var(--subtle); }
+.tl-item .res { text-align: right; font-weight: 650; white-space: nowrap; }
+.tl-item .res .mv { color: var(--muted); }
+.tl-item .res .mv.up { color: var(--up); }
+.tl-item .res .mv.down { color: var(--down); }
+.tl-item .res .gave { display: block; color: var(--subtle); font-weight: 400; font-size: 12.5px; }
+.tl-item .res.wait { color: var(--subtle); font-weight: 400; font-style: italic; white-space: normal; }
+.tech {
+  display: inline-grid; place-items: center; min-width: 28px; min-height: 28px; margin: -6px -6px -6px 0;
+  background: none; border: 0; padding: 0; color: var(--subtle); font-size: 13px; cursor: pointer; font-style: normal;
+}
+.tl-miss { margin: 8px 0 0; padding: 11px 12px; border-radius: 14px; background: var(--warn-bg); color: var(--text); font-size: 14.5px; }
+
+/* --- Health: one indicator and one sentence; the details on request --- */
+.hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 26px 8px 8px; }
+.ring {
+  width: 132px; height: 132px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 18px;
+  border: 6px solid var(--subtle); background: var(--raised); color: var(--muted);
+}
+.ring.ok { border-color: var(--ok); background: var(--ok-bg); color: var(--ok); }
+.ring.warn { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+.ring.bad { border-color: var(--bad); background: var(--bad-bg); color: var(--bad); }
+.ring svg { width: 50px; height: 50px; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.hero h1 { margin: 0; font-size: 30px; line-height: 1.15; }
+.hero p { color: var(--muted); max-width: 40ch; margin: 8px 0 0; }
+.hero .aside { color: var(--subtle); font-size: 14px; }
+.hero .flagged { color: var(--text); font-weight: 650; font-size: 14.5px; }
+.disclose {
+  margin: 18px auto 0; display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line);
+  background: var(--surface); border-radius: var(--r-pill); padding: 9px 16px; cursor: pointer; font-weight: 650;
+}
+.card h2.next { margin-top: 18px; }
+.updates { margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 14.5px; }
+.updates li { margin-top: 4px; }
+.checks { display: flex; flex-direction: column; margin-top: 6px; }
+.check { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+.check:last-child { border-bottom: 0; }
+.check .i { font-weight: 700; color: var(--muted); }
+.check .i.ok { color: var(--ok); }
+.check .i.warn { color: var(--warn); }
+.check .i.bad { color: var(--bad); }
+.check .i.note { color: var(--note); }
+.check .t { font-weight: 650; }
+.check .s { display: block; color: var(--subtle); font-size: 13.5px; }
+.check code { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--subtle); overflow-wrap: anywhere; }
+
 /* --- an error the page can show --- */
 .problem { margin-top: 28px; text-align: center; color: var(--muted); }
 .problem b { display: block; color: var(--text); font-size: 17px; margin-bottom: 6px; }
@@ -300,6 +375,15 @@ h1.screen { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 22px 0
   background: none; border: 0; padding: 6px 0; color: var(--subtle); font-size: 12px; font-weight: 650; cursor: pointer;
 }
 .tabs button[aria-current="page"] { color: var(--text); }
+.tabs button { position: relative; }
+.tabs .badge {
+  position: absolute; top: 2px; left: calc(50% + 6px); min-width: 16px; height: 16px; border-radius: 8px;
+  display: grid; place-items: center; font-size: 11px; font-weight: 800; line-height: 1;
+  color: var(--bg); background: var(--subtle); border: 2px solid var(--bg);
+}
+.tabs .badge.ok { background: var(--ok); }
+.tabs .badge.warn { background: var(--warn); }
+.tabs .badge.bad { background: var(--bad); }
 .tabs svg { width: 23px; height: 23px; }
 .icon-line { fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
 .icon-fill { fill: currentColor; }
@@ -308,6 +392,7 @@ h1.screen { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 22px 0
   .tabs { position: sticky; top: 0; bottom: auto; border-top: 0; border-bottom: 1px solid var(--line); padding: 6px 12px; }
   .tabs button { flex-direction: row; justify-content: center; gap: 8px; font-size: 14px; padding: 9px 0; }
   .tabs svg { width: 18px; height: 18px; }
+  .tabs .badge { position: static; margin-left: -2px; }
   /* The demo ribbon is one line here, and the tabs stick just below it. */
   .ribbon { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   :root[data-demo] .tabs { top: 34px; }

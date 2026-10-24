@@ -38,6 +38,7 @@ def _launcher():
 
 
 launcher = _launcher()
+DEFAULT_HEALTH_SUMMARY = launcher.default_health_summary  # before any test replaces it
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +47,13 @@ def no_keys_from_the_caller(monkeypatch):
 
     for name in ("LAB_APP_TOKEN", "LAB_APP_RESEARCH_KEY"):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def no_private_health_summary(monkeypatch, tmp_path):
+    """Health never reads the owner's Model Health summary in a test."""
+
+    monkeypatch.setattr(launcher, "default_health_summary", lambda: tmp_path / "no-summary.json")
 
 
 def get(app, path):
@@ -61,12 +69,16 @@ class Ask:
     """
 
     def __init__(self):
-        self.home = self.detail = None
+        self.home = self.detail = self.history = self.health = None
         self.missing = None  # the status of a stock that is not listed
 
     def __call__(self, server):
         app = server.app
         try:
+            for name in ("history", "health"):
+                response = get(app, f"/api/{name}")
+                assert response.status == 200, response.body
+                setattr(self, name, json.loads(response.body))
             response = get(app, "/api/home")
             assert response.status == 200, response.body
             self.home = json.loads(response.body)
@@ -141,6 +153,18 @@ def test_the_demo_serves_synthetic_stocks_reads_nothing_real_and_writes_nothing_
     assert "synthetic demo stocks" in " ".join(development["sheet"]["paragraphs"])
     assert "http://127.0.0.1:" in out.getvalue() and "synthetic demo" in out.getvalue()
     assert seen["local_zone"] is None and seen["data_class"] == DataClass.SYNTHETIC
+    history = ask.history
+    assert history["data_class"] == "synthetic" and history["demo"]
+    assert history["filters"] == ["All", "DEMO_CALM", "DEMO_SWING", "DEMO_TREND"]
+    assert history["problem"] is None and history["counts"].endswith("0 missed.")
+    # The replay's evenings: the last one waits for its result; the earlier ones are scored.
+    assert [e["state"] for e in history["evenings"]] == ["pending", "recorded", "recorded"]
+    assert {x["state"] for x in history["evenings"][0]["items"]} == {"pending"}
+    assert {x["state"] for e in history["evenings"][1:] for x in e["items"]} == {"scored"}
+    health = ask.health
+    assert (health["level"], health["line"]) == ("ok", home["status"]["words"])
+    assert health["checks"]["note"] == "The demo has no Model Health checks."
+    assert health["demo"] and health["link"] is None
     assert _changed_files() == before
 
 
@@ -208,6 +232,101 @@ def test_the_real_detail_wires_the_rules_calendar_the_reader_and_the_exclusions(
     assert seen["excluded"] == ("SKHY", "SNDK") and seen["local_zone"] is None
     assert seen["now"].isoformat() == "2026-10-22T11:40:00+00:00"
     assert seen["research_url"] == "http://127.0.0.1:8502/" and "tickers" not in seen
+
+
+def test_the_real_history_and_health_wire_the_calendar_the_summary_and_the_exclusions(
+    tmp_path, monkeypatch
+):
+    lab = Lab(tmp_path)
+    lab.watch(REAL_TEST_TICKER, "SKHY", at=ny("2026-10-21", "12:00"))
+    seen = {}
+
+    def history(records, **options):
+        seen["history"] = options
+        return {"evenings": []}
+
+    def health(records, **options):
+        seen["health"] = options
+        seen["summary"] = options["summary"]()
+        return {"level": "ok"}
+
+    monkeypatch.setattr(launcher, "build_history", history)
+    monkeypatch.setattr(launcher, "build_health", health)
+    summary = tmp_path / "health" / "latest.json"
+    ask = Ask()
+    argv = ["--port", "0", "--at", "2026-10-22T07:40-04:00", "--research-url"]
+    launcher.main(
+        [*argv, "http://127.0.0.1:8502/", "--health-summary", str(summary)],
+        records_factory=lambda: ReadOnlyRecords(lab.path),
+        serve=ask,
+        out=io.StringIO(),
+    )
+    assert (ask.history, ask.health) == ({"evenings": []}, {"level": "ok"})
+    for name in ("history", "health"):
+        options = seen[name]
+        assert options["calendar"] is sessions and options["data_class"] == DataClass.REAL
+        assert options["excluded"] == ("SKHY", "SNDK") and options["local_zone"] is None
+        assert options["now"].isoformat() == "2026-10-22T11:40:00+00:00"
+        assert "tickers" not in options
+    assert seen["health"]["calendar_id"] == CALENDAR_ID
+    assert seen["health"]["research_url"] == "http://127.0.0.1:8502/"
+    assert seen["summary"].path == summary and seen["summary"].missing  # read, not there
+
+
+def test_health_reads_model_healths_local_summary_unless_told_otherwise(tmp_path, monkeypatch):
+    # The research pages' own default (scripts/run_portfolio_lab.py); only the path is checked.
+    assert (
+        DEFAULT_HEALTH_SUMMARY() == Path.home() / "stock-agent-private" / "health" / "latest.json"
+    )
+    seen = {}
+
+    def health(records, **options):
+        seen["summary"] = options["summary"]()
+        return {"level": "ok"}
+
+    monkeypatch.setattr(launcher, "build_health", health)
+    launcher.main(
+        ["--port", "0"],
+        records_factory=lambda: ReadOnlyRecords(tmp_path / "none.sqlite"),
+        clock=lambda: pd.Timestamp("2026-10-22T11:40:00Z"),
+        serve=Ask(),
+        out=io.StringIO(),
+    )
+    assert seen["summary"].path == tmp_path / "no-summary.json"  # this test's stand-in default
+
+
+class Locked:
+    """A stand-in for serving: every data route, asked without the key and with a wrong one."""
+
+    def __init__(self):
+        self.answers = {}
+
+    def __call__(self, server):
+        app = server.app
+        try:
+            paths = [*app.api, *(f"{prefix}ZZZZ" for prefix in app.items)]
+            for path in paths:
+                for key in (None, "w" * 43):
+                    headers = {} if key is None else {"x-lab-token": key}
+                    found = app.handle("GET", path, f"127.0.0.1:{app.port}", headers)
+                    self.answers[(path, key)] = found.status
+        finally:
+            server.server_close()
+
+
+@pytest.mark.parametrize("mode", [[], ["--demo", "2"]], ids=["real", "demo"])
+def test_every_data_route_refuses_a_request_without_this_runs_key(tmp_path, mode):
+    locked = Locked()
+    launcher.main(
+        [*mode, "--port", "0"],
+        records_factory=lambda: ReadOnlyRecords(tmp_path / "none.sqlite"),
+        clock=lambda: pd.Timestamp("2026-10-22T11:40:00Z"),
+        serve=locked,
+        out=io.StringIO(),
+    )
+    routes = {path for path, _ in locked.answers}
+    assert routes == {"/api/home", "/api/history", "/api/health", "/api/stock/ZZZZ"}
+    assert set(locked.answers.values()) == {401}
 
 
 def test_the_real_app_end_to_end_on_fixture_records(tmp_path):

@@ -117,6 +117,9 @@ TEXT_PAIRS = [
     ("muted", "warn-bg"),
     ("muted", "bad-bg"),
     ("demo", "demo-bg"),
+    # The Health tab's badge: its mark in the page's background colour on its status colour.
+    ("bg", "warn"),
+    ("bg", "bad"),
 ]
 # Marks that carry meaning beside their words: 3:1 (WCAG non-text contrast).
 MARK_PAIRS = [
@@ -125,6 +128,11 @@ MARK_PAIRS = [
     ("ok", "surface"),
     ("warn", "warn-bg"),
     ("bad", "bad-bg"),
+    # Health: the ring on its tint, each check's mark on its card, the tab's badge.
+    ("ok", "ok-bg"),
+    ("warn", "surface"),
+    ("bad", "surface"),
+    *[(fg, "bg") for fg in ("ok", "warn", "bad")],
 ]
 
 
@@ -201,7 +209,12 @@ def test_the_detail_is_reached_only_through_the_checked_route():
     assert re.findall(r"await ask\((.+?)\);", CODE) == [
         '"/api/home"',
         "`/api/stock/${encodeURIComponent(ticker)}`",
+        "`/api/${name}`",
     ]
+    # History and Health: `name` is one of two fixed screens, never anything read from data.
+    assert 'const TABS = ["history", "health"];' in CODE
+    assert re.findall(r"loadTab\((.+?)\)", CODE) == ["name", "state.tab", "state.tab"]
+    assert CODE.count("if (TABS.includes(state.tab)) loadTab(state.tab);") == 2
     assert r"const TICKER = /^#stock\/([A-Z0-9][A-Z0-9_-]{0,19})$/;" in CODE
     assert server.NAME.pattern == "[A-Z0-9][A-Z0-9_-]{0,19}"
 
@@ -236,7 +249,47 @@ def test_the_watchlist_draws_every_line_on_one_shared_scale():
 def test_a_page_without_the_key_is_sent_back_to_the_app_with_no_retry_or_back():
     assert re.search(r"const LOCKED = \[[^\]]*, false, true\];", CODE)  # no Back, final
     assert "response.status === 401) state.problem = LOCKED" in CODE
+    assert "response.status === 401) state.problems[name] = LOCKED" in CODE
     assert "state.detailProblem = [LOCKED[0], LOCKED[1], true, true]" in CODE
     change = CODE[CODE.index('window.addEventListener("hashchange"') :]
     change = change[: change.index("});")]
     assert change.index("takeKey();") < change.index("follow();")
+
+
+def test_history_colours_only_the_move_that_happened():
+    # What the model said is never green or red; what happened is marked by its direction.
+    assert ".tl-item .res .mv.up { color: var(--up); }" in STYLE
+    assert ".tl-item .res .mv.down { color: var(--down); }" in STYLE
+    said = re.findall(r"([^{}]*\.said[^{}]*)\{([^}]*)\}", STYLE)
+    assert said and all("--up" not in body and "--down" not in body for _, body in said)
+    item = CODE[CODE.index("function historyItem(") :]
+    item = item[: item.index("\n  }\n")]
+    assert "`mv ${x.result.direction}`" in item and "x.said.up" in item
+
+
+def test_the_health_tab_is_marked_by_homes_status_line():
+    # Health's headline is Home's status line, so the tab's badge needs no other request. It
+    # shows only when the status needs a look or is wrong, with a mark as well as a colour.
+    assert 'id="health-badge"' in PAGE
+    render = CODE[CODE.index("function render()") :]
+    render = render[: render.index("\n  }\n")]
+    assert 'status.level === "warn" || status.level === "bad"' in render
+    assert "badge.textContent = level ? MARK[level]" in render
+    assert 'badge.setAttribute("aria-label", status.badge)' in render
+    assert re.search(r'data-tab="history".*data-tab="health".*data-tab="more"', PAGE, re.DOTALL)
+
+
+def test_a_screen_that_answers_again_clears_its_problem():
+    # An unchanged answer after a failure must still take the problem off the screen.
+    assert "!state.problems[name] && USABLE[name](data) && same(state[name], data)) return;" in CODE
+    assert (
+        "!state.detailProblem && usableDetail(data, ticker) && same(state.detail, data)) return;"
+        in (CODE)
+    )
+
+
+def test_lists_keep_their_role_in_safari():
+    # Safari drops a list's role when its markers are hidden, so the page names it.
+    for found in ('h("ul", { class: "list", role: "list" }', 'h("ul", { class: "tl-items", role: "list" }',
+                  'h("ol", { class: "tl", role: "list"'):  # fmt: skip
+        assert found in CODE, found
