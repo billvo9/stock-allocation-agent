@@ -132,6 +132,11 @@ TECHNICAL = "Technical detail: {detail}"
 UPDATES_TITLE = "Updates"
 SHEET_COLUMNS = ["What could happen", "Chance"]
 LINES_NOTE = "Lines show the past month; the dot's colour shows whether that day closed up or down."
+SHARED_LINES_NOTE = (
+    "Lines show the past month on one shared scale, so a calmer stock draws a flatter line. "
+    "The dot's colour shows whether that day closed up or down."
+)
+SCALE_NOTE = "Same scale for all lines"
 
 
 def record_failed(symbols: list[str]) -> str:
@@ -673,3 +678,132 @@ def explain(band: str | None) -> list[str]:
         ),
         "Green and red only ever mean a price went up or down. Outlooks are never green or red.",
     ]
+
+
+# --- History ---
+
+HISTORY_TITLE = "History"
+HISTORY_LEDE = "Each evening's outlook for the next trading day, and what happened."
+HISTORY_EMPTY = "No outlooks are recorded yet. The first one appears after an evening update."
+HISTORY_NOTE = (
+    "One day can't show whether an outlook is any good. A 47% chance of Up isn't wrong when "
+    "the stock goes down."
+)
+HISTORY_JUDGE_DETAIL = (
+    "each result is the stored score of the next trading day's outlook, as the evening update "
+    "recorded it; History shows the live record, with recalculations in place of what they "
+    "replaced."
+)
+HISTORY_PROBLEM_TITLE = "History can't be shown"
+HISTORY_PROBLEMS = {
+    "ledger_unverified": (
+        "The forecast record didn't pass its integrity check, so nothing is shown rather than a "
+        "partial list. The Health tab says more."
+    ),
+    "record_check_failed": (
+        "A stored outlook didn't pass its integrity check, so nothing is shown rather than a "
+        "partial list. The Health tab says more."
+    ),
+    "record_unreadable": (
+        "The forecast record can't be opened, so nothing is shown rather than a partial list. "
+        "The Health tab says more."
+    ),
+}
+MISSED_STAYS = "A missed evening stays missed. It is never filled in later."
+NO_OUTLOOK_RECORDED = "No outlook recorded that evening"
+HISTORY_WITHHELD = "Outlook withheld: its day doesn't match the exchange calendar"
+CATEGORY_SHORT = {"increase": "Up", "stable": "Flat", "decrease": "Down"}
+SAID = "Said"  # before what an outlook said: "Said ↑47% · ↓42%"
+NO_RESULT = "Couldn't be scored"
+NO_RESULT_YET = "No result yet"
+
+
+def month_day(value: date | str) -> str:
+    """'Oct 21'."""
+
+    day = _day(value)
+    return f"{day:%b} {day.day}"
+
+
+def history_counts(since: str, *, recorded: int, scored: int, missed: int) -> str:
+    """'Since Oct 19: 3 evenings recorded, 2 with a result, 1 missed.'"""
+
+    evenings = "evening" if recorded == 1 else "evenings"
+    return (
+        f"Since {month_day(since)}: {recorded} {evenings} recorded, {scored} with a result, "
+        f"{missed} missed."
+    )
+
+
+def history_more(shown: int) -> str:
+    return f"The latest {shown} evenings are shown. The research pages keep the full record."
+
+
+def missed_evening(as_of: str) -> str:
+    return f"No outlook: nothing was recorded on the evening of {short_day(as_of)}."
+
+
+def recorded_evening(made: str | None, *, waiting: bool) -> str:
+    """'Outlook recorded last night, 8:31 PM · waiting for the result'."""
+
+    text = "Outlook recorded" if made is None else f"Outlook recorded {made}"
+    return f"{text} · waiting for the result" if waiting else text
+
+
+def history_said(up: str, down: str) -> str:
+    return f"{SAID} {up} chance up, {down} chance down"
+
+
+def history_gave(word: str, chance: str) -> str:
+    """'It gave Up 47%': the chance recorded for what happened."""
+
+    return f"It gave {word} {chance}"
+
+
+def after_close(session: str) -> str:
+    return f"After {weekday(session)}'s close"
+
+
+# --- Health ---
+
+HEALTH_TITLES = {
+    "ok": "All good",
+    "warn": "Needs a look",
+    "bad": "Something is wrong",
+    "neutral": "Not started yet",
+}
+# The Health tab's badge, for screen readers (it shows only when the status needs a look).
+HEALTH_BADGES = {
+    "ok": "all good",
+    "warn": "needs a look",
+    "bad": "something is wrong",
+    "neutral": "not started yet",
+}
+HEALTH_BAD_ASIDE = "This app never changes your records. Model Health has the fix."
+SHOW_DETAILS = ("Show details", "Hide details")
+UPDATES_DETAILS_TITLE = "Evening updates"
+CHECKS_TITLE = "Model Health's Stock Lab checks"
+SUMMARY_MISSING = "Model Health hasn't written a summary yet, so its checks aren't shown here."
+SUMMARY_REFUSED = "Model Health's summary couldn't be read, so its checks aren't shown here."
+SUMMARY_LATER = "Model Health's summary is newer than this view, so its checks aren't shown here."
+SUMMARY_DEMO = "The demo has no Model Health checks."
+SUMMARY_NO_CHECKS = "Model Health's summary has no Stock Lab checks."
+MODEL_HEALTH_PAGE = "model-health"  # the Model Health page's path (app.wording.NAV)
+MODEL_HEALTH_LINK = "Open the full Model Health page"
+MODEL_HEALTH_SUB = "Every check, including the ones outside the Stock Lab"
+
+
+def summary_from(made: str, *, stale: bool) -> str:
+    if stale:
+        return (
+            f"From Model Health's latest summary, {made}: more than a day old, so these checks "
+            "may be out of date."
+        )
+    return f"From Model Health's summary, {made}."
+
+
+def flagged(count: int) -> str:
+    """'Model Health flags 1 check: see the details.'"""
+
+    noun = "check" if count == 1 else "checks"
+    return f"Model Health flags {count} {noun}: see the details."

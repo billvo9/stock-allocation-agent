@@ -17,6 +17,11 @@ synthetic and an engineering evaluation, in registered order, never ranked.
 from __future__ import annotations
 
 LAB_NAME = "Portfolio Lab"
+RESEARCH_LOCKED_TITLE = "Open the research pages from Portfolio Lab"
+RESEARCH_LOCKED = (
+    "For your privacy, these pages open only from the Lab app: in Portfolio Lab, choose "
+    "More, then Research pages."
+)
 
 # Navigation: (title, url path), in display order.
 NAV = {

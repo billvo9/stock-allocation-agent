@@ -5,9 +5,10 @@ It serves the Lab app (src/stock_agent/app/web; docs/product/lab_app_design.md)
 from Python's standard-library web server on 127.0.0.1, read-only: it opens
 the Stock Lab's store read-only, reads each stock's recent observed prices
 through the isolated descriptive reader (decision A6), and passes both, with
-the NYSE rules calendar, to the app's Home and Stock detail views. It never
-runs the evening job, writes nothing, sends nothing anywhere and reads no
-credential.
+the NYSE rules calendar, to the app's Home, Stock detail, History and Health
+views. Health also reads Model Health's latest local summary, as the Model
+Health page does. It never runs the evening job or a check, writes nothing,
+sends nothing anywhere and reads no credential.
 
 Modes
     (default)   the real Stock Lab
@@ -20,7 +21,20 @@ Options
                         a preview; only records that existed by then are read
     --research-url URL  where More > Research pages links, for example
                         http://127.0.0.1:8502/ when the Streamlit Lab runs
+    --health-summary FILE
+                        Model Health's local summary, for Health's details;
+                        default: ~/stock-agent-private/health/latest.json (the
+                        demo reads none)
     --open              open the app in the default browser
+
+This run's key. The data answers only requests that carry a key made for this
+run (`secrets.token_urlsafe`), or the one the Portfolio Lab app passes in
+LAB_APP_TOKEN. The key reaches the browser in the address's fragment
+(`#key=...`), which browsers never send to a server, and is never logged:
+--open opens the address with it, and only an interactive terminal prints it.
+The research pages have a key of their own (LAB_APP_RESEARCH_KEY, from the
+Portfolio Lab app): it is added to their link, which only a page holding this
+run's key is served.
 
 Usage:
     .venv/bin/python scripts/run_lab_app.py --demo --open
@@ -31,11 +45,14 @@ Stop it with Control-C.
 from __future__ import annotations
 
 import argparse
+import os
+import re
+import secrets
 import signal
 import sys
 import tempfile
 import webbrowser
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,7 +62,10 @@ from urllib.parse import urlsplit
 import numpy as np
 import pandas as pd
 
+from stock_agent.app.health_summary import load_summary
 from stock_agent.app.web.detail import build_detail
+from stock_agent.app.web.health import build_health
+from stock_agent.app.web.history import build_history
 from stock_agent.app.web.home import build_home
 from stock_agent.app.web.server import HOST, LabApp, make_server, static_files
 from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
@@ -56,10 +76,19 @@ from stock_agent.stock_lab.prices import session_returns
 from stock_agent.stock_lab.store import DB_NAME, StockLabStore, utc_now
 
 DEFAULT_PORT = 8510
+KEY_VARIABLE = "LAB_APP_TOKEN"  # set by the Portfolio Lab app (scripts/portfolio_lab_app.py)
+LINK_KEY_VARIABLE = "LAB_APP_RESEARCH_KEY"  # the research pages' key, for the link to them
+KEY = re.compile(r"[A-Za-z0-9_-]{32,128}")
 EXCLUDED = ("SKHY", "SNDK")  # the owner's choice: kept off the watchlist views
 DEMO_SESSIONS = 30
 DEMO_CALENDAR = "synthetic_weekdays"
 STOCK_ROUTE = "/api/stock/"  # one stock's detail: /api/stock/NVDA
+
+
+def default_health_summary() -> Path:
+    """The local monitor's latest summary (as scripts/run_portfolio_lab.py reads it)."""
+
+    return Path.home() / "stock-agent-private" / "health" / "latest.json"
 
 
 def observed(symbol: str, *, count: int, retrieved_by: pd.Timestamp):
@@ -106,8 +135,9 @@ def real_api(
     clock: Callable[[], datetime],
     recent: Callable,
     research_url: str | None,
+    health_summary: Path | None = None,
 ) -> tuple[dict, dict]:
-    """The routes (Home) and the named routes (one stock's detail, by its ticker)."""
+    """The routes (Home, History, Health) and the named routes (one stock, by its ticker)."""
 
     def home() -> dict:
         view = build_home(
@@ -136,7 +166,32 @@ def real_api(
             research_url=research_url,
         )
 
-    return {"/api/home": home}, {STOCK_ROUTE: stock}
+    def history() -> dict:
+        return build_history(
+            records_factory(),
+            now=clock(),
+            calendar=sessions,
+            data_class=DataClass.REAL,
+            local_zone=None,
+            excluded=EXCLUDED,
+        )
+
+    def health() -> dict:
+        now = clock()
+        return build_health(
+            records_factory(),
+            now=now,
+            calendar=sessions,
+            calendar_id=CALENDAR_ID,
+            data_class=DataClass.REAL,
+            local_zone=None,
+            summary=lambda: load_summary(health_summary, now=now),
+            research_url=research_url,
+            excluded=EXCLUDED,
+        )
+
+    routes = {"/api/home": home, "/api/history": history, "/api/health": health}
+    return routes, {STOCK_ROUTE: stock}
 
 
 # --- the synthetic demo ---
@@ -234,7 +289,31 @@ def demo_api(home_dir: Path, sessions_count: int, at: str | None, research_url: 
             research_url=research_url,
         )
 
-    return {"/api/home": home}, {STOCK_ROUTE: stock}
+    def history() -> dict:
+        return build_history(
+            records,
+            now=now,
+            calendar=weekdays,
+            data_class=DataClass.SYNTHETIC,
+            local_zone=None,
+            tickers=list(DEMO_IDS),
+        )
+
+    def health() -> dict:
+        return build_health(
+            records,
+            now=now,
+            calendar=weekdays,
+            calendar_id=DEMO_CALENDAR,
+            data_class=DataClass.SYNTHETIC,
+            local_zone=None,
+            summary=None,  # the demo has no Model Health summary
+            research_url=research_url,
+            tickers=list(DEMO_IDS),
+        )
+
+    routes = {"/api/home": home, "/api/history": history, "/api/health": health}
+    return routes, {STOCK_ROUTE: stock}
 
 
 # --- serving ---
@@ -249,10 +328,14 @@ def serve_forever(server) -> None:
         server.server_close()
 
 
-def _bind(port: int, out: TextIO):
+def new_key() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _bind(port: int, key: str, out: TextIO):
     """The app and its bound server, before any slow work; None when the port is busy."""
 
-    app = LabApp(port=port, api={}, static=static_files())
+    app = LabApp(port=port, api={}, static=static_files(), token=key)
     try:
         return app, make_server(app)
     except (OSError, OverflowError) as error:  # busy, not allowed, or not a port at all
@@ -269,10 +352,13 @@ def _serve(app: LabApp, server, routes, args, *, serve: Callable, out: TextIO) -
     api, items = routes
     app.api, app.items = dict(api), dict(items)
     url = f"http://{HOST}:{app.port}/"
+    keyed = f"{url}#key={app.token}"
     kind = "a synthetic demo" if args.demo is not None else "this Mac's Stock Lab, read-only"
     print(f"Lab app: {url} ({kind}). Press Control-C to stop.", file=out, flush=True)
     if args.open:
-        webbrowser.open(url)
+        webbrowser.open(keyed)
+    elif out.isatty():  # never into a log: only a person at a terminal sees the key
+        print(f"Open this address, which holds this run's key: {keyed}", file=out, flush=True)
     serve(server)
     return 0
 
@@ -285,12 +371,15 @@ def main(
     recent: Callable = observed,
     serve: Callable = serve_forever,
     out: TextIO = sys.stdout,
+    environ: Mapping[str, str] = os.environ,
+    make_key: Callable[[], str] = new_key,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1], allow_abbrev=False)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--demo", type=int, nargs="?", const=DEMO_SESSIONS, metavar="N")
     parser.add_argument("--at", metavar="TIME")
     parser.add_argument("--research-url", metavar="URL")
+    parser.add_argument("--health-summary", type=Path, metavar="FILE")
     parser.add_argument("--open", action="store_true")
     args = parser.parse_args(argv)
     if args.research_url and not local_url(args.research_url):
@@ -304,7 +393,16 @@ def main(
     except ValueError as error:
         print(f"refused: {error}", file=out)
         return 2
-    bound = _bind(args.port, out)
+    key = environ.get(KEY_VARIABLE) or make_key()
+    link_key = environ.get(LINK_KEY_VARIABLE)
+    for name, value in ((KEY_VARIABLE, key), (LINK_KEY_VARIABLE, link_key)):
+        if value is not None and not KEY.fullmatch(value):
+            print(f"refused: {name} must be 32 to 128 URL-safe characters", file=out)
+            return 2
+    research = args.research_url
+    if research and link_key:  # served only to a page that holds this run's key
+        research = f"{research}?key={link_key}"
+    bound = _bind(args.port, key, out)
     if bound is None:
         return 2
     app, server = bound
@@ -314,11 +412,12 @@ def main(
                 records_factory=records_factory,
                 clock=(lambda: fixed) if fixed else (lambda: _moment(None, clock)),
                 recent=recent,
-                research_url=args.research_url,
+                research_url=research,
+                health_summary=(args.health_summary or default_health_summary()).expanduser(),
             )
             return _serve(app, server, routes, args, serve=serve, out=out)
         with tempfile.TemporaryDirectory(prefix="lab-app-demo-") as home_dir:
-            routes = demo_api(Path(home_dir), args.demo, args.at, args.research_url)
+            routes = demo_api(Path(home_dir), args.demo, args.at, research)
             return _serve(app, server, routes, args, serve=serve, out=out)
     except ValueError as error:
         server.server_close()

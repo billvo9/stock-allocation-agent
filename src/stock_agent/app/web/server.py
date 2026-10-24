@@ -16,6 +16,18 @@ only, read-only.
 - A request another website starts in the background (by its Fetch metadata or
   Origin) gets 403 before any work; only a top-level visit to the page may come
   from a link elsewhere.
+- The data needs this launch's key (owner decision of 2026-10-23): a data route
+  answers 401 unless the `X-Lab-Token` header equals the key the launcher made
+  for this run, compared in constant time. The page, its assets and `/health`
+  hold no data and need no key. `/health` says "ok"; asked with a nonce
+  (`/health?nonce=...`), it answers HMAC-SHA256(key, nonce), so the launcher
+  knows the server on the port is the one holding this launch's key before it
+  opens the browser. The
+  key reaches the browser in the address's fragment, which is never sent to a
+  server, and a custom header can't be sent by another website without a
+  preflight, which this server refuses.
+- At most `AT_ONCE` screens are prepared at the same time; another request
+  gets 503 with one plain sentence, so a flood of requests can't pile up work.
 - A connection that sends nothing is dropped after 15 seconds.
 - Every response carries the same strict headers (`SECURITY_HEADERS`): the
   page may load only its own script, stylesheet, font and data, and may not
@@ -29,9 +41,12 @@ directly; the handler only copies a request in and a response out.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import re
 import sys
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
@@ -59,6 +74,13 @@ SECURITY_HEADERS = (
 TEXT = "text/plain; charset=utf-8"
 JSON = "application/json; charset=utf-8"
 FAILED = {"error": "The app couldn't prepare this screen."}
+LOCKED = {"error": "Open Portfolio Lab from its app to see your numbers."}
+KEY_HEADER = "x-lab-token"
+KEY = re.compile(r"[A-Za-z0-9_-]{32,128}")  # what secrets.token_urlsafe gives
+HEALTH = "/health"
+NONCE = re.compile(r"nonce=([A-Za-z0-9_-]{16,64})")
+AT_ONCE = 4  # screens prepared at the same time; one person needs one or two
+BUSY = {"error": "The Lab is busy. Try again in a moment."}
 NAME = re.compile(r"[A-Z0-9][A-Z0-9_-]{0,19}")  # a ticker, or a synthetic demo stock's id
 
 STATIC = Path(__file__).with_name("static")
@@ -106,11 +128,34 @@ class LabApp:
         api: Mapping[str, Callable[[], Mapping]],
         static: Mapping[str, tuple[bytes, str]],
         items: Mapping[str, Callable[[str], Mapping | None]] | None = None,
+        token: str | None = None,
     ) -> None:
+        if token is not None and not KEY.fullmatch(token):
+            raise ValueError("the Lab app's key must be 32 to 128 URL-safe characters")
         self.port = port
         self.api = dict(api)
         self.static = dict(static)
         self.items = dict(items or {})
+        self.token = token
+        self.working = threading.BoundedSemaphore(AT_ONCE)
+
+    def health(self, target: str) -> bytes:
+        """ "ok", or with a nonce and a key, HMAC-SHA256(key, nonce) in hex: proof of the key."""
+
+        query = target.partition("?")[2].partition("#")[0]
+        found = NONCE.fullmatch(query)
+        if self.token is None or found is None:
+            return b"ok"
+        digest = hmac.new(self.token.encode("ascii"), found[1].encode("ascii"), hashlib.sha256)
+        return digest.hexdigest().encode()
+
+    def unlocked(self, headers: Mapping[str, str]) -> bool:
+        """Whether the request carries this launch's key (always, when there is no key)."""
+
+        if self.token is None:
+            return True
+        given = headers.get(KEY_HEADER, "").encode("utf-8", "surrogateescape")
+        return hmac.compare_digest(given, self.token.encode("ascii"))
 
     def allowed(self, host: str | None) -> bool:
         if not host:
@@ -154,6 +199,10 @@ class LabApp:
         if path in self.static:
             body, kind = self.static[path]
             return Response(200, kind, body)
+        if path == HEALTH:
+            return Response(200, TEXT, self.health(target))
+        if not self.unlocked(headers or {}):
+            return Response(401, JSON, json.dumps(LOCKED).encode())
         if path in self.api:
             return self._json(path, self.api[path])
         for prefix, find in self.items.items():
@@ -163,6 +212,14 @@ class LabApp:
         return NOT_FOUND
 
     def _json(self, route: str, produce: Callable[[], Mapping | None]) -> Response:
+        if not self.working.acquire(blocking=False):
+            return Response(503, JSON, json.dumps(BUSY).encode())
+        try:
+            return self._prepare(route, produce)
+        finally:
+            self.working.release()
+
+    def _prepare(self, route: str, produce: Callable[[], Mapping | None]) -> Response:
         try:
             data = produce()
             body = None if data is None else json.dumps(data, allow_nan=False, ensure_ascii=False)

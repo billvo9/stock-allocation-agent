@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
 
 import pandas as pd
@@ -79,7 +80,54 @@ def build_home(
     """
 
     kind = DataClass(data_class).value
-    briefing, problem, previous = None, None, None
+    found = prepare(
+        records,
+        now=now,
+        calendar=calendar,
+        calendar_id=calendar_id,
+        data_class=kind,
+        tickers=tickers,
+        excluded=excluded,
+    )
+    moment = pd.Timestamp(now)
+    prices = {
+        symbol: recent(symbol, count=SPARK_SESSIONS, retrieved_by=moment) for symbol in found.listed
+    }
+    return home_view(
+        found.briefing,
+        prices,
+        now=now,
+        local_zone=local_zone,
+        tickers=found.listed,
+        data_class=kind,
+        problem=found.problem,
+        names=names,
+        previous_session=found.previous_session,
+    )
+
+
+@dataclass(frozen=True)
+class Prepared:
+    """The briefing at a time, or why it could not be prepared, and the stocks listed."""
+
+    briefing: Briefing | None
+    problem: str | None  # the refusal's type when there is no briefing
+    previous_session: str | None  # the session before the briefing's prior session
+    listed: tuple[str, ...]
+
+
+def prepare(
+    records: ReadOnlyRecords,
+    *,
+    now: datetime,
+    calendar: Callable,
+    calendar_id: str,
+    data_class: DataClass | str,
+    tickers: Sequence[str] | None = None,
+    excluded: Collection[str] = (),
+) -> Prepared:
+    """The premarket briefing's report at `now`, as Home (and Health) read it."""
+
     try:
         plan = briefing_timing(now, calendar)
         previous = session_before(calendar, plan.prior_session)
@@ -88,29 +136,14 @@ def build_home(
             timing=plan,
             calendar=calendar,
             calendar_id=calendar_id,
-            data_class=kind,
+            data_class=DataClass(data_class).value,
             tickers=tickers,
             excluded=excluded,
         )
-        listed = tuple(stock.symbol for stock in briefing.stocks)
     except ValueError as error:  # the store, the timing or the calendar refused
-        problem = type(error).__name__
         listed = watchlist(records, tickers, excluded)
-    moment = pd.Timestamp(now)
-    prices = {
-        symbol: recent(symbol, count=SPARK_SESSIONS, retrieved_by=moment) for symbol in listed
-    }
-    return home_view(
-        briefing,
-        prices,
-        now=now,
-        local_zone=local_zone,
-        tickers=listed,
-        data_class=kind,
-        problem=problem,
-        names=names,
-        previous_session=previous,
-    )
+        return Prepared(None, type(error).__name__, None, listed)
+    return Prepared(briefing, None, previous, tuple(stock.symbol for stock in briefing.stocks))
 
 
 def session_before(calendar: Callable, day: date) -> str | None:
@@ -167,6 +200,9 @@ def home_view(
             }
         )
     sessions = [s["price"]["session"] for s in stocks if s["price"]["available"]]
+    # Lines the page can draw (two levels or more): only several of them share a scale.
+    drawn = [s for s in stocks if sum(v is not None and v > 0 for v in s["price"]["line"]) > 1]
+    shared = len(drawn) > 1
     for stock in stocks:  # a close older than the others names its own day
         price = stock["price"]
         price["older"] = price["available"] and price["session"] != max(sessions)
@@ -181,9 +217,12 @@ def home_view(
         "version": VERSION,
         "data_class": data_class,
         "generated_at": pd.Timestamp(now).tz_convert("UTC").isoformat(),
-        "status": _status(briefing, problem, now, local_zone, previous_session),
+        "status": status_line(briefing, problem, now, local_zone, previous_session),
         "prices_note": words.prices_note(max(sessions)) if sessions else None,
-        "lines_note": words.LINES_NOTE if sessions else None,
+        "lines_note": (
+            None if not sessions else words.SHARED_LINES_NOTE if shared else words.LINES_NOTE
+        ),
+        "scale_note": words.SCALE_NOTE if shared else None,
         "checked": words.checked(now, local_zone),
         "stocks": stocks,
         "footer": words.FOOTER,
@@ -198,7 +237,9 @@ def home_view(
 # --- the status line ---
 
 
-def _status(briefing: Briefing | None, problem: str | None, now, zone, previous) -> dict:
+def status_line(briefing: Briefing | None, problem: str | None, now, zone, previous) -> dict:
+    """The status line (module docstring): its level, words, title and detail lines."""
+
     if briefing is None:
         return _line(
             "bad",
@@ -258,7 +299,13 @@ def _status(briefing: Briefing | None, problem: str | None, now, zone, previous)
 
 
 def _line(level: str, text: str, details: list[str]) -> dict:
-    return {"level": level, "words": text, "title": words.UPDATES_TITLE, "details": details}
+    return {
+        "level": level,
+        "words": text,
+        "title": words.UPDATES_TITLE,
+        "details": details,
+        "badge": words.HEALTH_BADGES[level],  # the Health tab's badge, in words
+    }
 
 
 def _tonight_open(briefing: Briefing) -> bool:

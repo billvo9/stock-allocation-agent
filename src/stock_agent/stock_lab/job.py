@@ -48,21 +48,16 @@ Activation. A run skipped because the owner's decisions are not recorded
 yet says so (`activation` "not_authorized"), so Model Health reads it as not
 activated, not as a degraded job.
 
-Missed evenings. A session's evening forecast can be recorded from its close's
-availability (20:00 New York) until the next session opens (09:30 New York);
-after that the window reader refuses it, so nothing ever fills it in. Every
-session from the first real forecast's as-of session whose next open has
-passed is due; a due session with no real forecast (of any stock) is missed.
-`evening_record` lists them, and how many of the last RECENT_EVENINGS due
-evenings were missed, so Model Health can flag a recent miss without staying
-flagged for every later day.
+Missed evenings. `evening_record` and `recorded_evenings` live in
+`stock_lab.evenings` (moved unchanged on 2026-10-23, so the Lab app's History
+reads the same rule) and are re-exported here.
 """
 
 from __future__ import annotations
 
 import os
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pandas as pd
@@ -74,14 +69,18 @@ from stock_agent.stock_lab.contracts import (
     SymbolReason,
     SymbolStatus,
 )
+from stock_agent.stock_lab.evenings import (  # the evening rule's one copy, re-exported here
+    RECENT_EVENINGS,  # noqa: F401 - re-exported
+    Sessions,
+    evening_record,  # noqa: F401 - re-exported
+    recorded_evenings,  # noqa: F401 - re-exported
+)
 from stock_agent.stock_lab.features import build_features
-from stock_agent.stock_lab.forecast import ForecastRefused, session_open
+from stock_agent.stock_lab.forecast import ForecastRefused
 from stock_agent.stock_lab.store import GENESIS, StockLabStore, StoreRefused, stamp
 from stock_agent.stock_lab.traps import CONFIRMED, UNRESOLVED, trap_events
 
-Sessions = Callable[[pd.Timestamp, pd.Timestamp], pd.DatetimeIndex]
 NOT_AUTHORIZED = "not_authorized"
-RECENT_EVENINGS = 10  # due evenings (two trading weeks) within which a miss stays flagged
 _HASH = re.compile(r"[0-9a-f]{64}")
 
 
@@ -141,62 +140,6 @@ def symbol_status(store: StockLabStore, tickers: Sequence[str]) -> dict:
         reason = SymbolReason.NOT_CHECKED if check is None else check.reason
         rows.append({"ticker": ticker, "status": status.value, "reason": reason.value})
     return {"tickers": rows}
-
-
-def recorded_evenings(store: StockLabStore) -> set[str]:
-    """
-    The as-of sessions (YYYY-MM-DD) with a real forecast of any stock: the evenings recorded.
-    ForecastRefused or StoreRefused when a stored forecast no longer verifies. The morning
-    check (stock_lab.morning) reads the same set.
-    """
-
-    return {
-        record["as_of_session"]
-        for symbol in store.forecast_symbols(DataClass.REAL)
-        for record in store.forecasts(symbol)
-        if record["data_class"] == DataClass.REAL.value
-    }
-
-
-def evening_record(
-    store: StockLabStore,
-    *,
-    now: pd.Timestamp,
-    expected: pd.Timestamp,
-    sessions: Sessions,
-    recent: int = RECENT_EVENINGS,
-) -> dict | None:
-    """
-    The prospective record's evenings (module docstring, "Missed evenings"): {since, due,
-    recorded, missed: [session], recent, recent_missed}. None before the first real forecast,
-    or when a stored forecast no longer verifies (the ledger check reports that).
-    """
-
-    try:
-        made = recorded_evenings(store)
-    except (ForecastRefused, StoreRefused):
-        return None
-    if not made:
-        return None
-    since = min(made)
-    days = [day.strftime("%Y-%m-%d") for day in sessions(pd.Timestamp(since, tz="UTC"), expected)]
-    try:  # the session after `expected`, whose open closes `expected`'s evening
-        after = sessions(expected + pd.Timedelta(days=1), expected + pd.Timedelta(days=10))
-    except ValueError:  # beyond the calendar's coverage: `expected` is not judged yet
-        after = ()
-    opens = [*days[1:], *(day.strftime("%Y-%m-%d") for day in after[:1])]
-    due = [
-        day for day, following in zip(days, opens, strict=False) if session_open(following) <= now
-    ]
-    missed = [day for day in due if day not in made]
-    return {
-        "since": since,
-        "due": len(due),
-        "recorded": len(due) - len(missed),
-        "missed": missed,
-        "recent": recent,
-        "recent_missed": len([day for day in due[-recent:] if day not in made]),
-    }
 
 
 def freshness(

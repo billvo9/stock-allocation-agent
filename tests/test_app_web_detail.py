@@ -822,6 +822,16 @@ def test_the_research_link_opens_the_stock_probability_page(lab):
     assert alone["url"] is None and alone["sub"] == words.RESEARCH_ELSEWHERE
 
 
+def test_the_research_link_keeps_this_launchs_research_key(lab):
+    # The launcher adds the research pages' key to their link; a page without it is locked.
+    keyed = "http://127.0.0.1:8502/?key=" + "k" * 43
+    learning = view(lab, at(THURSDAY, "07:40"), research_url=keyed)["learning"]
+    assert learning["url"] == "http://127.0.0.1:8502/stock-probability?key=" + "k" * 43
+    assert detail.research_page("http://localhost:8503/lab/", "model-health") == (
+        "http://localhost:8503/lab/model-health"
+    )
+
+
 def test_the_research_page_path_is_the_research_apps_own():
     from stock_agent.app import wording
 
