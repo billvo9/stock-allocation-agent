@@ -166,6 +166,68 @@ request time like Home. A ticker that is not on Home's watchlist gets 404.
 **For learning:** a link to the Stock Probability research page (`<research URL>/stock-probability`)
 when the launcher has `--research-url`; otherwise a sentence saying where the research pages open.
 
+### History in detail (PR 4)
+
+`GET /api/history`, prepared at the request time from the read-only history reader
+`stock_lab.briefing.history` (owner decision of 2026-10-23, below).
+
+**As known at the request time** (the briefing's own rule, `report._known`):
+- A forecast counts once it was created and its ledger entry recorded by then.
+- A recalculation replaces the forecast it supersedes once it existed by then. History shows
+  the live record, as the research page's history table does.
+- A score counts once it was written by then.
+- A failed ledger check, a record that fails its check when read, or a store that can't be
+  opened withholds the whole list: "History can't be shown", never a partial list.
+
+**The timeline**, newest first (the latest 40 evenings; the counts cover every one):
+- Each evening is titled by the session its outlook was for (the calendar's next session), with
+  "Outlook recorded last night, 8:31 PM" and, until every result is in, "waiting for the
+  result".
+- Each stock's line: "Said ↑47% · ↓42%", the next session's chances exactly as recorded
+  (rounded for display only, never coloured), and the stored result of that session:
+  - scored: the stored category and move, "Up +1.23%", in the move's colour, with "It gave Up
+    47%" (the recorded chance of what happened);
+  - not yet scored: "After Thu's close" until that evening's update, then "No result yet";
+  - unscorable: "Couldn't be scored", with the stored reason as a technical detail;
+  - no forecast that evening, the model's refusal, or a record whose first target session is not
+    the calendar's next session (withheld) each say so, with no number.
+- **Missed evenings** use the evening job's own rule (`stock_lab.evenings`): from the first
+  recorded evening, a session whose next open has passed with no forecast of any stock is
+  missed. It is shown as missed ("A missed evening stays missed. It is never filled in later.")
+  and counted.
+- "Since Oct 19: 12 evenings recorded, 11 with a result, 1 missed." An evening has a result
+  once any of its outlooks has a stored score.
+- A filter per stock, and "How to judge it" (one day can't show whether an outlook is any good;
+  Model Health's minimum).
+- Nothing is computed from prices (decision A6): the move is the score the evening job stored.
+
+### Health in detail (PR 4)
+
+`GET /api/health`, prepared at the request time.
+- **Headline:** Home's status line, from the same function (`home.status_line`) on the same
+  briefing, so the two never disagree. Its level gives the ring (green, amber, red, or grey
+  before anything has started) and the title ("All good", "Needs a look", "Something is
+  wrong", "Not started yet"). The Health tab's badge follows Home's level, so it needs no
+  request of its own. It shows only when the status needs a look ("!") or something is wrong
+  ("✕"), so it is never told by colour alone.
+- **Below it:** the live record's progress toward Model Health's minimum (as on a stock's
+  screen), or, when something is wrong, "This app never changes your records. Model Health
+  has the fix."
+- **Show details:**
+  - Evening updates: the status line's own detail lines.
+  - Model Health's Stock Lab checks (`data.stock_lab_*`, `forecast.stock_lab_*`), worst first,
+    each with its state word and check id, read from the local monitor's latest summary with
+    the Model Health page's own reader (`app.health_summary`). The summary's time is shown. A
+    missing or refused summary, or one more than 26 hours old, is named as such. A summary
+    written after the request time (a `--at` preview) is not used.
+  - A flagged check (warning or worse) is named under the headline ("Model Health flags 1
+    check: see the details"); the headline itself stays the live status line.
+  - "Open the full Model Health page" (`<research URL>/model-health`, with the research pages'
+    key), or where the research pages open.
+- The synthetic demo has no Model Health summary and says so.
+- The launcher's `--health-summary FILE` names the summary; by default it is
+  `~/stock-agent-private/health/latest.json`, as for the research pages.
+
 ## 4. Data and point-in-time rules
 
 - **One source of truth for status and outlooks:** `stock_lab.briefing.report.build_briefing`,
@@ -193,11 +255,11 @@ possible later decision):
 
 | Piece | Where | Role |
 |---|---|---|
-| View models | `src/stock_agent/app/web/home.py`, `detail.py` (later `history.py`, `health.py`) | Pure functions from the briefing and the prices to JSON-ready dicts of display-ready words and the raw recorded values |
+| View models | `src/stock_agent/app/web/home.py`, `detail.py`, `history.py`, `health.py` | Pure functions from the briefing and the prices to JSON-ready dicts of display-ready words and the raw recorded values |
 | Copy and formatting | `src/stock_agent/app/web/words.py` | Every user-facing sentence, time words, percentages |
 | Server | `src/stock_agent/app/web/server.py` | Standard-library `ThreadingHTTPServer`, read-only routes, security headers |
 | Front end | `src/stock_agent/app/web/static/` | `index.html`, `app.css`, `app.js`, the mark; the bundled Source Sans 3 is served from `app/static/fonts/` |
-| Launcher | `scripts/run_lab_app.py` | Wires the NYSE rules calendar, the recent-prices reader, the records and a clock into the server; `--demo` serves a synthetic replay from a temporary store |
+| Launcher | `scripts/run_lab_app.py` | Wires the NYSE rules calendar, the recent-prices reader, the records, Model Health's summary path and a clock into the server; `--demo` serves a synthetic replay from a temporary store |
 
 **Boundaries.**
 - No module under `src/` may import the rules calendar or the inference store's reader. The
@@ -312,7 +374,8 @@ test and security reviewers:
 2. **Stock detail.**
 3. **Mac app.** The launcher starts the Lab app and the research pages, with this launch's
    key; build from the runner copy; the watchlist's shared scale; runbook steps for the owner.
-4. **History and Health.**
+4. **History and Health.** The history reader and the evening rule's own module (owner
+   decision of 2026-10-23), the two screens, their routes and tabs.
 
 ## 8. Testing
 
@@ -387,6 +450,23 @@ Calls made while building PR 2 (Stock detail), for the owner to check:
   "true" or "false". Before, More's Dark / Light buttons showed neither as chosen until one was
   pressed.
 
+Calls made while building PR 4 (History and Health), for the owner to check:
+- The missed-evening rule moved, unchanged, from `stock_lab.job` into the pure
+  `stock_lab.evenings`, which the job re-exports, so there is one copy.
+- The app's import check matches forbidden modules by whole name, so `stock_lab.evenings` is
+  not mistaken for the evening job's `stock_lab.evening`, which stays forbidden.
+- Health's headline follows Home's status line (section 10's proposal). Model Health's checks
+  are details, with the flagged count named under the headline.
+- History counts an evening "with a result" once any of its outlooks has a stored score.
+- After the frontend review: the Health badge shows only for amber and red, with a mark; the
+  timeline and the watchlist name their list role (Safari drops it when markers are hidden);
+  each technical-detail button names its stock and day and is at least 28 px; a screen that
+  answers again after a failure clears its problem (the Stock detail had the same gap).
+- For the owner: Health can show "All good" (green) with "Model Health flags 1 check" below it,
+  because the headline follows the live status line and the daily summary's checks are details.
+  The alternative is to let a flagged summary check turn the headline amber, at the cost of
+  Home and Health no longer always agreeing.
+
 ## 10. Open for later PRs
 
 - **Flat's colour in light mode (owner decision; PR 2).** The approved Flat colour (`#B9B0A4`)
@@ -420,19 +500,30 @@ Calls made while building PR 2 (Stock detail), for the owner to check:
 - **A per-launch secret: decided (owner, 2026-10-23: "yes"; built in PR 3).** See
   "This launch's key" under Security.
 
-- **Health (PR 4).** The Home status line is live, but Model Health's summary is written
-  once a day (07:30), and two Stock Lab checks (input drift, the ticker check) exist only
-  there.
-  - Proposed: Health's headline follows the same live rules as the status line, so the two
-    never disagree.
+- **Health: built in PR 4** as proposed here. The Home status line is live, but Model
+  Health's summary is written once a day (07:30), and two Stock Lab checks (input drift, the
+  ticker check) exist only there.
+  - Health's headline follows the same live rules as the status line, so the two never
+    disagree.
   - The summary's checks are shown below it as details, with the summary's time. A missing
     summary, or one more than 26 hours old, is named as such.
-  - The app keeps importing only `health.model` and `health.view`.
-- **History (PR 4).** History needs every evening's forecast, its stored score and the
-  missed evenings. Today those rules live in `briefing.report` (private helpers) and
-  `stock_lab.job` (outside the app's allowed imports).
-  - Proposed: a small public, read-only history reader in `stock_lab.briefing`, reusing
-    those rules rather than copying them.
-  - Any change to the app's import boundary goes to the owner before it is built.
+  - The app keeps importing only `health.model` and `health.view` from the health center.
+- **Model Health's summary file (security review, PR 4; low).** The reader shared with the
+  research pages (`health.model.read_summary`) has no size, owner or permission check. The file
+  lives in the owner's private folder, so this matters only if that folder's permissions were
+  loosened. Proposed: refuse a file over a few MB, or one not owned by this account or writable
+  by others, in the shared reader.
+- **The watchlist as of a time (test review, PR 4).** History, like the briefing, lists today's
+  watchlist even for an `--at` preview of an earlier time. The records themselves are read as of
+  that time.
+- **History: decided (owner, 2026-10-23: "Approve (Recommended)"; built in PR 4).** History
+  needs every evening's forecast, its stored score and the missed evenings. Those rules lived
+  in `briefing.report` (private helpers) and `stock_lab.job` (outside the app's allowed
+  imports).
+  - Approved: the missed-evening rule moves unchanged into a pure `stock_lab.evenings`
+    module, re-exported by `stock_lab.job`; a read-only `stock_lab.briefing.history` reader
+    is built on the briefing's existing as-known-at-the-time filter; both join the app's
+    import allowlist in `tests/test_app_explore.py`. Nothing writes, and no point-in-time
+    rule changes.
   - History shows the live record. A recalculation that replaced a forecast is what
     History shows, as in the research page's history table.

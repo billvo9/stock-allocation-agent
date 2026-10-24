@@ -6,8 +6,10 @@ on this Mac by `scripts/build_mac_app.py`, with macOS's own tools and the Python
 standard library only. Nothing new is installed.
 
 It opens the **Lab app**: the simple, phone-style screens
-(`docs/product/lab_app_design.md`). The detailed **research pages** (the
-earlier Streamlit Lab) run beside it, one level down: More, then Research pages.
+(`docs/product/lab_app_design.md`): Home, a screen per stock, History (each
+evening's outlook and what happened) and Health (whether the evening updates and
+the forecast record are in order). The detailed **research pages** (the earlier
+Streamlit Lab) run beside it, one level down: More, then Research pages.
 
 ## In short
 
@@ -160,8 +162,10 @@ Everything the app writes is in `~/stock-agent-private/portfolio_lab_app/`
 - The app makes no network request beyond this Mac. The launcher's only
   requests are the servers' health checks, on 127.0.0.1, and the build makes
   none. (Streamlit itself behaves as it does when started from a terminal.)
-- It never starts a fetch, a forecast or any scheduled job. It starts only the
-  two servers (`scripts/run_lab_app.py` and `scripts/run_portfolio_lab.py`). The
+- It never starts a fetch, a forecast, a health check or any scheduled job. The
+  Health screen reads Model Health's latest summary
+  (`~/stock-agent-private/health/latest.json`), as the research pages' Model
+  Health page does, and runs no check itself. It starts only the two servers (`scripts/run_lab_app.py` and `scripts/run_portfolio_lab.py`). The
   unattended evening job (`local.stock-lab.daily`) is separate; the app neither
   reads nor changes it, even when both run from the runner copy.
 - It never writes inside the project folder. The evening job refuses a checkout
@@ -204,7 +208,8 @@ the app, on their own port:
 ```
 
 - It shows this Mac's Stock Lab, read-only. It writes nothing, fetches nothing,
-  and runs no job.
+  and runs no job. `--health-summary FILE` points Health at another Model Health
+  summary.
 - It makes its own key for that run. `--open` opens the browser with it; without
   `--open`, the terminal prints the address that holds it.
 - To try it with made-up stocks first, add `--demo`. That takes about a minute
