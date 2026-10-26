@@ -39,7 +39,7 @@ def checkout(root: Path) -> Path:
     """A project folder with everything the app needs."""
 
     folder = root / "project"
-    for part in (builder.VENV_PYTHON, builder.LAUNCHER, builder.LAB_SCRIPT):
+    for part in (builder.VENV_PYTHON, builder.LAUNCHER, builder.LAB_SCRIPT, builder.LAB_APP_SCRIPT):
         (folder / part).parent.mkdir(parents=True, exist_ok=True)
         (folder / part).write_text("", encoding="utf-8")
     (folder / builder.VENV_PYTHON).chmod(0o755)
@@ -129,7 +129,8 @@ def test_the_builder_and_the_launcher_agree_on_paths():
     assert builder.PRIVATE_DIR == launcher.PRIVATE_DIR
     places = launcher.Places(REPO, launcher.PRIVATE_DIR)
     assert places.python == REPO / builder.VENV_PYTHON
-    assert places.lab_script == REPO / builder.LAB_SCRIPT
+    assert places.script(launcher.RESEARCH) == REPO / builder.LAB_SCRIPT
+    assert places.script(launcher.LAB) == REPO / builder.LAB_APP_SCRIPT
 
 
 # --- checks ---------------------------------------------------------------------------
@@ -149,6 +150,7 @@ def test_a_destination_inside_the_checkout_or_the_repository_is_refused(tmp_path
         (builder.VENV_PYTHON, "has no .venv"),
         (builder.LAUNCHER, "has no scripts/portfolio_lab_app.py"),
         (builder.LAB_SCRIPT, "has no scripts/run_portfolio_lab.py"),
+        (builder.LAB_APP_SCRIPT, "has no scripts/run_lab_app.py.*pull --ff-only"),
     ],
 )
 def test_a_checkout_missing_a_part_is_refused(tmp_path, part, reason):
@@ -156,6 +158,29 @@ def test_a_checkout_missing_a_part_is_refused(tmp_path, part, reason):
     (folder / part).unlink()
     with pytest.raises(builder.BuildRefused, match=reason):
         builder.check_checkout(folder)
+
+
+def test_the_runner_checkout_is_the_default_when_it_exists(tmp_path, monkeypatch):
+    runner = tmp_path / "stock-agent-runner"
+    monkeypatch.setattr(builder, "main_worktree", lambda start=None: tmp_path / "main")
+    assert builder.default_checkout(runner) == tmp_path / "main"  # no runner yet
+    (runner / ".git").mkdir(parents=True)
+    assert builder.default_checkout(runner) == runner
+    assert builder.RUNNER == Path.home() / "stock-agent-runner"
+
+
+@pytest.mark.parametrize(
+    ("relative", "asks"),
+    [
+        ("Desktop/OMSA/stock-allocation-agent", True),
+        ("Documents/code/lab", True),
+        ("Downloads/lab", True),
+        ("stock-agent-runner", False),
+        ("DesktopNotes/lab", False),
+    ],
+)
+def test_macos_asks_only_for_a_checkout_in_a_protected_folder(tmp_path, relative, asks):
+    assert builder.protected(tmp_path / relative, home=tmp_path) is asks
 
 
 def test_the_main_working_tree_is_found_from_a_linked_worktree(tmp_path):

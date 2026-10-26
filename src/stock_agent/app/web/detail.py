@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import datetime, tzinfo
-from urllib.parse import urljoin
+from urllib.parse import urlsplit, urlunsplit
 
 import pandas as pd
 
@@ -423,10 +423,18 @@ def _lately(symbol: str, stock: StockBriefing | None) -> dict:
 # --- for learning: the research page ---
 
 
+def research_page(research_url: str, page: str) -> str:
+    """One research page's address, keeping the link's query: this launch's research key."""
+
+    parts = urlsplit(research_url)
+    path = f"{parts.path.rstrip('/')}/{page}"
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, ""))
+
+
 def _learning(symbol: str, research_url: str | None) -> dict:
     url = None
     if research_url:
-        url = urljoin(research_url.rstrip("/") + "/", words.RESEARCH_PAGE)
+        url = research_page(research_url, words.RESEARCH_PAGE)
     return {
         "title": words.LEARNING_TITLE,
         "url": url,
