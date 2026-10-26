@@ -47,7 +47,9 @@ RESEARCH_SIDE = (
     "comparison_coverage",
 )
 # The only project code that may import the Stock Lab.
-CONSUMERS = ("stock_agent/app/", "stock_agent/stock_lab/")
+# The exploratory showcase (2026-10-26) reuses the Stock Lab's write-once store, symbol
+# classification, audit and Tiingo adapter for its own separate private store.
+CONSUMERS = ("stock_agent/app/", "stock_agent/stock_lab/", "stock_agent/showcase/")
 
 
 def _key(path: Path) -> str:
@@ -113,14 +115,15 @@ def test_page_side_modules_never_import_the_research_side():
 
 
 def test_only_the_fetch_scripts_use_the_adapter():
-    # The research fetch (pre-2025 history into the research store) and the
-    # recent-window fetch (the inference window into the inference store).
+    # The research fetch (pre-2025 history into the research store), the
+    # recent-window fetch (the inference window into the inference store) and the
+    # showcase fetch (pre-2025 history into the separate showcase store).
     users = [
         script.name
         for script in sorted((PROJECT / "scripts").glob("*.py"))
         if "stock_agent.stock_lab.tiingo" in _imports(script)
     ]
-    assert users == ["stock_lab_fetch.py", "stock_lab_fetch_recent.py"]
+    assert users == ["showcase_fetch.py", "stock_lab_fetch.py", "stock_lab_fetch_recent.py"]
 
 
 def test_importing_the_page_side_loads_no_network_or_research_module():

@@ -128,12 +128,14 @@ class SymbolReason(StrEnum):
 
     NOT_CHECKED = "not_checked"
     LISTED_US_STOCK = "listed_us_stock"
+    LISTED_US_ETF = "listed_us_etf"  # only where a caller registers ETFs (the showcase)
     EMPTY = "empty"
     INVALID_FORMAT = "invalid_format"
     NON_US_SUFFIX = "non_us_suffix"
     INDEX_OR_DERIVED = "index_or_derived"
     NOT_LISTED = "not_listed_by_provider"
     NOT_A_STOCK = "not_a_stock"
+    NOT_REGISTERED_TYPE = "asset_type_not_registered"  # not the type the caller registered
     NON_US_EXCHANGE = "non_us_exchange"
     OVER_THE_COUNTER = "over_the_counter"
     UNKNOWN_EXCHANGE = "unknown_exchange"
