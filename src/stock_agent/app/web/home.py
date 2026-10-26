@@ -25,6 +25,10 @@ The status line, first match
 Pending: from 20:00 New York on a session day (the briefing's "advance"
 state), a stock one session behind is waiting for tonight's update, until a
 run for tonight's session has finished.
+
+The Health tab's badge (`checks.tab_badge`): the status line's amber or red, or
+"!" when Model Health's latest summary flags a Stock Lab check, read with the
+Model Health page's own reader when the launcher passes one.
 """
 
 from __future__ import annotations
@@ -36,7 +40,8 @@ from datetime import date, datetime, timedelta, tzinfo
 
 import pandas as pd
 
-from stock_agent.app.web import words
+from stock_agent.app.health_summary import Loaded
+from stock_agent.app.web import checks, words
 from stock_agent.stock_lab.briefing.report import (
     FRESH,
     STALE,
@@ -72,11 +77,13 @@ def build_home(
     tickers: Sequence[str] | None = None,
     excluded: Collection[str] = (),
     names: Mapping[str, str] | None = None,
+    summary: Callable[[], Loaded] | None = None,
 ) -> dict:
     """
     Home at `now` (timezone-aware). `recent(symbol, count=, retrieved_by=)` is the
     recent-prices reader, passed in by the launcher; `calendar` is the exchange
-    calendar the briefing plans with.
+    calendar the briefing plans with; `summary()` reads Model Health's latest local
+    summary, for the Health tab's badge (None: none to read).
     """
 
     kind = DataClass(data_class).value
@@ -103,7 +110,19 @@ def build_home(
         problem=found.problem,
         names=names,
         previous_session=found.previous_session,
+        flags=_flags(summary, now),
     )
+
+
+def _flags(summary: Callable[[], Loaded] | None, now: datetime) -> int:
+    """How many Stock Lab checks Model Health's summary flags; the badge never stops Home."""
+
+    if summary is None:
+        return 0
+    try:
+        return checks.flagged(checks.stock_lab_checks(summary(), now))
+    except Exception:  # noqa: BLE001 - a summary the reader can't handle flags nothing
+        return 0
 
 
 @dataclass(frozen=True)
@@ -178,12 +197,14 @@ def home_view(
     problem: str | None = None,
     names: Mapping[str, str] | None = None,
     previous_session: str | None = None,
+    flags: int = 0,
 ) -> dict:
     """
     The Home view from a prepared briefing (None when it could not be prepared).
     `names` are the stocks' display names (default: the watchlist's company names);
     `previous_session` is the session before the briefing's prior session (it names
-    last night's evening while tonight's update is still open).
+    last night's evening while tonight's update is still open); `flags` is how many
+    Stock Lab checks Model Health's summary flags.
     """
 
     names = words.NAMES if names is None else names
@@ -212,12 +233,14 @@ def home_view(
         for s in by_symbol.values()
         if s.status == FRESH and s.lineage is not None
     ]
+    status = status_line(briefing, problem, now, local_zone, previous_session)
     return {
         "schema": SCHEMA,
         "version": VERSION,
         "data_class": data_class,
         "generated_at": pd.Timestamp(now).tz_convert("UTC").isoformat(),
-        "status": status_line(briefing, problem, now, local_zone, previous_session),
+        "status": status,
+        "badge": checks.tab_badge(status["level"], flags),
         "prices_note": words.prices_note(max(sessions)) if sessions else None,
         "lines_note": (
             None if not sessions else words.SHARED_LINES_NOTE if shared else words.LINES_NOTE
@@ -304,7 +327,7 @@ def _line(level: str, text: str, details: list[str]) -> dict:
         "words": text,
         "title": words.UPDATES_TITLE,
         "details": details,
-        "badge": words.HEALTH_BADGES[level],  # the Health tab's badge, in words
+        "badge": words.HEALTH_BADGES[level],  # kept for a page loaded before the `badge` object
     }
 
 

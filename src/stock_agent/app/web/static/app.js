@@ -631,7 +631,7 @@
         h("h1", null, data.title),
         h("p", null, data.line),
         data.aside ? h("p", { class: "aside" }, data.aside) : null,
-        data.flagged ? h("p", { class: "flagged" }, data.flagged) : null,
+        data.flagged ? h("p", { class: "flagged" }, h("span", { class: "flag-mark", "aria-hidden": "true" }, "!"), data.flagged) : null,
         h("p", { class: "asof" }, data.checked),
         toggle),
       details,
@@ -736,15 +736,14 @@
       if (tab.dataset.tab === state.tab) tab.setAttribute("aria-current", "page");
       else tab.removeAttribute("aria-current");
     }
-    // Health's headline is Home's status line (the same rules), so Home's status marks the tab:
-    // only when it needs a look or something is wrong, with a shape as well as a colour.
-    const status = state.home && state.home.status;
-    const level = status && (status.level === "warn" || status.level === "bad") ? status.level : null;
+    // The Health tab's badge, as the server sends it: amber or red with Home's status line, or
+    // "!" when Model Health flags a check. A mark as well as a colour, and nothing otherwise.
+    const shown = badgeNow();
     const badge = document.getElementById("health-badge");
-    badge.hidden = !level;
-    badge.className = level ? `badge ${level}` : "badge";
-    badge.textContent = level ? MARK[level] : "";
-    if (level) badge.setAttribute("aria-label", status.badge);
+    badge.hidden = !shown;
+    badge.className = shown && (shown.level === "warn" || shown.level === "bad") ? `badge ${shown.level}` : "badge";
+    badge.textContent = shown ? shown.mark : "";
+    if (shown) badge.setAttribute("aria-label", shown.words);
     else badge.removeAttribute("aria-label");
     const demo = (state.home && state.home.demo) || (state.detail && state.detail.demo);
     const ribbon = document.getElementById("ribbon");
@@ -766,6 +765,15 @@
       && d.updates && Array.isArray(d.updates.lines) && d.checks && Array.isArray(d.checks.items)
       && Array.isArray(d.toggle),
   };
+
+  // The newest answer's badge: Home's, or Health's when Health answered later (both come from
+  // the same rule), so the tab never lags the Health screen it marks.
+  function badgeNow() {
+    const home = state.home, health = state.health;
+    if (health && health.badge !== undefined
+        && (!home || Date.parse(health.generated_at) > Date.parse(home.generated_at))) return health.badge;
+    return home ? home.badge : null;
+  }
 
   function usableDetail(data, ticker) {
     return data && data.schema === "lab_app_stock" && data.version === 1 && data.ticker === ticker

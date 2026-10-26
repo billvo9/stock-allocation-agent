@@ -336,6 +336,11 @@ h1.screen { font-size: 30px; line-height: 1.15; font-weight: 700; margin: 22px 0
 .hero p { color: var(--muted); max-width: 40ch; margin: 8px 0 0; }
 .hero .aside { color: var(--subtle); font-size: 14px; }
 .hero .flagged { color: var(--text); font-weight: 650; font-size: 14.5px; }
+/* The tab badge's "!", beside the line it points at. */
+.hero .flag-mark {
+  display: inline-grid; place-items: center; width: 16px; height: 16px; margin-right: 6px; border-radius: 8px;
+  vertical-align: -2px; font-size: 11px; font-weight: 800; line-height: 1; color: var(--bg); background: var(--warn);
+}
 .disclose {
   margin: 18px auto 0; display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line);
   background: var(--surface); border-radius: var(--r-pill); padding: 9px 16px; cursor: pointer; font-weight: 650;

@@ -163,13 +163,15 @@ def sections(summary: HealthSummary) -> tuple[Section, ...]:
 
 
 def load_summary(path: Path | None, *, now: datetime) -> Loaded:
-    if path is None or not path.exists():
+    if path is None:
         return Loaded(path)
     try:
+        if not path.exists():  # a folder this account may not open raises here
+            return Loaded(path)
         summary = read_summary(path)
     except SummaryRefused as error:
         return Loaded(path, refused_reason=error.reason.value, refused_detail=error.detail)
-    except OSError as error:  # a permission or I/O error: shown as refused, never a crash
+    except (OSError, RecursionError, ValueError) as error:  # unreadable: refused, never a crash
         return Loaded(path, refused_reason="unreadable", refused_detail=type(error).__name__)
     return Loaded(
         path,
