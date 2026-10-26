@@ -530,6 +530,62 @@ document.querySelectorAll('.figure').forEach(function (figure) {
 """
 
 
+OFFSET_NOTE = (
+    "Which day a rule rebalances on is a choice. Each rebalancing rule was also run on every "
+    "possible rebalancing day of its cycle (5 for weekly, 21 for monthly, 63 for quarterly), at "
+    "1x costs, with the same start. The registered day (offset 0) is the headline above. The "
+    "spread is the gap between the highest and the lowest total return across those days: how "
+    "much of a result is the luck of the day. The days are one variant with a sensitivity "
+    "family, not separate trials, and no day was chosen afterwards."
+)
+
+
+def _families(universe: Mapping) -> list[Mapping]:
+    return [
+        s
+        for s in universe["strategies"]
+        if s.get("offset_family") and s["offset_family"].get("applies")
+    ]
+
+
+def _spread_points(measure: Mapping) -> str:
+    if measure["spread"] is None:
+        return "unavailable"
+    return f"{measure['spread'] * 100:,.1f} percentage points"
+
+
+def _offsets_table(universe: Mapping) -> str:
+    families = _families(universe)
+    if not families:
+        return ""
+    rows = []
+    for s in families:
+        family = s["offset_family"]
+        total = family["total_return"]
+        stopped = family["stopped_offsets"]
+        note = (
+            f'<div class="sub">{_e(f"{stopped} days stopped early, so no spread")}</div>'
+            if stopped
+            else ""
+        )
+        rows.append(
+            f'<tr><th scope="row">{_e(s["label"])}{note}</th>'
+            f'<td class="num">{family["k"]}</td>'
+            f'<td class="num">{_e(pct(total["registered"]))}</td>'
+            f'<td class="num">{_e(_spread_points(total))}</td></tr>'
+        )
+    return (
+        "<details open><summary>Rebalancing-day sensitivity</summary>"
+        f'<p class="note">{_e(OFFSET_NOTE)}</p><div class="table-wrap"><table>'
+        "<caption>Total return across every rebalancing day, at 1x costs. Buy and hold never "
+        "rebalances, so the day changes nothing for it.</caption>"
+        '<thead><tr><th scope="col">Rule</th><th scope="col" class="num">Rebalancing days (k)</th>'
+        '<th scope="col" class="num">Registered day: total return</th>'
+        '<th scope="col" class="num">Spread across the days</th>'
+        f"</tr></thead><tbody>{''.join(rows)}</tbody></table></div></details>"
+    )
+
+
 def _universe_section(universe: Mapping) -> str:
     chips = "".join(
         f"<li><b>{_e(m['ticker'])}</b> {_e(m['sector'])}</li>" for m in universe["members"]
@@ -537,9 +593,15 @@ def _universe_section(universe: Mapping) -> str:
     return (
         f'<section id="{_e(universe["key"])}"><h2>{_e(universe["label"])}</h2>'
         f'<p>{_e(universe["selection"])}</p><ul class="chips">{chips}</ul>'
-        f"{growth_chart(universe)}{_results_table(universe)}{_calendar_table(universe)}"
+        f"{growth_chart(universe)}{_results_table(universe)}{_offsets_table(universe)}"
+        f"{_calendar_table(universe)}"
         f"{_components_table(universe)}</section>"
     )
+
+
+def _family_runs(results: Mapping) -> str:
+    runs = results.get("offset_family_simulations")
+    return f", and {runs:,} more on the other rebalancing days at 1x" if runs else ""
 
 
 def render_html(results: Mapping, *, logo_svg: str = "", font_dir: str | None = None) -> str:
@@ -570,9 +632,9 @@ def render_html(results: Mapping, *, logo_svg: str = "", font_dir: str | None = 
 <div><dt>Variants run</dt><dd>{results["variants_run"]} ({len(universes)} lists × {
         len(universes[0]["strategies"]) if universes else 0
     } rules), none chosen afterwards</dd></div>
-<div><dt>Simulations</dt><dd>{
-        results["simulations_run"]
-    } (each variant at 0x, 1x and 2x costs)</dd></div>
+<div><dt>Simulations</dt><dd>{results["simulations_run"]} (each variant at 0x, 1x and 2x costs){
+        _family_runs(results)
+    }</dd></div>
 <div><dt>Window</dt><dd>{_e(results["window"]["start"])} to {
         _e(results["window"]["end"])
     }</dd></div>
@@ -626,7 +688,8 @@ def render_markdown(results: Mapping) -> str:
         "",
         (
             f"Variants run: {results['variants_run']}, none chosen afterwards. Simulations: "
-            f"{results['simulations_run']} (each variant at 0x, 1x and 2x costs). Window: "
+            f"{results['simulations_run']} (each variant at 0x, 1x and 2x costs)"
+            f"{_family_runs(results)}. Window: "
             f"{results['window']['start']} to {results['window']['end']}. Starting amount: "
             f"{money(results['initial_wealth'])}."
         ),
@@ -667,6 +730,30 @@ def render_markdown(results: Mapping) -> str:
                 f"| {_turnover_text(s['turnover'])} | {money(s['costs']['paid_dollars'])} "
                 f"| {money(sens['0x']['final_wealth'])} | {money(sens['2x']['final_wealth'])} |"
             )
+        families = _families(universe)
+        if families:
+            lines += [
+                "",
+                (
+                    f"Rebalancing-day sensitivity. {OFFSET_NOTE} Buy and hold never rebalances, so "
+                    "the day changes nothing for it."
+                ),
+                "",
+                (
+                    "| Rule | Rebalancing days (k) | Registered day: total return | "
+                    "Spread across the days |"
+                ),
+                "|---|---:|---:|---:|",
+            ]
+            for s in families:
+                family = s["offset_family"]
+                total = family["total_return"]
+                stopped = family["stopped_offsets"]
+                label = s["label"] + (f" ({stopped} days stopped early)" if stopped else "")
+                lines.append(
+                    f"| {label} | {family['k']} | {pct(total['registered'])} "
+                    f"| {_spread_points(total)} |"
+                )
         strategies = universe["strategies"]
         years = sorted({row["year"] for s in strategies for row in s["calendar_years"]})
         by = {s["key"]: {r["year"]: r for r in s["calendar_years"]} for s in strategies}

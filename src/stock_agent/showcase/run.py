@@ -27,7 +27,11 @@ Measures (approved only; group C and D are not):
   wealth, the summed per-execution cost in basis points, and the final wealth
   at 0x, 1x and 2x the rates;
 - each holding's own growth of $10,000 over the same span (F5.4: no cost),
-  its total return and maximum drawdown, as context.
+  its total return and maximum drawdown, as context;
+- with a registered `offset_family` (F7.2, T5a D7): each rebalancing rule at
+  all k offsets of its cadence at 1x costs, reported as the registered
+  offset's total return and the max - min spread across the k offsets. One variant with a k-member family: `variants_run` does
+  not count the offsets, and the registered offset alone is the headline.
 
 Every variant is computed and reported in registered order; nothing is
 ranked or selected. A variant that cannot run as registered refuses the whole
@@ -58,9 +62,10 @@ from stock_agent.portfolio.engine import (
     COMPLETE,
     SimulationResult,
     collect_targets,
+    simulate,
     simulate_cost_sensitivity,
 )
-from stock_agent.portfolio.schedule import ScheduleSpec
+from stock_agent.portfolio.schedule import ScheduleSpec, offset_family
 from stock_agent.portfolio.transition import CASH_ACCOUNT, Constraints, CostModel
 from stock_agent.rl.policies import PolicyInputError
 from stock_agent.showcase.config import ShowcaseConfig, Strategy, Universe
@@ -240,26 +245,104 @@ def _stop_detail(table: ReturnTable, result: SimulationResult) -> dict[str, str]
     return {"session": _stamp(table.sessions[stop]), "reasons": detail}
 
 
+def _targets(config: ShowcaseConfig, table: ReturnTable, strategy: Strategy, offset: int):
+    schedule = ScheduleSpec(
+        every=strategy.every,
+        offset=offset,
+        lag=config.execution_lag,
+        first_decision=config.first_decision,
+    )
+    policy = make_policy(
+        strategy.rule, len(table.assets), table.cash_index, window=config.inverse_volatility_window
+    )
+    try:
+        return schedule, collect_targets(policy, table.returns, schedule)
+    except PolicyInputError as error:
+        raise ShowcaseRunRefused(f"{strategy.key}: the rule cannot decide ({error})") from None
+
+
+def _check_build(config: ShowcaseConfig, table: ReturnTable, strategy: Strategy, result) -> None:
+    # D3: the build executes at the registered close. A deferred build would sit in the
+    # funding leg until it executes, and that leg's return is not approved.
+    planned = config.first_decision + config.execution_lag
+    if not result.trades or result.trades[0].session != planned:
+        raise ShowcaseRunRefused(
+            f"{strategy.key}: the build could not execute at the registered close "
+            f"{_stamp(table.sessions[planned])} (a holding has no close there)"
+        )
+
+
+def _spread(values: list[float | None], registered: float | None) -> dict[str, object]:
+    """F7.2's report: the registered offset's value and the max - min spread (no min or max)."""
+
+    known = [v for v in values if v is not None]
+    return {
+        "registered": registered,
+        "spread": max(known) - min(known) if len(known) == len(values) and known else None,
+    }
+
+
+def _offset_family(
+    config: ShowcaseConfig,
+    table: ReturnTable,
+    strategy: Strategy,
+    costs: CostModel,
+    schedule: ScheduleSpec,
+    headline: SimulationResult,
+) -> dict[str, object] | None:
+    """
+    F7.2: the rule at every one of its k offsets, at the headline (1x) costs: the
+    registered offset's total return and the max - min spread of the total
+    return across the k offsets, nothing more (which offset was highest or
+    lowest is never recorded). One variant with a k-member sensitivity family;
+    no per-offset interval, and the family never chooses the headline (the
+    registered offset's run is the headline run itself). The spread is
+    unavailable when any offset stopped early.
+    """
+
+    if not config.offset_family:
+        return None
+    if strategy.rule == "buy_and_hold":
+        return {"applies": False, "k": strategy.every, "reason": "no_rebalances_after_the_build"}
+    returns, stopped = [], 0
+    registered = None
+    for spec in offset_family(schedule):
+        if spec.offset == schedule.offset:
+            result = headline
+        else:
+            _, targets = _targets(config, table, strategy, spec.offset)
+            result = simulate(
+                table.returns,
+                targets,
+                lag=config.execution_lag,
+                cost_rate=costs.rates_for(table.assets),
+                constraints=Constraints(cash_index=table.cash_index),
+                initial_wealth=config.initial_wealth,
+                has_close=table.has_close,
+            )
+            _check_build(config, table, strategy, result)
+        complete = result.status == COMPLETE
+        stopped += not complete
+        total = result.final_wealth / config.initial_wealth - 1.0 if complete else None
+        returns.append(total)
+        if spec.offset == schedule.offset:
+            registered = total
+    return {
+        "applies": True,
+        "k": strategy.every,
+        "registered_offset": schedule.offset,
+        "total_return": _spread(returns, registered),
+        "stopped_offsets": stopped,
+    }
+
+
 def run_strategy(
     config: ShowcaseConfig, data: UniverseData, strategy: Strategy
 ) -> dict[str, object]:
     """One registered variant: its simulations at 0x, 1x and 2x, and its measures."""
 
     table = data.table
-    n_assets = len(table.assets)
-    schedule = ScheduleSpec(
-        every=strategy.every,
-        offset=config.offset,
-        lag=config.execution_lag,
-        first_decision=config.first_decision,
-    )
-    policy = make_policy(
-        strategy.rule, n_assets, table.cash_index, window=config.inverse_volatility_window
-    )
-    try:
-        targets = collect_targets(policy, table.returns, schedule)
-    except PolicyInputError as error:
-        raise ShowcaseRunRefused(f"{strategy.key}: the rule cannot decide ({error})") from None
+    schedule, targets = _targets(config, table, strategy, config.offset)
     classes = {**config.asset_classes(), FUNDING_LEG: CASH_ACCOUNT}
     costs = CostModel.provisional({asset: classes[asset] for asset in table.assets})
     results = simulate_cost_sensitivity(
@@ -272,15 +355,8 @@ def run_strategy(
         initial_wealth=config.initial_wealth,
         has_close=table.has_close,
     )
-    planned = config.first_decision + config.execution_lag
     for result in results.values():
-        # D3: the build executes at the registered close. A deferred build would sit in the
-        # funding leg until it executes, and that leg's return is not approved.
-        if not result.trades or result.trades[0].session != planned:
-            raise ShowcaseRunRefused(
-                f"{strategy.key}: the build could not execute at the registered close "
-                f"{_stamp(table.sessions[planned])} (a holding has no close there)"
-            )
+        _check_build(config, table, strategy, result)
     headline = results[HEADLINE]
     growth = _wealth_series(table, headline)
     # A stopped run has no total return over the window: its last value is not the window's end.
@@ -310,6 +386,7 @@ def run_strategy(
         "calendar_years": _calendar_years(growth, year_end_sessions(table.sessions)),
         "cost_sensitivity": sensitivity,
         **_activity(headline, config.initial_wealth),
+        "offset_family": _offset_family(config, table, strategy, costs, schedule, headline),
         "dates": [_stamp(day) for day in growth.index],
         "wealth": [None if not math.isfinite(v) else round(float(v), 2) for v in growth],
         "complete": headline.status == COMPLETE,
@@ -390,6 +467,13 @@ def run_showcase(
         "config": {"name": config.name, "sha256": config.sha256()},
         "window": {"start": config.start.isoformat(), "end": config.end.isoformat()},
         "variants_run": len(config.variants()),
+        "offset_family": config.offset_family,
+        "offset_family_simulations": sum(
+            s["offset_family"]["k"] - 1
+            for u in universes
+            for s in u["strategies"]
+            if s["offset_family"] and s["offset_family"]["applies"]
+        ),
         "simulations_run": len(config.variants()) * len(config.cost_multipliers),
         "cost_multipliers": list(config.cost_multipliers),
         "cost_classes": dict(config.cost_classes),

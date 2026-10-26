@@ -9,6 +9,7 @@ import pytest
 from showcase_fixtures import config, default_frames, loader, sessions_2024
 
 from stock_agent.showcase.report import (
+    OFFSET_NOTE,
     WHAT_IT_DOES_NOT,
     WHAT_IT_SHOWS,
     _log_ticks,
@@ -111,3 +112,18 @@ def test_a_chart_breaks_at_a_gap_instead_of_bridging_it(results):
     chart = page[page.index('data-chart="funds"') :]
     path = re.search(r'<path class="line rule-buy_and_hold" d="([^"]+)"', chart).group(1)
     assert path.count("M") == 2  # two runs: before and after the gap
+
+
+def test_the_rebalancing_day_table_appears_only_with_a_registered_family(results):
+    family = run_showcase(
+        config(offset_family=True),
+        loader(default_frames(SESSIONS)),
+        sessions=SESSIONS,
+        code_sha="a" * 40,
+    )
+    page, markdown = render_html(family), render_markdown(family)
+    assert "Rebalancing-day sensitivity" in page and OFFSET_NOTE in markdown
+    assert "Rebalancing days (k)" in page and "percentage points" in page
+    assert "more on the other rebalancing days at 1x" in page
+    assert check_wording(page + markdown) == []
+    assert "Rebalancing-day sensitivity" not in render_html(results)

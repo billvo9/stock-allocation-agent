@@ -359,3 +359,129 @@ def test_a_mid_run_gap_leaves_wealth_unavailable_and_the_drawdown_labelled_incom
     chart = page[page.index('data-chart="funds"') :]
     path = re.search(r'<path class="line rule-buy_and_hold" d="([^"]+)"', chart).group(1)
     assert path.count("M") == 2  # the line breaks at the gap instead of bridging it
+
+
+# --- F7.2: the rebalance-offset sensitivity family ---
+
+
+@pytest.fixture(scope="module")
+def with_family():
+    frames = default_frames(SESSIONS)
+    return _results(frames, offset_family=True), _results(frames)
+
+
+def test_the_offset_family_never_changes_or_chooses_the_headline(with_family):
+    family, plain = with_family
+    assert family["variants_run"] == plain["variants_run"] == 10  # offsets are not variants
+    for a, b in zip(family["universes"], plain["universes"], strict=True):
+        for x, y in zip(a["strategies"], b["strategies"], strict=True):
+            assert {k: v for k, v in x.items() if k != "offset_family"} == {
+                k: v for k, v in y.items() if k != "offset_family"
+            }  # every headline measure, not only the wealth path
+            assert y["offset_family"] is None
+            if x["rule"] == "buy_and_hold":
+                assert x["offset_family"] == {
+                    "applies": False,
+                    "k": 21,
+                    "reason": "no_rebalances_after_the_build",
+                }
+                continue
+            fam = x["offset_family"]
+            assert fam["applies"] and fam["k"] == x["every"] and fam["registered_offset"] == 0
+            assert set(fam) == {
+                "applies",
+                "k",
+                "registered_offset",
+                "total_return",
+                "stopped_offsets",
+            }
+            total = fam["total_return"]
+            assert set(total) == {"registered", "spread"}  # F7.2: no min, max or best day
+            assert total["registered"] == x["total_return"] and total["spread"] >= 0
+            assert fam["stopped_offsets"] == 0
+
+
+def test_every_offset_is_run_and_the_days_change_the_result(with_family):
+    family, _ = with_family
+    assert family["offset_family"] is True
+    assert family["offset_family_simulations"] == 2 * (4 + 20 + 62 + 20)  # k - 1 per rule
+    weekly = _strategy(_universe(family, "funds"), "equal_weight_weekly")
+    assert weekly["offset_family"]["total_return"]["spread"] > 0
+
+
+def test_an_offset_runs_the_registered_schedule_shifted_by_its_phase():
+    cfg = config(offset_family=True)
+    data = universe_data(cfg.universe("funds"), SESSIONS, loader(default_frames(SESSIONS)))
+    strategy = cfg.strategies[2]  # equal weight, monthly
+    _, registered = showcase_run._targets(cfg, data.table, strategy, 0)
+    _, shifted = showcase_run._targets(cfg, data.table, strategy, 7)
+    assert min(registered) == min(shifted) == 20  # the common build decision (D3)
+    assert sorted(registered)[1:3] == [41, 62] and sorted(shifted)[1:3] == [27, 48]
+
+
+def test_the_spread_is_unavailable_when_any_offset_stopped():
+    assert showcase_run._spread([0.1, None, 0.3], 0.1) == {"registered": 0.1, "spread": None}
+    assert showcase_run._spread([0.1, 0.4, 0.3], 0.1)["spread"] == pytest.approx(0.3)
+
+
+def _offset_wealth(cfg, data, strategy, offset):
+    from stock_agent.portfolio.engine import simulate
+    from stock_agent.portfolio.transition import CASH_ACCOUNT, Constraints, CostModel
+
+    classes = {**cfg.asset_classes(), FUNDING_LEG: CASH_ACCOUNT}
+    costs = CostModel.provisional({asset: classes[asset] for asset in data.table.assets})
+    _, targets = showcase_run._targets(cfg, data.table, strategy, offset)
+    return simulate(
+        data.table.returns,
+        targets,
+        lag=1,
+        cost_rate=costs.rates_for(data.table.assets),
+        constraints=Constraints(cash_index=data.table.cash_index),
+        initial_wealth=10000.0,
+        has_close=data.table.has_close,
+    ).final_wealth
+
+
+def test_the_spread_matches_an_independent_replay_of_every_offset(with_family):
+    family, _ = with_family
+    cfg = config(offset_family=True)
+    data = universe_data(cfg.universe("funds"), SESSIONS, loader(default_frames(SESSIONS)))
+    strategy = cfg.strategies[1]  # equal weight, weekly: k = 5
+    totals = [_offset_wealth(cfg, data, strategy, o) / 10000 - 1 for o in range(5)]
+    reported = _strategy(_universe(family, "funds"), strategy.key)["offset_family"]
+    assert reported["total_return"]["spread"] == pytest.approx(max(totals) - min(totals), abs=1e-12)
+    assert reported["total_return"]["registered"] == pytest.approx(totals[0], abs=1e-12)
+
+
+def test_buy_and_hold_is_the_same_at_every_offset_which_is_why_it_has_no_family():
+    cfg = config(offset_family=True)
+    data = universe_data(cfg.universe("funds"), SESSIONS, loader(default_frames(SESSIONS)))
+    hold = cfg.strategies[0]
+    finals = {_offset_wealth(cfg, data, hold, o) for o in (0, 3, 11, 20)}
+    assert len(finals) == 1
+
+
+def test_every_non_registered_offset_is_actually_simulated(monkeypatch):
+    calls = []
+    real = showcase_run.simulate
+
+    def counting(returns, targets, **kwargs):
+        calls.append(min(d for d in targets if d > 20))  # the first rebalance decision
+        return real(returns, targets, **kwargs)
+
+    monkeypatch.setattr(showcase_run, "simulate", counting)
+    results = _results(offset_family=True)
+    assert len(calls) == results["offset_family_simulations"] == 2 * (4 + 20 + 62 + 20)
+    weekly = sorted(calls[:4])  # the first universe's weekly rule: offsets 1..4
+    assert weekly == [21, 22, 23, 24]
+
+
+def test_a_family_whose_offsets_stop_reports_no_spread():
+    frames = default_frames(SESSIONS)
+    closes = noisy(SESSIONS, 7, 0.01)
+    closes[150:] /= 2
+    frames["XAA"] = bars(SESSIONS, closes, div={150: 0.2}, split={150: 2.0})
+    universe = _universe(_results(frames, offset_family=True), "funds")
+    weekly = _strategy(universe, "equal_weight_weekly")["offset_family"]
+    assert weekly["stopped_offsets"] == 5 and weekly["total_return"]["spread"] is None
+    assert weekly["total_return"]["registered"] is None

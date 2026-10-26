@@ -16,6 +16,11 @@ weaken them:
 - tickers are US tickers in the provider's form, each with one kind (`etf` or
   `stock`), and there are at most `MAX_TICKERS` of them, one fetch run's scope.
 
+`offset_family` (optional, default false) registers F7.2's rebalance-offset
+sensitivity: every rebalancing rule is also run at all k offsets of its
+cadence. The k runs are one variant with a k-member sensitivity family, never
+k variants, and the registered `offset` alone gives the headline.
+
 `variants()` lists every (universe, strategy) pair in registered order: the
 number of variants run, recorded with the results. Every variant is
 reported; none is chosen afterwards. `sha256()` identifies the configuration
@@ -66,6 +71,7 @@ TOP_LEVEL = {
     "strategies",
     "universes",
 }
+OPTIONAL = {"offset_family"}
 
 
 class ConfigRefused(ValueError):
@@ -115,6 +121,7 @@ class ShowcaseConfig:
     strategies: tuple[Strategy, ...]
     universes: tuple[Universe, ...]
     record: dict
+    offset_family: bool = False
 
     def tickers(self) -> tuple[str, ...]:
         """Every ticker of every universe, once, in registered order."""
@@ -180,7 +187,10 @@ def _keys(record: dict, allowed: set[str], where: str) -> None:
 def config_from_dict(record: dict) -> ShowcaseConfig:
     """The validated configuration (module docstring), or `ConfigRefused`."""
 
-    _keys(record, TOP_LEVEL, "the configuration")
+    _keys({k: v for k, v in record.items() if k not in OPTIONAL}, TOP_LEVEL, "the configuration")
+    offset_family = record.get("offset_family", False)
+    if not isinstance(offset_family, bool):
+        raise ConfigRefused("offset_family must be true or false")
     if record["schema_version"] != SCHEMA_VERSION:
         raise ConfigRefused(f"unsupported schema_version {record['schema_version']!r}")
     if record["protocol"] != PROTOCOL:
@@ -300,6 +310,7 @@ def config_from_dict(record: dict) -> ShowcaseConfig:
         strategies=tuple(strategies),
         universes=tuple(universes),
         record=record,
+        offset_family=offset_family,
     )
 
 
