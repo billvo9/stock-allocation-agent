@@ -694,7 +694,10 @@ HEALTH_MODULES = ("stock_agent.health.model", "stock_agent.health.view")
 # frozen-model reader. The Premarket Briefing page reads the briefings already
 # written through the read-only `briefing.stored` (with the report, reliability,
 # timing and render modules it needs to read and word them), never the
-# preview writer and delivery log (`briefing.delivery`).
+# preview writer and delivery log (`briefing.delivery`). The Lab app's History
+# reads the forecast history through the read-only `briefing.history`, with the
+# evening job's missed-evening rule from the pure `evenings` (owner decision of
+# 2026-10-23), never the job itself.
 STOCK_LAB_MODULES = tuple(
     f"stock_agent.stock_lab.{name}"
     for name in (
@@ -720,6 +723,8 @@ STOCK_LAB_MODULES = tuple(
         "briefing.reliability",
         "briefing.timing",
         "briefing.render",
+        "briefing.history",
+        "evenings",
     )
 )
 APP_PROJECT_PREFIXES = (
@@ -759,6 +764,7 @@ FORBIDDEN = (
     "stock_agent.model_diagnostics",
     "stock_agent.model_validation",
     "stock_agent.data",
+    "stock_agent.database",  # named whole: "stock_agent.data" no longer reaches it as a prefix
     "stock_agent.features",
     "stock_agent.publication.writer",
     "sklearn",
@@ -766,6 +772,20 @@ FORBIDDEN = (
     "yfinance",
     "edgar",
 )
+
+
+def forbidden(module: str) -> bool:
+    """A FORBIDDEN module or one inside it (`stock_lab.evenings` is not `stock_lab.evening`)."""
+
+    return any(module == name or module.startswith(name + ".") for name in FORBIDDEN)
+
+
+def test_forbidden_names_whole_modules():
+    assert forbidden("stock_agent.stock_lab.evening")
+    assert forbidden("stock_agent.stock_lab.inference.store")
+    assert forbidden("stock_agent.data.prospective.window")
+    assert forbidden("stock_agent.database")
+    assert not forbidden("stock_agent.stock_lab.evenings")
 
 
 def _imports(path: Path) -> set[str]:
@@ -820,7 +840,7 @@ def test_rendering_the_app_loads_no_forbidden_module():
         "    app.switch_page(page).run()\n"
         "    assert not app.exception, (page, [e.value for e in app.exception])"
     )
-    assert not sorted(m for m in loaded if m.startswith(FORBIDDEN))
+    assert not sorted(m for m in loaded if forbidden(m))
     project = sorted(m for m in loaded if m.startswith("stock_agent"))
     outside = [
         m
@@ -842,6 +862,29 @@ def test_rendering_the_app_loads_no_forbidden_module():
     assert {*HEALTH_MODULES, "stock_agent.app.health_summary"} <= loaded
     assert {"stock_agent.stock_lab.store", "stock_agent.stock_lab.view"} <= loaded
     assert "stock_agent.stock_lab.briefing.stored" in loaded
+
+
+def test_the_lab_apps_screens_load_no_forbidden_module():
+    # The Lab app's views (app/web) keep to the same boundary as the research pages.
+    loaded = _loaded_after(
+        "import stock_agent.app.web.server, stock_agent.app.web.home, "
+        "stock_agent.app.web.detail, stock_agent.app.web.history, stock_agent.app.web.health"
+    )
+    assert not sorted(m for m in loaded if forbidden(m))
+    project = sorted(m for m in loaded if m.startswith("stock_agent"))
+    outside = [
+        m
+        for m in project
+        if m not in APP_PROJECT_PACKAGES and not m.startswith(APP_PROJECT_PREFIXES)
+    ]
+    assert not outside, outside
+    assert {
+        "stock_agent.stock_lab.briefing.history",
+        "stock_agent.stock_lab.evenings",
+        "stock_agent.app.health_summary",
+        *HEALTH_MODULES,
+    } <= loaded
+    assert "stock_agent.stock_lab.job" not in loaded
 
 
 @pytest.mark.parametrize(
