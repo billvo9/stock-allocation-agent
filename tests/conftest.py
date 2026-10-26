@@ -79,6 +79,20 @@ def _hermetic_comparison_reports(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _hermetic_showcase(tmp_path_factory):
+    """
+    No test reads or writes the owner's private showcase store or reports: both
+    default locations point into a temporary directory.
+    """
+
+    with pytest.MonkeyPatch.context() as patch:
+        home = tmp_path_factory.mktemp("no-showcase")
+        patch.setenv("STOCK_AGENT_SHOWCASE_HOME", str(home / "store"))
+        patch.setenv("STOCK_AGENT_SHOWCASE_REPORTS", str(home / "reports"))
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _hermetic_stock_lab_store(tmp_path_factory):
     """
     No test reads or writes the owner's private Stock Lab store: the Lab's

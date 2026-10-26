@@ -40,6 +40,11 @@ Classification against a listing (`classify`)
        ended; it cannot say which).
 
     A row with no last date is treated as having no price history.
+
+    Rule 2's asset type is a stock unless the caller registers another type
+    (`asset_types`, for example ETF for the exploratory showcase's sector
+    funds). The other rules are the same for every type, and a ticker the
+    provider lists under any other type is still refused.
 """
 
 from __future__ import annotations
@@ -72,6 +77,7 @@ US_EXCHANGES = frozenset(
 OTC_EXCHANGES = frozenset({"OTC", "OTCBB", "OTCMKTS", "OTCQX", "OTCQB", "PINK", "OTCPINK"})
 NON_US_EXCHANGES = frozenset({"SHE", "SHG", "LSE", "TSX", "HKSE", "ASX", "XETRA", "EURONEXT"})
 STOCK_ASSET_TYPES = frozenset({"STOCK"})
+ETF_ASSET_TYPES = frozenset({"ETF"})
 DEFAULT_DELISTED_AFTER = 20  # sessions after the cutoff before "delisted or renamed"
 
 _SEPARATORS = re.compile(r"[\s,;]+")
@@ -181,10 +187,17 @@ class Classification:
     row: ListingRow | None = None  # the row that decided, when one did
 
 
-def _ineligible(row: ListingRow) -> tuple[SymbolReason, str] | None:
+def _ineligible(
+    row: ListingRow, asset_types: frozenset[str] = STOCK_ASSET_TYPES
+) -> tuple[SymbolReason, str] | None:
     exchange = row.exchange.strip().upper()
-    if row.asset_type.strip().upper() not in STOCK_ASSET_TYPES:
-        return SymbolReason.NOT_A_STOCK, f"The provider lists it as {row.asset_type or 'unknown'}."
+    if row.asset_type.strip().upper() not in asset_types:
+        reason = (
+            SymbolReason.NOT_A_STOCK
+            if asset_types == STOCK_ASSET_TYPES
+            else SymbolReason.NOT_REGISTERED_TYPE
+        )
+        return reason, f"The provider lists it as {row.asset_type or 'unknown'}."
     if exchange in OTC_EXCHANGES:
         return SymbolReason.OVER_THE_COUNTER, f"It trades over the counter ({row.exchange})."
     if exchange in NON_US_EXCHANGES:
@@ -211,12 +224,19 @@ def classify(
     recent_cutoff: date,
     sessions_since: Callable[[date], int],
     delisted_after: int = DEFAULT_DELISTED_AFTER,
+    asset_types: frozenset[str] = STOCK_ASSET_TYPES,
 ) -> Classification:
     """
     The status of `ticker` against listing `rows` (rules in the module
     docstring). `recent_cutoff` is the last session a current listing must
     reach; `sessions_since(day)` counts sessions after `day` up to the cutoff.
+    `asset_types` are the provider's asset types that are eligible (upper
+    case): a stock unless the caller registers another.
     """
+
+    asset_types = frozenset(asset_types)
+    if not asset_types or any(kind != kind.strip().upper() for kind in asset_types):
+        raise ValueError("asset_types are non-empty, upper-case provider asset types")
 
     matching = [row for row in rows if row.ticker.strip().upper() == ticker]
     if not matching:
@@ -228,7 +248,7 @@ def classify(
         )
     eligible, refusals = [], []
     for row in matching:
-        refusal = _ineligible(row)
+        refusal = _ineligible(row, asset_types)
         if refusal is None:
             eligible.append(row)
         else:
@@ -248,12 +268,12 @@ def classify(
         )
     if current:
         row = current[0]
+        if row.asset_type.strip().upper() == "ETF":
+            reason, detail = SymbolReason.LISTED_US_ETF, f"An ETF listed on {row.exchange}"
+        else:
+            reason, detail = SymbolReason.LISTED_US_STOCK, f"A stock listed on {row.exchange}"
         return Classification(
-            ticker,
-            SymbolStatus.SUPPORTED,
-            SymbolReason.LISTED_US_STOCK,
-            f"A stock listed on {row.exchange}, priced in USD.",
-            row,
+            ticker, SymbolStatus.SUPPORTED, reason, f"{detail}, priced in USD.", row
         )
     latest = max(eligible, key=lambda row: row.end_date)
     behind = sessions_since(latest.end_date)
