@@ -239,6 +239,34 @@ when the launcher has `--research-url`; otherwise a sentence saying where the re
 - The launcher's `--health-summary FILE` names the summary; by default it is
   `~/stock-agent-private/health/latest.json`, as for the research pages.
 
+### Strategies in detail (More > Strategies)
+
+The owner chose "Yes, small and read-only (Recommended)" on 2026-10-26 for the exploratory
+real-data showcase (`docs/research/real_data_showcase.md`).
+
+`GET /api/strategies` reads only the newest saved showcase results (`results.json` under
+`~/stock-agent-private/showcase/`, or `STOCK_AGENT_SHOWCASE_REPORTS`), with the standard
+library (`app.web.strategies`; the app never imports the showcase package).
+- **Nothing is recomputed.** Every number is the report's own, rounded for display.
+- **Strict reading.** A non-finite number, another artifact or schema, a missing field or a
+  file over 32 MB shows "can't be read" and no number.
+- **What it shows.** The report's caveat labels come first, unchanged. For each list of
+  holdings:
+  - growth of $10,000 for every rule on one log-scale chart, sampled weekly, with
+    server-worded dollar ticks;
+  - a readout of every visible line's value for any week, by hover, drag or the arrow keys
+    (Home and End jump to the ends, Shift moves a year), spoken through the chart's
+    `aria-valuetext`;
+  - a toggle per line (owner request, 2026-10-26: "please, add hover and toggle to the
+    Strategies charts"). Each legend item is a button with `aria-pressed`, the last visible
+    line can't be hidden, and "Show all lines" brings them back. The scale stays fixed, so the
+    other lines never move, and the table and every number are unchanged;
+  - a table of what $10,000 became, the total return, the worst fall, the rebalances, the
+    costs, and the rebalancing-day spread (F7.2).
+- **Order and colour.** Rules keep the report's registered order and are never ranked. Rule
+  is colour and cycle is dash, never green, red or the outlook mist.
+- **The demo** reads nothing real and says so.
+
 ## 4. Data and point-in-time rules
 
 - **One source of truth for status and outlooks:** `stock_lab.briefing.report.build_briefing`,
@@ -366,6 +394,7 @@ The tokens are in the mockup's `:root` and move into `app.css`. "Ember" dark is 
 | Outlook (mist; never green or red) | `#AFC3D6`, Flat `#6C665E` | `#3E5A75`, Flat `#B9B0A4` |
 | Status ok / warning / problem / note | `#8FD3A0` / `#F2BC72` / `#F4A7AE` / `#97CAD7` | `#1E6633` / `#8A4B0F` / `#99202C` / `#26505D` |
 | Brand glow (logo and the chart's "now" point only) | `#DE8C66` | `#9A4325` |
+| Strategies lines: equal weight / inverse volatility / buy and hold | `#5B9BF0` / `#E8875A` / `#A99BF2` | `#2A6FC8` / `#B8501F` / `#5E4BB8` |
 
 - Every text colour is at least 4.5:1 on every surface, and up and down are at least 3:1 (in
   fact 5:1 or more). A test checks the pairs.

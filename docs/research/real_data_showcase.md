@@ -81,6 +81,39 @@ holding the stock stops (`distribution_in_gap`) rather than guessing.
   basis points, plus the final wealth at 0x and 2x.
 - Each holding's own growth over the same span (F5.4, no cost), as context.
 
+## The rebalancing-day (offset) family (F7.2)
+
+- **Approved:** F7.2 under T5a D7 (2026-10-15). It was requested for the showcase on
+  2026-10-26.
+- **Registered** in `configs/showcase/real_rebalancing_v2.yaml` before it was run. That file
+  is version 1 plus `offset_family: true`, and a test checks nothing else differs.
+- **What runs.** Each rebalancing rule runs at every offset o in [0, k) of its cadence
+  (weekly k = 5, monthly 21, quarterly 63), at 1x costs. Every offset shares the common
+  build close, so the rebalancing days move, and with them the rebalance count by at most
+  one and the first rebalance's distance from the build.
+- **What is reported**, exactly F7.2's wording:
+  - The registered offset (0) is the headline. Its run is the headline run itself, and the
+    family never chooses it.
+  - The family adds the max − min spread of the total return across the k offsets. Which
+    offset was highest or lowest is not recorded or shown.
+  - The spread is unavailable if any offset stopped early, and there are no per-offset
+    intervals.
+- **Counting.** A rule's k offsets are one variant with a k-member sensitivity family:
+  `variants_run` stays 18, and `offset_family_simulations` records the extra runs.
+- **Buy and hold** never rebalances, so the offset changes nothing for it, and it has no
+  family.
+
+## The Lab app's Strategies screen
+
+More > Strategies is a small, read-only screen, as the owner chose: "Yes, small and
+read-only (Recommended)" (2026-10-26).
+- It reads only the newest saved `results.json`, with the standard library. It recomputes
+  nothing and imports no showcase module, so the app's import allowlist is unchanged.
+- It shows the same caveats, the growth of $10,000 for each list, and the results table with
+  the rebalancing-day spread.
+- It is behind the app's per-launch key, like every data route. The demo reads nothing real.
+- The design is in `docs/product/lab_app_design.md`, "Strategies in detail".
+
 ## The universes
 
 1. **Nine sector funds:** XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY.
@@ -232,6 +265,9 @@ Commands, run from the repository root:
   - Interval estimates, such as a block bootstrap on the difference between
     two rules (group D).
   - A benchmark and a cash leg (group C).
+- **The rebalancing day matters.** The offset family shows how much a result moves when only
+  the rebalancing day changes, a pure timing accident. The spread is a description, not a
+  test.
 - **What to learn next.**
   - Survivorship bias, and point-in-time index membership (CRSP or the
     index's own history).
@@ -240,6 +276,6 @@ Commands, run from the repository root:
 
 ## Follow-ups (not done)
 
-- A Lab app screen for the showcase.
-- A rebalance-offset sensitivity family (F7.2) for the same variants.
 - Group C and group D measures, which wait for the owner's decisions.
+- Issuer-verified distributions and point-in-time index membership, for a less biased stock
+  list.
