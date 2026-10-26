@@ -124,6 +124,8 @@ TEXT_PAIRS = [
 # Marks that carry meaning beside their words: 3:1 (WCAG non-text contrast).
 MARK_PAIRS = [
     *[(fg, bg) for fg in ("up", "down", "line-ink", "fc", "note") for bg in SURFACES],
+    # Strategies: each rule's line and key on every surface (More > Strategies).
+    *[(fg, bg) for fg in ("s-ew", "s-iv", "s-bh") for bg in SURFACES],
     ("fc", "fc-flat"),  # the outlook bar's Up and Down segments beside its Flat one
     ("ok", "surface"),
     ("warn", "warn-bg"),
@@ -211,9 +213,15 @@ def test_the_detail_is_reached_only_through_the_checked_route():
         "`/api/stock/${encodeURIComponent(ticker)}`",
         "`/api/${name}`",
     ]
-    # History and Health: `name` is one of two fixed screens, never anything read from data.
-    assert 'const TABS = ["history", "health"];' in CODE
-    assert re.findall(r"loadTab\((.+?)\)", CODE) == ["name", "state.tab", "state.tab"]
+    # History, Health and Strategies: `name` is one of three fixed screens, never anything
+    # read from data.
+    assert 'const TABS = ["history", "health", "strategies"];' in CODE
+    assert re.findall(r"loadTab\((.+?)\)", CODE) == [
+        '"strategies"',
+        "name",
+        "state.tab",
+        "state.tab",
+    ]
     assert CODE.count("if (TABS.includes(state.tab)) loadTab(state.tab);") == 2
     assert r"const TICKER = /^#stock\/([A-Z0-9][A-Z0-9_-]{0,19})$/;" in CODE
     assert server.NAME.pattern == "[A-Z0-9][A-Z0-9_-]{0,19}"
@@ -311,3 +319,32 @@ def test_lists_keep_their_role_in_safari():
     for found in ('h("ul", { class: "list", role: "list" }', 'h("ul", { class: "tl-items", role: "list" }',
                   'h("ol", { class: "tl", role: "list"'):  # fmt: skip
         assert found in CODE, found
+
+
+def _function(name: str) -> str:
+    body = CODE[CODE.index(f"function {name}(") :]
+    return body[: body.index("\n  }\n") + 4]
+
+
+def test_each_strategies_line_has_a_real_toggle_button_and_one_line_always_stays():
+    chart = _function("growthChart")
+    assert 'h("button", { type: "button", class: "g-toggle", "aria-pressed": shown' in chart
+    assert "state.hiddenLines[key] = toggled(hidden, s.label, labels);" in chart
+    # The toggle refuses to hide the last visible line.
+    toggle = _function("toggled")
+    assert "labels.some((l) => !next.includes(l)) ? next : hidden" in toggle
+    # "Show all lines" clears every hidden line; the readout and its spoken text list only
+    # the visible lines, and hover, drag and the arrow keys move it.
+    assert "state.hiddenLines[key] = [];" in chart and '"Show all lines"' in chart
+    assert (
+        "...visible.map((s) =>" in chart
+        and "visible.map((s) => `${s.label} ${s.words[i]}`)" in chart
+    )
+    for event in ('"pointermove"', '"pointerdown"', '"keydown"'):
+        assert f"box.addEventListener({event}" in chart
+
+
+def test_hiding_lines_never_changes_the_table():
+    table = _function("resultsTable")
+    assert "hiddenLines" not in table and "visible" not in table and "toggled" not in table
+    assert "u.rows.map((r) =>" in table  # every row, always, exactly as served

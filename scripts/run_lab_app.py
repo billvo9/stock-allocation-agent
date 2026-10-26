@@ -7,7 +7,8 @@ the Stock Lab's store read-only, reads each stock's recent observed prices
 through the isolated descriptive reader (decision A6), and passes both, with
 the NYSE rules calendar, to the app's Home, Stock detail, History and Health
 views. Health also reads Model Health's latest local summary, as the Model
-Health page does. It never runs the evening job or a check, writes nothing,
+Health page does, and More > Strategies reads the newest saved showcase
+results (~/stock-agent-private/showcase/, read-only; the demo reads none). It never runs the evening job or a check, writes nothing,
 sends nothing anywhere and reads no credential.
 
 Modes
@@ -68,6 +69,7 @@ from stock_agent.app.web.health import build_health
 from stock_agent.app.web.history import build_history
 from stock_agent.app.web.home import build_home
 from stock_agent.app.web.server import HOST, LabApp, make_server, static_files
+from stock_agent.app.web.strategies import build_strategies, reports_root
 from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
 from stock_agent.stock_lab.briefing.report import ReadOnlyRecords
 from stock_agent.stock_lab.contracts import DataClass
@@ -192,7 +194,15 @@ def real_api(
             excluded=EXCLUDED,
         )
 
-    routes = {"/api/home": home, "/api/history": history, "/api/health": health}
+    def strategies() -> dict:
+        return build_strategies(reports_root(), now=clock())
+
+    routes = {
+        "/api/home": home,
+        "/api/history": history,
+        "/api/health": health,
+        "/api/strategies": strategies,
+    }
     return routes, {STOCK_ROUTE: stock}
 
 
@@ -315,7 +325,15 @@ def demo_api(home_dir: Path, sessions_count: int, at: str | None, research_url: 
             tickers=list(DEMO_IDS),
         )
 
-    routes = {"/api/home": home, "/api/history": history, "/api/health": health}
+    def strategies() -> dict:
+        return build_strategies(None, now=now)  # the demo reads nothing real
+
+    routes = {
+        "/api/home": home,
+        "/api/history": history,
+        "/api/health": health,
+        "/api/strategies": strategies,
+    }
     return routes, {STOCK_ROUTE: stock}
 
 
