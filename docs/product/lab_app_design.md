@@ -207,9 +207,20 @@ when the launcher has `--research-url`; otherwise a sentence saying where the re
 - **Headline:** Home's status line, from the same function (`home.status_line`) on the same
   briefing, so the two never disagree. Its level gives the ring (green, amber, red, or grey
   before anything has started) and the title ("All good", "Needs a look", "Something is
-  wrong", "Not started yet"). The Health tab's badge follows Home's level, so it needs no
-  request of its own. It shows only when the status needs a look ("!") or something is wrong
-  ("✕"), so it is never told by colour alone.
+  wrong", "Not started yet").
+- **The Health tab's badge** (owner decision of 2026-10-26, "Keep the green headline with the
+  badge"). Home sends it, so it needs no request of its own, and Health sends the same one
+  (`checks.tab_badge`); the page shows the newer of the two answers. It is never told by
+  colour alone:
+  - amber "!" ("needs a look") or red "✕" ("something is wrong") with Home's status line;
+  - otherwise amber "!" whenever Model Health's latest summary flags a Stock Lab check (a
+    warning or worse), even under a green headline ("1 check flagged"). The headline stays
+    green, and the line "Model Health flags 1 check: see the details" stays, with the same
+    "!" beside it;
+  - otherwise none. A summary that is missing, refused or written after the request time
+    flags nothing; a stale one's flagged check still counts (its age is named in the details).
+  - A summary the reader can't open (a folder it may not enter, JSON nested too deeply) is
+    refused, and Home keeps its screen whatever the reader does.
 - **Below it:** the live record's progress toward Model Health's minimum (as on a stock's
   screen), or, when something is wrong, "This app never changes your records. Model Health
   has the fix."
@@ -462,10 +473,13 @@ Calls made while building PR 4 (History and Health), for the owner to check:
   timeline and the watchlist name their list role (Safari drops it when markers are hidden);
   each technical-detail button names its stock and day and is at least 28 px; a screen that
   answers again after a failure clears its problem (the Stock detail had the same gap).
-- For the owner: Health can show "All good" (green) with "Model Health flags 1 check" below it,
-  because the headline follows the live status line and the daily summary's checks are details.
-  The alternative is to let a flagged summary check turn the headline amber, at the cost of
-  Home and Health no longer always agreeing.
+- Health can show "All good" (green) with "Model Health flags 1 check" below it, because the
+  headline follows the live status line and the daily summary's checks are details. The owner
+  decided on 2026-10-26: "Keep the green headline with the badge." The Health tab's badge
+  shows "!" whenever Model Health flags a Stock Lab check (built in a follow-up PR).
+- For the owner (security review of that follow-up): a summary that is missing or can't be read
+  shows no badge under a green headline; Health's details name it. A badge for that case is
+  possible, though anyone able to break the file could also write an all-green one.
 
 ## 10. Open for later PRs
 
@@ -511,7 +525,8 @@ Calls made while building PR 4 (History and Health), for the owner to check:
 - **Model Health's summary file (security review, PR 4; low).** The reader shared with the
   research pages (`health.model.read_summary`) has no size, owner or permission check. The file
   lives in the owner's private folder, so this matters only if that folder's permissions were
-  loosened. Proposed: refuse a file over a few MB, or one not owned by this account or writable
+  loosened. Home now reads it on each refresh too (for the badge), which a size check or a
+  cache by modification time would also make cheaper. Proposed: refuse a file over a few MB, or one not owned by this account or writable
   by others, in the shared reader.
 - **The watchlist as of a time (test review, PR 4).** History, like the briefing, lists today's
   watchlist even for an `--at` preview of an earlier time. The records themselves are read as of
