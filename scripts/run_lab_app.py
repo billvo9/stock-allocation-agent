@@ -140,15 +140,17 @@ def real_api(
     """The routes (Home, History, Health) and the named routes (one stock, by its ticker)."""
 
     def home() -> dict:
+        now = clock()
         view = build_home(
             records_factory(),
-            now=clock(),
+            now=now,
             calendar=sessions,
             calendar_id=CALENDAR_ID,
             data_class=DataClass.REAL,
             recent=recent,
             local_zone=None,  # this Mac's own zone, at each moment
             excluded=EXCLUDED,
+            summary=lambda: load_summary(health_summary, now=now),  # the Health tab's badge
         )
         return {**view, "research_url": research_url}
 
@@ -271,6 +273,7 @@ def demo_api(home_dir: Path, sessions_count: int, at: str | None, research_url: 
             local_zone=None,  # this Mac's own zone, at each moment
             tickers=list(DEMO_IDS),
             names=names,
+            summary=None,  # the demo has no Model Health summary
         )
         return {**view, "research_url": research_url}
 

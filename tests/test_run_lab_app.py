@@ -153,6 +153,7 @@ def test_the_demo_serves_synthetic_stocks_reads_nothing_real_and_writes_nothing_
     assert "synthetic demo stocks" in " ".join(development["sheet"]["paragraphs"])
     assert "http://127.0.0.1:" in out.getvalue() and "synthetic demo" in out.getvalue()
     assert seen["local_zone"] is None and seen["data_class"] == DataClass.SYNTHETIC
+    assert seen["summary"] is None and home["badge"] is None  # the demo has no summary
     history = ask.history
     assert history["data_class"] == "synthetic" and history["demo"]
     assert history["filters"] == ["All", "DEMO_CALM", "DEMO_SWING", "DEMO_TREND"]
@@ -198,6 +199,9 @@ def test_the_real_app_wires_the_rules_calendar_the_reader_and_the_exclusions(tmp
     assert seen["excluded"] == ("SKHY", "SNDK") and seen["local_zone"] is None
     assert seen["now"].isoformat() == "2026-10-22T11:40:00+00:00"
     assert ask.home["research_url"] == "http://127.0.0.1:8502/"
+    # The tab's badge reads Model Health's summary (this test's stand-in default) at that time.
+    read = seen["summary"]()
+    assert read.path == tmp_path / "no-summary.json" and read.missing
 
 
 def test_the_real_detail_wires_the_rules_calendar_the_reader_and_the_exclusions(
@@ -250,8 +254,13 @@ def test_the_real_history_and_health_wire_the_calendar_the_summary_and_the_exclu
         seen["summary"] = options["summary"]()
         return {"level": "ok"}
 
+    def home(records, **options):
+        seen["home"] = options["summary"]()
+        return {"stocks": []}
+
     monkeypatch.setattr(launcher, "build_history", history)
     monkeypatch.setattr(launcher, "build_health", health)
+    monkeypatch.setattr(launcher, "build_home", home)
     summary = tmp_path / "health" / "latest.json"
     ask = Ask()
     argv = ["--port", "0", "--at", "2026-10-22T07:40-04:00", "--research-url"]
@@ -271,6 +280,7 @@ def test_the_real_history_and_health_wire_the_calendar_the_summary_and_the_exclu
     assert seen["health"]["calendar_id"] == CALENDAR_ID
     assert seen["health"]["research_url"] == "http://127.0.0.1:8502/"
     assert seen["summary"].path == summary and seen["summary"].missing  # read, not there
+    assert seen["home"].path == summary  # the tab's badge reads the same file
 
 
 def test_health_reads_model_healths_local_summary_unless_told_otherwise(tmp_path, monkeypatch):

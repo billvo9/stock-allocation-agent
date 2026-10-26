@@ -24,7 +24,7 @@ from datetime import datetime, tzinfo
 import pandas as pd
 
 from stock_agent.app.health_summary import Loaded
-from stock_agent.app.web import home, words
+from stock_agent.app.web import checks, home, words
 from stock_agent.app.web.detail import research_page
 from stock_agent.stock_lab.briefing.reliability import MIN_SCORED, MIN_SESSIONS
 from stock_agent.stock_lab.briefing.report import Briefing, ReadOnlyRecords
@@ -32,16 +32,6 @@ from stock_agent.stock_lab.contracts import DataClass
 
 SCHEMA = "lab_app_health"
 VERSION = 1
-STOCK_LAB_SECTION = "stock_lab"
-# Model Health's levels (health.view.CONDITION_LEVELS) as the page's marks.
-MARKS = {
-    "VALID": "ok",
-    "NOTICE": "note",
-    "WARNING": "warn",
-    "UNAVAILABLE": "warn",
-    "INVALID/BLOCKED": "bad",
-}
-FLAGGED = ("warn", "bad")
 
 
 def build_health(
@@ -99,8 +89,8 @@ def health_view(
     """The Health view from Home's status line, the briefing and Model Health's summary."""
 
     level = status["level"]
-    checks = _checks(loaded, now, local_zone, data_class)
-    flagged = sum(check["mark"] in FLAGGED for check in checks["items"])
+    found = _checks(loaded, now, local_zone, data_class)
+    flagged = checks.flagged(found["items"])
     return {
         "schema": SCHEMA,
         "version": VERSION,
@@ -111,10 +101,11 @@ def health_view(
         "line": status["words"],
         "aside": _aside(level, briefing),
         "flagged": words.flagged(flagged) if flagged else None,
+        "badge": checks.tab_badge(level, flagged),  # the tab's, as Home sends it
         "checked": words.checked(now, local_zone),
         "toggle": list(words.SHOW_DETAILS),
         "updates": {"title": words.UPDATES_DETAILS_TITLE, "lines": status["details"]},
-        "checks": checks,
+        "checks": found,
         "link": None
         if not research_url
         else {
@@ -156,22 +147,11 @@ def _checks(loaded: Loaded | None, now: datetime, zone: tzinfo | None, data_clas
         return note(words.SUMMARY_REFUSED, loaded.refused_reason)
     if loaded.view is None or loaded.generated_at is None:
         return note(words.SUMMARY_MISSING)
-    if loaded.generated_at > now:  # written after this view's time: not known then
+    if not checks.usable(loaded, now):  # written after this view's time: not known then
         return note(words.SUMMARY_LATER)
     made = words.when(loaded.generated_at.isoformat(), now=now, local_zone=zone)
     stale = loaded.view.age_warning is not None
-    sections = [s for s in loaded.sections if s.key == STOCK_LAB_SECTION]
-    items = [
-        {
-            "check_id": check.check_id,
-            "title": check.title,
-            "mark": MARKS.get(check.level, "warn"),
-            "state_word": check.state_word,
-            "words": check.summary,
-        }
-        for section in sections
-        for check in section.checks
-    ]
+    items = checks.stock_lab_checks(loaded, now)
     text = words.summary_from(made, stale=stale)
     if not items:
         text = f"{text} {words.SUMMARY_NO_CHECKS}"

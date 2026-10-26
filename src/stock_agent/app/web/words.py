@@ -772,7 +772,7 @@ HEALTH_TITLES = {
     "bad": "Something is wrong",
     "neutral": "Not started yet",
 }
-# The Health tab's badge, for screen readers (it shows only when the status needs a look).
+# The Health tab's badge, for screen readers, when Home's status line is amber or red.
 HEALTH_BADGES = {
     "ok": "all good",
     "warn": "needs a look",
@@ -800,6 +800,13 @@ def summary_from(made: str, *, stale: bool) -> str:
             "may be out of date."
         )
     return f"From Model Health's summary, {made}."
+
+
+def flagged_badge(count: int) -> str:
+    """'1 check flagged': the Health tab's badge under a green headline ('Health 1 check …')."""
+
+    noun = "check" if count == 1 else "checks"
+    return f"{count} {noun} flagged"
 
 
 def flagged(count: int) -> str:

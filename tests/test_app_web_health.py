@@ -11,6 +11,7 @@ written under tmp_path. No network, no private store.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -290,3 +291,191 @@ def test_the_demo_has_no_model_health_checks(lab):
     found = view(lab, at(WEDNESDAY, "07:40"), data_class="synthetic")
     assert found["demo"] == words.DEMO
     assert found["checks"]["note"] == words.SUMMARY_DEMO and found["checks"]["items"] == []
+
+
+# --- the Health tab's badge (owner decision of 2026-10-26: "Keep the green headline with
+# the badge"): amber or red as Home's status line says, and "!" whenever Model Health flags
+# a Stock Lab check, even under a green headline ---
+
+FLAGGED_BADGE = {"level": "warn", "mark": "!", "words": "1 check flagged"}
+
+
+def home_with(lab, now, summary=None) -> dict:
+    return home.build_home(
+        ReadOnlyRecords(lab.path),
+        now=now,
+        calendar=nyse_sessions,
+        calendar_id="test_nyse_rules",
+        data_class="real",
+        recent=no_prices,
+        local_zone=NEW_YORK,
+        tickers=[T],
+        summary=summary,
+    )
+
+
+def both(lab, now, summary=None) -> tuple[dict, dict]:
+    """Home's badge and Health's at the same moment: always the same."""
+
+    on_home = home_with(lab, now, summary)
+    on_health = view(lab, now, summary=summary)
+    assert on_home["badge"] == on_health["badge"]
+    return on_home, on_health
+
+
+def test_a_green_headline_with_a_flagged_check_shows_the_badge(lab, tmp_path):
+    evening(lab, TUESDAY)
+    now = at(WEDNESDAY, "10:00")
+    read = summary_file(tmp_path / "latest.json", CHECKS, made=ny(WEDNESDAY, "07:30"))
+    on_home, on_health = both(lab, now, reading(read, now))
+    assert on_home["status"]["level"] == "ok" and on_health["level"] == "ok"  # still green
+    assert on_home["badge"] == FLAGGED_BADGE
+    assert on_health["flagged"] == "Model Health flags 1 check: see the details."
+
+
+def test_two_flagged_checks_are_counted(lab, tmp_path):
+    evening(lab, TUESDAY)
+    now = at(WEDNESDAY, "10:00")
+    two = [*CHECKS, a_check("data.stock_lab_tickers", HealthState.FAILED)]
+    read = summary_file(tmp_path / "latest.json", two, made=ny(WEDNESDAY, "07:30"))
+    on_home, _ = both(lab, now, reading(read, now))
+    assert on_home["badge"] == {**FLAGGED_BADGE, "words": "2 checks flagged"}
+
+
+def test_a_green_headline_with_no_flagged_check_shows_no_badge(lab, tmp_path):
+    evening(lab, TUESDAY)
+    now = at(WEDNESDAY, "10:00")
+    calm = [
+        a_check("data.stock_lab_freshness"),
+        a_check("forecast.stock_lab_scores", HealthState.INSUFFICIENT_EVIDENCE),  # too early
+        a_check("ci.tests", HealthState.FAILED),  # outside the Stock Lab
+    ]
+    read = summary_file(tmp_path / "latest.json", calm, made=ny(WEDNESDAY, "07:30"))
+    on_home, on_health = both(lab, now, reading(read, now))
+    assert on_home["status"]["level"] == "ok" and on_home["badge"] is None
+    assert on_health["flagged"] is None
+    assert both(lab, now)[0]["badge"] is None  # no summary to read at all
+
+
+@pytest.mark.parametrize(
+    ("kind", "note"),
+    [
+        ("missing", words.SUMMARY_MISSING),
+        ("refused", words.SUMMARY_REFUSED),
+        ("later", words.SUMMARY_LATER),
+    ],
+)
+def test_a_summary_that_cannot_be_used_flags_nothing(lab, tmp_path, kind, note):
+    evening(lab, TUESDAY)
+    now = at(WEDNESDAY, "07:29")
+    path = tmp_path / "latest.json"
+    if kind == "refused":
+        path.write_text("{not json", encoding="utf-8")
+    elif kind == "later":  # written a minute after the request time: not known then
+        summary_file(path, CHECKS, made=ny(WEDNESDAY, "07:30"))
+    on_home, on_health = both(lab, now, lambda: load_summary(path, now=now))
+    assert on_home["badge"] is None and on_health["checks"]["note"] == note
+    if kind == "later":  # written at the request time itself: known then, and it flags
+        exactly = at(WEDNESDAY, "07:30")
+        assert both(lab, exactly, lambda: load_summary(path, now=exactly))[0]["badge"] == (
+            FLAGGED_BADGE
+        )
+
+
+@pytest.mark.parametrize(
+    ("state", "flags"),
+    [
+        (HealthState.HEALTHY, False),
+        (HealthState.INSUFFICIENT_EVIDENCE, False),
+        (HealthState.DEGRADED, True),
+        (HealthState.UNAVAILABLE, True),
+        (HealthState.FAILED, True),
+    ],
+)
+def test_a_warning_or_worse_flags_and_nothing_milder_does(lab, tmp_path, state, flags):
+    evening(lab, TUESDAY)
+    now = at(WEDNESDAY, "10:00")
+    one = [a_check("forecast.stock_lab_drift", state)]
+    read = summary_file(tmp_path / "latest.json", one, made=ny(WEDNESDAY, "07:30"))
+    on_home, _ = both(lab, now, reading(read, now))
+    assert on_home["badge"] == (FLAGGED_BADGE if flags else None)
+
+
+def test_a_stale_summarys_flagged_check_still_shows_the_badge(lab, tmp_path):
+    # Model Health's latest word, named stale in the details, still flags the check.
+    evening(lab, TUESDAY)
+    now = at(WEDNESDAY, "10:00")
+    made = ny(WEDNESDAY, "10:00") - timedelta(hours=27)
+    read = summary_file(tmp_path / "latest.json", CHECKS, made=made)
+    on_home, on_health = both(lab, now, reading(read, now))
+    assert on_home["badge"] == FLAGGED_BADGE
+    assert "more than a day old" in on_health["checks"]["note"]
+
+
+def test_amber_and_red_headlines_show_their_own_badge(lab, tmp_path, monkeypatch):
+    evening(lab, TUESDAY)
+    now = at(THURSDAY, "07:40")  # Wednesday's update recorded nothing: amber
+    read = summary_file(tmp_path / "latest.json", CHECKS, made=ny(THURSDAY, "07:30"))
+    on_home, _ = both(lab, now, reading(read, now))
+    assert on_home["status"]["level"] == "warn"
+    assert on_home["badge"] == {"level": "warn", "mark": "!", "words": "needs a look"}
+    monkeypatch.setattr(ReadOnlyRecords, "verify_ledger", lambda self: (3, "entry 2 differs"))
+    on_home, _ = both(lab, now, reading(read, now))
+    assert on_home["status"]["level"] == "bad"
+    assert on_home["badge"] == {"level": "bad", "mark": "✕", "words": "something is wrong"}
+    assert both(lab, now)[0]["badge"]["level"] == "bad"  # with no summary, as today
+
+
+def test_before_anything_has_started_a_flagged_check_still_shows_the_badge(lab, tmp_path):
+    now = at(WEDNESDAY, "10:00")
+    read = summary_file(tmp_path / "latest.json", CHECKS, made=ny(WEDNESDAY, "07:30"))
+    on_home, _ = both(lab, now, reading(read, now))
+    assert on_home["status"]["level"] == "neutral" and on_home["badge"] == FLAGGED_BADGE
+    assert both(lab, now)[0]["badge"] is None
+
+
+# --- a summary the reader can't open never takes Home (or Health) down ---
+
+
+def broken_folder(tmp_path):
+    """A summary inside a folder this account may not open (as a privacy-protected folder)."""
+
+    folder = tmp_path / "closed"
+    folder.mkdir()
+    summary_file(folder / "latest.json", CHECKS, made=ny(WEDNESDAY, "07:30"))
+    folder.chmod(0)
+    return folder / "latest.json"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root opens any folder")
+def test_a_summary_in_a_folder_that_cannot_be_opened_is_refused(lab, tmp_path):
+    evening(lab, TUESDAY)
+    now = at(WEDNESDAY, "10:00")
+    path = broken_folder(tmp_path)
+    try:
+        read = lambda: load_summary(path, now=now)
+        on_home, on_health = both(lab, now, read)
+        assert on_home["status"]["level"] == "ok" and on_home["badge"] is None
+        assert on_health["checks"]["note"] == words.SUMMARY_REFUSED
+    finally:
+        path.parent.chmod(0o700)
+
+
+def test_a_summary_too_deeply_nested_to_read_is_refused(lab, tmp_path):
+    evening(lab, TUESDAY)
+    now = at(WEDNESDAY, "10:00")
+    path = tmp_path / "latest.json"
+    path.write_text("[" * 200_000 + "]" * 200_000, encoding="utf-8")
+    on_home, on_health = both(lab, now, lambda: load_summary(path, now=now))
+    assert on_home["badge"] is None
+    assert on_health["checks"]["note"] == words.SUMMARY_REFUSED
+
+
+def test_home_keeps_its_screen_whatever_the_summary_reader_does(lab):
+    evening(lab, TUESDAY)
+
+    def failing():
+        raise RuntimeError("an unexpected reader failure")
+
+    found = home_with(lab, at(WEDNESDAY, "10:00"), failing)
+    assert found["status"]["level"] == "ok" and found["badge"] is None

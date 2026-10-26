@@ -267,15 +267,33 @@ def test_history_colours_only_the_move_that_happened():
     assert "`mv ${x.result.direction}`" in item and "x.said.up" in item
 
 
-def test_the_health_tab_is_marked_by_homes_status_line():
-    # Health's headline is Home's status line, so the tab's badge needs no other request. It
-    # shows only when the status needs a look or is wrong, with a mark as well as a colour.
+def test_the_health_tab_shows_the_badge_home_sends():
+    # The server decides the badge (Home's status line, or a check Model Health flags; owner
+    # decision of 2026-10-26), so the page draws only what Home sends: its level's colour,
+    # its mark and its words, and nothing when there is none.
     assert 'id="health-badge"' in PAGE
     render = CODE[CODE.index("function render()") :]
     render = render[: render.index("\n  }\n")]
-    assert 'status.level === "warn" || status.level === "bad"' in render
-    assert "badge.textContent = level ? MARK[level]" in render
-    assert 'badge.setAttribute("aria-label", status.badge)' in render
+    assert "const shown = badgeNow();" in render
+    assert "badge.hidden = !shown;" in render
+    assert "`badge ${shown.level}`" in render  # its colour
+    assert "badge.textContent = shown ? shown.mark" in render
+    assert 'badge.setAttribute("aria-label", shown.words)' in render
+    assert "status.level" not in render  # no rule of its own
+    # Home's, or Health's when Health answered later (both send the same rule's badge), so the
+    # tab and the Health screen show the same moment.
+    newest = CODE[CODE.index("function badgeNow()") :]
+    newest = newest[: newest.index("\n  }\n")]
+    assert "Date.parse(health.generated_at) > Date.parse(home.generated_at)" in newest
+    assert "return home ? home.badge : null;" in newest
+
+
+def test_healths_flagged_line_carries_the_badges_mark():
+    # The "!" on the tab points at this line: it carries the same mark, beside its words.
+    screen = CODE[CODE.index("function healthScreen(") :]
+    screen = screen[: screen.index("\n  }\n")]
+    assert 'h("span", { class: "flag-mark", "aria-hidden": "true" }, "!")' in screen
+    assert ".hero .flag-mark {" in STYLE
     assert re.search(r'data-tab="history".*data-tab="health".*data-tab="more"', PAGE, re.DOTALL)
 
 
