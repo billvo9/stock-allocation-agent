@@ -105,3 +105,22 @@ def test_tickers_are_checked_and_capped():
     ]
     with pytest.raises(ConfigRefused, match="at most"):
         config(universes=[{"key": "big", "label": "Big", "selection": "x", "members": many}])
+
+
+def test_version_2_is_version_1_plus_the_registered_offset_family():
+    import yaml
+
+    v1 = yaml.safe_load(REGISTERED.read_text(encoding="utf-8"))
+    v2 = yaml.safe_load(
+        (REGISTERED.parent / "real_rebalancing_v2.yaml").read_text(encoding="utf-8")
+    )
+    assert v2.pop("offset_family") is True and v2.pop("name") == "real_rebalancing_v2"
+    v1.pop("name")
+    assert v1 == v2  # same universes, rules, schedules, offset, window and cost levels
+    assert load_config(REGISTERED).offset_family is False
+    assert load_config(REGISTERED.parent / "real_rebalancing_v2.yaml").offset_family is True
+
+
+def test_offset_family_must_be_a_boolean():
+    with pytest.raises(ConfigRefused, match="offset_family"):
+        config(offset_family="all")

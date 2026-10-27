@@ -1,5 +1,5 @@
 // The Lab app's page: a thin renderer of /api/home, /api/stock/<ticker>,
-// /api/history and /api/health. Every number, and every sentence about the data
+// /api/history, /api/health and /api/strategies. Every number, and every sentence about the data
 // (status, outlooks, the chart's days, results, checks, explanations), comes from
 // the server already worded; only the page's own fixed labels (the tabs, More,
 // About, the back button, the Health badge's words and the error messages) are
@@ -20,7 +20,11 @@
     range: null, eachDay: false, fromHome: false, homeScroll: 0, lastFocusKey: null, refreshed: 0,
     key: null,
     // History and Health: their data, their problem, and the latest request for each.
-    history: null, health: null, problems: { history: null, health: null }, askedTab: { history: 0, health: 0 },
+    history: null, health: null, strategies: null,
+    // Strategies: the lines hidden on each list's chart (by label) and where its readout is.
+    hiddenLines: {}, readAt: {},
+    problems: { history: null, health: null, strategies: null },
+    askedTab: { history: 0, health: 0, strategies: 0 },
     hfilter: "All", details: false,
   };
   let patterns = 0;  // unique ids for the Down segments' hatching
@@ -665,6 +669,9 @@
       h("h1", { class: "screen" }, "More"),
       h("section", { class: "card" }, h("h2", null, "Appearance"),
         h("div", { class: "seg2", role: "group", "aria-label": "Appearance" }, choice("dark", "Dark"), choice("light", "Light"))),
+      h("section", { class: "card" }, h("h2", null, "Strategies"),
+        h("p", { class: "sub" }, "How simple rebalancing rules would have done on real prices, 2003 to 2024. A look back, not advice."),
+        openStrategies()),
       h("section", { class: "card" }, h("h2", null, "Research pages"),
         h("p", { class: "sub" }, "Today's detailed pages, kept for learning. They use more technical words."),
         research),
@@ -675,6 +682,183 @@
           h("li", null, h("b", null, "Not advice. "), "The outlooks are an experiment in measuring chances honestly."),
           h("li", null, h("b", null, "Not yet proven. "), "Its live record is still too short to judge."))),
     ];
+  }
+
+  // --- More > Strategies ---------------------------------------------------------------
+
+  function openStrategies() {
+    const button = h("button", { class: "link", type: "button", "data-key": "strategies" },
+      h("span", null, h("span", { class: "t" }, "Open Strategies"), h("span", { class: "s" }, "Read-only, from your private report")),
+      h("span", { class: "chev", "aria-hidden": "true" }, "›"));
+    button.addEventListener("click", () => {
+      state.tab = "strategies";
+      render();
+      window.scrollTo(0, 0);
+      document.getElementById("screen").focus({ preventScroll: true });
+      loadTab("strategies");
+    });
+    return button;
+  }
+
+  function toMore() {
+    const button = h("button", { class: "back", type: "button", "data-key": "back" }, h("span", { "aria-hidden": "true" }, "‹ "), "More");
+    button.addEventListener("click", () => {
+      state.tab = "more";
+      render();
+      window.scrollTo(0, 0);
+      keyed("strategies") && keyed("strategies").focus({ preventScroll: true });
+    });
+    return button;
+  }
+
+  // A legend button hides or shows one line; the last visible line can't be hidden, so
+  // the chart is never empty. Presentation only: the table and every number stay as served.
+  function toggled(hidden, label, labels) {
+    const next = hidden.includes(label) ? hidden.filter((l) => l !== label) : [...hidden, label];
+    return labels.some((l) => !next.includes(l)) ? next : hidden;
+  }
+
+  // Every rule's growth of $10,000 on one log scale (drawing only: positions are never
+  // shown), on a scale fixed by every line, so a toggle never moves the others. The rule
+  // is the colour, the rebalancing cycle the dash. Hover, drag or the arrow keys read
+  // every visible line's value, as the server worded it, for that week.
+  function growthChart(chart, key) {
+    const n = chart.days.length;
+    const labels = chart.series.map((s) => s.label);
+    const hidden = (state.hiddenLines[key] || []).filter((l) => labels.includes(l));
+    const visible = chart.series.filter((s) => !hidden.includes(s.label));
+    const box = h("div", { class: "chart growth", tabindex: "0", role: "slider", "aria-label": chart.label,
+      "aria-valuemin": 0, "aria-valuemax": n - 1, "data-key": `growth-${key}` });
+    const readout = h("div", { class: "g-readout", role: "group", "aria-label": "Values at the chosen week" });
+    const H = 220, top = 10, bottom = 22, pad = 6;
+    let geometry = null;
+    let current = Number.isInteger(state.readAt[key]) && state.readAt[key] < n ? state.readAt[key] : n - 1;
+    const valued = chart.series.flatMap((s) => s.values.filter((v) => typeof v === "number" && v > 0));
+    const lo = Math.log(Math.min(...valued)), hi = Math.log(Math.max(...valued));
+
+    function show(i) {
+      current = i;
+      state.readAt[key] = i;
+      readout.replaceChildren(h("b", null, chart.days[i]),
+        ...visible.map((s) => h("span", { class: "g-row" },
+          h("i", { class: `g-key rule-${s.rule} every-${s.every}`, "aria-hidden": "true" }), s.label, h("b", { class: "num" }, s.words[i]))));
+      box.setAttribute("aria-valuenow", i);
+      box.setAttribute("aria-valuetext", `${chart.days[i]}: ${visible.map((s) => `${s.label} ${s.words[i]}`).join("; ")}`);
+      if (!geometry) return;
+      geometry.cursor.setAttribute("x1", geometry.x(i));
+      geometry.cursor.setAttribute("x2", geometry.x(i));
+    }
+
+    function draw(width) {
+      if (width < 2 || !valued.length) return;
+      const x = (i) => pad + (i / Math.max(n - 1, 1)) * (width - 2 * pad);
+      const y = (v) => top + (hi === lo ? 0.5 : 1 - (Math.log(v) - lo) / (hi - lo)) * (H - top - bottom);
+      const art = svg("svg", { viewBox: `0 0 ${width} ${H}`, width, height: H, "aria-hidden": "true" });
+      for (const tick of chart.ticks || []) {
+        if (!(typeof tick.value === "number" && tick.value > 0)) continue;
+        const label = svg("text", { class: "chart-tag", x: pad, y: y(tick.value) - 4 });
+        label.textContent = tick.words;
+        art.append(svg("line", { class: "g-grid", x1: pad, x2: width - pad, y1: y(tick.value), y2: y(tick.value) }), label);
+      }
+      let year = null;
+      chart.days.forEach((day, i) => {
+        const shown = day.slice(-4);
+        if (shown === year) return;
+        year = shown;
+        if (Number(shown) % 4 !== 0) return;  // a label every four years keeps a phone's width clear
+        const tick = svg("text", { class: "chart-tag", x: x(i), y: H - 4, "text-anchor": "middle" });
+        tick.textContent = shown;
+        art.append(svg("line", { class: "g-grid", x1: x(i), x2: x(i), y1: top, y2: H - bottom }), tick);
+      });
+      for (const s of visible) {
+        let d = "", pen = false;
+        s.values.forEach((v, i) => {
+          if (typeof v !== "number" || v <= 0) { pen = false; return; }
+          d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`;
+          pen = true;
+        });
+        art.append(svg("path", { class: `g-line rule-${s.rule} every-${s.every}`, d }));
+      }
+      const cursor = svg("line", { class: "chart-cursor", y1: top, y2: H - bottom });
+      art.append(cursor);
+      box.replaceChildren(art);
+      geometry = { x, cursor };
+      show(current);
+    }
+
+    const at = (event) => {
+      const rect = box.getBoundingClientRect();
+      const share = (event.clientX - rect.left - pad) / Math.max(rect.width - 2 * pad, 1);
+      return Math.max(0, Math.min(n - 1, Math.round(share * (n - 1))));
+    };
+    box.addEventListener("pointermove", (event) => show(at(event)));  // hover, and a drag
+    box.addEventListener("pointerdown", (event) => show(at(event)));
+    box.addEventListener("keydown", (event) => {
+      const moves = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 };
+      let next = null;
+      if (event.key in moves) next = current + moves[event.key] * (event.shiftKey ? 52 : 1);
+      else if (event.key === "Home") next = 0;
+      else if (event.key === "End") next = n - 1;
+      if (next === null) return;
+      event.preventDefault();
+      show(Math.max(0, Math.min(n - 1, next)));
+    });
+    show(current);
+    const legend = h("div", { class: "g-legend", role: "group", "aria-label": "Show or hide lines" },
+      chart.series.map((s, i) => {
+        const shown = !hidden.includes(s.label);
+        const button = h("button", { type: "button", class: "g-toggle", "aria-pressed": shown, "data-key": `line-${key}-${i}` },
+          h("i", { class: `g-key rule-${s.rule} every-${s.every}`, "aria-hidden": "true" }), s.label);
+        button.addEventListener("click", () => {
+          state.hiddenLines[key] = toggled(hidden, s.label, labels);
+          render();
+        });
+        return button;
+      }));
+    let reset = null;
+    if (hidden.length) {
+      reset = h("button", { type: "button", class: "textbtn g-all", "data-key": `lines-all-${key}` }, "Show all lines");
+      reset.addEventListener("click", () => {
+        state.hiddenLines[key] = [];
+        render();
+        keyed(`line-${key}-0`) && keyed(`line-${key}-0`).focus({ preventScroll: true });
+      });
+    }
+    return h("div", { class: "chart-block" }, legend, reset, fitted(box, draw), readout, h("p", { class: "note" }, chart.note));
+  }
+
+  function resultsTable(u) {
+    return h("div", { class: "g-table", role: "region", "aria-label": `${u.title}: results`, tabindex: "0" },
+      h("table", null,
+        h("thead", null, h("tr", null, u.columns.map((c, i) => h("th", { scope: "col", class: i ? "num" : null }, c)))),
+        h("tbody", null, u.rows.map((r) => h("tr", null,
+          h("th", { scope: "row" }, h("i", { class: `g-key rule-${r.rule} every-${r.every}`, "aria-hidden": "true" }), r.label,
+            r.stopped ? h("span", { class: "g-stop" }, r.stopped) : null),
+          r.cells.map((c) => h("td", { class: "num" }, c)))))));
+  }
+
+  function strategiesScreen(data) {
+    const parts = [toMore(), h("h1", { class: "screen" }, data.title), h("p", { class: "lede" }, data.lede)];
+    if (data.problem) {
+      parts.push(h("section", { class: "card empty-card" },
+        h("h2", null, data.problem.title), h("p", null, data.problem.words),
+        data.problem.technical ? h("p", { class: "note" }, data.problem.technical) : null));
+      return parts;
+    }
+    parts.push(h("section", { class: "card g-labels", "aria-labelledby": "g-read" },
+      h("h2", { id: "g-read" }, "Read this first"),
+      h("ul", { class: "about" }, data.labels.map((label) => h("li", null, label)))));
+    for (const u of data.universes) {
+      const id = `g-${u.key}`;
+      parts.push(h("section", { class: "card", "aria-labelledby": id },
+        h("h2", { id }, u.title),
+        h("p", { class: "sub" }, u.members),
+        h("p", { class: "sub" }, u.span),
+        growthChart(u.chart, u.key),
+        resultsTable(u)));
+    }
+    parts.push(h("p", { class: "note" }, data.days_note), h("p", { class: "asof" }, data.source));
+    return parts;
   }
 
   // --- render, load, route, theme -------------------------------------------------
@@ -697,6 +881,7 @@
     if (state.tab === "more") return more(state.home);
     if (state.tab === "history") return tabScreen("history", historyScreen);
     if (state.tab === "health") return tabScreen("health", healthScreen);
+    if (state.tab === "strategies") return tabScreen("strategies", strategiesScreen);
     if (state.stock) {
       if (state.detailProblem) {
         const [title, text, final, noBack] = state.detailProblem;
@@ -729,11 +914,12 @@
     main.replaceChildren(...parts.filter(Boolean));
     const again = keyed(focused);
     if (again) again.focus({ preventScroll: true });
-    const named = { history: "History", health: "Health", more: "More" }[state.tab];
+    const named = { history: "History", health: "Health", more: "More", strategies: "Strategies" }[state.tab];
     document.title = state.stock && state.detail ? `${state.detail.title} · Portfolio Lab`
       : named ? `${named} · Portfolio Lab` : "Portfolio Lab";
+    const tabbed = state.tab === "strategies" ? "more" : state.tab;  // Strategies opens from More
     for (const tab of document.querySelectorAll(".tabs [data-tab]")) {
-      if (tab.dataset.tab === state.tab) tab.setAttribute("aria-current", "page");
+      if (tab.dataset.tab === tabbed) tab.setAttribute("aria-current", "page");
       else tab.removeAttribute("aria-current");
     }
     // The Health tab's badge, as the server sends it: amber or red with Home's status line, or
@@ -764,6 +950,11 @@
     health: (d) => d && d.schema === "lab_app_health" && d.version === 1 && typeof d.level === "string"
       && d.updates && Array.isArray(d.updates.lines) && d.checks && Array.isArray(d.checks.items)
       && Array.isArray(d.toggle),
+    strategies: (d) => d && d.schema === "lab_app_strategies" && d.version === 1 && typeof d.title === "string"
+      && Array.isArray(d.labels) && Array.isArray(d.universes)
+      && d.universes.every((u) => u.chart && Array.isArray(u.chart.series) && Array.isArray(u.chart.days)
+        && Array.isArray(u.rows) && Array.isArray(u.columns))
+      && (d.problem === null || typeof d.problem.title === "string"),
   };
 
   // The newest answer's badge: Home's, or Health's when Health answered later (both come from
@@ -883,7 +1074,7 @@
   // The same screen as before, apart from when it was prepared.
   const same = (a, b) => JSON.stringify({ ...a, generated_at: null }) === JSON.stringify({ ...b, generated_at: null });
 
-  const TABS = ["history", "health"];  // the screens with data of their own
+  const TABS = ["history", "health", "strategies"];  // the screens with data of their own
 
   function load() {
     loadHome();

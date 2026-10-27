@@ -1,0 +1,149 @@
+# The exploratory real-data rebalancing showcase, version 2 (private, for the owner only).
+# Registered on 2026-10-26 (New York) before its offset family was run. It is version 1
+# (real_rebalancing_v1.yaml, whose headline results already existed) plus F7.2's rebalance-offset
+# sensitivity family, approved under T5a D7 on 2026-10-15 and requested on 2026-10-26. Nothing
+# else differs: the same universes, rules, schedules, registered offset, window and cost levels
+# (tests/test_showcase_config.py checks this). The family never chooses the headline: offset 0
+# stays the registered offset, and each rule's k offsets count as one variant.
+#
+# Version 1's header follows.
+#   The exploratory real-data rebalancing showcase (private, for the owner only).
+#   Registered on 2026-10-26 (New York), before any of its data was fetched or any result existed.
+#   The owner approved the showcase on 2026-10-26: "I want more stocks and industries than only
+#   AMD, MRVL, MU and NVIDIA. and Yes just don't add new formula except we really need one."
+#   Audience: "Only me (Recommended)". The owner approved the three universes below, as proposed,
+#   on 2026-10-26: "Universe OK (Recommended)".
+#
+#   Every variant below runs through the approved T5a engine (D1-D8) with the D2 provisional
+#   costs, next-close execution and a common build from cash. Returns are the approved F5.1 total
+#   return from raw closes, vendor-reported cash dividends and split factors. The descriptive
+#   measures are OD8 group A only. Nothing produced from this file is evidence of strategy skill:
+#   the universes are hindsight-selected and survivorship-biased, and it is not advice.
+#   Every variant is reported, in this order; none is chosen afterwards.
+schema_version: 1
+protocol: exploratory_real_data_showcase
+name: real_rebalancing_v2
+
+# The development period only. 2025 on is the sealed holdout and is refused.
+window:
+  start: 2003-01-02
+  end: 2024-12-31
+
+initial_wealth: 10000 # growth of $10,000, starting at the common build close
+# The common build decision (D3): the 61st session of the window (index 60), so the inverse-
+# volatility rule sees 60 returns at its first decision. Every strategy builds at that same
+# decision and executes it at the next close (lag 1, D1).
+first_decision: 60
+execution_lag: 1 # must equal the label's entry_lag (portfolio.schedule.execution_lag)
+offset: 0 # the one registered rebalance offset (D7), shared by every variant
+# F7.2: every rebalancing rule also runs at all k offsets of its cadence (weekly 5, monthly 21,
+# quarterly 63), at 1x costs; reported as the registered offset's result and the max - min spread.
+offset_family: true
+inverse_volatility_window: 60 # the registered rule's window (rl.policies.InverseVolatility)
+
+# D2 provisional all-in rates, by asset class. The sector funds are equity ETFs and use the
+# broad_etf rate (5 bp); the 2x sensitivity (10 bp) equals the single-stock rate.
+cost_classes:
+  etf: broad_etf
+  stock: single_stock
+cost_multipliers: [0.0, 1.0, 2.0] # D2 sensitivity, never chosen; 1x is the headline run
+
+# Fully invested and long only: the D5 defaults (no cap, no turnover limit). No target holds
+# cash, because a cash return is group C and is not approved.
+constraints:
+  max_weight: 1.0
+  max_turnover: null
+
+strategies:
+  - key: buy_and_hold
+    rule: buy_and_hold
+    every: 21 # decisions after the build are holds; the cadence changes nothing
+    label: Buy and hold
+    description: Equal weights bought once at the build, then left to drift.
+  - key: equal_weight_weekly
+    rule: equal_weight
+    every: 5
+    label: Equal weight, weekly
+    description: Back to equal weights every 5 sessions.
+  - key: equal_weight_monthly
+    rule: equal_weight
+    every: 21
+    label: Equal weight, monthly
+    description: Back to equal weights every 21 sessions.
+  - key: equal_weight_quarterly
+    rule: equal_weight
+    every: 63
+    label: Equal weight, quarterly
+    description: Back to equal weights every 63 sessions.
+  - key: inverse_volatility_monthly
+    rule: inverse_volatility
+    every: 21
+    label: Inverse volatility, monthly
+    description: Each holding in proportion to one over its 60-session volatility, every 21 sessions.
+  - key: inverse_volatility_quarterly
+    rule: inverse_volatility
+    every: 63
+    label: Inverse volatility, quarterly
+    description: Each holding in proportion to one over its 60-session volatility, every 63 sessions.
+
+universes:
+  - key: sector_etfs
+    label: Nine sector funds
+    selection: >-
+      The nine original Select Sector SPDR funds. They have existed since 1998, so they cover
+      the whole window, and choosing a sector fund avoids most stock-picking hindsight. The
+      funds themselves are survivors that were chosen in 2026.
+    members:
+      - {ticker: XLB, kind: etf, sector: Materials}
+      - {ticker: XLE, kind: etf, sector: Energy}
+      - {ticker: XLF, kind: etf, sector: Financials}
+      - {ticker: XLI, kind: etf, sector: Industrials}
+      - {ticker: XLK, kind: etf, sector: Technology}
+      - {ticker: XLP, kind: etf, sector: Consumer Staples}
+      - {ticker: XLU, kind: etf, sector: Utilities}
+      - {ticker: XLV, kind: etf, sector: Health Care}
+      - {ticker: XLY, kind: etf, sector: Consumer Discretionary}
+  - key: sector_stocks
+    label: Eighteen sector stocks
+    selection: >-
+      In each fund's "Top five holdings as of September 30, 2002" (Select Sector SPDR Trust
+      annual report, SEC EDGAR accession 0000950135-02-005333, filed 2002-11-27), the two
+      largest holdings, skipping a company that did not trade under the same ticker for all of
+      2003-2024, or that made a pro-rata spin-off or other non-cash distribution in 2003-2024
+      (the data has cash dividends only, so such a distribution would look like a loss).
+      Materials' top five all fail, so its full schedule of investments is read further down.
+      Skipped: VIA, AOL (consumer discretionary); MO (staples); AIG (financials); PFE, MRK,
+      ABT (health care); GE, MMM (industrials); IBM (technology); DUK, EXC (utilities); DD,
+      DOW, AA, IP, APD, WY, PX (materials). The skip list is from public corporate history,
+      as far as we know. The rule drops companies that failed, merged or were
+      renamed, so the list is survivorship-biased.
+    members:
+      - {ticker: WMT, kind: stock, sector: Consumer Discretionary}
+      - {ticker: HD, kind: stock, sector: Consumer Discretionary}
+      - {ticker: KO, kind: stock, sector: Consumer Staples}
+      - {ticker: PG, kind: stock, sector: Consumer Staples}
+      - {ticker: XOM, kind: stock, sector: Energy}
+      - {ticker: CVX, kind: stock, sector: Energy}
+      - {ticker: C, kind: stock, sector: Financials}
+      - {ticker: BAC, kind: stock, sector: Financials}
+      - {ticker: JNJ, kind: stock, sector: Health Care}
+      - {ticker: LLY, kind: stock, sector: Health Care}
+      - {ticker: UPS, kind: stock, sector: Industrials}
+      - {ticker: LMT, kind: stock, sector: Industrials}
+      - {ticker: MSFT, kind: stock, sector: Technology}
+      - {ticker: INTC, kind: stock, sector: Technology}
+      - {ticker: SO, kind: stock, sector: Utilities}
+      - {ticker: D, kind: stock, sector: Utilities}
+      - {ticker: NEM, kind: stock, sector: Materials}
+      - {ticker: PPG, kind: stock, sector: Materials}
+  - key: semiconductors
+    label: The four Stock Lab semiconductors
+    selection: >-
+      AMD, MRVL, MU and NVDA, the Stock Lab's watchlist. They were picked in 2026, after they
+      rose enormously, so this universe is hindsight-selected by construction. It is kept
+      apart so its selection does not leak into the other two.
+    members:
+      - {ticker: AMD, kind: stock, sector: Semiconductors}
+      - {ticker: MRVL, kind: stock, sector: Semiconductors}
+      - {ticker: MU, kind: stock, sector: Semiconductors}
+      - {ticker: NVDA, kind: stock, sector: Semiconductors}

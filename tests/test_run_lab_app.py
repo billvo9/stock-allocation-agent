@@ -69,13 +69,13 @@ class Ask:
     """
 
     def __init__(self):
-        self.home = self.detail = self.history = self.health = None
+        self.home = self.detail = self.history = self.health = self.strategies = None
         self.missing = None  # the status of a stock that is not listed
 
     def __call__(self, server):
         app = server.app
         try:
-            for name in ("history", "health"):
+            for name in ("history", "health", "strategies"):
                 response = get(app, f"/api/{name}")
                 assert response.status == 200, response.body
                 setattr(self, name, json.loads(response.body))
@@ -335,7 +335,13 @@ def test_every_data_route_refuses_a_request_without_this_runs_key(tmp_path, mode
         out=io.StringIO(),
     )
     routes = {path for path, _ in locked.answers}
-    assert routes == {"/api/home", "/api/history", "/api/health", "/api/stock/ZZZZ"}
+    assert routes == {
+        "/api/home",
+        "/api/history",
+        "/api/health",
+        "/api/strategies",
+        "/api/stock/ZZZZ",
+    }
     assert set(locked.answers.values()) == {401}
 
 
@@ -579,3 +585,29 @@ def test_an_unusable_research_key_is_refused():
         ["--port", "0"], serve=pytest.fail, out=out, environ={"LAB_APP_RESEARCH_KEY": "short"}
     )
     assert code == 2 and "LAB_APP_RESEARCH_KEY must be" in out.getvalue()
+
+
+@pytest.mark.parametrize("mode", [[], ["--demo", "2"]], ids=["real", "demo"])
+def test_strategies_reads_the_reports_folder_only_in_the_real_app(tmp_path, monkeypatch, mode):
+    roots = []
+    real = launcher.build_strategies
+
+    def spy(root, *, now):
+        roots.append(root)
+        return real(root, now=now)
+
+    monkeypatch.setattr(launcher, "build_strategies", spy)
+    asked = Ask()
+    launcher.main(
+        [*mode, "--port", "0"],
+        records_factory=lambda: ReadOnlyRecords(tmp_path / "none.sqlite"),
+        clock=lambda: pd.Timestamp("2026-10-22T11:40:00Z"),
+        serve=asked,
+        out=io.StringIO(),
+    )
+    assert asked.strategies["schema"] == "lab_app_strategies"
+    if mode:  # the demo: no folder at all, so nothing real is read
+        assert roots == [None] and asked.strategies["problem"]["title"] == "Not in the demo."
+    else:  # the conftest's empty reports folder: "no report yet"
+        assert roots == [launcher.reports_root()]
+        assert asked.strategies["problem"]["title"] == "No strategies report yet."
