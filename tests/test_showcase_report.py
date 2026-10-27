@@ -127,3 +127,31 @@ def test_the_rebalancing_day_table_appears_only_with_a_registered_family(results
     assert "more on the other rebalancing days at 1x" in page
     assert check_wording(page + markdown) == []
     assert "Rebalancing-day sensitivity" not in render_html(results)
+
+
+def test_the_group_d_tables_appear_only_with_registered_measures(results):
+    measures = {
+        "stress_windows": [
+            {"key": "spring", "label": "Spring", "start": "2024-03-01", "end": "2024-05-31"}
+        ],
+        "participation": {"notional": 1000000, "threshold": 0.01, "window": 20},
+    }
+    measured = run_showcase(
+        config(measures=measures),
+        loader(default_frames(SESSIONS)),
+        sessions=SESSIONS,
+        code_sha="a" * 40,
+    )
+    page, markdown = render_html(measured), render_markdown(measured)
+    for text in (
+        "Growth rate (CAGR)",
+        "Volatility",
+        "Spring",
+        "Trading per year and participation",
+    ):
+        assert text in page and text in markdown
+    assert "part year, not annualized" in page  # a 2024-only fixture is under a year
+    assert "a Sharpe ratio needs the T-bill rate series" in page
+    assert "of $1,000,000" in page and "1% of the asset" in page
+    assert check_wording(page + markdown) == []
+    assert "Growth rate (CAGR)" not in render_html(results)
