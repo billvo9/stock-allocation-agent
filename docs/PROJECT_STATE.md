@@ -1002,6 +1002,36 @@ the owner's answers and messages in session:
       settings stay provisional until M4's coverage simulation passes.
       Fetching new tickers (for example a benchmark fund) still needs the
       owner's go.
+  - **The backtest builder** (users add tickers and choose dates; owner, in
+    the lead session; the quoted text is the option chosen or the owner's
+    words):
+    - Users: "Only me, on this Mac (Recommended)". It is a local app under
+      the owner's personal Tiingo plan, with no hosting and no sharing of
+      data.
+    - New tickers: "Ask me each time (Recommended)". The app shows the new
+      tickers and the request count, and fetches only after the owner
+      confirms. Tickers already fetched are reused.
+    - Dates: the owner wrote "for the fixed strategies we can let it look
+      until now. Since these will stay unchanged right? please let me know
+      your opinion". After the lead explained that fixed rules cannot be
+      overfitted, but that seeing 2025-2026 results ends the sealed
+      period's value as a blind test, the owner chose "Evaluate the model
+      first, then open (Recommended)":
+      1. First, the one-time sealed (holdout) evaluation of the frozen
+         Stock Lab model `2b6cd0c1…7fa65e7` on the protected period, under
+         a protocol fixed and approved by the owner before any protected
+         outcome is read.
+      2. Then the builder may show 2025-01-01 to the latest close for the
+         pre-registered fixed rules only (buy-and-hold, equal weight,
+         inverse volatility). Every run that touches 2025 or later is
+         logged permanently.
+      3. Research code (training, tuning, selection, model evaluation)
+         keeps refusing 2025+ data.
+    - After that evaluation, the 2025-2026 historical holdout counts as
+      spent. Later model confirmation relies on the prospective records
+      (the Stock Lab from 2026-10-20; the ETF track after its
+      registration). This changes the lockbox policy for descriptive
+      fixed-rule backtests only, and only after step 1.
 - Pending:
   - Stock Lab, in order (open item 10):
     1. the confirmation of the bull-trap f;
