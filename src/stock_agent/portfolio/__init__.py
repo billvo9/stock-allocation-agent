@@ -15,6 +15,10 @@ Modules:
     backtest_summary
                  the `backtest_summary` health input (agreed format v1.0)
                  for one engine simulation.
+    performance  the OD8 group D measures that need no new data (M1 CAGR,
+                 M2 volatility, M5 stress windows, M6 turnover per calendar
+                 year, M7 the participation flag), approved by the owner on
+                 2026-10-26 (docs/research/group_d_decisions.md).
 
 transition, schedule and engine implement OD8 group B (T5a D1-D8,
 docs/research/t5a_open_decisions.md), approved by the owner on 2026-10-15;
