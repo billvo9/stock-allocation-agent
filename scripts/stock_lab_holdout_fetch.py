@@ -28,7 +28,16 @@ A stock is ready when its audit is, the provider served every session, and
 its 2024 closes, dividends and split factors equal the research store's. Any
 other stock is held for the owner's review, not stored.
 
-The key comes from TIINGO_API_KEY only (set it in the shell that runs this).
+The key. By default it comes from TIINGO_API_KEY. With --keychain it is read
+instead from the macOS Keychain item the evening job uses
+(stock_agent.data.vendors.keychain: service stock-agent-tiingo, account
+stock-lab), once, just before the first request, and handed to the adapter in
+memory only: never an environment variable, an argument, a file or a log. An
+item that cannot be read refuses the run before any request (exit 2), naming
+the reason, never the value. Nothing reads the key when nothing is requested.
+The key is held only in this process while it runs: an ordinary traceback
+shows no local values, but a debugger or a traceback that prints locals
+would show it.
 
 Exit codes: 0 success; 1 a refused request, response or write; 2 refused
 before any request.
@@ -37,6 +46,7 @@ Usage:
     .venv/bin/python scripts/stock_lab_holdout_fetch.py                        # the plan only
     .venv/bin/python scripts/stock_lab_holdout_fetch.py --authorized           # read-only run
     .venv/bin/python scripts/stock_lab_holdout_fetch.py --authorized --store   # fetch and store
+    .venv/bin/python scripts/stock_lab_holdout_fetch.py --authorized --store --keychain
 """
 
 from __future__ import annotations
@@ -51,6 +61,13 @@ import numpy as np
 import pandas as pd
 
 from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
+from stock_agent.data.vendors.keychain import (
+    TIINGO_ACCOUNT,
+    TIINGO_SERVICE,
+    KeychainRefused,
+    add_command,
+    read_key,
+)
 from stock_agent.data.vendors.tiingo import TiingoRequestFailed
 from stock_agent.stock_lab.audit import audit_bars, audit_lines
 from stock_agent.stock_lab.contracts import DEVELOPMENT_END, SymbolStatus
@@ -113,6 +130,8 @@ def plan(
     research: StockLabStore,
     holdout: HoldoutStore,
     out: TextIO,
+    *,
+    keychain: bool = False,
 ) -> None:
     first, last = days[0].date(), days[-1].date()
     print("Stock Lab holdout fetch plan (no request made; pass --authorized to run):", file=out)
@@ -139,6 +158,12 @@ def plan(
     print(f"  the listing checks and 2024 history are read from {shown(research.path)})", file=out)
     print("with --store: one batch per ready stock is written to the holdout store", file=out)
     print(f"  {shown(holdout.path)}; a stock that is not ready is held for review", file=out)
+    if keychain:
+        print(
+            f"the key: read from the macOS Keychain (service {TIINGO_SERVICE}, account "
+            f"{TIINGO_ACCOUNT}) just before the first request; not read now",
+            file=out,
+        )
 
 
 def main(
@@ -151,10 +176,12 @@ def main(
     calendar: Callable = sessions,
     calendar_id: str = CALENDAR_ID,
     out: TextIO = sys.stdout,
+    key_reader: Callable[[], str] = read_key,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1], allow_abbrev=False)
     parser.add_argument("--authorized", action="store_true")
     parser.add_argument("--store", action="store_true")
+    parser.add_argument("--keychain", action="store_true")
     args = parser.parse_args(argv)
     if args.store and not args.authorized:
         print("refused: --store needs --authorized", file=out)
@@ -178,14 +205,26 @@ def main(
         if ticker in checks and checks[ticker].status is SymbolStatus.SUPPORTED
     ]
     if not args.authorized:
-        plan(protocol, supported, stored, days, research, holdout, out)
+        plan(protocol, supported, stored, days, research, holdout, out, keychain=args.keychain)
         return 0
     requested = [ticker for ticker in supported if ticker not in stored]
     if not requested:
         print("nothing to fetch: every supported protocol stock is stored already", file=out)
         return 0
     first, last = days[0].date(), days[-1].date()
-    adapter = adapter_factory(authorized=True, max_requests=len(requested))
+    key_source = {}
+    if args.keychain:
+        try:
+            key = key_reader()
+        except KeychainRefused as error:
+            print(
+                f"refused: the Tiingo key could not be read from the macOS Keychain ({error}); "
+                f"nothing was requested. To add it, type it at the prompt of: {add_command()}",
+                file=out,
+            )
+            return 2
+        key_source["token_provider"] = lambda: key
+    adapter = adapter_factory(authorized=True, max_requests=len(requested), **key_source)
     ready: list[str] = []
     review: list[str] = []
     try:

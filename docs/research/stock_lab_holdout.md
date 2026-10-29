@@ -16,8 +16,12 @@ run.** The fetch and the run each wait for the owner's separate go.
   t(6), one-sided at 2.5%. Only the pooled daily RPS of B1 against B0
   decides; the five-session total and every other item are descriptive. The
   evaluation runs once.
+- **2026-10-29.** For the fetch, the owner chose "Add Keychain, then run it
+  for me (Recommended)". The fetch reads the Tiingo key from the Keychain
+  item the evening job uses (`--keychain`). It runs from the merged code
+  after the owner's relayed go. The one evaluation run needs a separate go.
 
-Both choices were made in the lead session and are recorded there. This
+These choices were made in the lead session and are recorded there. This
 document registers the protocol they approved.
 
 ## 2. The registered protocol
@@ -80,18 +84,20 @@ tuning and backtest entry points and scripts load nothing from it.
 ## 4. The owner's commands
 
 The fetch makes **4 requests**, one per stock: raw daily bars for
-2024-01-02 to 2026-10-14 from `api.tiingo.com`. The key comes from
-`TIINGO_API_KEY` in the shell that runs the command, and is sent only in the
-Authorization header.
+2024-01-02 to 2026-10-14 from `api.tiingo.com`. The key goes only in the
+Authorization header. It comes from `TIINGO_API_KEY` by default. With
+`--keychain` it is read once, in memory only, from the Keychain item the
+evening job uses (service `stock-agent-tiingo`, account `stock-lab`), just
+before the first request. Nothing reads the key when nothing is requested.
 
 ```bash
-.venv/bin/python scripts/stock_lab_holdout_fetch.py
+.venv/bin/python scripts/stock_lab_holdout_fetch.py --keychain
 ```
 
-prints the plan and makes no request.
+prints the plan, makes no request and reads no key.
 
 ```bash
-.venv/bin/python scripts/stock_lab_holdout_fetch.py --authorized --store
+.venv/bin/python scripts/stock_lab_holdout_fetch.py --authorized --store --keychain
 ```
 
 fetches the bars, audits them, and stores each ready stock.
