@@ -9,6 +9,7 @@ defects.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -180,6 +181,22 @@ def test_the_smoke_checks_pass_on_the_current_monitors():
         HealthState.HEALTHY,
         11,
     )
+
+
+@pytest.mark.parametrize("descending", [False, True])
+def test_the_input_reader_smoke_check_ignores_directory_listing_order(monkeypatch, descending):
+    # Directory order differs between filesystems (APFS listed the activated run first,
+    # the ubuntu-26.04 runner the other); the edited-record scenario must not depend on it.
+    listing = Path.iterdir
+    monkeypatch.setattr(
+        Path, "iterdir", lambda self: iter(sorted(listing(self), reverse=descending))
+    )
+    check = smoke.smoke_checks(now=lambda: NOW)[1]
+    assert (check.check_id, check.state, check.value) == (
+        "smoke.input_readers",
+        HealthState.HEALTHY,
+        11,
+    ), check.detail
 
 
 def test_a_monitor_that_stops_detecting_fails_the_smoke_check(monkeypatch):

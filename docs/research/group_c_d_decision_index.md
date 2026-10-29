@@ -1,6 +1,6 @@
 # Groups C and D: decision index (2026-10-17)
 
-**Status: every decision listed here is PENDING OWNER APPROVAL.** The packets are `group_c_decisions.md` (C1–C9: cash, T-bill returns and benchmarks) and `group_d_decisions.md` (M1–M9: statistics, uncertainty and reporting). Formula ids refer to `t5_portfolio_formulas.md`. D1–D8 remain the T5a ids.
+**Status: APPROVED by the owner on 2026-10-26 (New York): "Approve all C1–C9 (Recommended)" and "Approve all M1–M9 (Recommended)", the options of the suggested reply below (recorded in `docs/PROJECT_STATE.md` and `t5_portfolio_formulas.md` section 9).** The packets are `group_c_decisions.md` (C1–C9: cash, T-bill returns and benchmarks) and `group_d_decisions.md` (M1–M9: statistics, uncertainty and reporting). Formula ids refer to `t5_portfolio_formulas.md`. D1–D8 remain the T5a ids.
 
 Each group can be approved, amended or rejected on its own, and so can each item. Group C unblocks T5b (real return inputs); group D unblocks T5c (metrics and reporting). Together they are what a real-data comparison of PPO against the baselines needs before its first run. Nothing changes in code until an approval is recorded with its date and quotation.
 
