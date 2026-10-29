@@ -12,7 +12,8 @@ its trades: no I/O, no clock, no app or UI import.
   net returns. Over a path with a multi-session span, only the single-session
   returns are used and the result says "n of N sessions", N counting every
   return session (option (i)); the omitted spans can make it too low. sd <= ZERO_VARIANCE is `zero_variance`.
-  The Sharpe ratio needs group C's cash series and is not here.
+  `sharpe_ratio` is the same over excess returns e_t = R_t - rf_t, rf the cash
+  account's return for the span (C3).
 - M5 `stress_window` (F6.5 reused): a registered window's return and maximum
   drawdown on the wealth inside it. A window not wholly inside the path is
   `outside_window`, never shortened; a window edge without a value is
@@ -82,6 +83,32 @@ def annual_volatility(returns: Sequence[float], spans: Sequence[int]) -> dict:
     if sd <= ZERO_VARIANCE:
         return {"status": UNAVAILABLE, "reason": ZERO, "value": None, **detail}
     return {"status": OK, "reason": None, "value": math.sqrt(SESSIONS_PER_YEAR) * sd, **detail}
+
+
+def sharpe_ratio(
+    returns: Sequence[float], risk_free: Sequence[float], spans: Sequence[int]
+) -> dict:
+    """
+    M2 with C3 (approved 2026-10-26): sqrt(252) x mean(e) / sd(e), ddof 1, with
+    e_t = R_t - rf_t over the single-session spans (rf the cash account's return for the
+    same span). Over a gap, the single sessions only, labelled "n of N sessions", as for
+    the volatility; sd(e) <= ZERO_VARIANCE is `zero_variance` (a 100% cash portfolio).
+    """
+
+    if not len(returns) == len(risk_free) == len(spans):
+        raise ValueError("returns, risk_free and spans must align")
+    excess = np.array(
+        [r - f for r, f, s in zip(returns, risk_free, spans, strict=True) if s == 1], dtype=float
+    )
+    total = int(sum(spans))
+    detail = {"sessions": int(excess.size), "of": total, "complete": excess.size == total}
+    if excess.size < 2:
+        return {"status": UNAVAILABLE, "reason": TOO_FEW, "value": None, **detail}
+    sd = float(excess.std(ddof=1))
+    if sd <= ZERO_VARIANCE:
+        return {"status": UNAVAILABLE, "reason": ZERO, "value": None, **detail}
+    value = math.sqrt(SESSIONS_PER_YEAR) * float(excess.mean()) / sd
+    return {"status": OK, "reason": None, "value": value, **detail}
 
 
 @dataclass(frozen=True)
