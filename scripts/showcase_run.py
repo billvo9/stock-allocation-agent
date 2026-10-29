@@ -5,10 +5,12 @@ prices and write the private report (owner-run, private, local; no network).
 It reads only the showcase store (stock_agent.showcase.store), never a Stock
 Lab store, and refuses a universe with a ticker that has no stored bars, or
 bars outside 2003-01-02 to 2024-12-31: a missing holding is never silently
-dropped. Every variant of configs/showcase/real_rebalancing_v2.yaml runs, in
-registered order, at 0x, 1x and 2x the registered costs, and each rebalancing
-rule's registered offset family (F7.2) at 1x. Version 2 is version 1 plus that
-family; the fetch reads version 1, whose tickers are the same.
+dropped. Every variant of configs/showcase/real_rebalancing_v3.yaml runs, in
+registered order, at 0x, 1x and 2x the registered costs, each rebalancing
+rule's registered offset family (F7.2) at 1x, and the group D measures it
+registers (M1, M2 volatility, M5, M6, M7; approved 2026-10-26). Version 3 is
+version 2 plus those measures, and version 2 is version 1 plus the family; the
+fetch reads version 1, whose tickers are the same.
 
 It writes, once, into a new folder ~/stock-agent-private/showcase/<run_id>/
 (or under STOCK_AGENT_SHOWCASE_REPORTS), outside every Git working tree:
@@ -45,7 +47,7 @@ from stock_agent.showcase.store import ShowcaseStoreRefused, open_store, window_
 from stock_agent.stock_lab.store import StockLabStore
 
 REPO = Path(__file__).resolve().parents[1]
-CONFIG = REPO / "configs" / "showcase" / "real_rebalancing_v2.yaml"
+CONFIG = REPO / "configs" / "showcase" / "real_rebalancing_v3.yaml"
 LOGO = REPO / "assets" / "brand" / "portfolio-lab-mark.svg"
 FONTS = REPO / "src" / "stock_agent" / "app" / "static" / "fonts"
 REPORTS_ENV = "STOCK_AGENT_SHOWCASE_REPORTS"

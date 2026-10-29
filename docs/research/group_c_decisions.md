@@ -1,6 +1,6 @@
 # Group C: cash, T-bill returns and benchmarks (decision packet, 2026-10-17)
 
-**Status: every decision here is PENDING OWNER APPROVAL.** Nothing in this packet is implemented. No cash-return, risk-free, benchmark or availability formula changes in code until the owner approves the relevant decision, and the approval is recorded with its date and quotation here, in `t5_portfolio_formulas.md` section 9 and in `docs/PROJECT_STATE.md`.
+**Status: APPROVED by the owner on 2026-10-26 (New York), in full: "Approve all C1–C9 (Recommended)", the recommended options of `group_c_d_decision_index.md` (C1–C6 (a), C7 (a) with benchmarks outside the constraint set, C8 (a), C9 (a)); the option included authorizing a one-time FRED download of 2003-2024 T-bill history. Recorded in `docs/PROJECT_STATE.md` and `t5_portfolio_formulas.md` section 9.** The text below is the packet as approved; each item is implemented in its own reviewed change, and its status there says so.
 
 **Why now.** The owner's 2026-10-17 request: make future real-data comparisons of PPO against the baselines defensible, without tuning PPO against the synthetic generator again. D4 (a) (uninvested cash earns 0%) was approved on 2026-10-15 for synthetic engineering only, with the condition "Group C remains necessary for real economic comparisons". The synthetic comparison (`ppo_comparison.md`, section 9) shows why: 0% cash penalizes every cash-heavy result, including the cash a cap or a partial build leaves.
 

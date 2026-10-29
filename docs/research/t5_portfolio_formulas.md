@@ -1,6 +1,6 @@
 # T5 portfolio readiness: financial-formula specification
 
-**Status: every formula in this document is PENDING OD8 OWNER APPROVAL, except group A (F5.1–F5.4, F6.5, F6.6, the F4.1 fee rule and the OD8.13 label), approved on 2026-10-14, and group B (F1.1–F1.3, F2.1–F2.6, F7.1–F7.2, F8.1; T5a D1–D8), approved on 2026-10-15. Both decision records are in section 9.** This is a specification for review, not an implementation. No execution, transaction-cost, cash-return, benchmark, performance-metric or reward code changes until the owner approves the relevant formulas under OD8 (`docs/product/vision_and_prd.md`, section 13), and each approval is recorded with its date and quotation.
+**Status: every formula in this document is PENDING OD8 OWNER APPROVAL, except group A (F5.1–F5.4, F6.5, F6.6, the F4.1 fee rule and the OD8.13 label), approved on 2026-10-14, and group B (F1.1–F1.3, F2.1–F2.6, F7.1–F7.2, F8.1; T5a D1–D8), approved on 2026-10-15. Groups C and D were approved on 2026-10-26 as their decision packets recommend (`group_c_decisions.md`, `group_d_decisions.md`); where a packet's rule differs from this document's earlier proposal, the packet rules. Both decision records are in section 9.** This is a specification for review, not an implementation. No execution, transaction-cost, cash-return, benchmark, performance-metric or reward code changes until the owner approves the relevant formulas under OD8 (`docs/product/vision_and_prd.md`, section 13), and each approval is recorded with its date and quotation.
 
 - Written 2026-10-12 against `main` at `ad99749`. Code line references are as of that commit.
 - Every numerical example is synthetic and was checked by a scratch Python run.
@@ -501,7 +501,17 @@ Not authorized by these approvals: T5a–T5c simulator formulas (groups B–D) a
 
 The owner approved the T5a open decisions D1-D8, recorded verbatim against each D identifier in `docs/research/t5a_open_decisions.md`. These are approved: F1.1-F1.3 (D1), F2.1-F2.4 and F2.6 (D2; the rates are provisional assumptions shown at 0×, 1× and 2×), F2.5 (D3), F7.1-F7.2 (D7) and F8.1 with the reward log(1 + R_net) (D8 (a)). So are the new rules D4 (a), D5 and D6, which have no F-identifier here. D4 (a) holds only for synthetic engineering. Group C (cash returns, benchmarks) and group D (statistics, reporting) remain pending. One D5 clause, constraint sets for learned policies, awaits the owner's confirmation; until then, constraint sets apply identically to every compared policy. D9 is not approved.
 
-### Group C and D decision packets (2026-10-17, pending)
+### Groups C and D decision record (owner, 2026-10-26)
+
+The owner approved OD8 groups C and D in full on 2026-10-26 (New York), against a one-page
+plain-English sheet of each item's recommendation: "Approve all C1–C9 (Recommended)", which
+included authorizing a one-time FRED download of 2003-2024 T-bill history, and "Approve all M1–M9
+(Recommended)". The approved options are the packets' recommendations, as in the suggested reply of
+`group_c_d_decision_index.md`. The full record is in `docs/PROJECT_STATE.md`. Each item is
+implemented in its own reviewed change; M1, M2 (volatility), M5, M6 and M7 come first
+(`stock_agent.portfolio.performance`).
+
+### Group C and D decision packets (2026-10-17, approved 2026-10-26)
 
 Groups C and D are prepared for approval as decision packets in the T5a D1–D8 format: `group_c_decisions.md` (C1–C9: cash and T-bill returns, the risk-free rate, availability and vintages, benchmarks, `return_basis`, reference portfolios, the window start, and the booked-state exception) and `group_d_decisions.md` (M1–M9: CAGR, volatility and Sharpe, intervals and their coverage simulation, drawdown reuse and stress windows, turnover per calendar year, participation, multiple testing, and the reporting contract with power figures). The index and a suggested reply are in `group_c_d_decision_index.md`. Every formula in this specification stays pending until its approval is recorded here.
 

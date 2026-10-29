@@ -11,7 +11,8 @@ decision at the next close (D1), charges the D2 provisional costs on every
 trade, the build included, and replays the same decisions at 0x, 1x and 2x
 the rates (`simulate_cost_sensitivity`). 1x is the headline.
 
-Measures (approved only; group C and D are not):
+Measures (approved only: OD8 groups A and B, and the group D measures the
+configuration registers; group C and the rest of group D are not built yet):
 
 - growth of $10,000: the engine's pre-trade wealth path from the build close
   (to the cent), None where a held asset has no close or after a stop;
@@ -46,11 +47,13 @@ import math
 from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import numpy as np
 import pandas as pd
 
+from stock_agent.calendars import nyse
+from stock_agent.portfolio import performance
 from stock_agent.portfolio.descriptive import (
     UNAVAILABLE,
     MetricUnavailable,
@@ -66,7 +69,7 @@ from stock_agent.portfolio.engine import (
     simulate_cost_sensitivity,
 )
 from stock_agent.portfolio.schedule import ScheduleSpec, offset_family
-from stock_agent.portfolio.transition import CASH_ACCOUNT, Constraints, CostModel
+from stock_agent.portfolio.transition import CASH_ACCOUNT, DUST, Constraints, CostModel
 from stock_agent.rl.policies import PolicyInputError
 from stock_agent.showcase.config import ShowcaseConfig, Strategy, Universe
 from stock_agent.showcase.returns import FUNDING_LEG, RETURN_LABEL, ReturnTable, return_table
@@ -106,6 +109,7 @@ class UniverseData:
     table: ReturnTable
     lineage: Mapping[str, list[dict]]
     revised_sessions: Mapping[str, int]
+    dollar_volume: np.ndarray | None = None  # raw close x raw volume, the funding leg NaN (M7)
 
 
 def _stamp(session: pd.Timestamp) -> str:
@@ -143,7 +147,13 @@ def universe_data(
             for batch in stored.batches
         ]
         revised[ticker] = len(stored.revised_sessions)
-    return UniverseData(universe, return_table(sessions, bars), lineage, revised)
+    table = return_table(sessions, bars)
+    volume = np.full(table.returns.shape, np.nan)
+    for column, ticker in enumerate(universe.tickers):
+        frame = bars[ticker].set_index(pd.DatetimeIndex(bars[ticker]["session"]))
+        dollars = (frame["close"] * frame["volume"]).reindex(sessions)
+        volume[:, column] = dollars.to_numpy(dtype="float64")
+    return UniverseData(universe, table, lineage, revised, volume)
 
 
 def _wealth_series(table: ReturnTable, result: SimulationResult) -> pd.Series:
@@ -336,6 +346,109 @@ def _offset_family(
     }
 
 
+def _year_bounds(sessions: pd.DatetimeIndex) -> dict[int, tuple[pd.Timestamp, pd.Timestamp]]:
+    """Each calendar year's first and last NYSE session (the calendar's, not the window's)."""
+
+    first, last = nyse.COVERAGE.first.date(), nyse.COVERAGE.last.date()
+    bounds = {}
+    for year in sorted(set(sessions.year)):
+        days = nyse.sessions(max(date(year, 1, 1), first), min(date(year, 12, 31), last))
+        bounds[int(year)] = (days[0], days[-1])
+    return bounds
+
+
+def _group_d(
+    config: ShowcaseConfig, data: UniverseData, result: SimulationResult, growth: pd.Series
+) -> dict[str, object] | None:
+    """
+    The group D measures of the headline run (approved 2026-10-26; `portfolio.performance`):
+    M1 CAGR, M2 volatility, M5 the registered stress windows, M6 turnover per calendar year
+    and M7 the participation flag. None unless the configuration registers `measures`.
+    """
+
+    measures = config.measures
+    if measures is None:
+        return None
+    table = data.table
+    initial = config.initial_wealth
+    complete = result.status == COMPLETE
+    valued = growth.dropna()
+    if not complete:
+        cagr = {"value": None, "annualized": False, "reason": "stopped", "days": None}
+    else:  # M1: to the last valued close, named when it is not the window's last session
+        cagr = {
+            **performance.cagr(initial, float(valued.iloc[-1]), growth.index[0], valued.index[-1]),
+            "end": _stamp(valued.index[-1]),
+            "reason": None,
+        }
+    volatility = performance.annual_volatility(
+        [step.net_return for step in result.steps], [end - start for start, end in result.spans]
+    )
+    windows = [
+        performance.stress_window(
+            growth,
+            performance.StressWindow(
+                w.key, w.label, pd.Timestamp(w.start, tz="UTC"), pd.Timestamp(w.end, tz="UTC")
+            ),
+        )
+        for w in measures.stress_windows
+    ]
+    for window in windows:
+        ended_early = not complete and window["end"] > growth.index[-1]
+        if window["reason"] == performance.OUTSIDE_WINDOW and ended_early:
+            window["reason"] = "run_stopped_before_window_end"  # inside the registered span
+        window["start"], window["end"] = _stamp(window["start"]), _stamp(window["end"])
+    by_session = {start: step for step, (start, _) in zip(result.steps, result.spans, strict=True)}
+    executions = [
+        performance.Execution(table.sessions[t.session], t.feasibility, by_session[t.session])
+        for t in result.trades
+        if t.session in by_session
+    ]
+    turnover = performance.turnover_by_year(
+        executions,
+        first_session=growth.index[0],
+        last_session=growth.index[-1],
+        year_bounds=_year_bounds(table.sessions),
+    )
+    wealth_at = dict(zip(result.sessions, result.wealth, strict=True))
+    pre = np.zeros(len(table.assets))
+    pre[table.cash_index] = 1.0
+    trades, previous = [], {}
+    for step, (start, end) in zip(result.steps, result.spans, strict=True):
+        previous[start] = pre
+        pre = np.asarray(step.w_next)
+    for trade in result.trades:
+        step = by_session.get(trade.session)
+        if step is None:
+            continue
+        delta = np.asarray(step.w_post_trade) - previous[trade.session]
+        delta[np.abs(delta) < DUST] = 0.0  # the engine's own no-trade threshold
+        trades.append((trade.decision, delta, wealth_at[trade.session] / initial))
+    flag = performance.participation(
+        trades,
+        data.dollar_volume,
+        table.cash_index,
+        notional=measures.notional,
+        threshold=measures.threshold,
+        window=measures.volume_window,
+    )
+    return {
+        "cagr": cagr,
+        "volatility": volatility,
+        "stress_windows": windows,
+        "turnover_by_year": {
+            **turnover,
+            "years": [{**row, "year": int(row["year"])} for row in turnover["years"]],
+        },
+        "participation": {
+            **flag,
+            "notional": measures.notional,
+            "threshold": measures.threshold,
+            "window": measures.volume_window,
+        },
+    }
+
+
 def run_strategy(
     config: ShowcaseConfig, data: UniverseData, strategy: Strategy
 ) -> dict[str, object]:
@@ -387,6 +500,7 @@ def run_strategy(
         "cost_sensitivity": sensitivity,
         **_activity(headline, config.initial_wealth),
         "offset_family": _offset_family(config, table, strategy, costs, schedule, headline),
+        "group_d": _group_d(config, data, headline, growth),
         "dates": [_stamp(day) for day in growth.index],
         "wealth": [None if not math.isfinite(v) else round(float(v), 2) for v in growth],
         "complete": headline.status == COMPLETE,
@@ -468,6 +582,7 @@ def run_showcase(
         "window": {"start": config.start.isoformat(), "end": config.end.isoformat()},
         "variants_run": len(config.variants()),
         "offset_family": config.offset_family,
+        "group_d": config.measures is not None,
         "offset_family_simulations": sum(
             s["offset_family"]["k"] - 1
             for u in universes
