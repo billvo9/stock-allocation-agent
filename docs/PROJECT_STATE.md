@@ -1032,6 +1032,37 @@ the owner's answers and messages in session:
       (the Stock Lab from 2026-10-20; the ETF track after its
       registration). This changes the lockbox policy for descriptive
       fixed-rule backtests only, and only after step 1.
+  - **The sealed evaluation's protocol** (2026-10-26, against the Stock
+    Lab session's protocol summarised in plain English in the lead
+    session): "Approve as proposed (Recommended)".
+    - The frozen model `2b6cd0c1…7fa65e7` is used exactly as registered.
+    - Decision evenings run from 2024-12-31 to 2026-10-07, with outcomes
+      from 2025-01-02 to 2026-10-14.
+    - The deciding test asks whether B1 beats B0 on daily pooled RPS. It
+      uses A7's fold-block t over 7 calendar-quarter blocks, t(6),
+      one-sided at 2.5%.
+    - Brier score, log loss, the five-session total, calibration and the
+      per-stock and per-year breakdowns are descriptive only.
+    - There is exactly one run, written to a write-once record. The
+      protocol is registered in code by its sha256 before any protected
+      data is read.
+- 2026-10-28, cash returns in the showcase (group C part 2; owner, in the
+  lead session; the quoted text is the option chosen):
+  - The cash-column safeguard: "Yes, keep the safeguard (Recommended)".
+    Each decision sees the cash column as zero, so no strategy can read a
+    T-bill rate before C2 says it is available. This applies the approved
+    C2 and C9 scope, changes no rule, and leaves results identical.
+  - The cash account's presentation: "In the table, labelled "context"
+    (Recommended)". It is a context row, not a variant, with no
+    value-against-cash difference until M9.
+- 2026-10-29, the sealed evaluation's fetch (owner, in the lead session):
+  "Add Keychain, then run it for me (Recommended)".
+  - The holdout fetch script reads the Tiingo key from the evening job's
+    Keychain item (service `stock-agent-tiingo`, account `stock-lab`), in
+    memory only.
+  - After the owner merges the PR, the Stock Lab session runs the 4-request
+    fetch on the owner's relayed go.
+  - The one evaluation run needs a separate go.
 - Pending:
   - Stock Lab, in order (open item 10):
     1. the confirmation of the bull-trap f;
