@@ -943,17 +943,74 @@ the owner's answers and messages in session:
       briefing reads "made Tue 20 Oct 2026, 20:16 New York".
   - It activates real forecast recording for this model id only. Any other
     model, including a later re-freeze, needs its own activation.
+- 2026-10-21, the Stock Lab's blocked first unattended evening (owner, by
+  choosing these options in the lead session):
+  - The 20:30 launchd run was refused because macOS privacy protection
+    blocks background jobs from reading `~/Desktop`, where the repository
+    lives.
+  - "You run it now": the lead ran that evening's fetch-store and
+    `--record-real` by hand at about 20:38 New York. All four stocks were
+    recorded for 2026-10-21.
+  - "Dedicated runner copy (Recommended)": the evening job now runs from a
+    clone at `~/stock-agent-runner`, outside Desktop. Its venv is identical
+    to the frozen model's environment (numpy 2.5.1, pandas 3.0.5,
+    scikit-learn 1.9.1). A launchd test run exited 0, and the 2026-10-22
+    20:30 run was the first fully unattended one.
+- 2026-10-23, the Lab app redesign (owner, in the lead session; the quoted
+  text is the option chosen or the owner's words):
+  - The per-launch secret for the Lab app: "yes".
+  - One shared scale for the watchlist's one-month lines: "okay let's do the
+    shared scale".
+  - The History screen's read-only modules (`stock_lab.evenings`,
+    `stock_lab.briefing.history`) added to the app's import allowlist:
+    "Approve (Recommended)".
+- 2026-10-26 (owner, in the lead session; the quoted text is the option
+  chosen or the owner's words):
+  - Health headline: "Keep the green headline with the badge". The badge
+    shows whenever Model Health flags a Stock Lab check.
+  - **Real-data rebalancing showcase (exploratory, private).**
+    - Scope: "I want more stocks and industries than only AMD, MRVL, MU and
+      NVIDIA. and Yes just don't add new formula except we really need
+      one."
+    - Audience: "Only me (Recommended)".
+    - Universe: "Universe OK (Recommended)". That is 31 tickers: 9 sector
+      ETFs, 18 sector stocks chosen by each fund's 2002-09-30 top holdings,
+      and the 4 semiconductors as a separate universe.
+    - The fetch: "Go, run it for me (Recommended)" (32 Tiingo requests,
+      2003-2024 only, into the private showcase store).
+    - The boundary-test allowlist additions for the showcase: "Approve
+      (Recommended)".
+    - A small read-only Strategies screen in the Lab app: "Yes, small and
+      read-only (Recommended)".
+    - The rebalancing-day (offset) sensitivity needs no new decision: F7.2
+      was approved on 2026-10-15 (T5a D7).
+  - **OD8 groups C and D approved**, against a one-page plain-English sheet
+    of each item's recommendation, given in the lead session:
+    - Group C: "Approve all C1–C9 (Recommended)". The option stated that
+      it includes authorizing a one-time FRED download of 2003-2024
+      T-bill history.
+    - Group D: "Approve all M1–M9 (Recommended)".
+    - The sheet's recommendations are the packets' recommended options, as
+      in the "Suggested reply" of `docs/research/group_c_d_decision_index.md`:
+      C1-C6 (a), C7 (a) with benchmarks outside the constraint set, C8
+      (a), C9 (a); M1 as stated; M2 with (i) for incomplete histories; M3
+      with `fold_block_t` beside the bootstrap; M4 (a) with 5,000
+      replications; M5 (a); M6 (a); M7 (a) with N = $1,000,000; M8 (a)
+      with no fallback claims and the bootstrap-SE DSR; M9 (a) with value
+      against cash as in the PRD and averaged targets as the seed ensemble.
+    - Each group is implemented in focused, reviewed PRs. M3's interval
+      settings stay provisional until M4's coverage simulation passes.
+      Fetching new tickers (for example a benchmark fund) still needs the
+      owner's go.
 - Pending:
   - Stock Lab, in order (open item 10):
     1. the confirmation of the bull-trap f;
     2. the scheduled evening job, which needs the Tiingo key at run time, and
        the briefing's delivery provider, address and installation.
   - the rest of OD3;
-  - OD8 groups C-D (cash returns and benchmarks; statistics and
-    reporting). The decision packets are merged (#92); nothing in them is
-    approved. Group B, the D1-D8 packet, was approved on 2026-10-15
-    (above); its D5 clause and two interpretations were confirmed on
-    2026-10-17 (above);
+  - OD8 groups C-D: approved on 2026-10-26 (above); to be implemented.
+    Group B, the D1-D8 packet, was approved on 2026-10-15 (above); its D5
+    clause and two interpretations were confirmed on 2026-10-17 (above);
   - D9 (the Builder's buy-and-hold mix), separate from group B;
   - OD9's `signal_cutoff_at` for decisions and the production
     availability rule beyond descriptive display;

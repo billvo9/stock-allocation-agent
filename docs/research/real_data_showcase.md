@@ -81,6 +81,57 @@ holding the stock stops (`distribution_in_gap`) rather than guessing.
   basis points, plus the final wealth at 0x and 2x.
 - Each holding's own growth over the same span (F5.4, no cost), as context.
 
+## The rebalancing-day (offset) family (F7.2)
+
+- **Approved:** F7.2 under T5a D7 (2026-10-15). It was requested for the showcase on
+  2026-10-26.
+- **Registered** in `configs/showcase/real_rebalancing_v2.yaml` before it was run. That file
+  is version 1 plus `offset_family: true`, and a test checks nothing else differs.
+- **What runs.** Each rebalancing rule runs at every offset o in [0, k) of its cadence
+  (weekly k = 5, monthly 21, quarterly 63), at 1x costs. Every offset shares the common
+  build close, so the rebalancing days move, and with them the rebalance count by at most
+  one and the first rebalance's distance from the build.
+- **What is reported**, exactly F7.2's wording:
+  - The registered offset (0) is the headline. Its run is the headline run itself, and the
+    family never chooses it.
+  - The family adds the max − min spread of the total return across the k offsets. Which
+    offset was highest or lowest is not recorded or shown.
+  - The spread is unavailable if any offset stopped early, and there are no per-offset
+    intervals.
+- **Counting.** A rule's k offsets are one variant with a k-member sensitivity family:
+  `variants_run` stays 18, and `offset_family_simulations` records the extra runs.
+- **Buy and hold** never rebalances, so the offset changes nothing for it, and it has no
+  family.
+
+## Group D measures that need no new data (M1, M2, M5, M6, M7)
+
+- **Approval.** The owner approved groups C and D in full on 2026-10-26: "Approve all M1–M9
+  (Recommended)", meaning the packets' recommended options. The decision record is in
+  `docs/PROJECT_STATE.md`.
+- **Registration.** `configs/showcase/real_rebalancing_v3.yaml` registers them before they
+  were computed. It is version 2 plus a `measures` block, and the headline and offset family
+  are unchanged (tested). The code is `stock_agent.portfolio.performance`, wired in
+  `showcase.run._group_d`.
+
+| Id | What the report shows | Rule |
+|---|---|---|
+| M1 | Growth rate (CAGR) | G^(365.25/D) − 1, G = W_end / W_0 with W_0 before the build cost, D calendar days from the build close to the last close; under 365 days the period return, labelled, never annualized |
+| M2 | Volatility | √252 × sd(R_t), ddof 1, over per-session net returns; over a gap, the single-session returns only, labelled "incomplete: n of N sessions" (N counts every return session) with the caveat that the moves left out can make it read too low; sd ≤ 1e-12 is `zero_variance`. The Sharpe ratio waits for group C's cash series |
+| M5 | Stress windows | The S&P 500's closing peak to closing low: 2007-10-09 to 2009-03-09 (1,565.15 to 676.53), 2020-02-19 to 2020-03-23 (3,386.15 to 2,237.40), and 2022-01-03 to 2022-10-12 (4,796.56 to 3,577.03), checked on 2026-10-26 against published closes (Reason, ETF Trends, Marotta on Money, PBS NewsHour, Yardeni Research). Each window's return and its F6.5 maximum drawdown inside it; a window outside the span is `outside_window`, never shortened |
+| M6 | Turnover per calendar year | One-way turnover with the construction apart (it ends at the first execution reaching the build's own target, or at a different target); the rebalance sums per calendar year, part years labelled and never scaled; the yearly figure is the mean of the full years. Traded notional the same way |
+| M7 | Participation flag | q = |Δ| × N × W⁻ / MDV per traded asset, flagged above 1%, N = $1,000,000; MDV is the median of raw close × raw volume over the 20 sessions ending at the decision session (never the next one); fewer than 20 is `unavailable`; the build is counted apart. A flag, not a capacity figure |
+
+## The Lab app's Strategies screen
+
+More > Strategies is a small, read-only screen, as the owner chose: "Yes, small and
+read-only (Recommended)" (2026-10-26).
+- It reads only the newest saved `results.json`, with the standard library. It recomputes
+  nothing and imports no showcase module, so the app's import allowlist is unchanged.
+- It shows the same caveats, the growth of $10,000 for each list, and the results table with
+  the rebalancing-day spread.
+- It is behind the app's per-launch key, like every data route. The demo reads nothing real.
+- The design is in `docs/product/lab_app_design.md`, "Strategies in detail".
+
 ## The universes
 
 1. **Nine sector funds:** XLB, XLE, XLF, XLI, XLK, XLP, XLU, XLV, XLY.
@@ -232,6 +283,20 @@ Commands, run from the repository root:
   - Interval estimates, such as a block bootstrap on the difference between
     two rules (group D).
   - A benchmark and a cash leg (group C).
+- **The rebalancing day matters.** The offset family shows how much a result moves when only
+  the rebalancing day changes, a pure timing accident. The spread is a description, not a
+  test.
+- **Growth rate versus total return.** A CAGR turns a total return into a steady yearly
+  rate: +900% over 21.75 years is about 11.2% a year. Calendar days make the year exact, and
+  counting the build inside it keeps the cost of getting invested in the result. A CAGR is
+  never divided by volatility here; a Sharpe ratio needs the T-bill rate first.
+- **Volatility.** Volatility is the typical size of a day's move, scaled to a year by √252.
+  It describes the bumpiness of the path, not its worst fall: two rules with the same
+  volatility can have very different drawdowns. That is why the stress windows sit beside it.
+- **Participation.** Participation asks whether a trade would have been large for the market
+  that day. At $1,000,000, a 2003 sector-fund build was more than 1% of some funds' exchange
+  volume. That is a warning about the assumed costs at that size, not a limit, and a fund can
+  absorb more through creations than its exchange volume shows.
 - **What to learn next.**
   - Survivorship bias, and point-in-time index membership (CRSP or the
     index's own history).
@@ -240,6 +305,8 @@ Commands, run from the repository root:
 
 ## Follow-ups (not done)
 
-- A Lab app screen for the showcase.
-- A rebalance-offset sensitivity family (F7.2) for the same variants.
-- Group C and group D measures, which wait for the owner's decisions.
+- Group C (the T-bill rate series and cash return, then Sharpe), benchmarks (C5-C8), and the
+  remaining group D items (M3 intervals after the M4 coverage simulation, M8, M9), in the
+  order agreed.
+- Issuer-verified distributions and point-in-time index membership, for a less biased stock
+  list.

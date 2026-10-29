@@ -16,6 +16,16 @@ weaken them:
 - tickers are US tickers in the provider's form, each with one kind (`etf` or
   `stock`), and there are at most `MAX_TICKERS` of them, one fetch run's scope.
 
+`offset_family` (optional, default false) registers F7.2's rebalance-offset
+sensitivity: every rebalancing rule is also run at all k offsets of its
+cadence. The k runs are one variant with a k-member sensitivity family, never
+k variants, and the registered `offset` alone gives the headline.
+
+`measures` (optional) registers the group D settings approved on 2026-10-26:
+M5's three stress windows and M7's participation notional, threshold and
+volume window. A window may lie outside the run's span: it is then reported
+`outside_window`, never shortened.
+
 `variants()` lists every (universe, strategy) pair in registered order: the
 number of variants run, recorded with the results. Every variant is
 reported; none is chosen afterwards. `sha256()` identifies the configuration
@@ -33,6 +43,7 @@ from pathlib import Path
 
 import yaml
 
+from stock_agent.calendars import nyse
 from stock_agent.portfolio.schedule import execution_lag
 from stock_agent.portfolio.transition import (
     BROAD_ETF,
@@ -66,6 +77,7 @@ TOP_LEVEL = {
     "strategies",
     "universes",
 }
+OPTIONAL = {"offset_family", "measures"}
 
 
 class ConfigRefused(ValueError):
@@ -101,6 +113,65 @@ class Strategy:
 
 
 @dataclass(frozen=True)
+class Window:
+    key: str
+    label: str
+    start: date
+    end: date
+
+
+@dataclass(frozen=True)
+class Measures:
+    """
+    The registered group D settings (approved 2026-10-26): M5's stress windows
+    and M7's participation flag (notional N, threshold p, MDV window).
+    """
+
+    stress_windows: tuple[Window, ...]
+    notional: float
+    threshold: float
+    volume_window: int
+
+
+def _measures(record: object) -> Measures:
+    _keys(record, {"stress_windows", "participation"}, "measures")
+    windows = []
+    for entry in record["stress_windows"]:
+        _keys(entry, {"key", "label", "start", "end"}, "a stress window")
+        key = str(entry["key"])
+        if not _NAME.fullmatch(key):
+            raise ConfigRefused(f"stress window key {key!r} must be a lowercase word")
+        first = _date(entry["start"], f"{key}.start")
+        last = _date(entry["end"], f"{key}.end")
+        if first >= last:
+            raise ConfigRefused(f"stress window {key} must start before it ends")
+        for name, day in (("start", first), ("end", last)):
+            try:
+                session = nyse.is_session(day)
+            except nyse.CalendarRefused:
+                session = False  # outside the frozen calendar: never a registered edge
+            if not session:
+                raise ConfigRefused(f"stress window {key}'s {name} {day} is not an NYSE session")
+        windows.append(Window(key, _text(entry["label"], f"{key}.label"), first, last))
+    if len({w.key for w in windows}) != len(windows):
+        raise ConfigRefused("stress windows need distinct keys")
+    participation = record["participation"]
+    _keys(participation, {"notional", "threshold", "window"}, "participation")
+    notional, threshold = participation["notional"], participation["threshold"]
+    for name, value in (("notional", notional), ("threshold", threshold)):
+        if isinstance(value, bool) or not isinstance(value, int | float) or not value > 0:
+            raise ConfigRefused(f"participation.{name} must be a positive number")
+    if threshold >= 1:
+        raise ConfigRefused("participation.threshold is a fraction below 1")
+    return Measures(
+        stress_windows=tuple(windows),
+        notional=float(notional),
+        threshold=float(threshold),
+        volume_window=_int(participation["window"], "participation.window", 1),
+    )
+
+
+@dataclass(frozen=True)
 class ShowcaseConfig:
     name: str
     start: date
@@ -115,6 +186,8 @@ class ShowcaseConfig:
     strategies: tuple[Strategy, ...]
     universes: tuple[Universe, ...]
     record: dict
+    offset_family: bool = False
+    measures: Measures | None = None
 
     def tickers(self) -> tuple[str, ...]:
         """Every ticker of every universe, once, in registered order."""
@@ -180,7 +253,10 @@ def _keys(record: dict, allowed: set[str], where: str) -> None:
 def config_from_dict(record: dict) -> ShowcaseConfig:
     """The validated configuration (module docstring), or `ConfigRefused`."""
 
-    _keys(record, TOP_LEVEL, "the configuration")
+    _keys({k: v for k, v in record.items() if k not in OPTIONAL}, TOP_LEVEL, "the configuration")
+    offset_family = record.get("offset_family", False)
+    if not isinstance(offset_family, bool):
+        raise ConfigRefused("offset_family must be true or false")
     if record["schema_version"] != SCHEMA_VERSION:
         raise ConfigRefused(f"unsupported schema_version {record['schema_version']!r}")
     if record["protocol"] != PROTOCOL:
@@ -300,6 +376,8 @@ def config_from_dict(record: dict) -> ShowcaseConfig:
         strategies=tuple(strategies),
         universes=tuple(universes),
         record=record,
+        offset_family=offset_family,
+        measures=None if "measures" not in record else _measures(record["measures"]),
     )
 
 

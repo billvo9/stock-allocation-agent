@@ -105,3 +105,98 @@ def test_tickers_are_checked_and_capped():
     ]
     with pytest.raises(ConfigRefused, match="at most"):
         config(universes=[{"key": "big", "label": "Big", "selection": "x", "members": many}])
+
+
+def test_version_2_is_version_1_plus_the_registered_offset_family():
+    import yaml
+
+    v1 = yaml.safe_load(REGISTERED.read_text(encoding="utf-8"))
+    v2 = yaml.safe_load(
+        (REGISTERED.parent / "real_rebalancing_v2.yaml").read_text(encoding="utf-8")
+    )
+    assert v2.pop("offset_family") is True and v2.pop("name") == "real_rebalancing_v2"
+    v1.pop("name")
+    assert v1 == v2  # same universes, rules, schedules, offset, window and cost levels
+    assert load_config(REGISTERED).offset_family is False
+    assert load_config(REGISTERED.parent / "real_rebalancing_v2.yaml").offset_family is True
+
+
+def test_offset_family_must_be_a_boolean():
+    with pytest.raises(ConfigRefused, match="offset_family"):
+        config(offset_family="all")
+
+
+MEASURES = {
+    "stress_windows": [
+        {"key": "spring", "label": "Spring", "start": "2024-03-01", "end": "2024-05-31"},
+    ],
+    "participation": {"notional": 1000000, "threshold": 0.01, "window": 20},
+}
+
+
+def test_version_3_is_version_2_plus_the_registered_group_d_measures():
+    import yaml
+
+    v2 = yaml.safe_load((REGISTERED.parent / "real_rebalancing_v2.yaml").read_text("utf-8"))
+    v3 = yaml.safe_load((REGISTERED.parent / "real_rebalancing_v3.yaml").read_text("utf-8"))
+    measures = v3.pop("measures")
+    assert v3.pop("name") == "real_rebalancing_v3"
+    v2.pop("name")
+    assert v2 == v3
+    windows = {(w["key"], str(w["start"]), str(w["end"])) for w in measures["stress_windows"]}
+    assert windows == {
+        ("global_financial_crisis", "2007-10-09", "2009-03-09"),
+        ("covid_crash", "2020-02-19", "2020-03-23"),
+        ("rate_shock_2022", "2022-01-03", "2022-10-12"),
+    }
+    assert measures["participation"] == {"notional": 1000000, "threshold": 0.01, "window": 20}
+    loaded = load_config(REGISTERED.parent / "real_rebalancing_v3.yaml")
+    assert loaded.measures.notional == 1_000_000 and loaded.measures.volume_window == 20
+
+
+@pytest.mark.parametrize(
+    "change, message",
+    [
+        (("participation", "threshold", 1.5), "fraction below 1"),
+        (("participation", "notional", 0), "positive"),
+        (("participation", "window", 0), "at least 1"),
+    ],
+)
+def test_bad_measure_settings_are_refused(change, message):
+    import copy
+
+    measures = copy.deepcopy(MEASURES)
+    section, key, value = change
+    measures[section][key] = value
+    with pytest.raises(ConfigRefused, match=message):
+        config(measures=measures)
+
+
+def test_a_stress_window_must_run_forward_and_keys_must_differ():
+    import copy
+
+    backwards = copy.deepcopy(MEASURES)
+    backwards["stress_windows"][0]["end"] = "2024-02-01"
+    with pytest.raises(ConfigRefused, match="start before it ends"):
+        config(measures=backwards)
+    twice = copy.deepcopy(MEASURES)
+    twice["stress_windows"].append(dict(twice["stress_windows"][0]))
+    with pytest.raises(ConfigRefused, match="distinct keys"):
+        config(measures=twice)
+
+
+def test_a_stress_window_edge_must_be_a_session_and_a_bool_is_not_a_number():
+    import copy
+
+    weekend = copy.deepcopy(MEASURES)
+    weekend["stress_windows"][0]["start"] = "2024-03-02"  # a Saturday
+    with pytest.raises(ConfigRefused, match="not an NYSE session"):
+        config(measures=weekend)
+    late = copy.deepcopy(MEASURES)
+    late["stress_windows"][0]["end"] = "2025-03-03"  # outside the frozen calendar
+    with pytest.raises(ConfigRefused, match="not an NYSE session"):
+        config(measures=late)
+    flag = copy.deepcopy(MEASURES)
+    flag["participation"]["notional"] = True
+    with pytest.raises(ConfigRefused, match="positive number"):
+        config(measures=flag)

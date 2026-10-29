@@ -359,3 +359,292 @@ def test_a_mid_run_gap_leaves_wealth_unavailable_and_the_drawdown_labelled_incom
     chart = page[page.index('data-chart="funds"') :]
     path = re.search(r'<path class="line rule-buy_and_hold" d="([^"]+)"', chart).group(1)
     assert path.count("M") == 2  # the line breaks at the gap instead of bridging it
+
+
+# --- F7.2: the rebalance-offset sensitivity family ---
+
+
+@pytest.fixture(scope="module")
+def with_family():
+    frames = default_frames(SESSIONS)
+    return _results(frames, offset_family=True), _results(frames)
+
+
+def test_the_offset_family_never_changes_or_chooses_the_headline(with_family):
+    family, plain = with_family
+    assert family["variants_run"] == plain["variants_run"] == 10  # offsets are not variants
+    for a, b in zip(family["universes"], plain["universes"], strict=True):
+        for x, y in zip(a["strategies"], b["strategies"], strict=True):
+            assert {k: v for k, v in x.items() if k != "offset_family"} == {
+                k: v for k, v in y.items() if k != "offset_family"
+            }  # every headline measure, not only the wealth path
+            assert y["offset_family"] is None
+            if x["rule"] == "buy_and_hold":
+                assert x["offset_family"] == {
+                    "applies": False,
+                    "k": 21,
+                    "reason": "no_rebalances_after_the_build",
+                }
+                continue
+            fam = x["offset_family"]
+            assert fam["applies"] and fam["k"] == x["every"] and fam["registered_offset"] == 0
+            assert set(fam) == {
+                "applies",
+                "k",
+                "registered_offset",
+                "total_return",
+                "stopped_offsets",
+            }
+            total = fam["total_return"]
+            assert set(total) == {"registered", "spread"}  # F7.2: no min, max or best day
+            assert total["registered"] == x["total_return"] and total["spread"] >= 0
+            assert fam["stopped_offsets"] == 0
+
+
+def test_every_offset_is_run_and_the_days_change_the_result(with_family):
+    family, _ = with_family
+    assert family["offset_family"] is True
+    assert family["offset_family_simulations"] == 2 * (4 + 20 + 62 + 20)  # k - 1 per rule
+    weekly = _strategy(_universe(family, "funds"), "equal_weight_weekly")
+    assert weekly["offset_family"]["total_return"]["spread"] > 0
+
+
+def test_an_offset_runs_the_registered_schedule_shifted_by_its_phase():
+    cfg = config(offset_family=True)
+    data = universe_data(cfg.universe("funds"), SESSIONS, loader(default_frames(SESSIONS)))
+    strategy = cfg.strategies[2]  # equal weight, monthly
+    _, registered = showcase_run._targets(cfg, data.table, strategy, 0)
+    _, shifted = showcase_run._targets(cfg, data.table, strategy, 7)
+    assert min(registered) == min(shifted) == 20  # the common build decision (D3)
+    assert sorted(registered)[1:3] == [41, 62] and sorted(shifted)[1:3] == [27, 48]
+
+
+def test_the_spread_is_unavailable_when_any_offset_stopped():
+    assert showcase_run._spread([0.1, None, 0.3], 0.1) == {"registered": 0.1, "spread": None}
+    assert showcase_run._spread([0.1, 0.4, 0.3], 0.1)["spread"] == pytest.approx(0.3)
+
+
+def _offset_wealth(cfg, data, strategy, offset):
+    from stock_agent.portfolio.engine import simulate
+    from stock_agent.portfolio.transition import CASH_ACCOUNT, Constraints, CostModel
+
+    classes = {**cfg.asset_classes(), FUNDING_LEG: CASH_ACCOUNT}
+    costs = CostModel.provisional({asset: classes[asset] for asset in data.table.assets})
+    _, targets = showcase_run._targets(cfg, data.table, strategy, offset)
+    return simulate(
+        data.table.returns,
+        targets,
+        lag=1,
+        cost_rate=costs.rates_for(data.table.assets),
+        constraints=Constraints(cash_index=data.table.cash_index),
+        initial_wealth=10000.0,
+        has_close=data.table.has_close,
+    ).final_wealth
+
+
+def test_the_spread_matches_an_independent_replay_of_every_offset(with_family):
+    family, _ = with_family
+    cfg = config(offset_family=True)
+    data = universe_data(cfg.universe("funds"), SESSIONS, loader(default_frames(SESSIONS)))
+    strategy = cfg.strategies[1]  # equal weight, weekly: k = 5
+    totals = [_offset_wealth(cfg, data, strategy, o) / 10000 - 1 for o in range(5)]
+    reported = _strategy(_universe(family, "funds"), strategy.key)["offset_family"]
+    assert reported["total_return"]["spread"] == pytest.approx(max(totals) - min(totals), abs=1e-12)
+    assert reported["total_return"]["registered"] == pytest.approx(totals[0], abs=1e-12)
+
+
+def test_buy_and_hold_is_the_same_at_every_offset_which_is_why_it_has_no_family():
+    cfg = config(offset_family=True)
+    data = universe_data(cfg.universe("funds"), SESSIONS, loader(default_frames(SESSIONS)))
+    hold = cfg.strategies[0]
+    finals = {_offset_wealth(cfg, data, hold, o) for o in (0, 3, 11, 20)}
+    assert len(finals) == 1
+
+
+def test_every_non_registered_offset_is_actually_simulated(monkeypatch):
+    calls = []
+    real = showcase_run.simulate
+
+    def counting(returns, targets, **kwargs):
+        calls.append(min(d for d in targets if d > 20))  # the first rebalance decision
+        return real(returns, targets, **kwargs)
+
+    monkeypatch.setattr(showcase_run, "simulate", counting)
+    results = _results(offset_family=True)
+    assert len(calls) == results["offset_family_simulations"] == 2 * (4 + 20 + 62 + 20)
+    weekly = sorted(calls[:4])  # the first universe's weekly rule: offsets 1..4
+    assert weekly == [21, 22, 23, 24]
+
+
+def test_a_family_whose_offsets_stop_reports_no_spread():
+    frames = default_frames(SESSIONS)
+    closes = noisy(SESSIONS, 7, 0.01)
+    closes[150:] /= 2
+    frames["XAA"] = bars(SESSIONS, closes, div={150: 0.2}, split={150: 2.0})
+    universe = _universe(_results(frames, offset_family=True), "funds")
+    weekly = _strategy(universe, "equal_weight_weekly")["offset_family"]
+    assert weekly["stopped_offsets"] == 5 and weekly["total_return"]["spread"] is None
+    assert weekly["total_return"]["registered"] is None
+
+
+# --- group D measures (approved 2026-10-26) ---
+
+GROUP_D = {
+    "stress_windows": [
+        {"key": "spring", "label": "Spring", "start": "2024-03-01", "end": "2024-05-31"},
+        {"key": "covid_crash", "label": "COVID crash", "start": "2020-02-19", "end": "2020-03-23"},
+    ],
+    "participation": {"notional": 1000000, "threshold": 0.01, "window": 20},
+}
+
+
+@pytest.fixture(scope="module")
+def with_measures():
+    frames = default_frames(SESSIONS)
+    return _results(frames, measures=GROUP_D), _results(frames)
+
+
+def test_the_group_d_measures_never_change_the_headline(with_measures):
+    measured, plain = with_measures
+    assert measured["group_d"] is True and plain["group_d"] is False
+    for a, b in zip(measured["universes"], plain["universes"], strict=True):
+        for x, y in zip(a["strategies"], b["strategies"], strict=True):
+            assert {k: v for k, v in x.items() if k != "group_d"} == {
+                k: v for k, v in y.items() if k != "group_d"
+            }
+            assert y["group_d"] is None and x["group_d"] is not None
+
+
+def test_the_group_d_measures_agree_with_the_headline_record(with_measures):
+    from stock_agent.portfolio.performance import annual_volatility, cagr
+
+    measured, _ = with_measures
+    for universe in measured["universes"]:
+        for s in universe["strategies"]:
+            g = s["group_d"]
+            expected = cagr(
+                10_000, s["final_wealth"], pd.Timestamp(s["start"]), pd.Timestamp(s["end"])
+            )
+            assert {k: g["cagr"][k] for k in expected} == expected  # under a year here
+            assert not g["cagr"]["annualized"] and g["cagr"]["end"] == s["end"]
+            wealth = pd.Series(s["wealth"], dtype="float64")
+            daily = (wealth / wealth.shift(1) - 1).dropna().to_list()
+            # The saved path is rounded to the cent; the measure uses the unrounded one.
+            assert g["volatility"]["value"] == pytest.approx(
+                annual_volatility(daily, [1] * len(daily))["value"], rel=1e-5
+            )
+            turnover = g["turnover_by_year"]
+            yearly = sum(row["turnover"] for row in turnover["years"])
+            total = turnover["construction"]["turnover"] + yearly
+            assert total == pytest.approx(s["turnover"]["total_one_way"])
+            assert turnover["construction"]["executions"] == 1  # no turnover limit: the build
+            assert turnover["years"] == [
+                {
+                    "year": 2024,
+                    "turnover": pytest.approx(yearly),
+                    "traded_notional": pytest.approx(turnover["years"][0]["traded_notional"]),
+                    "partial": True,
+                }
+            ]
+            assert turnover["annual_turnover"] is None  # no full calendar year in the data
+            spring, covid = g["stress_windows"]
+            assert spring["status"] == "ok" and covid["reason"] == "outside_window"
+            participation = g["participation"]
+            assert participation["rebalances"]["executions"] == s["turnover"]["rebalances"]
+
+
+def test_the_stress_window_return_is_the_wealth_ratio_inside_it(with_measures):
+    measured, _ = with_measures
+    universe = measured["universes"][0]
+    dates = universe["dates"]
+    for s in universe["strategies"]:
+        spring = s["group_d"]["stress_windows"][0]
+        start, end = dates.index("2024-03-01"), dates.index("2024-05-31")
+        cents = s["wealth"][end] / s["wealth"][start] - 1  # the saved path is rounded to cents
+        assert spring["return"] == pytest.approx(cents, abs=1e-5)
+
+
+def test_participation_uses_the_decision_session_the_trade_and_the_pre_trade_wealth(monkeypatch):
+    from stock_agent.portfolio import performance
+
+    captured = []
+    real = performance.participation
+
+    def capture(trades, *args, **kwargs):
+        captured.append(list(trades))
+        return real(trades, *args, **kwargs)
+
+    monkeypatch.setattr(performance, "participation", capture)
+    results = _results(measures=GROUP_D)
+    funds = _universe(results, "funds")
+    for s, trades in zip(funds["strategies"], captured[: len(funds["strategies"])], strict=True):
+        decisions = [decision for decision, _, _ in trades]
+        assert decisions[0] == 20  # the build decision, not its execution session
+        if s["rule"] != "buy_and_hold":
+            assert all((d - 20) % s["every"] == 0 for d in decisions)
+        # The executed change, not the holdings: half its absolute sum is the turnover.
+        halves = sum(0.5 * float(np.abs(delta).sum()) for _, delta, _ in trades)
+        assert halves == pytest.approx(s["turnover"]["total_one_way"])
+        # Pre-trade wealth per 1.0 of initial cash, at the execution close (decision + 1).
+        for decision, _, wealth in trades:
+            at = funds["dates"].index(SESSIONS[decision + 1].strftime("%Y-%m-%d"))
+            assert wealth == pytest.approx(s["wealth"][at] / 10_000, abs=1e-6)
+
+
+def test_the_measures_over_a_gap_are_labelled_and_never_bridged():
+    frames = default_frames(SESSIONS)
+    frames["XAA"].loc[100, ["open", "high", "low", "close", "volume"]] = np.nan
+    gap_day = SESSIONS[100].strftime("%Y-%m-%d")
+    windows = {
+        "stress_windows": [
+            {"key": "across", "label": "Across", "start": "2024-04-01", "end": "2024-07-01"},
+            {"key": "edge", "label": "Edge", "start": gap_day, "end": "2024-08-01"},
+        ],
+        "participation": GROUP_D["participation"],
+    }
+    universe = _universe(_results(frames, measures=windows), "funds")
+    for s in universe["strategies"]:
+        g = s["group_d"]
+        assert not g["volatility"]["complete"]
+        # The two-session span counts two return sessions in N and none in n.
+        assert g["volatility"]["sessions"] == g["volatility"]["of"] - 2
+        across, edge = g["stress_windows"]
+        assert across["status"] == "ok" and across["drawdown"]["complete"] is False
+        assert edge["reason"] == "window_edge_value_unavailable"
+    weekly = _strategy(universe, "equal_weight_weekly")["group_d"]["participation"]
+    assert weekly["rebalances"]["unavailable"] > 0  # no volume at the gap: never filled
+    page = render_html({**_results(frames, measures=windows), "universes": [universe]})
+    assert "without volume data" in page and "can make it read too low" in page
+
+
+def test_a_stopped_run_has_no_growth_rate_and_still_renders():
+    frames = default_frames(SESSIONS)
+    closes = noisy(SESSIONS, 7, 0.01)
+    closes[150:] /= 2
+    frames["XAA"] = bars(SESSIONS, closes, div={150: 0.2}, split={150: 2.0})
+    late = {
+        "stress_windows": [
+            {"key": "late", "label": "Late", "start": "2024-10-01", "end": "2024-11-29"},
+        ],
+        "participation": GROUP_D["participation"],
+    }
+    results = _results(frames, measures=late)
+    for s in _universe(results, "funds")["strategies"]:
+        assert s["group_d"]["cagr"]["value"] is None and s["group_d"]["cagr"]["reason"] == "stopped"
+        # Inside the registered span but after the stop: said so, never "outside".
+        reason = s["group_d"]["stress_windows"][0]["reason"]
+        assert reason == "run_stopped_before_window_end"
+    page = render_html(results)
+    assert "Growth rate (CAGR)" in page and "unavailable (stopped)" in page
+
+
+def test_the_growth_rate_runs_to_the_last_valued_close():
+    frames = default_frames(SESSIONS)
+    frames["XAA"].loc[len(SESSIONS) - 1, ["open", "high", "low", "close", "volume"]] = np.nan
+    universe = _universe(_results(frames, measures=GROUP_D), "funds")
+    for s in universe["strategies"]:
+        assert s["final_wealth"] is None and s["complete"]  # no value on the last session
+        cagr = s["group_d"]["cagr"]
+        assert cagr["end"] == SESSIONS[-2].strftime("%Y-%m-%d")
+        last = s["wealth"][-2]
+        assert cagr["value"] == pytest.approx(last / 10_000 - 1, abs=1e-6)  # under a year

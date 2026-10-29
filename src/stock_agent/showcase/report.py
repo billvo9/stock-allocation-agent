@@ -77,8 +77,9 @@ WHAT_IT_DOES_NOT = (
         "semiconductors were picked after they rose enormously, so any rule holding them looks good."
     ),
     (
-        "Annualized figures, Sharpe ratios, a cash return or benchmarks: those formulas (groups C "
-        "and D) are not approved, so none is computed."
+        "Sharpe ratios, a cash return, benchmarks or intervals: none is computed here yet. The "
+        "owner approved them on 2026-10-26, and each needs something first: the T-bill rate "
+        "series, benchmark prices, or a coverage check of the interval method."
     ),
     (
         "Taxes, or income exactly as the issuers paid it: dividends are as the vendor reported them, "
@@ -530,6 +531,216 @@ document.querySelectorAll('.figure').forEach(function (figure) {
 """
 
 
+OFFSET_NOTE = (
+    "Which day a rule rebalances on is a choice. Each rebalancing rule was also run on every "
+    "possible rebalancing day of its cycle (5 for weekly, 21 for monthly, 63 for quarterly), at "
+    "1x costs, with the same start. The registered day (offset 0) is the headline above. The "
+    "spread is the gap between the highest and the lowest total return across those days: how "
+    "much of a result is the luck of the day. The days are one variant with a sensitivity "
+    "family, not separate trials, and no day was chosen afterwards."
+)
+
+
+def _families(universe: Mapping) -> list[Mapping]:
+    return [
+        s
+        for s in universe["strategies"]
+        if s.get("offset_family") and s["offset_family"].get("applies")
+    ]
+
+
+def _spread_points(measure: Mapping) -> str:
+    if measure["spread"] is None:
+        return "unavailable"
+    return f"{measure['spread'] * 100:,.1f} percentage points"
+
+
+def _offsets_table(universe: Mapping) -> str:
+    families = _families(universe)
+    if not families:
+        return ""
+    rows = []
+    for s in families:
+        family = s["offset_family"]
+        total = family["total_return"]
+        stopped = family["stopped_offsets"]
+        note = (
+            f'<div class="sub">{_e(f"{stopped} days stopped early, so no spread")}</div>'
+            if stopped
+            else ""
+        )
+        rows.append(
+            f'<tr><th scope="row">{_e(s["label"])}{note}</th>'
+            f'<td class="num">{family["k"]}</td>'
+            f'<td class="num">{_e(pct(total["registered"]))}</td>'
+            f'<td class="num">{_e(_spread_points(total))}</td></tr>'
+        )
+    return (
+        "<details open><summary>Rebalancing-day sensitivity</summary>"
+        f'<p class="note">{_e(OFFSET_NOTE)}</p><div class="table-wrap"><table>'
+        "<caption>Total return across every rebalancing day, at 1x costs. Buy and hold never "
+        "rebalances, so the day changes nothing for it.</caption>"
+        '<thead><tr><th scope="col">Rule</th><th scope="col" class="num">Rebalancing days (k)</th>'
+        '<th scope="col" class="num">Registered day: total return</th>'
+        '<th scope="col" class="num">Spread across the days</th>'
+        f"</tr></thead><tbody>{''.join(rows)}</tbody></table></div></details>"
+    )
+
+
+GROUP_D_NOTE = (
+    "Growth rate (CAGR) is per year on calendar days, with the build's cost inside it. "
+    "Volatility is the yearly scale (square root of 252) of the daily net returns' standard "
+    "deviation; a Sharpe ratio needs the T-bill rate series and is not shown yet. Each stress "
+    "window runs from the S&P 500's closing peak to its closing low: its return and its worst "
+    "fall inside the window. Before taxes."
+)
+TRADING_NOTE = (
+    "Turnover is one way (selling 10% to buy another 10% is 10%). The build is shown on its "
+    "own; the rebalances are summed per calendar year, a part year is never scaled, and the "
+    "yearly figure is the mean of the full years. Participation flags a trade larger than {p} "
+    "of the asset's median dollar volume over the {w} sessions before it, for a portfolio of "
+    "{n}: a flag, not a capacity figure, and a fund's exchange volume understates what it can "
+    "absorb."
+)
+
+
+def _with_group_d(universe: Mapping) -> list[Mapping]:
+    return [s for s in universe["strategies"] if s.get("group_d")]
+
+
+def _cagr_text(cagr: Mapping | None) -> str:
+    if cagr is None or cagr["value"] is None:
+        reason = None if cagr is None else cagr.get("reason")
+        return "unavailable" + (f" ({reason})" if reason else "")
+    text = pct(cagr["value"])
+    if not cagr["annualized"]:
+        text += " (part year, not annualized)"
+    return text
+
+
+def _share(value: float | None) -> str:
+    return "unavailable" if value is None else f"{value * 100:,.0f}%"
+
+
+def _flag_text(found: Mapping) -> str:
+    text = f"{found['flagged']:,} of {found['assessed']:,}"
+    if found["unavailable"]:
+        text += f" ({found['unavailable']:,} without volume data)"
+    return text
+
+
+def _volatility_text(vol: Mapping) -> str:
+    if vol["value"] is None:
+        return f"unavailable ({vol['reason']})"
+    text = f"{vol['value'] * 100:.1f}%"
+    if not vol["complete"]:
+        text += (
+            f" (incomplete: {vol['sessions']:,} of {vol['of']:,} sessions; the moves left out "
+            "across gaps can make it read too low)"
+        )
+    return text
+
+
+def _window_text(window: Mapping) -> str:
+    if window["status"] != "ok":
+        return f"unavailable ({window['reason']})"
+    fall = window["drawdown"]
+    worst = (
+        ""
+        if fall is None
+        else f"; worst fall {_drawdown_text({**fall, 'measure': 'maximum_drawdown' if fall['complete'] else 'observed'})}"
+    )
+    return f"{pct(window['return'])}{worst}"
+
+
+def _group_d_tables(universe: Mapping) -> str:
+    rows = _with_group_d(universe)
+    if not rows:
+        return ""
+    windows = rows[0]["group_d"]["stress_windows"]
+    head = "".join(
+        f'<th scope="col" class="num">{_e(w["label"])}<div class="sub">{_e(w["start"])} to '
+        f"{_e(w['end'])}</div></th>"
+        for w in windows
+    )
+    growth_rows = "".join(
+        f'<tr><th scope="row">{_e(s["label"])}</th>'
+        f'<td class="num">{_e(_cagr_text(s["group_d"]["cagr"]))}</td>'
+        f'<td class="num">{_e(_volatility_text(s["group_d"]["volatility"]))}</td>'
+        + "".join(
+            f'<td class="num">{_e(_window_text(w))}</td>' for w in s["group_d"]["stress_windows"]
+        )
+        + "</tr>"
+        for s in rows
+    )
+    flag = rows[0]["group_d"]["participation"]
+    trading_rows = []
+    for s in rows:
+        g = s["group_d"]
+        turnover, part = g["turnover_by_year"], g["participation"]
+        build, rebalances = part["build"], part["rebalances"]
+        annual = turnover["annual_turnover"]
+        trading_rows.append(
+            f'<tr><th scope="row">{_e(s["label"])}</th>'
+            f'<td class="num">{turnover["construction"]["turnover"] * 100:,.0f}%</td>'
+            f'<td class="num">{_e("unavailable" if annual is None else f"{annual * 100:,.0f}%")}'
+            f'<div class="sub">mean of {turnover["full_years"]} full years; traded '
+            f"{_e(_share(turnover['annual_notional']))} a year</div></td>"
+            f'<td class="num">{_e(_flag_text(build))}</td>'
+            f'<td class="num">{_e(_flag_text(rebalances))}</td>'
+            f'<td class="num">{_e(_q_text(rebalances["max_q"]))}</td></tr>'
+        )
+    trading_note = TRADING_NOTE.format(
+        p=f"{flag['threshold'] * 100:g}%", w=flag["window"], n=money(flag["notional"])
+    )
+    return (
+        "<details open><summary>Growth rate, volatility and stress windows</summary>"
+        f'<p class="note">{_e(GROUP_D_NOTE)}</p><div class="table-wrap"><table>'
+        "<caption>Every registered variant at 1x costs, in registered order (not ranked)."
+        '</caption><thead><tr><th scope="col">Rule</th>'
+        '<th scope="col" class="num">Growth rate (CAGR)</th>'
+        f'<th scope="col" class="num">Volatility</th>{head}</tr></thead>'
+        f"<tbody>{growth_rows}</tbody></table></div></details>"
+        "<details open><summary>Trading per year and participation</summary>"
+        f'<p class="note">{_e(trading_note)}</p><div class="table-wrap"><table>'
+        "<caption>One-way turnover and participation flags at 1x costs.</caption><thead><tr>"
+        '<th scope="col">Rule</th><th scope="col" class="num">Build turnover</th>'
+        '<th scope="col" class="num">Rebalance turnover a year</th>'
+        '<th scope="col" class="num">Build trades flagged</th>'
+        '<th scope="col" class="num">Rebalance trades flagged</th>'
+        '<th scope="col" class="num">Largest rebalance participation</th>'
+        f"</tr></thead><tbody>{''.join(trading_rows)}</tbody></table></div>"
+        f"{_turnover_years_table(rows)}</details>"
+    )
+
+
+def _q_text(q: float | None) -> str:
+    return "unavailable" if q is None else f"{q * 100:.2f}%"
+
+
+def _turnover_years_table(rows: list[Mapping]) -> str:
+    by = {s["key"]: {r["year"]: r for r in s["group_d"]["turnover_by_year"]["years"]} for s in rows}
+    years = sorted({year for found in by.values() for year in found})
+    head = "".join(f'<th scope="col" class="num">{_e(s["label"])}</th>' for s in rows)
+    body = []
+    for year in years:
+        cells, partial = [], False
+        for s in rows:
+            row = by[s["key"]].get(year)
+            if row is None:
+                cells.append('<td class="num">-</td>')
+                continue
+            partial |= row["partial"]
+            cells.append(f'<td class="num">{row["turnover"] * 100:,.0f}%</td>')
+        label = f"{year} (part)" if partial else str(year)
+        body.append(f'<tr><th scope="row">{_e(label)}</th>{"".join(cells)}</tr>')
+    return (
+        '<details><summary>Rebalance turnover by calendar year</summary><div class="table-wrap">'
+        f'<table><thead><tr><th scope="col">Year</th>{head}</tr></thead>'
+        f"<tbody>{''.join(body)}</tbody></table></div></details>"
+    )
+
+
 def _universe_section(universe: Mapping) -> str:
     chips = "".join(
         f"<li><b>{_e(m['ticker'])}</b> {_e(m['sector'])}</li>" for m in universe["members"]
@@ -537,9 +748,16 @@ def _universe_section(universe: Mapping) -> str:
     return (
         f'<section id="{_e(universe["key"])}"><h2>{_e(universe["label"])}</h2>'
         f'<p>{_e(universe["selection"])}</p><ul class="chips">{chips}</ul>'
-        f"{growth_chart(universe)}{_results_table(universe)}{_calendar_table(universe)}"
+        f"{growth_chart(universe)}{_results_table(universe)}{_group_d_tables(universe)}"
+        f"{_offsets_table(universe)}"
+        f"{_calendar_table(universe)}"
         f"{_components_table(universe)}</section>"
     )
+
+
+def _family_runs(results: Mapping) -> str:
+    runs = results.get("offset_family_simulations")
+    return f", and {runs:,} more on the other rebalancing days at 1x" if runs else ""
 
 
 def render_html(results: Mapping, *, logo_svg: str = "", font_dir: str | None = None) -> str:
@@ -570,9 +788,9 @@ def render_html(results: Mapping, *, logo_svg: str = "", font_dir: str | None = 
 <div><dt>Variants run</dt><dd>{results["variants_run"]} ({len(universes)} lists × {
         len(universes[0]["strategies"]) if universes else 0
     } rules), none chosen afterwards</dd></div>
-<div><dt>Simulations</dt><dd>{
-        results["simulations_run"]
-    } (each variant at 0x, 1x and 2x costs)</dd></div>
+<div><dt>Simulations</dt><dd>{results["simulations_run"]} (each variant at 0x, 1x and 2x costs){
+        _family_runs(results)
+    }</dd></div>
 <div><dt>Window</dt><dd>{_e(results["window"]["start"])} to {
         _e(results["window"]["end"])
     }</dd></div>
@@ -597,8 +815,9 @@ charged on every trade, the build included.</li>
 <li>Sessions without a close in the stored prices: {gaps}. A return across such a gap counts
 as one return in the inverse-volatility window, and wealth is unavailable while a held asset has
 no close.</li>
-<li>Turnover is one way: selling 10% of the portfolio to buy another 10% is 10%. It is summed over
-every trade, the build included, and not annualized.</li>
+<li>Turnover is one way: selling 10% of the portfolio to buy another 10% is 10%. The results
+table sums it over every trade, the build included; where it is shown a year, the build is apart
+and the yearly figure is the mean of the full calendar years.</li>
 <li>Maximum drawdown is the largest fall from a previous high, close to close. Where a session
 has no value, only the largest observed decline is given, labelled as such.</li>
 <li>Prices: Tiingo end-of-day data, retrieved {_e(retrieved)}, for private use only (no
@@ -626,7 +845,8 @@ def render_markdown(results: Mapping) -> str:
         "",
         (
             f"Variants run: {results['variants_run']}, none chosen afterwards. Simulations: "
-            f"{results['simulations_run']} (each variant at 0x, 1x and 2x costs). Window: "
+            f"{results['simulations_run']} (each variant at 0x, 1x and 2x costs)"
+            f"{_family_runs(results)}. Window: "
             f"{results['window']['start']} to {results['window']['end']}. Starting amount: "
             f"{money(results['initial_wealth'])}."
         ),
@@ -667,6 +887,74 @@ def render_markdown(results: Mapping) -> str:
                 f"| {_turnover_text(s['turnover'])} | {money(s['costs']['paid_dollars'])} "
                 f"| {money(sens['0x']['final_wealth'])} | {money(sens['2x']['final_wealth'])} |"
             )
+        families = _families(universe)
+        if families:
+            lines += [
+                "",
+                (
+                    f"Rebalancing-day sensitivity. {OFFSET_NOTE} Buy and hold never rebalances, so "
+                    "the day changes nothing for it."
+                ),
+                "",
+                (
+                    "| Rule | Rebalancing days (k) | Registered day: total return | "
+                    "Spread across the days |"
+                ),
+                "|---|---:|---:|---:|",
+            ]
+            for s in families:
+                family = s["offset_family"]
+                total = family["total_return"]
+                stopped = family["stopped_offsets"]
+                label = s["label"] + (f" ({stopped} days stopped early)" if stopped else "")
+                lines.append(
+                    f"| {label} | {family['k']} | {pct(total['registered'])} "
+                    f"| {_spread_points(total)} |"
+                )
+        with_d = _with_group_d(universe)
+        if with_d:
+            windows = with_d[0]["group_d"]["stress_windows"]
+            flag = with_d[0]["group_d"]["participation"]
+            lines += [
+                "",
+                f"Growth rate, volatility and stress windows. {GROUP_D_NOTE}",
+                "",
+                "| Rule | Growth rate (CAGR) | Volatility | "
+                + " | ".join(f"{w['label']} ({w['start']} to {w['end']})" for w in windows)
+                + " |",
+                "|---|---:|---:|" + "---:|" * len(windows),
+            ]
+            for s in with_d:
+                g = s["group_d"]
+                lines.append(
+                    f"| {s['label']} | {_cagr_text(g['cagr'])} | {_volatility_text(g['volatility'])} | "
+                    + " | ".join(_window_text(w) for w in g["stress_windows"])
+                    + " |"
+                )
+            lines += [
+                "",
+                "Trading per year and participation. "
+                + TRADING_NOTE.format(
+                    p=f"{flag['threshold'] * 100:g}%", w=flag["window"], n=money(flag["notional"])
+                ),
+                "",
+                (
+                    "| Rule | Build turnover | Rebalance turnover a year | Build trades flagged | "
+                    "Rebalance trades flagged | Largest rebalance participation |"
+                ),
+                "|---|---:|---:|---:|---:|---:|",
+            ]
+            for s in with_d:
+                g = s["group_d"]
+                turnover, part = g["turnover_by_year"], g["participation"]
+                annual = turnover["annual_turnover"]
+                lines.append(
+                    f"| {s['label']} | {turnover['construction']['turnover'] * 100:,.0f}% "
+                    f"| {'unavailable' if annual is None else f'{annual * 100:,.0f}%'} "
+                    f"(mean of {turnover['full_years']} full years) "
+                    f"| {_flag_text(part['build'])} | {_flag_text(part['rebalances'])} "
+                    f"| {_q_text(part['rebalances']['max_q'])} |"
+                )
         strategies = universe["strategies"]
         years = sorted({row["year"] for s in strategies for row in s["calendar_years"]})
         by = {s["key"]: {r["year"]: r for r in s["calendar_years"]} for s in strategies}
@@ -703,7 +991,10 @@ def render_markdown(results: Mapping) -> str:
             "- The approved portfolio engine: next-close execution, one common build from cash, "
             "provisional per-trade costs on every trade, the build included."
         ),
-        "- Turnover is one way, summed over every trade, not annualized.",
+        (
+            "- Turnover is one way. The results table sums it over every trade, the build "
+            "included; a yearly figure keeps the build apart and is the mean of the full years."
+        ),
         (
             f"- Configuration `{results['config']['name']}` (sha256 "
             f"`{results['config']['sha256'][:16]}`), code `{results['code_sha'] or 'uncommitted'}`, "

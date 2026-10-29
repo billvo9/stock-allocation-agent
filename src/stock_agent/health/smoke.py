@@ -167,7 +167,9 @@ def input_reader_results(directory: Path) -> list[tuple[str, bool, str]]:
     def registry_states(name: str, *, edit: bool) -> list[Check]:
         root = fixtures.build_registry(directory / name)
         if edit:
-            record = next((root.parent / "runs").iterdir()) / "record.json"
+            # The activated run is the last one built (run ids sort by build order); chosen
+            # by name, never by directory-listing order, which differs between filesystems.
+            record = max((root.parent / "runs").iterdir()) / "record.json"
             record.write_text(record.read_text(encoding="utf-8") + " ", encoding="utf-8")
         return registry.registry_checks(root, now=SMOKE_AS_OF.to_pydatetime, allow_synthetic=True)
 

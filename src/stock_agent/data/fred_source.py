@@ -486,6 +486,8 @@ class FredDataSource:
         self,
         series_id: str,
         offset: int,
+        realtime_start: str | None = None,
+        realtime_end: str | None = None,
     ) -> dict[str, Any]:
         params: dict[str, object] = {
             "series_id": series_id,
@@ -494,6 +496,12 @@ class FredDataSource:
             "offset": offset,
             "sort_order": "asc",
         }
+
+        if realtime_start is not None:
+            params["realtime_start"] = realtime_start
+
+        if realtime_end is not None:
+            params["realtime_end"] = realtime_end
 
         payload = self._get_version_1_json(
             self.SERIES_VINTAGE_DATES_URL,
@@ -515,9 +523,13 @@ class FredDataSource:
     def get_series_vintage_dates(
         self,
         series_id: str,
+        realtime_start: str | None = None,
+        realtime_end: str | None = None,
     ) -> list[str]:
         """
-        Return dates when a FRED series received new or revised data.
+        Return dates when a FRED series received new or revised data, optionally
+        bounded to the real-time period [realtime_start, realtime_end] (so a
+        research request can stop before a holdout).
         """
 
         vintage_dates: list[str] = []
@@ -527,6 +539,8 @@ class FredDataSource:
             payload = self._request_vintage_dates_page(
                 series_id=series_id,
                 offset=offset,
+                realtime_start=realtime_start,
+                realtime_end=realtime_end,
             )
 
             page_dates = payload["vintage_dates"]
