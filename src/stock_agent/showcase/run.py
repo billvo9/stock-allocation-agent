@@ -37,8 +37,9 @@ configuration registers; group C and the rest of group D are not built yet):
 Every variant is computed and reported in registered order; nothing is
 ranked or selected. A variant that cannot run as registered refuses the whole
 run (`ShowcaseRunRefused`): a rule that cannot decide, or a build that cannot
-execute at the registered close (it would wait in the funding leg, whose
-return is not approved).
+execute at the registered close (it would wait in the funding leg, which no
+registered variant is meant to hold). Decisions never see the funding leg's
+return: on real data it carries the cash rate, a decision input only under C2.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ import numpy as np
 import pandas as pd
 
 from stock_agent.calendars import nyse
+from stock_agent.data.rates.cash import CASH_LABEL, FRED_CITATION, FRED_NOTICE
 from stock_agent.portfolio import performance
 from stock_agent.portfolio.descriptive import (
     UNAVAILABLE,
@@ -110,6 +112,7 @@ class UniverseData:
     lineage: Mapping[str, list[dict]]
     revised_sessions: Mapping[str, int]
     dollar_volume: np.ndarray | None = None  # raw close x raw volume, the funding leg NaN (M7)
+    cash: np.ndarray | None = None  # the cash account's return per session (C1; row 0 unused)
 
 
 def _stamp(session: pd.Timestamp) -> str:
@@ -124,11 +127,16 @@ def _number(value: float | None) -> float | None:
 
 
 def universe_data(
-    universe: Universe, sessions: pd.DatetimeIndex, load: Callable[[str], object]
+    universe: Universe,
+    sessions: pd.DatetimeIndex,
+    load: Callable[[str], object],
+    cash: pd.DataFrame | None = None,
 ) -> UniverseData:
     """
     The universe's return table from `load(ticker)` (a `StoredBars`; see
-    `showcase.store.window_bars`), with each ticker's batches as lineage.
+    `showcase.store.window_bars`), with each ticker's batches as lineage. With `cash`
+    (`data.rates.cash.cash_returns` over `sessions`), the funding leg earns the cash
+    account's return (C4); every registered target holds none of it.
     """
 
     bars, lineage, revised = {}, {}, {}
@@ -153,7 +161,14 @@ def universe_data(
         frame = bars[ticker].set_index(pd.DatetimeIndex(bars[ticker]["session"]))
         dollars = (frame["close"] * frame["volume"]).reindex(sessions)
         volume[:, column] = dollars.to_numpy(dtype="float64")
-    return UniverseData(universe, table, lineage, revised, volume)
+    accrual = None
+    if cash is not None:
+        expected = pd.DatetimeIndex(sessions[1:])
+        if not pd.DatetimeIndex(cash["session"]).equals(expected):
+            raise ShowcaseRunRefused("the cash series does not cover the window's sessions")
+        accrual = np.concatenate([[0.0], cash["accrual"].to_numpy(dtype="float64")])
+        table.returns[:, table.cash_index] = accrual
+    return UniverseData(universe, table, lineage, revised, volume, accrual)
 
 
 def _wealth_series(table: ReturnTable, result: SimulationResult) -> pd.Series:
@@ -266,14 +281,20 @@ def _targets(config: ShowcaseConfig, table: ReturnTable, strategy: Strategy, off
         strategy.rule, len(table.assets), table.cash_index, window=config.inverse_volatility_window
     )
     try:
-        return schedule, collect_targets(policy, table.returns, schedule)
+        # Decisions never see the cash account's return: on real data it carries the
+        # 3-month rate itself, which C2 keeps from a decision until it is available (C9's
+        # exception covers booked state only). Every registered rule ignores the column, so
+        # the targets are unchanged.
+        decision_returns = table.returns.copy()
+        decision_returns[:, table.cash_index] = 0.0
+        return schedule, collect_targets(policy, decision_returns, schedule)
     except PolicyInputError as error:
         raise ShowcaseRunRefused(f"{strategy.key}: the rule cannot decide ({error})") from None
 
 
 def _check_build(config: ShowcaseConfig, table: ReturnTable, strategy: Strategy, result) -> None:
     # D3: the build executes at the registered close. A deferred build would sit in the
-    # funding leg until it executes, and that leg's return is not approved.
+    # funding leg until it executes, which no registered variant is meant to hold.
     planned = config.first_decision + config.execution_lag
     if not result.trades or result.trades[0].session != planned:
         raise ShowcaseRunRefused(
@@ -381,9 +402,18 @@ def _group_d(
             "end": _stamp(valued.index[-1]),
             "reason": None,
         }
-    volatility = performance.annual_volatility(
-        [step.net_return for step in result.steps], [end - start for start, end in result.spans]
-    )
+    spans = [end - start for start, end in result.spans]
+    volatility = performance.annual_volatility([step.net_return for step in result.steps], spans)
+    if data.cash is None:
+        sharpe = None
+    else:  # M2 on excess returns over the cash account's return for the same span (C3)
+        risk_free = [
+            float(np.prod(1.0 + data.cash[start + 1 : end + 1]) - 1.0)
+            for start, end in result.spans
+        ]
+        sharpe = performance.sharpe_ratio(
+            [step.net_return for step in result.steps], risk_free, spans
+        )
     windows = [
         performance.stress_window(
             growth,
@@ -435,6 +465,7 @@ def _group_d(
     return {
         "cagr": cagr,
         "volatility": volatility,
+        "sharpe": sharpe,
         "stress_windows": windows,
         "turnover_by_year": {
             **turnover,
@@ -536,6 +567,22 @@ def components(
     return rows
 
 
+def _cash_context(data: UniverseData, dates: list[str]) -> dict | None:
+    """The cash account over the universe's span, from its build close: context, not a rule."""
+
+    if data.cash is None:
+        return None
+    sessions = [_stamp(s) for s in data.table.sessions]
+    start, end = sessions.index(dates[0]), sessions.index(dates[-1])
+    growth = float(np.prod(1.0 + data.cash[start + 1 : end + 1]))
+    first, last = pd.Timestamp(dates[0]), pd.Timestamp(dates[-1])
+    return {
+        "total_return": growth - 1.0,
+        "cagr": performance.cagr(1.0, growth, first, last),
+        "label": CASH_LABEL,
+    }
+
+
 def run_showcase(
     config: ShowcaseConfig,
     load: Callable[[str], object],
@@ -543,12 +590,21 @@ def run_showcase(
     sessions: pd.DatetimeIndex,
     code_sha: str | None,
     generated_at: datetime | None = None,
+    cash: pd.DataFrame | None = None,
 ) -> dict[str, object]:
-    """Every registered variant, in registered order, as one strict-JSON-ready record."""
+    """
+    Every registered variant, in registered order, as one strict-JSON-ready record.
+    `cash` is the registered cash account's series (`data.rates.cash.cash_returns`), required
+    when the configuration registers `cash`.
+    """
 
+    if (config.cash_rate_id is None) != (cash is None):
+        raise ShowcaseRunRefused(
+            "a cash series is needed exactly when the configuration registers one"
+        )
     universes = []
     for universe in config.universes:
-        data = universe_data(universe, sessions, load)
+        data = universe_data(universe, sessions, load, cash)
         strategies = [run_strategy(config, data, strategy) for strategy in config.strategies]
         build = pd.Timestamp(strategies[0]["start"], tz="UTC")
         if any(s["start"] != strategies[0]["start"] for s in strategies):
@@ -567,6 +623,7 @@ def run_showcase(
                 ],
                 "build": _stamp(build),
                 "dates": dates,
+                "cash": _cash_context(data, dates),
                 "components": components(config, data, build),
                 "strategies": strategies,
                 "lineage": dict(data.lineage),
@@ -583,6 +640,17 @@ def run_showcase(
         "variants_run": len(config.variants()),
         "offset_family": config.offset_family,
         "group_d": config.measures is not None,
+        "cash": None
+        if cash is None
+        else {
+            "rate_id": config.cash_rate_id,
+            "label": CASH_LABEL,
+            "notice": FRED_NOTICE,
+            "citation": FRED_CITATION,
+            "carried_sessions": int(cash["reason"].notna().sum()),
+            "stale_sessions": int(cash["stale"].sum()),
+            "pre_alfred_sessions": int(cash["pre_alfred"].sum()),
+        },
         "offset_family_simulations": sum(
             s["offset_family"]["k"] - 1
             for u in universes

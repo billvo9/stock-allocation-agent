@@ -648,3 +648,124 @@ def test_the_growth_rate_runs_to_the_last_valued_close():
         assert cagr["end"] == SESSIONS[-2].strftime("%Y-%m-%d")
         last = s["wealth"][-2]
         assert cagr["value"] == pytest.approx(last / 10_000 - 1, abs=1e-6)  # under a year
+
+
+# --- group C: the cash account (C1, C3, C4, C9) and the Sharpe ratio (M2) ---
+
+
+def _cash_series(rate=0.05, step=0.0):
+    from stock_agent.data.rates.cash import cash_returns
+    from stock_agent.data.rates.vintages import vintages_from_alfred
+
+    # Each session's own first release, published the next day; the last session's value
+    # (posted in 2025) is never needed: the last span uses the one before it.
+    days = [d.strftime("%Y-%m-%d") for d in SESSIONS[:-1]]
+    # `step` makes the rate change by date, so a one-session misalignment shows.
+    rows = [(day, f"{(rate + step * i) * 100:.4f}", day) for i, day in enumerate(days)]
+    rows = [
+        (d, v, (pd.Timestamp(d) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")) for d, v, _ in rows
+    ]
+    frame = vintages_from_alfred(
+        pd.DataFrame(rows, columns=["date", "value", "realtime_start"]),
+        rate_id="USD_TREASURY_3M",
+        provider_series_id="DGS3MO",
+        currency="USD",
+        tenor="3M",
+        quote_convention="investment_basis",
+        retrieved_at=pd.Timestamp("2026-10-28T03:00:00Z"),
+    )
+    return cash_returns(frame, SESSIONS, "USD_TREASURY_3M")
+
+
+def _with_cash(cash, **changes):
+    cfg = config(cash={"rate_id": "USD_TREASURY_3M"}, measures=GROUP_D, **changes)
+    return run_showcase(
+        cfg, loader(default_frames(SESSIONS)), sessions=SESSIONS, code_sha=None, cash=cash
+    )
+
+
+def test_the_cash_account_never_changes_the_headline_and_adds_a_sharpe_ratio():
+    cash = _cash_series()
+    measured = _with_cash(cash)
+    plain = _results(measures=GROUP_D)
+    json.dumps(measured, allow_nan=False)
+    for a, b in zip(measured["universes"], plain["universes"], strict=True):
+        for x, y in zip(a["strategies"], b["strategies"], strict=True):
+            assert x["wealth"] == y["wealth"] and x["final_wealth"] == y["final_wealth"]
+            assert {k: v for k, v in x["group_d"].items() if k != "sharpe"} == {
+                k: v for k, v in y["group_d"].items() if k != "sharpe"
+            }
+            assert y["group_d"]["sharpe"] is None and x["group_d"]["sharpe"]["status"] == "ok"
+    assert measured["cash"]["rate_id"] == "USD_TREASURY_3M"
+    assert "not endorsed or certified" in measured["cash"]["notice"]
+
+
+def test_the_sharpe_ratio_is_the_excess_over_the_same_spans_cash_return():
+    from stock_agent.portfolio.performance import sharpe_ratio
+
+    cash = _cash_series(0.01, 0.0004)  # from 1% to about 11%: each session's rate differs
+    universe = _universe(_with_cash(cash), "funds")
+    accrual = cash["accrual"].to_numpy()
+    dates = [d.strftime("%Y-%m-%d") for d in SESSIONS]
+    for s in universe["strategies"]:
+        wealth = pd.Series(s["wealth"], dtype="float64")
+        daily = (wealth / wealth.shift(1) - 1).dropna().to_list()
+        first = dates.index(universe["dates"][0])
+        rf = accrual[first : first + len(daily)].tolist()
+        expected = sharpe_ratio(daily, rf, [1] * len(daily))["value"]
+        # The saved path is rounded to the cent; the measure uses the unrounded one.
+        assert s["group_d"]["sharpe"]["value"] == pytest.approx(expected, rel=1e-4)
+
+
+def test_the_cash_context_is_the_accounts_own_growth_over_the_span():
+    cash = _cash_series(0.01, 0.0004)
+    universe = _universe(_with_cash(cash), "funds")
+    dates = [d.strftime("%Y-%m-%d") for d in SESSIONS]
+    first, last = dates.index(universe["dates"][0]), dates.index(universe["dates"][-1])
+    growth = float(np.prod(1 + cash["accrual"].to_numpy()[first:last]))
+    assert universe["cash"]["total_return"] == pytest.approx(growth - 1)
+    assert universe["cash"]["label"].startswith("Cash: 3-month Treasury bill rate")
+    page = render_html(_with_cash(cash))
+    assert "Sharpe ratio" in page and "Cash account (context, not a variant)" in page
+    assert "no comparison with it is made" in page
+    assert "not endorsed or certified by the Federal Reserve Bank of St. Louis" in page
+    assert "[DGS3MO], retrieved from FRED" in page
+
+
+def test_a_cash_series_is_needed_exactly_when_one_is_registered():
+    with pytest.raises(ShowcaseRunRefused, match="exactly when"):
+        _with_cash(None)
+    with pytest.raises(ShowcaseRunRefused, match="exactly when"):
+        run_showcase(config(), loader(default_frames(SESSIONS)), sessions=SESSIONS,
+                     code_sha=None, cash=_cash_series())  # fmt: skip
+    short = _cash_series().iloc[:-1]
+    with pytest.raises(ShowcaseRunRefused, match="cover"):
+        _with_cash(short)
+
+
+def test_the_engine_cash_column_is_the_cash_accrual_c4():
+    cash = _cash_series(0.01, 0.0004)
+    cfg = config(cash={"rate_id": "USD_TREASURY_3M"}, measures=GROUP_D)
+    data = universe_data(cfg.universe("funds"), SESSIONS, loader(default_frames(SESSIONS)), cash)
+    column = data.table.returns[:, data.table.cash_index]
+    assert column.tolist() == [0.0, *cash["accrual"].tolist()]
+
+
+def test_a_decision_never_sees_the_cash_rate(monkeypatch):
+    # C9 books y_{t-1} at t, but a field carrying the rate stays under C2: no decision sees
+    # the cash column, so a policy that would read it (mean-variance, PPO) cannot.
+    seen = []
+    real = showcase_run.make_policy
+
+    def recording(rule, n_assets, cash_index, *, window):
+        policy = real(rule, n_assets, cash_index, window=window)
+
+        def wrapped(history):
+            seen.append(history[:, cash_index].copy())
+            return policy(history)
+
+        return wrapped
+
+    monkeypatch.setattr(showcase_run, "make_policy", recording)
+    _with_cash(_cash_series(0.01, 0.0004))
+    assert seen and all((column == 0.0).all() for column in seen)

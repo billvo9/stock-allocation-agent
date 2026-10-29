@@ -121,6 +121,39 @@ holding the stock stops (`distribution_in_gap`) rather than guessing.
 | M6 | Turnover per calendar year | One-way turnover with the construction apart (it ends at the first execution reaching the build's own target, or at a different target); the rebalance sums per calendar year, part years labelled and never scaled; the yearly figure is the mean of the full years. Traded notional the same way |
 | M7 | Participation flag | q = |Δ| × N × W⁻ / MDV per traded asset, flagged above 1%, N = $1,000,000; MDV is the median of raw close × raw volume over the 20 sessions ending at the decision session (never the next one); fewer than 20 is `unavailable`; the build is counted apart. A flag, not a capacity figure |
 
+## The cash account and the Sharpe ratio (C1, C3, C4, C9; M2)
+
+- **Approval.** The owner approved them on 2026-10-26 ("Approve all C1–C9 (Recommended)",
+  "Approve all M1–M9 (Recommended)").
+- **Registration.** `configs/showcase/real_rebalancing_v4.yaml` is version 3 plus a `cash`
+  block naming the rates store's `USD_TREASURY_3M`, registered before any cash return or Sharpe
+  ratio was computed. The run refuses until the DGS3MO vintages are stored
+  (`scripts/rates_backfill.py`).
+- **Cash (C1 with C9).** Over each span (t − 1, t], the account earns the first-published
+  DGS3MO yield of the latest date on or before t − 1, accrued on actual calendar days (365, or
+  366 in a leap year, split at 1 January), by the existing `_simple_interest_accrual`.
+  - A bond-market holiday carries the previous rate (`bond_market_holiday_carry`).
+  - A rate more than 5 weekdays old is flagged `stale_rate` (holidays counted, so it flags
+    sooner).
+  - A rate from ALFRED's first vintage for a date before 2005-06-28 is flagged and counted:
+    it may include revisions made before then.
+  - Booked state uses y_{t−1} at t: C9's scoped exception. As a decision input, the same
+    value counts only under C2.
+- **C4.** The real cash series is the engine's cash column. Every registered target holds 0%
+  of it, so no wealth path, total return or measure changes (tested). The synthetic label
+  stays for synthetic runs.
+- **Decisions never see it.** The cash column carries the rate itself, which C2 keeps from a
+  decision until it is available, and C9's exception covers booked state only. So every
+  decision gets a copy with that column at 0 (tested with a recording policy). The
+  registered rules ignore it anyway, so no target changes.
+- **Sharpe (M2 over C3).** √252 × mean(e) / sd(e), ddof 1, with e_t = R_t − rf_t over the
+  single-session spans and rf the cash account's return for the same span.
+  - A 100% cash portfolio has none (`zero_variance`).
+  - No interval is shown until M4 and M3.
+- **Context.** The cash account's own growth and CAGR over each list's span, labelled as
+  context, never as a rule. FRED's notice and the DGS3MO citation appear wherever the cash rate
+  is used.
+
 ## The Lab app's Strategies screen
 
 More > Strategies is a small, read-only screen, as the owner chose: "Yes, small and
@@ -290,6 +323,11 @@ Commands, run from the repository root:
   rate: +900% over 21.75 years is about 11.2% a year. Calendar days make the year exact, and
   counting the build inside it keeps the cost of getting invested in the result. A CAGR is
   never divided by volatility here; a Sharpe ratio needs the T-bill rate first.
+- **The Sharpe ratio.** It asks how much return a rule earned above cash per unit of
+  bumpiness. Above cash is the important part: with a zero risk-free rate, even holding cash
+  would look like a reward for no risk. A Sharpe ratio from one 22-year path is a point
+  estimate. Ten years of daily data pin it down only to about ±0.6, which is why intervals (M3,
+  after the M4 coverage check) come before any comparison.
 - **Volatility.** Volatility is the typical size of a day's move, scaled to a year by √252.
   It describes the bumpiness of the path, not its worst fall: two rules with the same
   volatility can have very different drawdowns. That is why the stress windows sit beside it.
@@ -305,8 +343,8 @@ Commands, run from the repository root:
 
 ## Follow-ups (not done)
 
-- Group C (the T-bill rate series and cash return, then Sharpe), benchmarks (C5-C8), and the
-  remaining group D items (M3 intervals after the M4 coverage simulation, M8, M9), in the
-  order agreed.
+- Run the DGS3MO backfill (the owner's go), then rerun the showcase on version 4.
+- Benchmarks (C5-C8), and the remaining group D items (M3 intervals after the M4 coverage
+  simulation, M8, M9), in the order agreed.
 - Issuer-verified distributions and point-in-time index membership, for a less biased stock
   list.

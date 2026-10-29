@@ -5,12 +5,14 @@ prices and write the private report (owner-run, private, local; no network).
 It reads only the showcase store (stock_agent.showcase.store), never a Stock
 Lab store, and refuses a universe with a ticker that has no stored bars, or
 bars outside 2003-01-02 to 2024-12-31: a missing holding is never silently
-dropped. Every variant of configs/showcase/real_rebalancing_v3.yaml runs, in
+dropped. Every variant of configs/showcase/real_rebalancing_v4.yaml runs, in
 registered order, at 0x, 1x and 2x the registered costs, each rebalancing
 rule's registered offset family (F7.2) at 1x, and the group D measures it
-registers (M1, M2 volatility, M5, M6, M7; approved 2026-10-26). Version 3 is
-version 2 plus those measures, and version 2 is version 1 plus the family; the
-fetch reads version 1, whose tickers are the same.
+registers (M1, M2, M5, M6, M7; approved 2026-10-26), with the cash account (C1,
+C3, C4, C9) from the private rates store's first releases; it refuses to run
+before the rates are stored. Version 4 is version 3 plus the cash account,
+version 3 is version 2 plus the measures, and version 2 is version 1 plus the
+family; the fetch reads version 1, whose tickers are the same.
 
 It writes, once, into a new folder ~/stock-agent-private/showcase/<run_id>/
 (or under STOCK_AGENT_SHOWCASE_REPORTS), outside every Git working tree:
@@ -39,6 +41,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
+from stock_agent.data.rates.cash import CashUnavailable, cash_returns
+from stock_agent.data.rates.vintages import VintageRefused, default_home, load_vintages
 from stock_agent.showcase.config import load_config
 from stock_agent.showcase.report import check_wording, render_html, render_markdown
 from stock_agent.showcase.returns import window_sessions
@@ -47,7 +51,7 @@ from stock_agent.showcase.store import ShowcaseStoreRefused, open_store, window_
 from stock_agent.stock_lab.store import StockLabStore
 
 REPO = Path(__file__).resolve().parents[1]
-CONFIG = REPO / "configs" / "showcase" / "real_rebalancing_v3.yaml"
+CONFIG = REPO / "configs" / "showcase" / "real_rebalancing_v4.yaml"
 LOGO = REPO / "assets" / "brand" / "portfolio-lab-mark.svg"
 FONTS = REPO / "src" / "stock_agent" / "app" / "static" / "fonts"
 REPORTS_ENV = "STOCK_AGENT_SHOWCASE_REPORTS"
@@ -100,6 +104,7 @@ def main(
     *,
     store_factory: Callable[[], StockLabStore] = open_store,
     root_factory: Callable[[], Path] = reports_root,
+    rates_home: Callable[[], Path] = default_home,
     sha_reader: Callable[[], str | None] = code_sha,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     out: TextIO = sys.stdout,
@@ -124,6 +129,21 @@ def main(
         print("nothing was run: every registered holding needs its stored bars", file=out)
         return 2
 
+    sessions = window_sessions(config.start, config.end)
+    cash = None
+    if config.cash_rate_id is not None:
+        try:
+            vintages = load_vintages(config.cash_rate_id, rates_home())
+            if vintages is None:
+                raise CashUnavailable("no rates are stored")
+            cash = cash_returns(vintages, sessions, config.cash_rate_id)
+        except (CashUnavailable, VintageRefused) as error:
+            print(
+                f"refused: the cash rate {config.cash_rate_id} can't be used ({error}); store it "
+                "first with scripts/rates_backfill.py",
+                file=out,
+            )
+            return 2
     root = root_factory().expanduser().resolve()
     if any((folder / ".git").exists() for folder in (root, *root.parents)):
         print("refused: the report folder must be outside every Git working tree", file=out)
@@ -134,9 +154,10 @@ def main(
         results = run_showcase(
             config,
             loaded.__getitem__,
-            sessions=window_sessions(config.start, config.end),
+            sessions=sessions,
             code_sha=sha,
             generated_at=generated,
+            cash=cash,
         )
     except ShowcaseRunRefused as error:
         print(f"refused: {error}; nothing was written", file=out)
