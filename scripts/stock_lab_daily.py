@@ -44,13 +44,28 @@ Modes
     --record-real --model ID
                       the same, recorded: the scores (outcomes from the
                       inference store, stock_lab.evening), the forecasts
-                      (write-once; a stale stock keeps its last forecast and
-                      none is backfilled), the job run and its Model Health
+                      (write-once; a stale stock keeps its last forecast), then
+                      every missed evening reconstructed apart from them (as
+                      --reconstruct-missed), the job run and its Model Health
                       input, with the prospective record's missed evenings
-                      (stock_lab.job.evening_record). Refused unless the
+                      and those reconstructed (stock_lab.job.evening_record). Refused unless the
                       owner activated that model (decision A4:
                       evening.ACTIVATED_MODELS, only the models the owner
                       explicitly activated).
+    --reconstruct-missed --model ID
+                      the manual one-shot reconstruction (owner decision of
+                      2026-10-30, replacing decision A4's "missed sessions are
+                      never backfilled" for the activated model): every missed
+                      (stock, session) since the first live forecast,
+                      reconstructed from prices dated up to that close and
+                      recorded apart from the live record (stock_lab.evening,
+                      "Reconstructing missed evenings"), then the
+                      reconstructions scored (live forecasts are scored by the
+                      evening run only). It records no job run. --record-real does the same after each
+                      evening's live forecasts, so this is only for an evening
+                      that cannot wait for the next run. Exit 0 nothing refused,
+                      1 a reconstruction refused (tried again next time), 2 the
+                      model.
     --check-environment --model ID
                       read-only: this Python's minor version, numpy, pandas
                       and scikit-learn beside the frozen model ID's recorded
@@ -93,10 +108,11 @@ from stock_agent.calendars.nyse import CalendarRefused
 from stock_agent.calendars.nyse_rules import CALENDAR_ID, sessions
 from stock_agent.stock_lab import scoring
 from stock_agent.stock_lab.contracts import DataClass
+from stock_agent.stock_lab.forecast import ForecastRefused
 from stock_agent.stock_lab.job import NOT_AUTHORIZED, evening_record, record_run
 from stock_agent.stock_lab.monitoring import shared_inputs
 from stock_agent.stock_lab.replay import ReplayRefused, run_replay
-from stock_agent.stock_lab.store import StockLabStore, stamp, utc_now
+from stock_agent.stock_lab.store import StockLabStore, StoreRefused, stamp, utc_now
 from stock_agent.stock_lab.synthetic import DEMO_IDS
 
 REPLAY_CALENDAR = "synthetic_weekdays"
@@ -252,7 +268,7 @@ def _real(args, *, store, clock, started, out, inference_path, calendar, calenda
             file=out,
         )
         return 2
-    if args.record_real:
+    if args.record_real or args.reconstruct_missed:
         try:
             evening.check_activated(record["model_id"])
         except evening.NotActivated as error:
@@ -270,6 +286,10 @@ def _real(args, *, store, clock, started, out, inference_path, calendar, calenda
         return 2
     path = inference_path or evening.inference_path()
     tickers = store.watched()
+    if args.reconstruct_missed:
+        return _reconstruct_only(evening, store, model, tickers=tickers, clock=clock,
+                                 expected=expected, calendar=calendar, calendar_id=calendar_id,
+                                 path=path, out=out)  # fmt: skip
     write = bool(args.record_real)
     _, problem = store.verify_ledger()
     if problem is not None:  # a record changed outside the store: nothing more is written
@@ -317,6 +337,9 @@ def _real(args, *, store, clock, started, out, inference_path, calendar, calenda
             b1 = result.forecast["comparator"]["daily"][0]
             line += f"; next session {first['session']}: {_percent(first)}; B1 {_percent(b1)}"
         print(line, file=out)
+    if write:  # after the live forecasts: every missed evening, reconstructed apart from them
+        _reconstruct(evening, store, model, clock=clock, expected=expected,
+                     calendar=calendar, calendar_id=calendar_id, path=path, out=out)  # fmt: skip
     finished = clock()
     evenings = evening_record(
         store, now=finished, expected=expected,
@@ -367,6 +390,67 @@ def _real(args, *, store, clock, started, out, inference_path, calendar, calenda
     return 0 if status != "failed" else 1
 
 
+def _reconstruct(evening, store, model, *, clock, expected, calendar, calendar_id,
+                 path, out):  # fmt: skip
+    """
+    Reconstruct the missed evenings and print them; True when none was refused. `evening` is
+    the real path's module, which only _real loads (the isolation tests check it).
+    """
+
+    try:
+        found = evening.reconstruct_missed(
+            store, model, clock=clock, expected=expected, sessions=calendar,
+            calendar_id=calendar_id, path=path,
+        )  # fmt: skip
+    except (ForecastRefused, StoreRefused) as error:  # a stored record failed its check
+        print(f"reconstruction skipped: a stored record does not verify ({error})", file=out)
+        return False
+    if not found:
+        print("missed evenings: nothing to reconstruct", file=out)
+        return True
+    for day in sorted({r.session for r in found}):
+        made = [r.ticker for r in found if r.session == day and r.status == evening.RECORDED]
+        if made:
+            print(
+                f"reconstructed {day}: {', '.join(made)} (made after the fact, kept apart from "
+                "the live record; the evening stays missed on time)",
+                file=out,
+            )
+        for r in found:
+            if r.session == day and r.status != evening.RECORDED:
+                print(
+                    f"  not reconstructed {r.ticker} as of {day} ({r.reason}: {r.detail}); "
+                    "tried again at the next run",
+                    file=out,
+                )
+    return all(r.status == evening.RECORDED for r in found)
+
+
+def _reconstruct_only(evening, store, model, *, tickers, clock, expected, calendar, calendar_id,
+                      path, out) -> int:  # fmt: skip
+    """--reconstruct-missed (module docstring): reconstruct, then score; no job run."""
+
+    _, problem = store.verify_ledger()
+    if problem is not None:  # a record changed outside the store: nothing is written
+        print(f"refused: the ledger does not verify ({problem})", file=out)
+        return 1
+    clean = _reconstruct(evening, store, model, clock=clock, expected=expected,
+                         calendar=calendar, calendar_id=calendar_id, path=path, out=out)  # fmt: skip
+    symbols = sorted(set(tickers) | set(store.forecast_symbols(DataClass.REAL)))
+    outcomes = evening.score_real(
+        store, symbols=symbols, now=clock(), expected=expected, sessions=calendar,
+        calendar_id=calendar_id, path=path, write=True, model_id=model.model_id,
+        watched=tickers, reconstructed_only=True,
+    )  # fmt: skip
+    counts = outcomes.reconstructed
+    print(
+        f"reconstructed scores: {counts['scored']} scored, {counts['unscorable']} unscorable, "
+        f"{counts['pending']} pending (live forecasts are scored by the evening run only)",
+        file=out,
+    )
+    return 0 if clean else 1
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -385,6 +469,7 @@ def main(
     real.add_argument("--record-real", action="store_true")
     real.add_argument("--dry-run", action="store_true")
     real.add_argument("--check-environment", action="store_true")
+    real.add_argument("--reconstruct-missed", action="store_true")
     parser.add_argument("--model", metavar="ID")
     parser.add_argument("--health-inputs", type=Path, default=None)
     parser.add_argument("--ledger-head-backup", type=Path, default=None)
@@ -443,7 +528,7 @@ def main(
             file=out,
         )
         return 2
-    if args.dry_run or args.record_real:
+    if args.dry_run or args.record_real or args.reconstruct_missed:
         return _real(
             args, store=store, clock=clock, started=started, out=out,
             inference_path=inference_path, calendar=calendar, calendar_id=calendar_id,

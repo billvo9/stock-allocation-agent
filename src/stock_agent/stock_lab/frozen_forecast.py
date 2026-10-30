@@ -43,6 +43,13 @@ from stock_agent.stock_lab.store import stamp
 from stock_agent.stock_lab.targets import cumulative_band
 
 MARKET_STATE = ("ret_5", "ret_20", "vol_20", "ewma_vol")
+# First among a reconstruction's limitations (owner decision of 2026-10-30).
+RECONSTRUCTED_LIMITATION = (
+    "Reconstructed after the fact for a missed evening: made after its evening closed, from "
+    "prices dated up to its as-of close only, as the provider served them when it was made, "
+    "which may differ from what that evening could have read (a session corrected or first "
+    "served later)."
+)
 LIMITATIONS = (
     (
         "Experimental and unvalidated: the evaluation is a development test of a "
@@ -132,9 +139,11 @@ def forecast_record(
     created_at: pd.Timestamp,
     data: Mapping[str, object],
     data_class: str,
+    reconstructed: bool = False,
 ) -> dict:
     """
-    The checked forecast artifact (schema 1.1) of a frozen model at `symbol`'s last session
+    The checked forecast artifact (schema 1.1, or 1.2 `reconstructed` for a missed evening,
+    stated first in its limitations) of a frozen model at `symbol`'s last session
     with a close in `panel`, built from the inference window alone: the frozen estimator's
     probabilities, B1's on the same inputs, band and sessions (the comparator), and the state
     the forecast was made in (the run, momentum, volatility, regime). The reversal statistics
@@ -169,6 +178,8 @@ def forecast_record(
     limitations = list(LIMITATIONS)
     if data_class == "synthetic":
         limitations.insert(0, "Synthetic demo stock: not a real company.")
+    if reconstructed:
+        limitations.insert(0, RECONSTRUCTED_LIMITATION)
     return artifact.build(
         symbol=symbol,
         data_class=data_class,
@@ -196,4 +207,5 @@ def forecast_record(
         limitations=limitations,
         refusal=refusal,
         comparator=comparator,
+        reconstructed=reconstructed,
     )

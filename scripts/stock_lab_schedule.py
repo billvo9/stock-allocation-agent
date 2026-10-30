@@ -30,8 +30,9 @@ Modes
                           forecasts, and the Model Health input in the folder
                           that every checkout's Model Health reads.
                      A failed step 1 stops the run with its exit status: no
-                     forecast is recorded that evening and none is backfilled
-                     later. caffeinate -s -i keeps the Mac awake until the run
+                     forecast is recorded on time that evening; the next run
+                     reconstructs it after the fact, labelled and kept apart
+                     from the live record (owner decision of 2026-10-30). caffeinate -s -i keeps the Mac awake until the run
                      ends, but holds against system sleep only on AC power: a
                      laptop must be plugged in. A refusal, a failed step 1
                      (exit 4: the network never came up) or a failed step 2 shows
@@ -375,8 +376,9 @@ def evening_wake_note(zone: str = "America/New_York") -> str:
         "note: launchd runs this agent only while you are logged in (asleep is fine, shut down "
         "or logged out is not) and the Mac is awake. A run missed while the Mac sleeps starts "
         "when it next wakes, and still records that evening if it starts before the next "
-        "09:30 New York open; after that, the evening is a permanent gap in the prospective "
-        "record. An optional wake, five minutes before (an administrator setting; pmset keeps "
+        "09:30 New York open; after that, the evening is missed on time (the next run "
+        "reconstructs it after the fact, labelled and kept apart from the live record). An "
+        "optional wake, five minutes before (an administrator setting; pmset keeps "
         "one repeating pair, a power-on and a power-off event, so this replaces a repeating "
         "schedule already set, the briefing's 08:25 wake included: keep this one, since a late "
         f"briefing can still be read but a missed evening cannot be recorded): "
@@ -429,7 +431,8 @@ def render_run_sh(
 #      scripts/stock_lab_daily.py --record-real --model <id>, with its Model Health input
 #      in the shared folder every checkout's Model Health reads (--health-inputs).
 # A failed step 1 stops the run with its exit status and a dated reason on stderr: no
-# forecast is recorded that evening, and none is backfilled later. Model Health shows a
+# forecast is recorded on time that evening (the next run reconstructs it after the fact,
+# labelled and kept apart from the live record). Model Health shows a
 # stopped job (job_overdue) and, after the next evening, the missed one (evening_missed).
 # A refusal or a failed step also shows one local notification ({OSASCRIPT}): a fixed
 # notice, never a value, price or key, and it never changes the exit status. A run that

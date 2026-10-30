@@ -24,7 +24,8 @@ What a run records, per watched stock:
     evenings        the real path only (`evening_record`): the prospective
                     record's evenings since the first real forecast, and which
                     of them recorded no forecast once their decision time had
-                    passed (missed evenings are permanent gaps)
+                    passed (missed evenings stay missed on time; those
+                    reconstructed after the fact are noted, `reconstructed`)
 
 The kept head. A hash chain shows an edited or removed middle entry, but
 not a removed last entry. So the job keeps the head hash in a private file

@@ -118,8 +118,10 @@ class ReadOnlyRecords:
     def watched(self) -> tuple[str, ...]:
         return self._store.watched()
 
-    def forecasts(self, symbol: str) -> tuple[dict, ...]:
-        return self._store.forecasts(symbol)
+    def forecasts(self, symbol: str, *, reconstructed: bool = False) -> tuple[dict, ...]:
+        """The live track (StockLabStore.forecasts); `reconstructed`: the reconstructions."""
+
+        return self._store.forecasts(symbol, reconstructed=reconstructed)
 
     def forecast_symbols(self, data_class: DataClass) -> tuple[str, ...]:
         """Every symbol with a stored forecast of `data_class` (the morning check reads it)."""
@@ -129,8 +131,10 @@ class ReadOnlyRecords:
     def forecast_recorded_at(self, symbol: str) -> dict[str, str]:
         return self._store.forecast_recorded_at(symbol)
 
-    def scores(self, symbol: str) -> tuple[dict, ...]:
-        return self._store.scores(symbol)
+    def scores(self, symbol: str, *, reconstructed: bool = False) -> tuple[dict, ...]:
+        """The live track's scores; `reconstructed`: the reconstructions' (kept apart)."""
+
+        return self._store.scores(symbol, reconstructed=reconstructed)
 
     def job_runs(self) -> tuple[dict, ...]:
         return self._store.job_runs()
@@ -142,7 +146,7 @@ class ReadOnlyRecords:
         return self._store.evaluations(data_class)
 
     def scored_symbols(self) -> tuple[str, ...]:
-        """Every symbol with a stored score (any data class), including former watchlist ones."""
+        """Every symbol with a live score (any data class), including former watchlist ones."""
 
         return tuple(sorted({score["symbol"] for score in self._store.scores()}))
 
@@ -517,11 +521,18 @@ class _Known:
     problem: str | None  # a record that failed its check when read
 
 
-def _known(records: ReadOnlyRecords, symbol: str, cutoff: str, data_class: str) -> _Known:
+def _known(
+    records: ReadOnlyRecords, symbol: str, cutoff: str, data_class: str, *, reconstructed=False
+) -> _Known:
+    """The live track as known at `cutoff`; `reconstructed`: the reconstructions (History)."""
+
     try:
-        stored = records.forecasts(symbol)
+        if reconstructed:
+            stored = records.forecasts(symbol, reconstructed=True)
+            scores = records.scores(symbol, reconstructed=True)
+        else:  # the live track: the store's default reads
+            stored, scores = records.forecasts(symbol), records.scores(symbol)
         recorded = records.forecast_recorded_at(symbol)
-        scores = records.scores(symbol)
     except (ForecastRefused, StoreRefused) as error:
         return _Known((), (), (), f"{type(error).__name__}: {error}")
     forecasts = tuple(

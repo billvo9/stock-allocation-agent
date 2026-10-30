@@ -42,9 +42,11 @@ MODULE_CONSUMERS = {
     },
     # The real evening job's frozen-model side (decision A4; reviewed 2026-10-19): a
     # forecast's inputs through the frozen-model reader, its outcomes and each stock's
-    # newest close through the outcome reader. It never imports the writer.
+    # newest close through the outcome reader. It never imports the writer. A missed
+    # evening's inputs come through the reconstruction reader (the owner's decision of
+    # 2026-10-30: reconstructed, labelled and kept apart from the live record).
     "stock_lab/evening.py": {
-        f"{INFERENCE}.window": {"load_inference_window"},
+        f"{INFERENCE}.window": {"load_inference_window", "load_reconstruction_window"},
         f"{INFERENCE}.outcomes": {"latest_close", "read_outcomes"},
         f"{INFERENCE}.schema": {"InferenceRefused", "default_path"},
     },

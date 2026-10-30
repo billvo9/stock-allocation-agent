@@ -709,7 +709,11 @@ HISTORY_PROBLEMS = {
         "The Health tab says more."
     ),
 }
-MISSED_STAYS = "A missed evening stays missed. It is never filled in later."
+MISSED_STAYS = (
+    "A missed evening stays missed on time. An outlook made for it later is labelled and kept "
+    "apart."
+)
+RECONSTRUCTED_LABEL = "Reconstructed after the fact: "  # before each reconstructed item's label
 NO_OUTLOOK_RECORDED = "No outlook recorded that evening"
 HISTORY_WITHHELD = "Outlook withheld: its day doesn't match the exchange calendar"
 CATEGORY_SHORT = {"increase": "Up", "stable": "Flat", "decrease": "Down"}
@@ -725,13 +729,27 @@ def month_day(value: date | str) -> str:
     return f"{day:%b} {day.day}"
 
 
-def history_counts(since: str, *, recorded: int, scored: int, missed: int) -> str:
-    """'Since Oct 19: 3 evenings recorded, 2 with a result, 1 missed.'"""
+def history_counts(
+    since: str, *, recorded: int, scored: int, missed: int, reconstructed: int = 0
+) -> str:
+    """'Since Oct 19: 3 evenings recorded, 2 with a result, 1 missed; 3 outlooks reconstructed
+    after the fact.' The last part only when an outlook was reconstructed."""
 
     evenings = "evening" if recorded == 1 else "evenings"
+    outlooks = "outlook" if reconstructed == 1 else "outlooks"
+    rebuilt = f"; {reconstructed} {outlooks} reconstructed after the fact" if reconstructed else ""
     return (
         f"Since {month_day(since)}: {recorded} {evenings} recorded, {scored} with a result, "
-        f"{missed} missed."
+        f"{missed} missed{rebuilt}."
+    )
+
+
+def missed_reconstructed(made: str) -> str:
+    """A missed evening whose outlooks were reconstructed later (owner decision, 2026-10-30)."""
+
+    return (
+        f"Missed on time. Reconstructed after the fact (made {made}) from prices up to that "
+        "close, and kept apart from the live record."
     )
 
 

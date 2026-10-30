@@ -48,6 +48,27 @@ the store refused every forecast as backdated)
     (the store judges the open by created_at, within CLOCK_SKEW). The store's
     checks are unchanged.
 
+Reconstructing missed evenings (`reconstruct_missed`; the owner's decision of
+2026-10-30 replaces decision A4's "missed sessions are never backfilled" for
+the activated model)
+    After the evening's live forecasts, every due evening since the first live
+    forecast (evenings.missing_forecasts) is reconstructed, per stock (owner,
+    2026-10-30), for each stock of the model that was watched when that
+    evening began (the append-only watchlist, never today's) and has no
+    forecast of it (live or reconstructed): a missed evening's stocks and a
+    partly recorded evening's missing ones, all of them,
+    session by session, chosen by no outcome. Each session's windows are read
+    at the job's clock with load_reconstruction_window: the 252 sessions
+    dated up to that close only, from every batch retrieved by then. The
+    panel and the frozen model's forecast are the live evening's, so on the
+    same data a reconstruction equals the forecast the evening would have
+    recorded. It is recorded write-once through the store's own path,
+    reconstructed true, at its true created_at (never backdated), one per
+    (stock, session) and never beside a live one. A session whose window
+    cannot be read is reported and tried again at the next run. A window_only
+    model is never reconstructed (its prior pools the evening's panel, which
+    can no longer be read as it was): each gap is reported.
+
 Scoring (`score_real`): every real forecast not yet fully scored, on outcomes
 read from the inference store (read_outcomes): a target is scored only when
 every session it needs was absent from the store when the forecast was known
@@ -56,6 +77,9 @@ expected session but has no stored outcome yet is counted as missing, once per
 (stock, session), for Model Health; a stock no longer watched is still scored
 when its outcomes arrive, but its prices are no longer fetched, so it never
 counts as missing.
+
+Reconstructions are scored by session dates (scoring.score_forecast) and
+counted apart (ScoreSummary.reconstructed); the live counts are live alone.
 
 Model Health (`monitor_fields`): per-stock results (recorded, skipped, stale,
 refused), the freshness of each stock's newest stored close, input drift of
@@ -73,14 +97,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from stock_agent.stock_lab import monitoring, registry, scoring
+from stock_agent.stock_lab import evenings, monitoring, registry, scoring
 from stock_agent.stock_lab.evaluation import build_panel
-from stock_agent.stock_lab.forecast import ForecastRefused, session_open
+from stock_agent.stock_lab.forecast import ForecastRefused, is_reconstructed, session_open
 from stock_agent.stock_lab.frozen_forecast import forecast_record
 from stock_agent.stock_lab.frozen_model import RegistryRefused
 from stock_agent.stock_lab.inference.outcomes import latest_close, read_outcomes
 from stock_agent.stock_lab.inference.schema import InferenceRefused, default_path
-from stock_agent.stock_lab.inference.window import load_inference_window
+from stock_agent.stock_lab.inference.window import (
+    load_inference_window,
+    load_reconstruction_window,
+)
 from stock_agent.stock_lab.store import BackdatingRefused, StockLabStore, StoreRefused, stamp
 
 Sessions = Callable[[pd.Timestamp, pd.Timestamp], pd.DatetimeIndex]
@@ -142,22 +169,44 @@ class Evening:
     freshness: tuple[dict, ...]
 
 
+@dataclass(frozen=True)
+class Reconstruction:
+    """One missed (stock, session): recorded, or refused with the reason (tried again later)."""
+
+    ticker: str
+    session: str
+    status: str  # RECORDED or REFUSED
+    reason: str | None
+    detail: str
+    forecast_id: str | None = None
+
+
+def _counts() -> dict:
+    return {"scored": 0, "unscorable": 0, "pending": 0, "refused": 0}
+
+
 @dataclass
 class ScoreSummary:
+    """The live track's counts; `reconstructed` holds the reconstructions' apart."""
+
     scored: int = 0
     unscorable: int = 0
     pending: int = 0
     missing: int = 0
     refused: list[dict] = field(default_factory=list)
+    reconstructed: dict = field(default_factory=_counts)
 
     def as_dict(self) -> dict:
-        return {
+        found = {
             "scored": self.scored,
             "unscorable": self.unscorable,
             "pending": self.pending,
             "missing": self.missing,
             "refused": list(self.refused),
         }
+        if any(self.reconstructed.values()):  # additive: only once a reconstruction exists
+            found["reconstructed"] = dict(self.reconstructed)
+        return found
 
 
 def target_sessions(sessions: Sessions, as_of: pd.Timestamp) -> list[str]:
@@ -295,7 +344,7 @@ def forecast_watchlist(
     return Evening(ordered, panel, tuple(freshness))
 
 
-def _forecast(panel, ticker, model, window, *, day, targets, decided) -> dict:
+def _forecast(panel, ticker, model, window, *, day, targets, decided, reconstructed=False) -> dict:
     """`ticker`'s forecast from `window`, read as of `decided`: its decision time and created_at."""
 
     newest = window.batches[-1]
@@ -315,7 +364,7 @@ def _forecast(panel, ticker, model, window, *, day, targets, decided) -> dict:
     }
     return forecast_record(
         panel, ticker, model, target_sessions=targets, created_at=decided, data=data,
-        data_class=window.data_class,
+        data_class=window.data_class, reconstructed=reconstructed,
     )  # fmt: skip
 
 
@@ -359,6 +408,66 @@ def _record(
     return artifact
 
 
+def reconstruct_missed(
+    store: StockLabStore,
+    model: registry.FrozenModel,
+    *,
+    clock: Callable[[], pd.Timestamp],
+    expected: pd.Timestamp,
+    sessions: Sessions,
+    calendar_id: str,
+    path: Path,
+) -> tuple[Reconstruction, ...]:
+    """
+    Every missed (stock, session) since the first live forecast, reconstructed and recorded
+    (module docstring). Only for a model the owner activated (NotActivated). ForecastRefused
+    or StoreRefused when a stored record no longer verifies, as for every reader of the store.
+    """
+
+    check_activated(model.model_id)
+    gaps = evenings.missing_forecasts(
+        store, stocks=model.stocks, now=clock(), expected=expected, sessions=sessions
+    )
+    if model.state_rule == registry.WINDOW_ONLY:
+        detail = "a window_only model's evening panel can no longer be read as it was"
+        return tuple(Reconstruction(t, day, REFUSED, "window_only", detail) for day, t in gaps)
+    out: list[Reconstruction] = []
+    for day in sorted({session for session, _ in gaps}):
+        decided = clock()  # the reconstruction's own time: its reads and its created_at
+        windows, refused = {}, {}
+        stocks = [t for t in store.watched_at(evenings.evening_opens(day)) if t in model.stocks]
+        for ticker in stocks:  # that evening's panel: every stock watched then
+            try:
+                windows[ticker] = load_reconstruction_window(
+                    path, ticker, day, retrieved_by=decided, sessions=sessions,
+                    calendar_id=calendar_id,
+                )  # fmt: skip
+            except InferenceRefused as error:
+                refused[ticker] = error
+        bars = {t: w.bars.drop(columns=["batch_id"]) for t, w in windows.items()}
+        panel = build_panel(bars, model.final.config) if bars else None
+        targets = target_sessions(sessions, pd.Timestamp(day, tz="UTC"))
+        for ticker in [t for session, t in gaps if session == day]:
+            if ticker in refused:
+                error = refused[ticker]
+                out.append(Reconstruction(ticker, day, REFUSED, error.reason.value, error.detail))
+                continue
+            try:
+                artifact = _forecast(panel, ticker, model, windows[ticker], day=day,
+                                     targets=targets, decided=decided, reconstructed=True)  # fmt: skip
+                store.record_reconstruction(artifact, real_authorized=True)
+            except StoreRefused as error:
+                out.append(Reconstruction(ticker, day, REFUSED, "store_refused", str(error)))
+                continue
+            except (RegistryRefused, ForecastRefused) as error:
+                reason = getattr(error, "reason", "forecast_refused")
+                out.append(Reconstruction(ticker, day, REFUSED, reason, str(error)))
+                continue
+            made = f"reconstructed {artifact['forecast_id'][:12]} at {artifact['created_at']}"
+            out.append(Reconstruction(ticker, day, RECORDED, None, made, artifact["forecast_id"]))
+    return tuple(out)
+
+
 def score_real(
     store: StockLabStore,
     *,
@@ -371,6 +480,7 @@ def score_real(
     write: bool,
     model_id: str | None = None,
     watched: Sequence[str] | None = None,
+    reconstructed_only: bool = False,
 ) -> ScoreSummary:
     """
     Score the real forecasts whose targets have closed (module docstring). Writing the scores
@@ -388,7 +498,7 @@ def score_real(
         done = store.scored_keys(symbol)
         recorded = store.forecast_recorded_at(symbol)
         try:
-            stored = store.forecasts(symbol)
+            stored = [*store.forecasts(symbol), *store.forecasts(symbol, reconstructed=True)]
         except (ForecastRefused, StoreRefused):  # a stored record failed its check: none scored
             summary.refused.append(
                 {"ticker": symbol, "forecast_id": None, "reason": "record_check_failed"}
@@ -396,6 +506,9 @@ def score_real(
             continue
         for record in stored:
             if record["data_class"] != "real" or record["refusal"] is not None:
+                continue
+            rebuilt = is_reconstructed(record)  # counted apart from the live track
+            if reconstructed_only and not rebuilt:  # the manual reconstruction: no live score
                 continue
             targets = [str(h) for h in range(1, 6)] + (["cum"] if record["cumulative"] else [])
             if all((record["forecast_id"], t) in done for t in targets):
@@ -411,6 +524,9 @@ def score_real(
                     sessions=sessions, calendar_id=calendar_id,
                 )  # fmt: skip
             except InferenceRefused as error:
+                if rebuilt:
+                    summary.reconstructed["refused"] += 1
+                    continue
                 summary.refused.append({"ticker": symbol, "forecast_id": record["forecast_id"],
                                         "reason": error.reason.value})  # fmt: skip
                 continue
@@ -421,6 +537,11 @@ def score_real(
             fresh = []
             for score in found:
                 if (score.forecast_id, score.target) in done:
+                    continue
+                if rebuilt:
+                    summary.reconstructed[score.status] += 1
+                    if score.status != scoring.PENDING:
+                        fresh.append(score)
                     continue
                 if score.status == scoring.PENDING:
                     summary.pending += 1
