@@ -291,6 +291,14 @@ class StoreRefused(ValueError):
     """A store location or a write that the rules refuse."""
 
 
+class BackdatingRefused(StoreRefused):
+    """
+    A forecast whose created_at is more than CLOCK_SKEW earlier than the store's clock. The
+    only refusal a caller may retry, with a fresh created_at: a Mac that slept between the
+    stamp and the write (stock_lab.evening). The rule is the same either way.
+    """
+
+
 CLOCK_SKEW = pd.Timedelta(minutes=5)  # how far a forecast's created_at may be from the clock
 _FROZEN_COLUMNS = "model_id, data_class, estimator, evaluation_run_id, content_sha256, record"
 FROZEN_QUERIES = {  # fixed statements: no value is ever formatted into SQL
@@ -1023,7 +1031,7 @@ class StockLabStore:
         if made > now + CLOCK_SKEW:
             raise StoreRefused("a forecast cannot be created in the future")
         if made < now - CLOCK_SKEW:
-            raise StoreRefused(
+            raise BackdatingRefused(
                 "a forecast is recorded when it is made: created_at is earlier than the "
                 "store's clock (backdating is refused)"
             )

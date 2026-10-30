@@ -33,6 +33,16 @@ Field semantics (as Tiingo documents them; recorded with every batch)
                              history is recomputed after every later event, so
                              it is not a point-in-time vintage.
 
+Reaching the network (`reach`, `wait_for_network`), for a run that starts
+the moment the Mac wakes, before Wi-Fi is back (2026-10-29)
+    reach    a DNS lookup of api.tiingo.com, then one TCP connection to its
+             port 443, closed at once. Nothing is sent on it: no TLS, no
+             HTTP, no key or header. So it is no request of the plan and
+             spends none of the key's budget.
+    wait     reach again after 5, 10, 20, 40, then every 60 seconds, for at
+             most NETWORK_WAIT seconds of waiting in all, and never sleeping
+             up to or past the caller's deadline.
+
 Every batch records its retrieval time and is stored as a new vintage
 (store.py); a session served differently by a later retrieval is reported
 as revised, never overwritten. The ticker-to-security mapping is Tiingo's
@@ -47,12 +57,14 @@ import io
 import json
 import math
 import re
+import socket
 import time
 import zipfile
 import zlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date
+from urllib.parse import urlsplit
 
 import pandas as pd
 
@@ -75,6 +87,11 @@ PRICE_FIELDS = ("date", "open", "high", "low", "close", "volume", "divCash", "sp
 LISTING_HEADER = ("ticker", "exchange", "assetType", "priceCurrency", "startDate", "endDate")
 DEFAULT_MAX_REQUESTS = 40
 DEFAULT_MIN_INTERVAL = 2.0  # seconds between requests
+PRICES_HOST = urlsplit(PRICES_BASE).hostname  # api.tiingo.com: the host the key is sent to
+HTTPS_PORT = 443
+PROBE_TIMEOUT = 5.0  # seconds for the reachability check's TCP connection
+NETWORK_WAIT = 300.0  # seconds: the longest wait for the network, in all
+NETWORK_DELAYS = (5.0, 10.0, 20.0, 40.0, 60.0)  # between checks; the last one repeats
 MAX_LISTING_BYTES = 64 * 1024 * 1024
 
 VINTAGE_NOTE = (
@@ -265,6 +282,70 @@ def _listing_rows(reader) -> tuple[ListingRow, ...]:
     if not rows:
         raise StockDataRefused("listing_empty", "no rows")
     return tuple(rows)
+
+
+@dataclass(frozen=True)
+class NetworkWait:
+    reachable: bool
+    checks: int
+    waited: float  # seconds slept between the checks
+    first: str | None  # why the first check failed (None when it passed)
+    reason: str | None  # why the last check failed, when the network never came up
+
+
+def reach(
+    host: str = PRICES_HOST,
+    port: int = HTTPS_PORT,
+    *,
+    resolve: Callable[..., object] = socket.getaddrinfo,
+    connect: Callable[..., socket.socket] = socket.create_connection,
+    timeout: float = PROBE_TIMEOUT,
+) -> str | None:
+    """
+    None when `host` resolves and accepts a TCP connection on `port`, else why not, by the
+    failure's type only ("dns: gaierror", "connect: TimeoutError"). The connection is closed
+    at once with nothing sent: it is not a request, and no key or header goes anywhere.
+    """
+
+    try:
+        resolve(host, port, type=socket.SOCK_STREAM)
+    except OSError as error:  # socket.gaierror included
+        return f"dns: {type(error).__name__}"
+    try:
+        connection = connect((host, port), timeout=timeout)
+    except OSError as error:  # TimeoutError and refused or unreachable included
+        return f"connect: {type(error).__name__}"
+    connection.close()
+    return None
+
+
+def wait_for_network(
+    check: Callable[[], str | None],
+    *,
+    clock: Callable[[], pd.Timestamp],
+    sleep: Callable[[float], None],
+    until: pd.Timestamp,
+    seconds: float = NETWORK_WAIT,
+    delays: tuple[float, ...] = NETWORK_DELAYS,
+) -> NetworkWait:
+    """
+    Run `check` (`reach`) until it passes, sleeping `delays` between checks (the last one
+    repeated): at most `seconds` of sleep in all, and no sleep that would end at or after
+    `until` on the wall clock (the caller's deadline).
+    """
+
+    checks, waited, first = 0, 0.0, None
+    while True:
+        reason = check()
+        checks += 1
+        if reason is None:
+            return NetworkWait(True, checks, waited, first, None)
+        first = first or reason
+        delay = delays[min(checks, len(delays)) - 1]
+        if waited + delay > seconds or clock() + pd.Timedelta(seconds=delay) >= until:
+            return NetworkWait(False, checks, waited, first, reason)
+        sleep(delay)
+        waited += delay
 
 
 class StockAdapter:

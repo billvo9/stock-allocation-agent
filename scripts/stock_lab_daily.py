@@ -62,9 +62,12 @@ Modes
 
 Scheduling: the unattended evening (`scripts/stock_lab_schedule.py`, which
 prints the launchd agent and its run.sh) runs
-`scripts/stock_lab_fetch_recent.py --authorized --store --keychain` and, only
-when that succeeds, `--record-real --model ID`. The owner installs it; nothing
-here installs anything.
+`scripts/stock_lab_fetch_recent.py --authorized --store --keychain --unattended`
+and, only when that succeeds, `--record-real --model ID`. The owner installs it;
+nothing here installs anything. A forecast that the store refuses as
+backdated (the Mac slept between the decision and the write) is made again,
+once, at the time of its write, from its window as of then; no write starts
+at or after the next open (stock_lab.evening, "Timing").
 
 Usage:
     .venv/bin/python scripts/stock_lab_daily.py --demo-replay 20
@@ -289,9 +292,10 @@ def _real(args, *, store, clock, started, out, inference_path, calendar, calenda
         calendar_id=calendar_id, path=path, write=write, model_id=model.model_id,
         watched=tickers,
     )  # fmt: skip
+    # The decision time is now; the clock remakes a forecast refused as backdated (a sleep).
     found = evening.forecast_watchlist(
         store, model, tickers=tickers, now=clock(), expected=expected, sessions=calendar,
-        calendar_id=calendar_id, path=path, record=write,
+        calendar_id=calendar_id, path=path, record=write, clock=clock,
     )  # fmt: skip
     mode = "recorded" if write else "dry run: nothing recorded"
     print(

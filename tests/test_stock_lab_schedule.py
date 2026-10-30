@@ -42,6 +42,8 @@ MODEL = "2b6cd0c1a52f5ecfc16d6c8e221956d6fd23093826618e895949ac62e7fa65e7"
 # The home folder main() prints for: never this checkout's, wherever the checkout is, so the
 # protected-folder warning appears only in the tests that place the checkout inside it.
 HOME = Path("/Users/someone")
+# The evening's price update, as run.sh runs it.
+FETCH = "scripts/stock_lab_fetch_recent.py --authorized --store --keychain --unattended"
 
 
 def _script():
@@ -128,6 +130,8 @@ def test_the_evening_agent_starts_run_sh_at_2030_new_york_with_a_private_umask()
     assert "sudo pmset repeat wakeorpoweron MTWRF 20:25:00" in note  # printed, never run
     assert "pmset -g sched" in note and "replaces" in note and "08:25 wake" in note
     assert "09:30 New York" in note and "logged in" in note
+    # caffeinate -s holds the Mac awake on AC power only, and a wake on battery may be a dark one.
+    assert "a laptop must be plugged in" in note and "on battery" in note
     assert "<plist" not in note and "pmset" not in printed  # the note never enters the file
 
 
@@ -322,9 +326,7 @@ def test_run_sh_updates_prices_then_records_the_activated_model_and_never_holds_
     code_lines = [line for line in lines if not line.lstrip().startswith("#")]
     (fetch,) = [i for i, line in enumerate(lines) if line in code_lines and "fetch_recent" in line]
     (record,) = [i for i, line in enumerate(lines) if line in code_lines and "--record" in line]
-    assert lines[fetch] == (
-        '"${clean[@]}" "$python" scripts/stock_lab_fetch_recent.py --authorized --store --keychain'
-    )
+    assert lines[fetch] == f'"${{clean[@]}}" "$python" {FETCH}'
     assert lines[record] == (
         '"${clean[@]}" "$python" scripts/stock_lab_daily.py --record-real --model "$model" '
         '--health-inputs "$inputs"'
@@ -342,6 +344,15 @@ def test_run_sh_updates_prices_then_records_the_activated_model_and_never_holds_
     (clean,) = [line for line in lines if line.startswith("clean=(")]
     assert clean.startswith("clean=(/usr/bin/env -i ")
     assert 'PATH=/usr/bin:/bin:/usr/sbin:/sbin "PYTHONPATH=$repo/src")' in clean
+    # Awake for the whole run, while this script (and each step it runs) has not exited: -s
+    # keeps the system from sleeping (on AC power only), -i from idle sleep.
+    (awake,) = [line for line in code_lines if "caffeinate" in line and "-x" not in line]
+    assert awake == "  /usr/bin/caffeinate -s -i -w $$ </dev/null >/dev/null 2>&1 &!"
+    assert lines.index(awake) < fetch
+    # The comment says that a laptop must be plugged in.
+    assert "only on AC power: a laptop must be plugged in" in " ".join(
+        line.lstrip("# ") for line in lines if line.startswith("#")
+    )
     body = "\n".join(code_lines)
     for absent in ("TIINGO_API_KEY", "security", "launchctl", "pmset", "export ", "setenv",
                    "--backfill", "--at "):  # fmt: skip
@@ -400,6 +411,7 @@ def test_every_evening_notice_is_short_plain_ascii_and_holds_no_number_but_the_o
     assert set(schedule.EVENING_NOTICES) == {
         "refused",
         "fetch_refused",
+        "fetch_offline",
         "fetch_failed",
         "record_failed",
     }
@@ -585,7 +597,7 @@ def test_the_evening_updates_prices_then_records_with_only_the_named_variables(e
     assert done.returncode == 0, done.stderr
     assert done.stderr == ""
     assert _steps(home) == [
-        "scripts/stock_lab_fetch_recent.py --authorized --store --keychain",
+        FETCH,
         (
             f"scripts/stock_lab_daily.py --record-real --model {MODEL} "
             f"--health-inputs {home}/stock-agent-private/health_inputs"
@@ -603,21 +615,29 @@ def test_the_evening_updates_prices_then_records_with_only_the_named_variables(e
 
 
 @needs_shell
-@pytest.mark.parametrize("status", [1, 2, 127])
+@pytest.mark.parametrize("status", [1, 2, 4, 127])
 def test_a_failed_price_update_stops_the_evening_before_any_forecast(evening, status):
     repo, home, arguments, _ = evening
     (repo / ".venv" / "fetch-exit").write_text(f"{status}\n", encoding="utf-8")
     done = _launch(arguments, home)
     assert done.returncode == status
-    assert _steps(home) == ["scripts/stock_lab_fetch_recent.py --authorized --store --keychain"]
+    assert _steps(home) == [FETCH]
     (line,) = done.stderr.strip().splitlines()
     assert re.fullmatch(
         STAMP + rf"stopped: the price update failed \(exit {status}\); no forecast was recorded "
         r"tonight",
         line,
     ), line
-    # Exit 2 is the fetch's refusal before any request (for example the Keychain item).
-    assert _notices(home) == [NOTICE["fetch_refused" if status == 2 else "fetch_failed"]]
+    # Exit 2 is the fetch's refusal before any request (for example the Keychain item), and
+    # exit 4 a network that never came up after the wake (nothing requested).
+    shown = {2: "fetch_refused", 4: "fetch_offline"}.get(status, "fetch_failed")
+    assert _notices(home) == [NOTICE[shown]]
+
+
+def test_the_offline_exit_is_the_price_updates():
+    import test_stock_lab_fetch_recent_script as fetched
+
+    assert schedule.OFFLINE_EXIT == fetched.fetch.NO_NETWORK == 4
 
 
 @needs_shell
@@ -702,7 +722,14 @@ def test_a_notifier_that_hangs_is_stopped_and_never_holds_the_evening(evening, m
 @pytest.mark.parametrize("notifier", ["fails", "missing"])
 @pytest.mark.parametrize(
     "outcome, status",
-    [("success", 0), ("fetch", 5), ("fetch-refused", 2), ("record", 5), ("refused", 3)],
+    [
+        ("success", 0),
+        ("fetch", 5),
+        ("fetch-refused", 2),
+        ("fetch-offline", 4),
+        ("record", 5),
+        ("refused", 3),
+    ],
 )
 def test_a_notifier_that_fails_or_is_missing_never_changes_the_evening(
     evening, notifier, outcome, status
@@ -720,7 +747,8 @@ def test_a_notifier_that_fails_or_is_missing_never_changes_the_evening(
         (repo / "README").write_text("edited\n", encoding="utf-8")
     done = _launch(arguments, home)
     assert done.returncode == status
-    steps = {"success": 2, "fetch": 1, "fetch-refused": 1, "record": 2, "refused": 0}
+    steps = {"success": 2, "fetch": 1, "fetch-refused": 1, "fetch-offline": 1, "record": 2}
+    steps["refused"] = 0
     assert len(_steps(home)) == steps[outcome]
     # Only the evening's own dated line: nothing from the notifier reaches the log.
     assert len(done.stderr.strip().splitlines()) == (0 if outcome == "success" else 1)

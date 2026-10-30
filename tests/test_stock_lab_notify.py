@@ -90,6 +90,7 @@ def test_every_notice_is_short_plain_ascii_and_holds_no_number_but_the_open():
         "evening_not_recorded",
         "evening_missed",
         "check_failed",
+        "on_battery",
         "test",
     }
     for key, text in notify.NOTICES.items():

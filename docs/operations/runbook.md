@@ -255,11 +255,45 @@ open, the activated Stock Lab model records that evening's forecasts. Until
 now the owner ran the two steps by hand. The evening agent runs them
 unattended at 20:30 New York on weekdays:
 
-1. `scripts/stock_lab_fetch_recent.py --authorized --store --keychain` stores
-   the recent prices. The Tiingo key is read from the macOS Keychain inside
-   that process, once, just before the first request.
+1. `scripts/stock_lab_fetch_recent.py --authorized --store --keychain
+   --unattended` stores the recent prices. The Tiingo key is read from the
+   macOS Keychain inside that process, once, just before the first request.
 2. Only when step 1 succeeds, `scripts/stock_lab_daily.py --record-real
    --model <id>` records that evening's forecasts.
+
+**A Mac that sleeps or wakes late.** Two evenings were lost to macOS power
+behaviour. On 2026-10-27 the Mac was on battery: its 20:25 wake was only a dark
+wake, and it fell back asleep mid-run, so the store refused all four forecasts
+as backdated. On 2026-10-29 the Mac woke at 23:52, and the first request
+failed before Wi-Fi had reconnected. The evening now handles both:
+
+- **Awake for the whole run.** `caffeinate -s -i` holds the Mac awake until
+  the run ends. macOS honours `-s` (no system sleep) only on AC power, so **a
+  laptop must be plugged in** in the evening. On battery, step 1 writes
+  `warning: running on battery - the Mac may sleep; plug in for reliable
+  evenings` to `daily.out.log`, shows that notice, and carries on.
+- **The network after a wake.** Before the key is read and before the first
+  request, step 1 waits up to 5 minutes for `api.tiingo.com`. It checks with a
+  DNS lookup and a TCP connection that it closes at once, with nothing sent:
+  no request, no key, no header. It checks again after 5, 10, 20, 40 and then
+  every 60 seconds. If the network never comes up, step 1 exits 4 with
+  nothing requested.
+- **Retries.** A transport error (the request got no response) is retried at
+  most 3 times in the whole run, after 10, 30 and 90 seconds. An HTTP refusal
+  (4xx, 429 included), a server error, a refused response or an audit hold is
+  never retried. Each retry is a request, so an evening makes at most 33
+  requests (30 tickers and 3 retries), under the key's 50 an hour.
+- **Never past the open.** Neither the wait nor a retry starts if it would
+  end at or after the next 09:30 New York open. A request already under way
+  may finish after it, and the forecast step then refuses the evening.
+- **A sleep before the forecasts are written.** A forecast is made at its
+  decision time: its window is read as of that time, which is both its
+  `created_at` and its `data.decision_time`. When the store refuses a
+  forecast as backdated (the Mac slept between the decision and the write),
+  the forecast step makes that forecast again, once, at the current time,
+  from the window as of then. That is refused at or after the next open,
+  like any decision. The step also never starts a write at or after the
+  open. The store's backdating limit (5 minutes) is unchanged.
 
 A failed step 1 stops the run. That evening then has no forecast, and none is
 ever backfilled: a forecast made after the next open is refused. A missed
@@ -301,8 +335,8 @@ current working directory: Operation not permitted); macOS privacy protection
 blocks launchd jobs from ~/Desktop, ~/Documents and ~/Downloads: run the
 evening from a runner checkout outside them`.
 Each step runs under `env -i` with only `HOME`, `USER`, `LOGNAME`, `TMPDIR`, a
-system `PATH` and `PYTHONPATH`. `caffeinate -i` keeps the Mac from idle sleep
-until the run ends. The two stores are the default private folders
+system `PATH` and `PYTHONPATH`. `caffeinate -s -i` keeps the Mac from system
+and idle sleep until the run ends (`-s` on AC power only). The two stores are the default private folders
 (`~/stock-agent-private/stock_lab/` and
 `~/stock-agent-private/stock_lab_inference/`). Variables that move them
 (`STOCK_AGENT_STOCK_LAB_HOME`, `STOCK_AGENT_STOCK_LAB_INFERENCE_HOME`) never
@@ -331,7 +365,9 @@ these notifications under Script Editor (osascript's host application).
 |---|---|---|
 | tonight's run was refused by the checkout check | `run.sh`, exit 3 (the checkout is not a clean `main`, git cannot read it, or `cd` failed) | Fix what `daily.err.log` names: usually, make the runner a clean `main` again; `Operation not permitted` means the checkout is in a protected folder (use the runner). Then recover the evening (below) |
 | tonight's price update was refused before any request | `run.sh`, exit 2 from the price update (for example the Keychain item) | Fix the reason in `daily.out.log`, then recover |
+| tonight's price update found no network after the wake | `run.sh`, exit 4 from the price update (no network within 5 minutes; nothing requested) | Check Wi-Fi, then recover |
 | tonight's run failed (price update) | `run.sh`, any other non-zero exit from the price update | Read the last lines of both logs, then recover |
+| running on battery - the Mac may sleep; plug in for reliable evenings | the price update, on battery (the run carries on) | Plug the Mac in for the evenings. If the run then fails, recover |
 | tonight's run failed (forecasts) | `run.sh`, a non-zero exit from the forecast step | Read `daily.out.log`, then recover |
 | last evening was not recorded; it can still be recorded before 09:30 | the morning check, before the open | Read the evening's logs, then recover before 09:30 |
 | last evening was not recorded, and after the 09:30 open it can no longer be | the morning check, after the open (a Mac that woke late) | Nothing to recover: the gap stays. Find the cause in the logs |
@@ -600,9 +636,10 @@ Run every command from the runner checkout, `~/stock-agent-runner`, on
    your zone. pmset keeps a single repeating pair, so this replaces the
    briefing's 08:25 wake. Keep the evening wake: a late briefing can still
    be read, but a missed evening cannot be recorded. Check the schedule
-   before and after with `pmset -g sched`. A laptop should stay on power.
-   Confirm the first evening (step 6), because a Mac can fall asleep again
-   before 20:30 under its idle settings.
+   before and after with `pmset -g sched`. A laptop must stay plugged in: on
+   battery a scheduled wake may be only a dark wake, and `caffeinate -s` does
+   not hold the Mac awake. Confirm the first evening (step 6), because a Mac
+   can fall asleep again before 20:30 under its idle settings.
 6. **Verify the first unattended evening** (the next morning, before 09:30
    New York, while a missed evening can still be recovered):
    - `launchctl print gui/$(id -u)/local.stock-lab.daily` shows `runs` of at
@@ -673,6 +710,7 @@ Run every command from the runner checkout, `~/stock-agent-runner`, on
 | 1 | The price update refused a request, response or write (no forecast), or the record step failed | Read the last lines of both logs |
 | 2 | Refused: the Keychain item could not be read (before any request), or the record step refused the model (not activated or not registered) | Fix the reason the log names |
 | 3 | Refused: the checkout is not a clean `main`, or git cannot read it (git's message is in the reason); nothing ran | Make the runner a clean `main` again; for `Operation not permitted`, print `run.sh` from the runner (outside `~/Desktop`) |
+| 4 | The price update found no network within 5 minutes of the start (nothing requested, no forecast) | Check Wi-Fi, then recover the evening before 09:30 |
 | 127 | The venv's Python is missing | Recreate the runner's `.venv` ("The runner checkout", steps 2-5) |
 
 **Recovering a failed evening.** Before the next 09:30 New York open, fix
