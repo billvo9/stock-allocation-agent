@@ -1063,6 +1063,27 @@ the owner's answers and messages in session:
   - After the owner merges the PR, the Stock Lab session runs the 4-request
     fetch on the owner's relayed go.
   - The one evaluation run needs a separate go.
+- 2026-10-30, the Stock Lab's missed evenings (owner, in the lead session).
+  The owner wrote: "No, I want it even if it fails to load the data.
+  Tonight, I can still come pull the data and make the prediction for that
+  later on without data leakage." Shown the safeguards, the owner then chose
+  "Reconstruct, labelled, kept separate (Recommended)".
+  - This replaces A4's clause "missed sessions are never backfilled" for the
+    activated model `2b6cd0c1…7fa65e7`.
+  - The next successful evening run automatically reconstructs every missed
+    evening since activation, including 2026-10-27 and 2026-10-29. Nothing
+    is chosen after seeing outcomes.
+  - The frozen, deterministic model computes each reconstruction only from
+    data dated up to that evening's close: its 252-session window as of
+    that session.
+  - Each reconstruction is written once, labelled "reconstructed", with its
+    true creation time and its data retrieval time. It is never backdated
+    to look on time.
+  - Reconstructed forecasts are scored and reported separately from live
+    forecasts. The live track, recorded before the next open, stays the
+    prospective record and is unchanged. Known limit: a vendor revision of
+    a past close could make a reconstruction differ slightly from the
+    on-time forecast.
 - Pending:
   - Stock Lab, in order (open item 10):
     1. the confirmation of the bull-trap f;
