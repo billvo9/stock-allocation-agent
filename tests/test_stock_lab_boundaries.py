@@ -31,6 +31,8 @@ EXTRA = {
     "size_simulation": {"stock_agent.model_diagnostics.inference"},
     "decision_tests": {"stock_agent.model_diagnostics.inference"},
     "logistic": {"sklearn"},
+    # The sealed holdout run (owner decision of 2026-10-26) uses the fold-block t of A7.
+    "holdout/evaluate": {"stock_agent.model_diagnostics.inference"},
 }
 RESEARCH_SIDE = (
     "tiingo",
@@ -45,6 +47,7 @@ RESEARCH_SIDE = (
     "decision_tests",
     "planned_simulation",
     "comparison_coverage",
+    "holdout/evaluate",  # the sealed holdout run: the frozen model, scored once
 )
 # The only project code that may import the Stock Lab.
 # The exploratory showcase (2026-10-26) reuses the Stock Lab's write-once store, symbol
@@ -100,14 +103,18 @@ def test_nothing_else_in_the_project_imports_the_stock_lab():
         assert not [n for n in _imports(path) if n.startswith("stock_agent.stock_lab")], relative
 
 
+def _research_modules() -> set[str]:
+    return {f"stock_agent.stock_lab.{name.replace('/', '.')}" for name in RESEARCH_SIDE}
+
+
 def test_the_app_never_imports_the_research_side():
-    forbidden = {f"stock_agent.stock_lab.{name}" for name in RESEARCH_SIDE}
+    forbidden = _research_modules()
     for path in sorted((SOURCE / "stock_agent" / "app").rglob("*.py")):
         assert not _imports(path) & forbidden, path.name
 
 
 def test_page_side_modules_never_import_the_research_side():
-    forbidden = {f"stock_agent.stock_lab.{name}" for name in RESEARCH_SIDE}
+    forbidden = _research_modules()
     for path in MODULES:
         if _key(path) in RESEARCH_SIDE:
             continue
@@ -116,14 +123,20 @@ def test_page_side_modules_never_import_the_research_side():
 
 def test_only_the_fetch_scripts_use_the_adapter():
     # The research fetch (pre-2025 history into the research store), the
-    # recent-window fetch (the inference window into the inference store) and the
-    # showcase fetch (pre-2025 history into the separate showcase store).
+    # recent-window fetch (the inference window into the inference store), the
+    # showcase fetch (pre-2025 history into the separate showcase store) and the
+    # holdout fetch (the sealed holdout's history into the separate holdout store).
     users = [
         script.name
         for script in sorted((PROJECT / "scripts").glob("*.py"))
         if "stock_agent.stock_lab.tiingo" in _imports(script)
     ]
-    assert users == ["showcase_fetch.py", "stock_lab_fetch.py", "stock_lab_fetch_recent.py"]
+    assert users == [
+        "showcase_fetch.py",
+        "stock_lab_fetch.py",
+        "stock_lab_fetch_recent.py",
+        "stock_lab_holdout_fetch.py",
+    ]
 
 
 def test_importing_the_page_side_loads_no_network_or_research_module():

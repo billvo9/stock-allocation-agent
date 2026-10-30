@@ -78,6 +78,11 @@ SCRIPT_CONSUMERS = {
     # only (which session the Home screen's briefing is for), passed to the app's Home
     # view and the briefing modules, which never import it.
     "scripts/run_lab_app.py",
+    # The Stock Lab's sealed holdout (owner decision of 2026-10-26): the rules calendar only
+    # (the protocol's fetched and decision sessions), passed to the Stock Lab's holdout store
+    # and run, which never import it.
+    "scripts/stock_lab_holdout_fetch.py",
+    "scripts/stock_lab_holdout_evaluate.py",
 }
 CONSUMER_NAMES = {
     "stock_agent.data.prospective.inference": {

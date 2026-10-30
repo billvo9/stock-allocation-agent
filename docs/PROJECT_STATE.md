@@ -1002,6 +1002,67 @@ the owner's answers and messages in session:
       settings stay provisional until M4's coverage simulation passes.
       Fetching new tickers (for example a benchmark fund) still needs the
       owner's go.
+  - **The backtest builder** (users add tickers and choose dates; owner, in
+    the lead session; the quoted text is the option chosen or the owner's
+    words):
+    - Users: "Only me, on this Mac (Recommended)". It is a local app under
+      the owner's personal Tiingo plan, with no hosting and no sharing of
+      data.
+    - New tickers: "Ask me each time (Recommended)". The app shows the new
+      tickers and the request count, and fetches only after the owner
+      confirms. Tickers already fetched are reused.
+    - Dates: the owner wrote "for the fixed strategies we can let it look
+      until now. Since these will stay unchanged right? please let me know
+      your opinion". After the lead explained that fixed rules cannot be
+      overfitted, but that seeing 2025-2026 results ends the sealed
+      period's value as a blind test, the owner chose "Evaluate the model
+      first, then open (Recommended)":
+      1. First, the one-time sealed (holdout) evaluation of the frozen
+         Stock Lab model `2b6cd0c1…7fa65e7` on the protected period, under
+         a protocol fixed and approved by the owner before any protected
+         outcome is read.
+      2. Then the builder may show 2025-01-01 to the latest close for the
+         pre-registered fixed rules only (buy-and-hold, equal weight,
+         inverse volatility). Every run that touches 2025 or later is
+         logged permanently.
+      3. Research code (training, tuning, selection, model evaluation)
+         keeps refusing 2025+ data.
+    - After that evaluation, the 2025-2026 historical holdout counts as
+      spent. Later model confirmation relies on the prospective records
+      (the Stock Lab from 2026-10-20; the ETF track after its
+      registration). This changes the lockbox policy for descriptive
+      fixed-rule backtests only, and only after step 1.
+  - **The sealed evaluation's protocol** (2026-10-26, against the Stock
+    Lab session's protocol summarised in plain English in the lead
+    session): "Approve as proposed (Recommended)".
+    - The frozen model `2b6cd0c1…7fa65e7` is used exactly as registered.
+    - Decision evenings run from 2024-12-31 to 2026-10-07, with outcomes
+      from 2025-01-02 to 2026-10-14.
+    - The deciding test asks whether B1 beats B0 on daily pooled RPS. It
+      uses A7's fold-block t over 7 calendar-quarter blocks, t(6),
+      one-sided at 2.5%.
+    - Brier score, log loss, the five-session total, calibration and the
+      per-stock and per-year breakdowns are descriptive only.
+    - There is exactly one run, written to a write-once record. The
+      protocol is registered in code by its sha256 before any protected
+      data is read.
+- 2026-10-28, cash returns in the showcase (group C part 2; owner, in the
+  lead session; the quoted text is the option chosen):
+  - The cash-column safeguard: "Yes, keep the safeguard (Recommended)".
+    Each decision sees the cash column as zero, so no strategy can read a
+    T-bill rate before C2 says it is available. This applies the approved
+    C2 and C9 scope, changes no rule, and leaves results identical.
+  - The cash account's presentation: "In the table, labelled "context"
+    (Recommended)". It is a context row, not a variant, with no
+    value-against-cash difference until M9.
+- 2026-10-29, the sealed evaluation's fetch (owner, in the lead session):
+  "Add Keychain, then run it for me (Recommended)".
+  - The holdout fetch script reads the Tiingo key from the evening job's
+    Keychain item (service `stock-agent-tiingo`, account `stock-lab`), in
+    memory only.
+  - After the owner merges the PR, the Stock Lab session runs the 4-request
+    fetch on the owner's relayed go.
+  - The one evaluation run needs a separate go.
 - Pending:
   - Stock Lab, in order (open item 10):
     1. the confirmation of the bull-trap f;
