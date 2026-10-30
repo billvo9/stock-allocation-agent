@@ -1084,6 +1084,14 @@ the owner's answers and messages in session:
     prospective record and is unchanged. Known limit: a vendor revision of
     a past close could make a reconstruction differ slightly from the
     on-time forecast.
+  - The owner's clarifications, the same day, answering two questions in
+    the lead session:
+    - Partly recorded evenings: "Yes, per stock (Recommended)". Every
+      (stock, evening) pair without a live forecast is reconstructed the same
+      automatic way, whether the whole evening or only some stocks failed.
+    - The stocks covered: "That evening's watchlist (Recommended)". These
+      are the stocks watched at 20:00 New York that evening. A stock added
+      later never gets forecasts for earlier evenings.
 - Pending:
   - Stock Lab, in order (open item 10):
     1. the confirmation of the bull-trap f;
