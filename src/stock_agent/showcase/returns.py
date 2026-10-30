@@ -21,10 +21,10 @@ Labels the report carries with these returns:
   labelled multi-session return (R5a), and wealth is unavailable across the
   gap while a held asset has no close.
 
-The table's last column is the engine's funding leg. Every registered target
-holds 0% of it, so its entry (0.0, as D4 (a) requires the engine to be given)
-never reaches a wealth path; `tests/test_showcase_run.py` checks that the
-results do not change when it does.
+The table's last column is the engine's funding leg (0.0 here; with a registered
+cash account, `showcase.run.universe_data` sets it to the account's return, C4).
+Every registered target holds 0% of it, so its entry never reaches a wealth path;
+`tests/test_showcase_run.py` checks that the results do not change when it does.
 """
 
 from __future__ import annotations

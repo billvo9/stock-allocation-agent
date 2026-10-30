@@ -200,3 +200,18 @@ def test_a_stress_window_edge_must_be_a_session_and_a_bool_is_not_a_number():
     flag["participation"]["notional"] = True
     with pytest.raises(ConfigRefused, match="positive number"):
         config(measures=flag)
+
+
+def test_version_4_is_version_3_plus_the_registered_cash_account():
+    import yaml
+
+    v3 = yaml.safe_load((REGISTERED.parent / "real_rebalancing_v3.yaml").read_text("utf-8"))
+    v4 = yaml.safe_load((REGISTERED.parent / "real_rebalancing_v4.yaml").read_text("utf-8"))
+    assert v4.pop("cash") == {"rate_id": "USD_TREASURY_3M"}
+    assert v4.pop("name") == "real_rebalancing_v4"
+    v3.pop("name")
+    assert v3 == v4
+    rates = yaml.safe_load((REGISTERED.parents[2] / "config" / "rates.yaml").read_text("utf-8"))
+    assert rates["risk_free"]["rate_id"] == "USD_TREASURY_3M"  # the store's id for DGS3MO
+    with pytest.raises(ConfigRefused, match="unknown keys"):
+        config(cash={"rate_id": "X", "source": "y"})

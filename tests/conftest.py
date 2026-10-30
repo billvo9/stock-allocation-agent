@@ -523,3 +523,17 @@ def _hermetic_stock_lab_inference(tmp_path_factory):
         missing = tmp_path_factory.mktemp("no-stock-lab-inference") / "inference"
         patch.setenv("STOCK_AGENT_STOCK_LAB_INFERENCE_HOME", str(missing))
         yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _hermetic_stock_lab_holdout(tmp_path_factory):
+    """
+    No test reads or writes the owner's private Stock Lab holdout store: its
+    default location is the directory named by this variable, which does not
+    exist unless a test writes it.
+    """
+
+    with pytest.MonkeyPatch.context() as patch:
+        missing = tmp_path_factory.mktemp("no-stock-lab-holdout") / "holdout"
+        patch.setenv("STOCK_AGENT_STOCK_LAB_HOLDOUT_HOME", str(missing))
+        yield

@@ -303,3 +303,75 @@ def test_the_report_folder_may_not_be_inside_a_git_tree(store, tmp_path):
     (tmp_path / "repo" / ".git").mkdir(parents=True)
     code, text = run_report(store, tmp_path / "repo" / "reports")
     assert code == 2 and "outside every Git working tree" in text
+
+
+def test_the_run_refuses_a_registered_cash_rate_that_is_not_stored(store, tmp_path, monkeypatch):
+    _filled_store(store)
+    monkeypatch.setattr(
+        runner, "CONFIG", write_config(tmp_path / "cash.yaml", cash={"rate_id": "USD_TREASURY_3M"})
+    )
+    out = io.StringIO()
+    code = runner.main(
+        [],
+        store_factory=lambda: store,
+        root_factory=lambda: tmp_path / "reports",
+        rates_home=lambda: tmp_path / "rates",
+        sha_reader=lambda: "b" * 40,
+        now=lambda: datetime(2026, 10, 28, 4, 0, tzinfo=UTC),
+        out=out,
+    )
+    assert code == 2 and "rates_backfill.py" in out.getvalue()
+    assert not (tmp_path / "reports").exists()
+
+
+def test_the_run_uses_the_stored_cash_rate(store, tmp_path, monkeypatch):
+    from stock_agent.data.rates.vintages import save_vintages, vintages_from_alfred
+
+    _filled_store(store)
+    monkeypatch.setattr(
+        runner,
+        "CONFIG",
+        write_config(
+            tmp_path / "cash.yaml",
+            cash={"rate_id": "USD_TREASURY_3M"},
+            measures={
+                "stress_windows": [
+                    {"key": "spring", "label": "Spring", "start": "2024-03-01", "end": "2024-05-31"}
+                ],
+                "participation": {"notional": 1000000, "threshold": 0.01, "window": 20},
+            },
+        ),
+    )
+    days = [d.strftime("%Y-%m-%d") for d in sessions_2024()[:-1]]
+    rows = [
+        (d, "5.00", (pd.Timestamp(d) + pd.Timedelta(days=1)).strftime("%Y-%m-%d")) for d in days
+    ]
+    vintages = vintages_from_alfred(
+        pd.DataFrame(rows, columns=["date", "value", "realtime_start"]),
+        rate_id="USD_TREASURY_3M",
+        provider_series_id="DGS3MO",
+        currency="USD",
+        tenor="3M",
+        quote_convention="investment_basis",
+        retrieved_at=pd.Timestamp("2026-10-28T03:00:00Z"),
+    )
+    save_vintages(vintages, "USD_TREASURY_3M", tmp_path / "rates")
+    out = io.StringIO()
+    code = runner.main(
+        [],
+        store_factory=lambda: store,
+        root_factory=lambda: tmp_path / "reports",
+        rates_home=lambda: tmp_path / "rates",
+        sha_reader=lambda: "b" * 40,
+        now=lambda: datetime(2026, 10, 28, 4, 0, tzinfo=UTC),
+        out=out,
+    )
+    assert code == 0, out.getvalue()
+    folder = next((tmp_path / "reports").iterdir())
+    results = json.loads((folder / "results.json").read_text())
+    assert results["cash"]["rate_id"] == "USD_TREASURY_3M"
+    assert all(
+        s["group_d"]["sharpe"] is not None for u in results["universes"] for s in u["strategies"]
+    )
+    markdown = (folder / "report.md").read_text()
+    assert "Sharpe ratio" in markdown and "not endorsed or certified" in markdown

@@ -26,6 +26,10 @@ M5's three stress windows and M7's participation notional, threshold and
 volume window. A window may lie outside the run's span: it is then reported
 `outside_window`, never shortened.
 
+`cash` (optional) registers the cash account on real data (C1/C4, approved
+2026-10-26): the vintage store's `rate_id` whose first releases accrue as the
+engine's cash column, and the risk-free rate of the Sharpe ratio (C3, M2).
+
 `variants()` lists every (universe, strategy) pair in registered order: the
 number of variants run, recorded with the results. Every variant is
 reported; none is chosen afterwards. `sha256()` identifies the configuration
@@ -77,7 +81,7 @@ TOP_LEVEL = {
     "strategies",
     "universes",
 }
-OPTIONAL = {"offset_family", "measures"}
+OPTIONAL = {"offset_family", "measures", "cash"}
 
 
 class ConfigRefused(ValueError):
@@ -131,6 +135,13 @@ class Measures:
     notional: float
     threshold: float
     volume_window: int
+
+
+def _cash(record: object) -> str:
+    """The registered cash rate (C1/C4): the rates store's `rate_id` for the account."""
+
+    _keys(record, {"rate_id"}, "cash")
+    return _text(record["rate_id"], "cash.rate_id")
 
 
 def _measures(record: object) -> Measures:
@@ -188,6 +199,7 @@ class ShowcaseConfig:
     record: dict
     offset_family: bool = False
     measures: Measures | None = None
+    cash_rate_id: str | None = None
 
     def tickers(self) -> tuple[str, ...]:
         """Every ticker of every universe, once, in registered order."""
@@ -378,6 +390,7 @@ def config_from_dict(record: dict) -> ShowcaseConfig:
         record=record,
         offset_family=offset_family,
         measures=None if "measures" not in record else _measures(record["measures"]),
+        cash_rate_id=None if "cash" not in record else _cash(record["cash"]),
     )
 
 

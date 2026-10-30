@@ -1,0 +1,1164 @@
+{
+  "schema": "stock_lab_holdout_size",
+  "schema_version": "1.0",
+  "simulation_only": true,
+  "test": {
+    "name": "fold_block_t_one_sided",
+    "blocks": 7,
+    "df": 6,
+    "critical": -2.44691,
+    "series": "pooled daily RPS differential, B1 minus B0, per decision"
+  },
+  "designs": [
+    {
+      "design": {
+        "label": "primary",
+        "names": 4,
+        "block_sizes": [
+          61,
+          62,
+          64,
+          64,
+          61,
+          62,
+          69
+        ],
+        "window": 252,
+        "half_life": 252.0,
+        "kappa": 40.0,
+        "alpha_prior": 50.0,
+        "development_years": 22,
+        "sessions_per_year": 252,
+        "correlation": 0.5,
+        "daily_vol": 0.025,
+        "t_df": 5.0,
+        "arch": 0.06,
+        "garch": 0.92,
+        "tau": 0.005,
+        "nominal": 0.025,
+        "shifts": [
+          {
+            "name": "none",
+            "drift": 0.0,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          {
+            "name": "drift_5bp",
+            "drift": 0.0005,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          {
+            "name": "drift_10bp",
+            "drift": 0.001,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          {
+            "name": "drift_15bp",
+            "drift": 0.0015,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          {
+            "name": "drift_20bp",
+            "drift": 0.002,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          {
+            "name": "drift_30bp",
+            "drift": 0.003,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          {
+            "name": "vol_x1.25",
+            "drift": 0.0,
+            "vol_scale": 1.25,
+            "onset": "window"
+          },
+          {
+            "name": "vol_x1.5",
+            "drift": 0.0,
+            "vol_scale": 1.5,
+            "onset": "window"
+          },
+          {
+            "name": "drift_20bp_vol_x1.5",
+            "drift": 0.002,
+            "vol_scale": 1.5,
+            "onset": "window"
+          },
+          {
+            "name": "drift_20bp_from_holdout",
+            "drift": 0.002,
+            "vol_scale": 1.0,
+            "onset": "holdout"
+          },
+          {
+            "name": "vol_x1.5_from_holdout",
+            "drift": 0.0,
+            "vol_scale": 1.5,
+            "onset": "holdout"
+          }
+        ],
+        "reps": 20000,
+        "seed": 20261029,
+        "chunk": 250,
+        "decisions": 443,
+        "development_sessions": 5544,
+        "sessions": 5991
+      },
+      "scenarios": [
+        {
+          "shift": {
+            "name": "none",
+            "drift": 0.0,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          "true_mean": 0.000528379,
+          "true_mean_mc_se": 3.4023e-06,
+          "sd_of_estimate": 0.000481158,
+          "rms_se": 0.000613856,
+          "b1_better_share": 0.12275,
+          "mix_shift_pp": {
+            "decrease": -0.00763798,
+            "stable": 0.0253783,
+            "increase": -0.0177403
+          },
+          "reject": {
+            "means": "false_positive_rate",
+            "rate": 0.0006,
+            "mc_se": 0.000173153
+          },
+          "boundary_size": {
+            "rate": 0.0057,
+            "mc_se": 0.00053233
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.00055,
+              "mc_se": 0.000165786
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.0017,
+              "mc_se": 0.0002913
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.0057,
+              "mc_se": 0.00053233
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.01555,
+              "mc_se": 0.000874877
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.0415,
+              "mc_se": 0.00141028
+            }
+          ],
+          "exact_critical": -1.68992,
+          "variance_ratio": 1.62764,
+          "shape": {
+            "estimate_skewness": -1.05333,
+            "estimate_se_correlation": -0.391614
+          },
+          "block_correlation": {
+            "adjacent_mean": -0.0904502,
+            "all_pairs_mean": -0.0581975
+          },
+          "rps_gain_power": [
+            {
+              "delta": 0.0005,
+              "rate": 0.0536,
+              "mc_se": 0.00159259
+            },
+            {
+              "delta": 0.001,
+              "rate": 0.29015,
+              "mc_se": 0.00320907
+            },
+            {
+              "delta": 0.002,
+              "rate": 0.86385,
+              "mc_se": 0.00242501
+            }
+          ]
+        },
+        {
+          "shift": {
+            "name": "drift_5bp",
+            "drift": 0.0005,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          "true_mean": 0.000443405,
+          "true_mean_mc_se": 3.93286e-06,
+          "sd_of_estimate": 0.000556191,
+          "rms_se": 0.000657165,
+          "b1_better_share": 0.17575,
+          "mix_shift_pp": {
+            "decrease": -0.938237,
+            "stable": 0.0180868,
+            "increase": 0.92015
+          },
+          "reject": {
+            "means": "false_positive_rate",
+            "rate": 0.00145,
+            "mc_se": 0.000269063
+          },
+          "boundary_size": {
+            "rate": 0.00735,
+            "mc_se": 0.000603986
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.0009,
+              "mc_se": 0.000212037
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.00215,
+              "mc_se": 0.000327519
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.00735,
+              "mc_se": 0.000603986
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.01725,
+              "mc_se": 0.000920664
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.0454,
+              "mc_se": 0.00147205
+            }
+          ],
+          "exact_critical": -1.7581,
+          "variance_ratio": 1.39605,
+          "shape": {
+            "estimate_skewness": -1.17328,
+            "estimate_se_correlation": -0.463518
+          },
+          "block_correlation": {
+            "adjacent_mean": -0.0651984,
+            "all_pairs_mean": -0.0421816
+          },
+          "rps_gain_power": []
+        },
+        {
+          "shift": {
+            "name": "drift_10bp",
+            "drift": 0.001,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          "true_mean": 0.000188988,
+          "true_mean_mc_se": 5.24955e-06,
+          "sd_of_estimate": 0.000742398,
+          "rms_se": 0.000775401,
+          "b1_better_share": 0.3234,
+          "mix_shift_pp": {
+            "decrease": -1.8588,
+            "stable": -0.0049259,
+            "increase": 1.86373
+          },
+          "reject": {
+            "means": "false_positive_rate",
+            "rate": 0.00665,
+            "mc_se": 0.000574708
+          },
+          "boundary_size": {
+            "rate": 0.0108,
+            "mc_se": 0.000730868
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.0015,
+              "mc_se": 0.000273656
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.003,
+              "mc_se": 0.000386717
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.0108,
+              "mc_se": 0.000730868
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.02455,
+              "mc_se": 0.00109424
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.0565,
+              "mc_se": 0.0016326
+            }
+          ],
+          "exact_critical": -1.93089,
+          "variance_ratio": 1.09088,
+          "shape": {
+            "estimate_skewness": -1.2031,
+            "estimate_se_correlation": -0.548922
+          },
+          "block_correlation": {
+            "adjacent_mean": -0.0198805,
+            "all_pairs_mean": -0.0120041
+          },
+          "rps_gain_power": []
+        },
+        {
+          "shift": {
+            "name": "drift_15bp",
+            "drift": 0.0015,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          "true_mean": -0.000234164,
+          "true_mean_mc_se": 6.93073e-06,
+          "sd_of_estimate": 0.000980153,
+          "rms_se": 0.000940081,
+          "b1_better_share": 0.52545,
+          "mix_shift_pp": {
+            "decrease": -2.76664,
+            "stable": -0.0506133,
+            "increase": 2.81725
+          },
+          "reject": {
+            "means": "power",
+            "rate": 0.0214,
+            "mc_se": 0.00102328
+          },
+          "boundary_size": {
+            "rate": 0.0146,
+            "mc_se": 0.00084814
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.00205,
+              "mc_se": 0.000319828
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.0047,
+              "mc_se": 0.000483627
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.0146,
+              "mc_se": 0.00084814
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.03045,
+              "mc_se": 0.00121496
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.0697,
+              "mc_se": 0.00180058
+            }
+          ],
+          "exact_critical": -2.07752,
+          "variance_ratio": 0.919906,
+          "shape": {
+            "estimate_skewness": -1.06272,
+            "estimate_se_correlation": -0.580222
+          },
+          "block_correlation": {
+            "adjacent_mean": 0.0170921,
+            "all_pairs_mean": 0.0123152
+          },
+          "rps_gain_power": []
+        },
+        {
+          "shift": {
+            "name": "drift_20bp",
+            "drift": 0.002,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          "true_mean": -0.000823666,
+          "true_mean_mc_se": 8.80653e-06,
+          "sd_of_estimate": 0.00124543,
+          "rms_se": 0.00113573,
+          "b1_better_share": 0.7199,
+          "mix_shift_pp": {
+            "decrease": -3.66553,
+            "stable": -0.108607,
+            "increase": 3.77414
+          },
+          "reject": {
+            "means": "power",
+            "rate": 0.05705,
+            "mc_se": 0.00164005
+          },
+          "boundary_size": {
+            "rate": 0.0175,
+            "mc_se": 0.000927193
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.003,
+              "mc_se": 0.000386717
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.0061,
+              "mc_se": 0.000550581
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.0175,
+              "mc_se": 0.000927193
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.0379,
+              "mc_se": 0.00135025
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.08155,
+              "mc_se": 0.0019352
+            }
+          ],
+          "exact_critical": -2.19765,
+          "variance_ratio": 0.831594,
+          "shape": {
+            "estimate_skewness": -0.905128,
+            "estimate_se_correlation": -0.577039
+          },
+          "block_correlation": {
+            "adjacent_mean": 0.0429153,
+            "all_pairs_mean": 0.028082
+          },
+          "rps_gain_power": []
+        },
+        {
+          "shift": {
+            "name": "drift_30bp",
+            "drift": 0.003,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          "true_mean": -0.00250191,
+          "true_mean_mc_se": 1.29715e-05,
+          "sd_of_estimate": 0.00183445,
+          "rms_se": 0.00157366,
+          "b1_better_share": 0.9394,
+          "mix_shift_pp": {
+            "decrease": -5.43096,
+            "stable": -0.272505,
+            "increase": 5.70347
+          },
+          "reject": {
+            "means": "power",
+            "rate": 0.22395,
+            "mc_se": 0.00294785
+          },
+          "boundary_size": {
+            "rate": 0.02445,
+            "mc_se": 0.00109207
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.00415,
+              "mc_se": 0.000454575
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.0098,
+              "mc_se": 0.000696562
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.02445,
+              "mc_se": 0.00109207
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.0502,
+              "mc_se": 0.00154402
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.097,
+              "mc_se": 0.00209274
+            }
+          ],
+          "exact_critical": -2.43515,
+          "variance_ratio": 0.735889,
+          "shape": {
+            "estimate_skewness": -0.684294,
+            "estimate_se_correlation": -0.528055
+          },
+          "block_correlation": {
+            "adjacent_mean": 0.0784774,
+            "all_pairs_mean": 0.0486882
+          },
+          "rps_gain_power": []
+        },
+        {
+          "shift": {
+            "name": "vol_x1.25",
+            "drift": 0.0,
+            "vol_scale": 1.25,
+            "onset": "window"
+          },
+          "true_mean": 0.000231207,
+          "true_mean_mc_se": 4.29869e-06,
+          "sd_of_estimate": 0.000607927,
+          "rms_se": 0.00065873,
+          "b1_better_share": 0.2986,
+          "mix_shift_pp": {
+            "decrease": 1.87764,
+            "stable": -3.74137,
+            "increase": 1.86373
+          },
+          "reject": {
+            "means": "false_positive_rate",
+            "rate": 0.00585,
+            "mc_se": 0.000539248
+          },
+          "boundary_size": {
+            "rate": 0.01355,
+            "mc_se": 0.000817508
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.0022,
+              "mc_se": 0.000331297
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.0048,
+              "mc_se": 0.000488721
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.01355,
+              "mc_se": 0.000817508
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.0304,
+              "mc_se": 0.001214
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.0677,
+              "mc_se": 0.00177647
+            }
+          ],
+          "exact_critical": -2.06063,
+          "variance_ratio": 1.17412,
+          "shape": {
+            "estimate_skewness": -1.02774,
+            "estimate_se_correlation": -0.411638
+          },
+          "block_correlation": {
+            "adjacent_mean": -0.0235512,
+            "all_pairs_mean": -0.021654
+          },
+          "rps_gain_power": []
+        },
+        {
+          "shift": {
+            "name": "vol_x1.5",
+            "drift": 0.0,
+            "vol_scale": 1.5,
+            "onset": "window"
+          },
+          "true_mean": -0.000361243,
+          "true_mean_mc_se": 5.12774e-06,
+          "sd_of_estimate": 0.000725172,
+          "rms_se": 0.000707014,
+          "b1_better_share": 0.66515,
+          "mix_shift_pp": {
+            "decrease": 3.14694,
+            "stable": -6.28249,
+            "increase": 3.13555
+          },
+          "reject": {
+            "means": "power",
+            "rate": 0.0559,
+            "mc_se": 0.00162443
+          },
+          "boundary_size": {
+            "rate": 0.0211,
+            "mc_se": 0.00101624
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.00405,
+              "mc_se": 0.000449088
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.00755,
+              "mc_se": 0.000612086
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.0211,
+              "mc_se": 0.00101624
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.046,
+              "mc_se": 0.00148128
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.08845,
+              "mc_se": 0.00200782
+            }
+          ],
+          "exact_critical": -2.34902,
+          "variance_ratio": 0.950547,
+          "shape": {
+            "estimate_skewness": -0.792283,
+            "estimate_se_correlation": -0.373706
+          },
+          "block_correlation": {
+            "adjacent_mean": 0.0243016,
+            "all_pairs_mean": 0.0073427
+          },
+          "rps_gain_power": []
+        },
+        {
+          "shift": {
+            "name": "drift_20bp_vol_x1.5",
+            "drift": 0.002,
+            "vol_scale": 1.5,
+            "onset": "window"
+          },
+          "true_mean": -0.00100633,
+          "true_mean_mc_se": 7.32703e-06,
+          "sd_of_estimate": 0.0010362,
+          "rms_se": 0.000960448,
+          "b1_better_share": 0.85155,
+          "mix_shift_pp": {
+            "decrease": 0.619189,
+            "stable": -6.32265,
+            "increase": 5.70347
+          },
+          "reject": {
+            "means": "power",
+            "rate": 0.11065,
+            "mc_se": 0.00221818
+          },
+          "boundary_size": {
+            "rate": 0.01915,
+            "mc_se": 0.000969105
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.0027,
+              "mc_se": 0.000366927
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.0072,
+              "mc_se": 0.000597836
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.01915,
+              "mc_se": 0.000969105
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.03955,
+              "mc_se": 0.00137815
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.0806,
+              "mc_se": 0.00192488
+            }
+          ],
+          "exact_critical": -2.26285,
+          "variance_ratio": 0.859135,
+          "shape": {
+            "estimate_skewness": -0.851699,
+            "estimate_se_correlation": -0.517952
+          },
+          "block_correlation": {
+            "adjacent_mean": 0.0326795,
+            "all_pairs_mean": 0.0228921
+          },
+          "rps_gain_power": []
+        },
+        {
+          "shift": {
+            "name": "drift_20bp_from_holdout",
+            "drift": 0.002,
+            "vol_scale": 1.0,
+            "onset": "holdout"
+          },
+          "true_mean": -0.000671552,
+          "true_mean_mc_se": 8.18659e-06,
+          "sd_of_estimate": 0.00115776,
+          "rms_se": 0.00105023,
+          "b1_better_share": 0.6797,
+          "mix_shift_pp": {
+            "decrease": -3.83954,
+            "stable": -0.114907,
+            "increase": 3.95444
+          },
+          "reject": {
+            "means": "power",
+            "rate": 0.0434,
+            "mc_se": 0.00144077
+          },
+          "boundary_size": {
+            "rate": 0.014,
+            "mc_se": 0.000830783
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.00195,
+              "mc_se": 0.000311945
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.00415,
+              "mc_se": 0.000454575
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.014,
+              "mc_se": 0.000830783
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.0321,
+              "mc_se": 0.00124639
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.0755,
+              "mc_se": 0.00186815
+            }
+          ],
+          "exact_critical": -2.10118,
+          "variance_ratio": 0.822875,
+          "shape": {
+            "estimate_skewness": -0.984527,
+            "estimate_se_correlation": -0.624071
+          },
+          "block_correlation": {
+            "adjacent_mean": 0.0789717,
+            "all_pairs_mean": 0.0375312
+          },
+          "rps_gain_power": []
+        },
+        {
+          "shift": {
+            "name": "vol_x1.5_from_holdout",
+            "drift": 0.0,
+            "vol_scale": 1.5,
+            "onset": "holdout"
+          },
+          "true_mean": -0.000244624,
+          "true_mean_mc_se": 4.97521e-06,
+          "sd_of_estimate": 0.0007036,
+          "rms_se": 0.000702574,
+          "b1_better_share": 0.5969,
+          "mix_shift_pp": {
+            "decrease": 3.29695,
+            "stable": -6.58231,
+            "increase": 3.28536
+          },
+          "reject": {
+            "means": "power",
+            "rate": 0.034,
+            "mc_se": 0.00128148
+          },
+          "boundary_size": {
+            "rate": 0.0169,
+            "mc_se": 0.000911438
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.00315,
+              "mc_se": 0.000396237
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.00615,
+              "mc_se": 0.000552819
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.0169,
+              "mc_se": 0.000911438
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.03735,
+              "mc_se": 0.0013408
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.0801,
+              "mc_se": 0.00191943
+            }
+          ],
+          "exact_critical": -2.20431,
+          "variance_ratio": 0.997084,
+          "shape": {
+            "estimate_skewness": -0.81407,
+            "estimate_se_correlation": -0.398018
+          },
+          "block_correlation": {
+            "adjacent_mean": 0.0249894,
+            "all_pairs_mean": 0.00440052
+          },
+          "rps_gain_power": []
+        }
+      ]
+    },
+    {
+      "design": {
+        "label": "constant_volatility",
+        "names": 4,
+        "block_sizes": [
+          61,
+          62,
+          64,
+          64,
+          61,
+          62,
+          69
+        ],
+        "window": 252,
+        "half_life": 252.0,
+        "kappa": 40.0,
+        "alpha_prior": 50.0,
+        "development_years": 22,
+        "sessions_per_year": 252,
+        "correlation": 0.5,
+        "daily_vol": 0.025,
+        "t_df": 5.0,
+        "arch": 0.0,
+        "garch": 0.0,
+        "tau": 0.005,
+        "nominal": 0.025,
+        "shifts": [
+          {
+            "name": "none",
+            "drift": 0.0,
+            "vol_scale": 1.0,
+            "onset": "window"
+          }
+        ],
+        "reps": 20000,
+        "seed": 20261029,
+        "chunk": 250,
+        "decisions": 443,
+        "development_sessions": 5544,
+        "sessions": 5991
+      },
+      "scenarios": [
+        {
+          "shift": {
+            "name": "none",
+            "drift": 0.0,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          "true_mean": 0.000634186,
+          "true_mean_mc_se": 3.084e-06,
+          "sd_of_estimate": 0.000436143,
+          "rms_se": 0.000587712,
+          "b1_better_share": 0.0757,
+          "mix_shift_pp": {
+            "decrease": 0.00401436,
+            "stable": 0.00374749,
+            "increase": -0.00776185
+          },
+          "reject": {
+            "means": "false_positive_rate",
+            "rate": 0.00015,
+            "mc_se": 8.6596e-05
+          },
+          "boundary_size": {
+            "rate": 0.00355,
+            "mc_se": 0.000420559
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.0002,
+              "mc_se": 9.999e-05
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.00105,
+              "mc_se": 0.000229008
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.00355,
+              "mc_se": 0.000420559
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.0112,
+              "mc_se": 0.000744129
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.0327,
+              "mc_se": 0.00125759
+            }
+          ],
+          "exact_critical": -1.56571,
+          "variance_ratio": 1.81581,
+          "shape": {
+            "estimate_skewness": -1.08726,
+            "estimate_se_correlation": -0.400842
+          },
+          "block_correlation": {
+            "adjacent_mean": -0.13048,
+            "all_pairs_mean": -0.0684058
+          },
+          "rps_gain_power": [
+            {
+              "delta": 0.0005,
+              "rate": 0.0571,
+              "mc_se": 0.00164073
+            },
+            {
+              "delta": 0.001,
+              "rate": 0.34945,
+              "mc_se": 0.00337146
+            },
+            {
+              "delta": 0.002,
+              "rate": 0.88495,
+              "mc_se": 0.00225625
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "design": {
+        "label": "persistent_volatility",
+        "names": 4,
+        "block_sizes": [
+          61,
+          62,
+          64,
+          64,
+          61,
+          62,
+          69
+        ],
+        "window": 252,
+        "half_life": 252.0,
+        "kappa": 40.0,
+        "alpha_prior": 50.0,
+        "development_years": 22,
+        "sessions_per_year": 252,
+        "correlation": 0.5,
+        "daily_vol": 0.025,
+        "t_df": 5.0,
+        "arch": 0.06,
+        "garch": 0.935,
+        "tau": 0.005,
+        "nominal": 0.025,
+        "shifts": [
+          {
+            "name": "none",
+            "drift": 0.0,
+            "vol_scale": 1.0,
+            "onset": "window"
+          }
+        ],
+        "reps": 20000,
+        "seed": 20261029,
+        "chunk": 250,
+        "decisions": 443,
+        "development_sessions": 5544,
+        "sessions": 5991
+      },
+      "scenarios": [
+        {
+          "shift": {
+            "name": "none",
+            "drift": 0.0,
+            "vol_scale": 1.0,
+            "onset": "window"
+          },
+          "true_mean": -0.000134474,
+          "true_mean_mc_se": 8.48551e-06,
+          "sd_of_estimate": 0.00120003,
+          "rms_se": 0.000880869,
+          "b1_better_share": 0.42805,
+          "mix_shift_pp": {
+            "decrease": -0.0726578,
+            "stable": 0.152985,
+            "increase": -0.0803274
+          },
+          "reject": {
+            "means": "power",
+            "rate": 0.03765,
+            "mc_se": 0.00134597
+          },
+          "boundary_size": {
+            "rate": 0.0336,
+            "mc_se": 0.00127419
+          },
+          "calibration": [
+            {
+              "level": 0.005,
+              "critical": -3.70743,
+              "rate": 0.01155,
+              "mc_se": 0.000755533
+            },
+            {
+              "level": 0.01,
+              "critical": -3.14267,
+              "rate": 0.0178,
+              "mc_se": 0.000934964
+            },
+            {
+              "level": 0.025,
+              "critical": -2.44691,
+              "rate": 0.0336,
+              "mc_se": 0.00127419
+            },
+            {
+              "level": 0.05,
+              "critical": -1.94318,
+              "rate": 0.05235,
+              "mc_se": 0.00157495
+            },
+            {
+              "level": 0.1,
+              "critical": -1.43976,
+              "rate": 0.08825,
+              "mc_se": 0.00200577
+            }
+          ],
+          "exact_critical": -2.76855,
+          "variance_ratio": 0.538811,
+          "shape": {
+            "estimate_skewness": -2.32812,
+            "estimate_se_correlation": -0.549823
+          },
+          "block_correlation": {
+            "adjacent_mean": 0.281332,
+            "all_pairs_mean": 0.108468
+          },
+          "rps_gain_power": [
+            {
+              "delta": 0.0005,
+              "rate": 0.05625,
+              "mc_se": 0.0016292
+            },
+            {
+              "delta": 0.001,
+              "rate": 0.11435,
+              "mc_se": 0.00225027
+            },
+            {
+              "delta": 0.002,
+              "rate": 0.51365,
+              "mc_se": 0.00353422
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
