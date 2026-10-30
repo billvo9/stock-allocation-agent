@@ -1,5 +1,5 @@
 {
-  "schema": "stock_lab_holdout_size",
+  "schema": "stock_lab_block_t_size",
   "schema_version": "1.0",
   "simulation_only": true,
   "test": {

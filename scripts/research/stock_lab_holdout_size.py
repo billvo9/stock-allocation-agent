@@ -88,7 +88,7 @@ from stock_agent.model_diagnostics.inference import student_t_ppf
 from stock_agent.stock_lab import planned_simulation as ps
 from stock_agent.stock_lab.size_simulation import HORIZONS, K, categorize
 
-SCHEMA = "stock_lab_holdout_size"
+SCHEMA = "stock_lab_block_t_size"  # the quarterly fold-block t's size and power
 SCHEMA_VERSION = "1.0"
 # Decisions per block of the registered protocol, 2025Q1 (with 2024-12-31) to 2026Q3 (with
 # the October 2026 decisions), from the rules calendar the protocol uses (a test checks them).
