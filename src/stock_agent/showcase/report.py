@@ -594,6 +594,40 @@ GROUP_D_NOTE = (
     "window runs from the S&P 500's closing peak to its closing low: its return and its worst "
     "fall inside the window. Before taxes."
 )
+SHARPE_NOTE = (
+    "Growth rate (CAGR) is per year on calendar days, with the build's cost inside it. "
+    "Volatility is the yearly scale (square root of 252) of the daily net returns' standard "
+    "deviation. The Sharpe ratio is the daily return above the cash account's (the 3-month "
+    "T-bill rate), on average, divided by its standard deviation, on the same yearly scale; "
+    "it is a point estimate with no interval yet. Each stress window runs from the S&P 500's "
+    "closing peak to its closing low: its return and its worst fall inside the window. Before "
+    "taxes."
+)
+
+
+def _has_sharpe(rows: list[Mapping]) -> bool:
+    return any(s["group_d"].get("sharpe") is not None for s in rows)
+
+
+def _sharpe_text(sharpe: Mapping | None) -> str:
+    if sharpe is None or sharpe["value"] is None:
+        return "unavailable" + ("" if sharpe is None else f" ({sharpe['reason']})")
+    text = f"{sharpe['value']:.2f}"
+    if not sharpe["complete"]:
+        text += (
+            f" (incomplete: {sharpe['sessions']:,} of {sharpe['of']:,} sessions; the moves "
+            "left out across gaps can make it misleading)"
+        )
+    return text
+
+
+def _cash_row_cells(universe: Mapping) -> tuple[str, str] | None:
+    cash = universe.get("cash")
+    if not cash:
+        return None
+    return _cagr_text(cash["cagr"]), pct(cash["total_return"])
+
+
 TRADING_NOTE = (
     "Turnover is one way (selling 10% to buy another 10% is 10%). The build is shown on its "
     "own; the rebalances are summed per calendar year, a part year is never scaled, and the "
@@ -663,16 +697,26 @@ def _group_d_tables(universe: Mapping) -> str:
         f"{_e(w['end'])}</div></th>"
         for w in windows
     )
+    sharpe = _has_sharpe(rows)
     growth_rows = "".join(
         f'<tr><th scope="row">{_e(s["label"])}</th>'
         f'<td class="num">{_e(_cagr_text(s["group_d"]["cagr"]))}</td>'
         f'<td class="num">{_e(_volatility_text(s["group_d"]["volatility"]))}</td>'
+        + (f'<td class="num">{_e(_sharpe_text(s["group_d"]["sharpe"]))}</td>' if sharpe else "")
         + "".join(
             f'<td class="num">{_e(_window_text(w))}</td>' for w in s["group_d"]["stress_windows"]
         )
         + "</tr>"
         for s in rows
     )
+    cash = _cash_row_cells(universe)
+    if cash is not None:
+        blanks = '<td class="num">-</td>' * (len(windows) + (2 if sharpe else 1))
+        growth_rows += (
+            f'<tr><th scope="row">Cash account (context, not a variant)<div class="sub">'
+            f"{_e(universe['cash']['label'])}; total {_e(cash[1])}</div></th>"
+            f'<td class="num">{_e(cash[0])}</td>{blanks}</tr>'
+        )
     flag = rows[0]["group_d"]["participation"]
     trading_rows = []
     for s in rows:
@@ -695,11 +739,15 @@ def _group_d_tables(universe: Mapping) -> str:
     )
     return (
         "<details open><summary>Growth rate, volatility and stress windows</summary>"
-        f'<p class="note">{_e(GROUP_D_NOTE)}</p><div class="table-wrap"><table>'
-        "<caption>Every registered variant at 1x costs, in registered order (not ranked)."
+        f'<p class="note">{_e(SHARPE_NOTE if sharpe else GROUP_D_NOTE)}</p>'
+        '<div class="table-wrap"><table>'
+        "<caption>Every registered variant at 1x costs, in registered order (not ranked). "
+        "A cash row, when shown, is context, not a variant: no comparison with it is made."
         '</caption><thead><tr><th scope="col">Rule</th>'
         '<th scope="col" class="num">Growth rate (CAGR)</th>'
-        f'<th scope="col" class="num">Volatility</th>{head}</tr></thead>'
+        '<th scope="col" class="num">Volatility</th>'
+        + ('<th scope="col" class="num">Sharpe ratio</th>' if sharpe else "")
+        + f"{head}</tr></thead>"
         f"<tbody>{growth_rows}</tbody></table></div></details>"
         "<details open><summary>Trading per year and participation</summary>"
         f'<p class="note">{_e(trading_note)}</p><div class="table-wrap"><table>'
@@ -758,6 +806,21 @@ def _universe_section(universe: Mapping) -> str:
 def _family_runs(results: Mapping) -> str:
     runs = results.get("offset_family_simulations")
     return f", and {runs:,} more on the other rebalancing days at 1x" if runs else ""
+
+
+def _cash_bullet(results: Mapping) -> str:
+    cash = results.get("cash")
+    if not cash:
+        return ""
+    return (
+        f"<li>{_e(cash['label'])}. It accrues the first-published 3-month Treasury rate of each "
+        "span's start on actual calendar days, a holiday carrying the previous rate "
+        f"({cash['carried_sessions']:,} sessions carried, {cash['stale_sessions']:,} stale; "
+        f"{cash['pre_alfred_sessions']:,} use rates archived only from 2005-06-28, which may "
+        "include earlier revisions). "
+        "Every portfolio here holds none of it: it is the risk-free rate of the Sharpe ratio "
+        f"and context. {_e(cash['notice'])} Source: {_e(cash['citation'])}</li>\n"
+    )
 
 
 def render_html(results: Mapping, *, logo_svg: str = "", font_dir: str | None = None) -> str:
@@ -820,7 +883,9 @@ table sums it over every trade, the build included; where it is shown a year, th
 and the yearly figure is the mean of the full calendar years.</li>
 <li>Maximum drawdown is the largest fall from a previous high, close to close. Where a session
 has no value, only the largest observed decline is given, labelled as such.</li>
-<li>Prices: Tiingo end-of-day data, retrieved {_e(retrieved)}, for private use only (no
+{_cash_bullet(results)}<li>Prices: Tiingo end-of-day data, retrieved {
+        _e(retrieved)
+    }, for private use only (no
 redistribution). Configuration <code>{_e(results["config"]["name"])}</code>, sha256
 <code>{_e(results["config"]["sha256"][:16])}</code>; code <code>{
         _e(results["code_sha"] or "uncommitted")
@@ -915,21 +980,34 @@ def render_markdown(results: Mapping) -> str:
         if with_d:
             windows = with_d[0]["group_d"]["stress_windows"]
             flag = with_d[0]["group_d"]["participation"]
+            sharpe = _has_sharpe(with_d)
             lines += [
                 "",
-                f"Growth rate, volatility and stress windows. {GROUP_D_NOTE}",
+                (
+                    f"Growth rate, volatility and stress windows. "
+                    f"{SHARPE_NOTE if sharpe else GROUP_D_NOTE}"
+                ),
                 "",
                 "| Rule | Growth rate (CAGR) | Volatility | "
+                + ("Sharpe ratio | " if sharpe else "")
                 + " | ".join(f"{w['label']} ({w['start']} to {w['end']})" for w in windows)
                 + " |",
-                "|---|---:|---:|" + "---:|" * len(windows),
+                "|---|---:|---:|" + ("---:|" if sharpe else "") + "---:|" * len(windows),
             ]
             for s in with_d:
                 g = s["group_d"]
                 lines.append(
                     f"| {s['label']} | {_cagr_text(g['cagr'])} | {_volatility_text(g['volatility'])} | "
+                    + (f"{_sharpe_text(g['sharpe'])} | " if sharpe else "")
                     + " | ".join(_window_text(w) for w in g["stress_windows"])
                     + " |"
+                )
+            cash = _cash_row_cells(universe)
+            if cash is not None:
+                lines.append(
+                    f"| Cash account (context, not a variant; {universe['cash']['label']}; "
+                    f"total {cash[1]}) "
+                    f"| {cash[0]} |" + " - |" * (len(windows) + (2 if sharpe else 1))
                 )
             lines += [
                 "",
@@ -1001,6 +1079,18 @@ def render_markdown(results: Mapping) -> str:
             f"generated {results['generated_at']}."
         ),
         "- Tiingo end-of-day data for private use only (no redistribution).",
+        *(
+            []
+            if not results.get("cash")
+            else [
+                (
+                    f"- {results['cash']['label']}: the first-published 3-month Treasury rate of "
+                    "each span's start, accrued on actual calendar days; every portfolio here holds "
+                    "none of it (the Sharpe ratio's risk-free rate, and context). "
+                    f"{results['cash']['notice']} Source: {results['cash']['citation']}"
+                )
+            ]
+        ),
         "",
     ]
     return "\n".join(lines)
