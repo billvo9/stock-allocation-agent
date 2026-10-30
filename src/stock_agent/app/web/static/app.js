@@ -555,8 +555,11 @@
   // was recorded (or that it was missed).
   function evening(e, chosen) {
     const head = [h("h2", { class: "tl-h" }, e.title), h("p", { class: "tl-s" }, e.sub)];
-    if (e.state === "missed") return h("li", { class: "tl-day missed" }, head, h("p", { class: "tl-miss" }, e.missed_words));
     const items = e.items.filter((x) => chosen === "All" || x.ticker === chosen);
+    if (e.state === "missed") {  // its items, if any, were reconstructed after the fact
+      return h("li", { class: "tl-day missed" }, head, h("p", { class: "tl-miss" }, e.missed_words),
+        items.length ? h("ul", { class: "tl-items", role: "list" }, items.map((x) => historyItem(x, e))) : null);
+    }
     return h("li", { class: `tl-day ${e.state}` }, head,
       h("ul", { class: "tl-items", role: "list" }, items.map((x) => historyItem(x, e))));
   }

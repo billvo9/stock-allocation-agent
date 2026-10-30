@@ -34,9 +34,11 @@ class Store:
     def forecast_symbols(self, data_class):
         return tuple(s for s, rows in self.made.items() if any(c == "real" for _, c in rows))
 
-    def forecasts(self, symbol):
+    def forecasts(self, symbol, *, reconstructed=False):
         if self.refuse:
             raise ForecastRefused("a stored forecast no longer verifies")
+        if reconstructed:  # this fake holds live forecasts only
+            return ()
         return tuple({"as_of_session": day, "data_class": c} for day, c in self.made[symbol])
 
 

@@ -295,9 +295,51 @@ failed before Wi-Fi had reconnected. The evening now handles both:
   like any decision. The step also never starts a write at or after the
   open. The store's backdating limit (5 minutes) is unchanged.
 
-A failed step 1 stops the run. That evening then has no forecast, and none is
-ever backfilled: a forecast made after the next open is refused. A missed
-evening is therefore a permanent gap in the prospective record.
+A failed step 1 stops the run. That evening then has no forecast on time: a
+live forecast made after the next open is refused, so the evening stays
+missed in the live record.
+
+**Missed evenings are reconstructed, apart from the live record.** This follows
+the owner's decision of 2026-10-30 for the activated model, which replaces
+decision A4's "missed sessions are never backfilled". After each evening's
+live forecasts, step 2 reconstructs every (stock, evening) since the first live
+forecast, 2026-10-20, that has no live forecast. That includes a partly recorded
+evening's missing stocks. The stocks are those watched at 20:00 New York that
+evening, from the watchlist's history, never today's list, so adding a stock
+later never creates earlier forecasts. Nothing is chosen: every gap is filled the
+same way.
+
+- **The inputs.** Each reconstruction runs the frozen model on the 252-session
+  window as of the missed session. Only sessions dated up to that close are
+  read, from every batch retrieved by the time it is made. On the same data it
+  equals the forecast the evening would have recorded.
+- **The record.** Each one is write-once and marked `reconstructed`. Its
+  `created_at` is the true time it was made; it is never backdated. There is
+  at most one per stock and session, and never one beside a live forecast.
+- **Scoring and reports.** Reconstructions are scored by session dates and
+  kept off the live track. The briefing, Home, Detail, the reliability tables,
+  the B1 comparison and Model Health's live counts ignore them. History shows
+  each under its evening, labelled "Reconstructed after the fact", with its own
+  count. A missed evening reads "Missed on time. Reconstructed after the fact
+  (made ...)".
+- **Model Health** still reports a missed evening as missed (`evening_missed`).
+  Its detail notes each evening reconstructed after the fact, missed or partly
+  recorded.
+- **To reconstruct at once,** without waiting for the next evening, run from
+  the runner:
+
+  ```bash
+  .venv/bin/python scripts/stock_lab_daily.py --reconstruct-missed --model 2b6cd0c1a52f5ecfc16d6c8e221956d6fd23093826618e895949ac62e7fa65e7
+  ```
+
+  It records no job run, scores what it made, and exits 1 when a session's
+  window can't be read yet (it is tried again at the next run).
+- **The limit: vendor revisions.** A reconstruction reads the prices as the
+  provider serves them when it is made. If the provider corrected a session
+  on or before the missed close after that evening, the reconstruction uses
+  the corrected value, which the evening itself could not have read. It never
+  reads a later session. The record states this limit in its first
+  limitation.
 `scripts/stock_lab_schedule.py` prints the agent and its `run.sh`. Installing
 them is the owner's step, and nothing here installs, loads or wakes anything.
 
@@ -715,9 +757,11 @@ Run every command from the runner checkout, `~/stock-agent-runner`, on
 
 **Recovering a failed evening.** Before the next 09:30 New York open, fix
 the cause and run `launchctl kickstart -k gui/$(id -u)/local.stock-lab.daily`
-(or the two commands by hand). After 09:30 the evening stays a gap: never
-backfill, and never edit the stores. Model Health shows a stopped run as
-`job_overdue` and the gap as `evening_missed` (`forecast.stock_lab_job`).
+(or the two commands by hand). After 09:30 the evening stays missed on time.
+The next successful evening reconstructs it apart from the live record, or
+`--reconstruct-missed` does it at once (above). Never edit the stores. Model
+Health shows a stopped run as `job_overdue` and the miss as `evening_missed`
+(`forecast.stock_lab_job`), noting any reconstruction.
 
 **To remove it:** `launchctl bootout gui/$(id -u)/local.stock-lab.daily`,
 then delete the plist and `run.sh`. Remove the wake with `sudo pmset repeat

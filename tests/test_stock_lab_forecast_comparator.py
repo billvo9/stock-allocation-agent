@@ -136,6 +136,9 @@ def test_a_schema_1_0_record_stays_valid_as_stored(made):
     with pytest.raises(artifact.ForecastRefused, match="fields"):
         artifact.check(_resealed({**old, "comparator": forecast["comparator"]}))
     with pytest.raises(artifact.ForecastRefused, match="schema"):
+        artifact.check(_resealed({**forecast, "schema_version": "1.3"}))
+    # 1.2 is a reconstruction (owner decision of 2026-10-30): never a 1.1 record relabelled.
+    with pytest.raises(artifact.ForecastRefused, match="fields"):
         artifact.check(_resealed({**forecast, "schema_version": "1.2"}))
 
 

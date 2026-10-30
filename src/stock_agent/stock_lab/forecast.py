@@ -53,6 +53,14 @@ session opens, at 09:30 America/New_York (the prospective ETF ledger's
 recording deadline). Otherwise it could already contain that session's
 opening move, or the outcome itself. The store refuses such a record, and
 scoring leaves each target whose sessions had opened unscored.
+
+Reconstructed (schema 1.2; owner decision of 2026-10-30, for the activated
+model's missed evenings): `reconstructed` is True, and the forecast is made
+after its evening closed (at or after its first target session's open), at
+its true created_at, from prices dated up to its as-of close only. It is
+never a live forecast: the store records it only through its own path,
+scoring judges it by session dates, and every live aggregate leaves it out
+(`is_reconstructed`). Live forecasts stay schema 1.1, without the field.
 """
 
 from __future__ import annotations
@@ -66,7 +74,8 @@ from zoneinfo import ZoneInfo
 
 SCHEMA = "stock_probability_forecast"
 SCHEMA_VERSION = "1.1"  # 1.1 adds the B1 comparator
-SCHEMA_VERSIONS = ("1.0", "1.1")
+RECONSTRUCTED_VERSION = "1.2"  # 1.2: a reconstruction (1.1 and `reconstructed`, always True)
+SCHEMA_VERSIONS = ("1.0", "1.1", RECONSTRUCTED_VERSION)
 TOLERANCE = 1e-9
 FIELDS = (
     "schema",
@@ -153,6 +162,8 @@ def check(record: Mapping[str, object]) -> Mapping[str, object]:
 
     version = record.get("schema_version")
     fields = FIELDS if version == "1.0" else (*FIELDS, "comparator")
+    if version == RECONSTRUCTED_VERSION:
+        fields = (*fields, "reconstructed")
     if tuple(sorted(record)) != tuple(sorted(fields)):
         raise ForecastRefused("unexpected or missing fields")
     if record["schema"] != SCHEMA or version not in SCHEMA_VERSIONS:
@@ -170,6 +181,11 @@ def check(record: Mapping[str, object]) -> Mapping[str, object]:
         raise ForecastRefused("target sessions are YYYY-MM-DD dates")
     if not record["as_of_session"] < sessions[0] or sessions != sorted(set(sessions)):
         raise ForecastRefused("target sessions must follow the as-of session, in order")
+    if version == RECONSTRUCTED_VERSION:
+        if record["reconstructed"] is not True or record["data_class"] != "real":
+            raise ForecastRefused("a 1.2 record is a real forecast with reconstructed true")
+        if not opened_by(record, sessions[:1]):
+            raise ForecastRefused("a reconstruction is made only after its evening closed")
     refusal = record["refusal"]
     daily = record["daily"]
     if refusal is not None:
@@ -192,6 +208,12 @@ def check(record: Mapping[str, object]) -> Mapping[str, object]:
     if version != "1.0":
         _check_comparator(record)
     return record
+
+
+def is_reconstructed(record: Mapping[str, object]) -> bool:
+    """True for a reconstruction (schema 1.2), never a live forecast (module docstring)."""
+
+    return record.get("reconstructed") is True
 
 
 def _check_comparator(record: Mapping[str, object]) -> None:
@@ -244,11 +266,13 @@ def build(
     refusal: Mapping[str, str] | None = None,
     supersedes: str | None = None,
     comparator: Mapping[str, object] | None = None,
+    reconstructed: bool = False,
 ) -> dict:
     """
-    A checked record (schema 1.1); `daily` is five (Decrease, Stable, Increase) triples.
-    `comparator` is B1's forecast on the same inputs: {"half_life", "daily" (five triples),
-    "cumulative" (a triple or None)}; required unless the record is a refusal.
+    A checked record (schema 1.1; 1.2 when `reconstructed`); `daily` is five (Decrease,
+    Stable, Increase) triples. `comparator` is B1's forecast on the same inputs: {"half_life",
+    "daily" (five triples), "cumulative" (a triple or None)}; required unless the record is a
+    refusal.
     """
 
     def triple(values: Sequence[float]) -> dict:
@@ -297,5 +321,8 @@ def build(
             else triple(comparator["cumulative"]),
         },
     }
+    if reconstructed:
+        record["schema_version"] = RECONSTRUCTED_VERSION
+        record["reconstructed"] = True
     record["forecast_id"] = forecast_id(record)
     return dict(check(record))

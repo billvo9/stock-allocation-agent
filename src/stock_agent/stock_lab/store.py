@@ -529,6 +529,24 @@ class StockLabStore:
     def watched(self) -> tuple[str, ...]:
         return tuple(item.ticker for item in self.watchlist())
 
+    def watched_at(self, when: pd.Timestamp) -> tuple[str, ...]:
+        """The tickers watched at `when` (the append-only events recorded by then), in order."""
+
+        with self._read() as connection:
+            if connection is None:
+                return ()
+            rows = connection.execute(
+                """
+                SELECT e.ticker FROM watchlist_events e
+                JOIN (SELECT ticker, MAX(seq) AS seq FROM watchlist_events
+                      WHERE recorded_at <= ? GROUP BY ticker) last
+                  ON e.ticker = last.ticker AND e.seq = last.seq
+                WHERE e.action = 'add' ORDER BY e.ticker
+                """,
+                (stamp(when),),
+            ).fetchall()
+        return tuple(row[0] for row in rows)
+
     def add(self, parsed: Iterable[ParsedTicker]) -> tuple[AddResult, ...]:
         """Record an add for each valid entry not already watched (one transaction)."""
 
@@ -1021,11 +1039,83 @@ class StockLabStore:
         """
 
         checked = forecast_artifact.check(record)
+        if forecast_artifact.is_reconstructed(checked):
+            raise StoreRefused("a reconstruction is recorded only through record_reconstruction")
         if checked["data_class"] == DataClass.REAL.value and real_authorized is not True:
             raise StoreRefused("real forecasts need the owner's decisions A2 and A4")
         demo = "_" in checked["symbol"]
         if (checked["data_class"] == DataClass.SYNTHETIC.value) != demo:
             raise StoreRefused("synthetic forecasts only under demo identifiers, and only they")
+        self._made_now(checked)
+        if forecast_artifact.opened_by(checked, checked["target_sessions"][:1]):
+            raise StoreRefused("a forecast must be made before its first target session opens")
+        with self._write() as connection:
+            self._after_stored_data(connection, checked)
+            _check_supersedes(connection, checked)
+            self._insert_forecast(connection, checked)
+        return checked["forecast_id"]
+
+    def record_reconstruction(self, record: dict, *, real_authorized: bool = False) -> str:
+        """
+        Store one reconstructed forecast (write-once; returns its id): the explicit path of the
+        owner's decision of 2026-10-30, for a missed evening of the activated model only
+        (stock_lab.evening.reconstruct_missed). The record is schema 1.2 with reconstructed
+        true and made after its evening closed (forecast.check). Its created_at is its true
+        time: within CLOCK_SKEW of the store's clock, as for every forecast (no backdating).
+        It supersedes nothing, and it is refused when the stock already has any forecast as
+        of that session, live or reconstructed: one per (stock, session), never beside or
+        over a live record; and for a session before the first real live forecast (before
+        activation, nothing was missed). Like a real live forecast it needs the caller's word
+        that the owner's decisions allow it (`real_authorized`; only stock_lab.evening passes
+        it, for an activated model). record_forecast refuses it, and keeps refusing late
+        forecasts. Which evenings and stocks are reconstructed (missed evenings only, the
+        stocks watched when each began) is the caller's rule, not checked here.
+        """
+
+        checked = forecast_artifact.check(record)
+        if not forecast_artifact.is_reconstructed(checked):
+            raise StoreRefused("not a reconstruction: a schema 1.2 record with reconstructed true")
+        if real_authorized is not True:
+            raise StoreRefused("reconstructions need the owner's decisions A2, A4 and 2026-10-30")
+        if checked["supersedes"] is not None:
+            raise StoreRefused("a reconstruction supersedes nothing")
+        self._made_now(checked)
+        if self._clock() < forecast_artifact.session_open(checked["target_sessions"][0]):
+            raise StoreRefused(
+                "a reconstruction is recorded only after its evening closed (the store's clock)"
+            )
+        with self._write() as connection:
+            first = min(
+                (
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT as_of_session, record FROM forecasts WHERE data_class = ?",
+                        (DataClass.REAL.value,),
+                    )
+                    if not forecast_artifact.is_reconstructed(json.loads(row[1]))
+                ),
+                default=None,
+            )
+            if first is None or checked["as_of_session"] < first:
+                raise StoreRefused(
+                    "a reconstruction fills a missed evening since the first live forecast only"
+                )
+            self._after_stored_data(connection, checked)
+            found = connection.execute(
+                "SELECT 1 FROM forecasts WHERE symbol = ? AND as_of_session = ? AND data_class = ?",
+                (checked["symbol"], checked["as_of_session"], checked["data_class"]),
+            ).fetchone()
+            if found is not None:
+                raise StoreRefused(
+                    f"{checked['symbol']} already has a forecast as of {checked['as_of_session']}: "
+                    "one reconstruction per stock and session, never beside a live forecast"
+                )
+            self._insert_forecast(connection, checked)
+        return checked["forecast_id"]
+
+    def _made_now(self, checked: Mapping) -> None:
+        """A forecast is recorded when it is made: created_at within CLOCK_SKEW of the clock."""
+
         made = pd.Timestamp(checked["created_at"])
         now = self._clock()
         if made > now + CLOCK_SKEW:
@@ -1035,34 +1125,33 @@ class StockLabStore:
                 "a forecast is recorded when it is made: created_at is earlier than the "
                 "store's clock (backdating is refused)"
             )
-        if forecast_artifact.opened_by(checked, checked["target_sessions"][:1]):
-            raise StoreRefused("a forecast must be made before its first target session opens")
-        with self._write() as connection:
-            latest = connection.execute(
-                "SELECT MAX(retrieved_at) FROM price_batches WHERE ticker = ?",
-                (checked["symbol"],),
-            ).fetchone()[0]
-            if latest is not None and made < pd.Timestamp(latest):
-                raise StoreRefused(
-                    "a forecast cannot predate data already stored for its stock "
-                    f"(retrieved {latest})"
-                )
-            _check_supersedes(connection, checked)
-            text = forecast_artifact.canonical(dict(checked))
-            connection.execute(
-                "INSERT INTO forecasts VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    checked["forecast_id"],
-                    checked["symbol"],
-                    checked["as_of_session"],
-                    checked["created_at"],
-                    checked["data_class"],
-                    checked["supersedes"],
-                    text,
-                ),
+
+    @staticmethod
+    def _after_stored_data(connection: sqlite3.Connection, checked: Mapping) -> None:
+        latest = connection.execute(
+            "SELECT MAX(retrieved_at) FROM price_batches WHERE ticker = ?",
+            (checked["symbol"],),
+        ).fetchone()[0]
+        if latest is not None and pd.Timestamp(checked["created_at"]) < pd.Timestamp(latest):
+            raise StoreRefused(
+                f"a forecast cannot predate data already stored for its stock (retrieved {latest})"
             )
-            _append_ledger(connection, "forecast", checked["forecast_id"], text, self._clock())
-        return checked["forecast_id"]
+
+    def _insert_forecast(self, connection: sqlite3.Connection, checked: Mapping) -> None:
+        text = forecast_artifact.canonical(dict(checked))
+        connection.execute(
+            "INSERT INTO forecasts VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                checked["forecast_id"],
+                checked["symbol"],
+                checked["as_of_session"],
+                checked["created_at"],
+                checked["data_class"],
+                checked["supersedes"],
+                text,
+            ),
+        )
+        _append_ledger(connection, "forecast", checked["forecast_id"], text, self._clock())
 
     def evaluation(self, run_id: str) -> dict | None:
         """One stored evaluation by its run id, re-checked against its hash."""
@@ -1079,8 +1168,12 @@ class StockLabStore:
             raise StoreRefused("an evaluation record does not match its hash")
         return json.loads(row[1])
 
-    def forecasts(self, symbol: str) -> tuple[dict, ...]:
-        """Every stored forecast of `symbol`, oldest first, each re-checked."""
+    def forecasts(self, symbol: str, *, reconstructed: bool = False) -> tuple[dict, ...]:
+        """
+        Every stored forecast of `symbol` on the live track, oldest first, each re-checked;
+        with `reconstructed`, its reconstructions instead (record_reconstruction). The live
+        track never holds a reconstruction, so no live reader can count one by mistake.
+        """
 
         with self._read() as connection:
             if connection is None:
@@ -1089,7 +1182,8 @@ class StockLabStore:
                 "SELECT record FROM forecasts WHERE symbol = ? ORDER BY created_at, forecast_id",
                 (symbol,),
             ).fetchall()
-        return tuple(dict(forecast_artifact.check(json.loads(row[0]))) for row in rows)
+        records = (dict(forecast_artifact.check(json.loads(row[0]))) for row in rows)
+        return tuple(r for r in records if forecast_artifact.is_reconstructed(r) is reconstructed)
 
     def forecast_symbols(self, data_class: DataClass) -> tuple[str, ...]:
         """Every symbol with a stored forecast of `data_class`, watched or not (for scoring)."""
@@ -1163,11 +1257,19 @@ class StockLabStore:
                 )
         return len(rows)
 
-    def scores(self, symbol: str | None = None) -> tuple[dict, ...]:
+    def scores(self, symbol: str | None = None, *, reconstructed: bool = False) -> tuple[dict, ...]:
+        """The live track's scores (of `symbol`, or every stock); `reconstructed`: the others."""
+
+        rows, rebuilt = self._score_rows(symbol)
+        return tuple(row for row in rows if (row["forecast_id"] in rebuilt) is reconstructed)
+
+    def _score_rows(self, symbol: str | None) -> tuple[tuple[dict, ...], frozenset[str]]:
+        """Every score row, and the ids of the reconstructed forecasts among the stored ones."""
+
         columns = SCORE_COLUMNS
         with self._read() as connection:
             if connection is None:
-                return ()
+                return (), frozenset()
             query = f"SELECT {', '.join(columns)} FROM scores"
             rows = (
                 connection.execute(query + " ORDER BY session, forecast_id, target").fetchall()
@@ -1176,10 +1278,18 @@ class StockLabStore:
                     query + " WHERE symbol = ? ORDER BY session, forecast_id, target", (symbol,)
                 ).fetchall()
             )
-        return tuple(dict(zip(columns, row, strict=True)) for row in rows)
+            records = connection.execute("SELECT forecast_id, record FROM forecasts").fetchall()
+        rebuilt = frozenset(
+            forecast_id
+            for forecast_id, text in records
+            if forecast_artifact.is_reconstructed(json.loads(text))
+        )
+        return tuple(dict(zip(columns, row, strict=True)) for row in rows), rebuilt
 
     def scored_keys(self, symbol: str) -> set[tuple[str, str]]:
-        return {(row["forecast_id"], row["target"]) for row in self.scores(symbol)}
+        """Every scored (forecast, target) of `symbol`, live and reconstructed (never re-scored)."""
+
+        return {(row["forecast_id"], row["target"]) for row in self._score_rows(symbol)[0]}
 
     def record_job_run(self, run: dict) -> str:
         text = _strict_json(run)
@@ -1327,12 +1437,14 @@ def _check_supersedes(connection: sqlite3.Connection, record: Mapping) -> None:
             )
         return
     target = connection.execute(
-        "SELECT symbol, as_of_session, data_class FROM forecasts WHERE forecast_id = ?",
+        "SELECT symbol, as_of_session, data_class, record FROM forecasts WHERE forecast_id = ?",
         (replaced,),
     ).fetchone()
     if target is None:
         raise StoreRefused("supersedes names a forecast the store does not hold")
-    if target != (record["symbol"], record["as_of_session"], record["data_class"]):
+    if forecast_artifact.is_reconstructed(json.loads(target[3])):
+        raise StoreRefused("a live forecast never supersedes a reconstruction")
+    if target[:3] != (record["symbol"], record["as_of_session"], record["data_class"]):
         raise StoreRefused(
             "a forecast may supersede only one for the same stock, as-of session and data class"
         )

@@ -42,7 +42,12 @@ Fields besides the envelope (`inputs`):
                   missed: [session], recent, recent_missed}
                   (stock_lab.job.evening_record). A due evening is one whose
                   next 09:30 New York open has passed; a missed one recorded
-                  no forecast and never will (no backfill). A miss among the
+                  no live forecast on time, and stays missed. The optional
+                  `reconstructed` (added 2026-10-30) lists the due evenings
+                  holding a forecast reconstructed after the fact, scored
+                  apart from the live
+                  record (missed or partly recorded: per stock), and is
+                  noted. A miss among the
                   last `recent` due evenings degrades the job check
     symbols      optional and additive (added 2026-10-17; the format stays 1.0
                   because the envelope ignores extra fields, so earlier files
@@ -190,6 +195,12 @@ def _parse(artifact: Artifact) -> dict:
             raise FormatError("evenings: recorded and missed must add up to due")
         if evenings["recent_missed"] > min(evenings["recent"], len(evenings["missed"])):
             raise FormatError("evenings.recent_missed exceeds the recent or missed evenings")
+        if evenings.get("reconstructed") is not None:  # optional (owner decision, 2026-10-30)
+            rebuilt = [_session(day) for day in require(evenings, "reconstructed", "list")]
+            if rebuilt != sorted(set(rebuilt)) or (rebuilt and rebuilt[0] < since):
+                raise FormatError(
+                    "evenings.reconstructed must list distinct sessions since `since`, in order"
+                )
     if document.get("symbols") is not None:
         symbols = require(document, "symbols", "object")
         for row in require(symbols, "tickers", "list"):
@@ -357,13 +368,19 @@ def _evening_finding(evenings: dict | None) -> Finding | None:
         return None
     missed = evenings["missed"]
     count = evenings["recent_missed"]
+    rebuilt = set(missed) & set(evenings.get("reconstructed") or ())
+    noted = (
+        f" {len(rebuilt)} of them reconstructed after the fact, scored apart from the live record."
+        if rebuilt
+        else ""
+    )
     return Finding(
         HealthState.DEGRADED,
         "evening_missed",
         f"{count} of the last {min(evenings['recent'], evenings['due'])} closed evenings recorded "
         f"no forecast (latest {missed[-1]}): permanent gaps in the prospective record, since a "
         "forecast is never made after the next 09:30 open. Check the evening agent's log; "
-        f"{len(missed)} missed since {evenings['since']}.",
+        f"{len(missed)} missed since {evenings['since']}.{noted}",
     )
 
 
@@ -371,10 +388,17 @@ def _evening_text(evenings: dict | None) -> str:
     if not evenings:
         return ""
     missed = evenings["missed"]
-    shown = ", ".join(missed[-5:]) if missed else "none"
+    noted = evenings.get("reconstructed") or []
+    rebuilt = set(noted)
+    shown = (
+        ", ".join(f"{day} (reconstructed)" if day in rebuilt else day for day in missed[-5:])
+        if missed
+        else "none"
+    )
+    later = f"reconstructed after the fact (latest 5): {', '.join(noted[-5:])}; " if noted else ""
     return (
         f"evenings since {evenings['since']}: {evenings['recorded']} of {evenings['due']} "
-        f"recorded; missed (latest 5): {shown}; "
+        f"recorded; missed (latest 5): {shown}; {later}"
     )
 
 

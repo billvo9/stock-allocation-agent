@@ -22,6 +22,12 @@ A forecast is scored against outcomes it could not have seen:
     - a score is written once per (forecast, target) and never rewritten:
       the forecast's probabilities are never touched.
 
+A reconstruction (forecast.is_reconstructed; owner decision of 2026-10-30) is
+made after its targets began, from prices dated up to its as-of close only,
+so it is judged by session dates instead: every target after its as-of
+session is scored once its outcome is stored, whenever that was. Its scores
+are kept off the live track (store.scores), never mixed with a live one.
+
 Scores per target: the realized category, the realized return, and the
 Brier score, log loss and RPS of the stored probabilities.
 """
@@ -37,7 +43,7 @@ import numpy as np
 import pandas as pd
 
 from stock_agent.stock_lab.contracts import CATEGORY_CODES, StableBand
-from stock_agent.stock_lab.forecast import PROBABILITY_KEYS
+from stock_agent.stock_lab.forecast import PROBABILITY_KEYS, is_reconstructed
 from stock_agent.stock_lab.forecast import opened_by as forecast_opened_by
 from stock_agent.stock_lab.prices import on_calendar, session_returns
 from stock_agent.stock_lab.scores import brier, log_loss, rps
@@ -114,6 +120,7 @@ def score_forecast(
 
     if record["refusal"] is not None:
         return ()
+    by_date = is_reconstructed(record)  # judged by session dates (module docstring)
     band = StableBand(record["band"])
     frame = session_returns(on_calendar(bars, sessions), band)
     by_day = {row.session.strftime("%Y-%m-%d"): row for row in frame.itertuples()}
@@ -127,7 +134,7 @@ def score_forecast(
             "symbol": record["symbol"],
             "target": target,
         }
-        if forecast_opened_by(record, needed):
+        if not by_date and forecast_opened_by(record, needed):
             out.append(_score(common, session, UNSCORABLE, "forecast_after_target_opened"))
             continue
         row = by_day.get(session)
@@ -135,7 +142,7 @@ def score_forecast(
             out.append(_score(common, session, PENDING, "not_closed_yet"))
             continue
         batch_id = batch_of[session]
-        if any(day in seen_before for day in needed):
+        if not by_date and any(day in seen_before for day in needed):
             out.append(_score(common, session, UNSCORABLE, "outcome_retrieved_before_forecast",
                               batch_id))  # fmt: skip
             continue

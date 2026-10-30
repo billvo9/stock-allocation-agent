@@ -56,6 +56,16 @@ What is returned (`InferenceWindow`)
     batches           the batches that supplied a session (lineage)
     revised_sessions  sessions whose values differ between eligible batches
 
+Reconstruction (`load_reconstruction_window`; owner decision of 2026-10-30,
+for the activated model's missed evenings)
+    The same window, read after its evening closed: every batch retrieved by
+    `retrieved_by` (the reconstruction's own time), and sessions dated up to
+    the as-of close only, so no later session ever enters. It refuses an
+    evening still open (invalid_request: forecast it live), where the live
+    reader alone applies. On the same data it reads what the live reader
+    read; a session the provider served differently later (a correction) is
+    read as served last, which the evening itself could not have read.
+
 What the reader cannot know
     It reads no clock, so `retrieved_by` is the caller's claim. A caller that
     passed past decision times would rebuild past windows (only from what was
@@ -150,6 +160,37 @@ def load_inference_window(
 ) -> InferenceWindow:
     """The inputs for a forecast as of `as_of_session`; the contract is in the module docstring."""
 
+    return _load(store_path, ticker, as_of_session, lookback, retrieved_by=retrieved_by,
+                 sessions=sessions, calendar_id=calendar_id, reconstruction=False)  # fmt: skip
+
+
+def load_reconstruction_window(
+    store_path: str | Path,
+    ticker: str,
+    as_of_session: object,
+    lookback: int = INFERENCE_SESSIONS,
+    *,
+    retrieved_by: pd.Timestamp,
+    sessions: Sessions,
+    calendar_id: str,
+) -> InferenceWindow:
+    """The inputs for a forecast reconstructed after its evening closed (module docstring)."""
+
+    return _load(store_path, ticker, as_of_session, lookback, retrieved_by=retrieved_by,
+                 sessions=sessions, calendar_id=calendar_id, reconstruction=True)  # fmt: skip
+
+
+def _load(
+    store_path: str | Path,
+    ticker: str,
+    as_of_session: object,
+    lookback: int,
+    *,
+    retrieved_by: pd.Timestamp,
+    sessions: Sessions,
+    calendar_id: str,
+    reconstruction: bool,
+) -> InferenceWindow:
     if not isinstance(ticker, str) or not ticker or ticker != ticker.strip().upper():
         raise InferenceRefused(Refusal.INVALID_REQUEST, f"not a stored ticker: {ticker!r}")
     if type(lookback) is not int:
@@ -176,11 +217,18 @@ def load_inference_window(
             f"the {as_of.date()} close is not available until 20:00 America/New_York",
         )
     following = _next_session(sessions, as_of)
-    if decision >= opens_at(following):
+    closed = decision >= opens_at(following)
+    if closed and not reconstruction:
         raise InferenceRefused(
             Refusal.AFTER_NEXT_OPEN,
             f"the decision is after the {following.date()} open: a forecast as of "
             f"{as_of.date()} can no longer be made, only reconstructed",
+        )
+    if reconstruction and not closed:
+        raise InferenceRefused(
+            Refusal.INVALID_REQUEST,
+            f"the {as_of.date()} evening is open until the {following.date()} open: "
+            "forecast it live, never as a reconstruction",
         )
 
     with read_only(Path(store_path)) as connection:

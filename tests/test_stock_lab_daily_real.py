@@ -233,7 +233,10 @@ def test_a_model_id_shorter_than_16_characters_is_refused(lab):
     assert code == 2 and "at least 16 characters" in out.getvalue()
 
 
-def test_a_skipped_evening_is_recorded_as_missed_and_never_backfilled(lab, monkeypatch):
+def test_a_skipped_evening_stays_missed_on_time_and_is_reconstructed_apart(lab, monkeypatch):
+    # Decision A4 never backfilled a missed evening; the owner's decision of 2026-10-30
+    # replaces that for the activated model: it is reconstructed, labelled and kept apart,
+    # and the evening stays missed on time.
     store, _, model, clock, tmp_path = lab
     monkeypatch.setattr(evening, "ACTIVATED_MODELS", frozenset({model["model_id"]}))
     code, text = _main(lab, "--record-real")
@@ -253,11 +256,14 @@ def test_a_skipped_evening_is_recorded_as_missed_and_never_backfilled(lab, monke
     line = f"evenings since {AS_OF}: 1 of 2 closed evenings recorded; missed (latest 5): {skipped}"
     assert line in text.splitlines()
     assert {f["as_of_session"] for t in SOURCES for f in store.forecasts(t)} == {AS_OF, third}
+    assert {f["as_of_session"] for t in SOURCES
+            for f in store.forecasts(t, reconstructed=True)} == {skipped}  # fmt: skip
     written = sorted((tmp_path / "health" / "stock_lab_monitor").glob("*.json"))
     document = json.loads(written[-1].read_text(encoding="utf-8"))
     assert document["schema_version"] == "1.0"  # `evenings` is additive: the format stays
     assert document["evenings"] == {"since": AS_OF, "due": 2, "recorded": 1, "missed": [skipped],
-                                    "recent": 10, "recent_missed": 1}  # fmt: skip
+                                    "recent": 10, "recent_missed": 1,
+                                    "reconstructed": [skipped]}  # fmt: skip
     checks = {c.check_id: c for c in stock_lab_checks(written[-1].parent)}
     job = checks["forecast.stock_lab_job"]
     assert (job.state, job.reason) == (HealthState.DEGRADED, "evening_missed")
@@ -268,6 +274,7 @@ def test_a_dry_run_reports_the_evenings_and_records_nothing(lab, monkeypatch):
     store, _, model, clock, _ = lab
     monkeypatch.setattr(evening, "ACTIVATED_MODELS", frozenset({model["model_id"]}))
     assert _main(lab, "--record-real")[0] == 0
+    _store_batch(lab, next_day(AS_OF))  # its prices are in: a reconstruction could be made
     before = store.path.read_bytes()
     clock.now = ny(next_day(AS_OF, 2), "09:30")  # the next evening was never recorded
     code, text = _main(lab, "--dry-run")
@@ -358,3 +365,89 @@ def test_the_environment_check_is_its_own_mode(lab):
         assert daily.main(argv, store_factory=lambda: store, out=out) == 2, other
         assert "--check-environment takes --model ID only" in out.getvalue()
     assert store.job_runs() == runs  # nothing ran
+
+
+# --- reconstructing missed evenings (owner decision of 2026-10-30) ---------------------------
+
+
+def _store_batch(lab, day: str) -> None:
+    """Each stock's window ending `day`, retrieved at 20:30 New York that day."""
+
+    clock = Clock(ny(day, "20:31"))
+    inference = type(lab[1])(lab[1].path, clock=clock)
+    for ticker, stock_id in SOURCES.items():
+        record(inference, clock, window_start(day), day, retrieved_at=ny(day, "20:30"),
+               ticker=ticker, bars=steady_bars(window_start(day), day, stock=stock_id))  # fmt: skip
+
+
+def _missed_friday(lab, monkeypatch):
+    """Thursday recorded by the job; Friday's prices stored and its evening missed; Monday's."""
+
+    model = lab[2]
+    monkeypatch.setattr(evening, "ACTIVATED_MODELS", frozenset({model["model_id"]}))
+    assert _main(lab, "--record-real")[0] == 0  # Thursday 20:35
+    friday, monday = next_day(AS_OF), next_day(AS_OF, 2)
+    _store_batch(lab, friday)
+    _store_batch(lab, monday)
+    return friday, monday
+
+
+def test_the_next_evening_reconstructs_the_missed_one_and_it_stays_missed(lab, monkeypatch):
+    store, _, _, clock, tmp_path = lab
+    friday, monday = _missed_friday(lab, monkeypatch)
+    clock.now = ny(monday, "20:35")
+    code, text = _main(lab, "--record-real")
+    assert code == 0, text
+    assert f"reconstructed {friday}: AMD, MU, NVDA (made after the fact, kept apart" in text
+    for ticker in SOURCES:
+        assert [f["as_of_session"] for f in store.forecasts(ticker)] == [AS_OF, monday]
+        (rebuilt,) = store.forecasts(ticker, reconstructed=True)
+        assert rebuilt["as_of_session"] == friday
+        assert pd.Timestamp(rebuilt["created_at"]) >= ny(monday, "20:35")
+    run = store.latest_job_run()
+    assert run["status"] == "ok" and [r["status"] for r in run["results"]] == ["recorded"] * 3
+    newest = max((tmp_path / "health" / "stock_lab_monitor").glob("*.json"))
+    document = json.loads(newest.read_text(encoding="utf-8"))
+    assert document["evenings"]["missed"] == [friday]  # missed on time
+    assert document["evenings"]["reconstructed"] == [friday]  # and noted
+    assert document["evenings"]["recorded"] + 1 == document["evenings"]["due"]
+
+
+def test_the_manual_command_reconstructs_and_scores_then_finds_nothing_more(lab, monkeypatch):
+    store, _, _, clock, _ = lab
+    friday, monday = _missed_friday(lab, monkeypatch)
+    runs = len(store.job_runs())
+    clock.now = ny(next_day(AS_OF, 3), "12:00")  # Tuesday midday: Monday is missed too
+    code, text = _main(lab, "--reconstruct-missed")
+    assert code == 0, text
+    assert f"reconstructed {friday}: AMD, MU, NVDA" in text
+    assert f"reconstructed {monday}: AMD, MU, NVDA" in text
+    for ticker in SOURCES:
+        made = {f["as_of_session"]: f for f in store.forecasts(ticker, reconstructed=True)}
+        assert sorted(made) == [friday, monday]
+        scored = {s["forecast_id"] for s in store.scores(ticker, reconstructed=True)}
+        assert scored == {made[friday]["forecast_id"]}  # Monday's outcome is stored; Tuesday's not
+    assert len(store.job_runs()) == runs  # no evening run is recorded by the manual command
+    assert all(store.scores(t) == () for t in SOURCES)  # live forecasts: the evening run's
+    code, text = _main(lab, "--reconstruct-missed")
+    assert code == 0 and "nothing to reconstruct" in text
+
+
+def test_the_manual_command_needs_an_activated_model_and_is_its_own_mode(lab):
+    code, text = _main(lab, "--reconstruct-missed")
+    assert code == 2 and "is not activated" in text
+    for flags in (("--reconstruct-missed", "--record-real"), ("--reconstruct-missed", "--dry-run")):
+        with pytest.raises(SystemExit):
+            _main(lab, *flags)
+
+
+def test_the_manual_command_exits_1_when_a_window_cannot_be_read_yet(lab, monkeypatch):
+    store, _, model, clock, _ = lab
+    monkeypatch.setattr(evening, "ACTIVATED_MODELS", frozenset({model["model_id"]}))
+    assert _main(lab, "--record-real")[0] == 0  # Thursday; Friday's prices never stored
+    clock.now = ny(next_day(AS_OF, 2), "12:00")
+    code, text = _main(lab, "--reconstruct-missed")
+    assert code == 1
+    for ticker in SOURCES:
+        assert f"not reconstructed {ticker} as of {next_day(AS_OF)} (short_window" in text
+        assert store.forecasts(ticker, reconstructed=True) == ()

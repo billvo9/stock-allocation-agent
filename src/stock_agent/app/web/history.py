@@ -100,10 +100,12 @@ def _problem(reason: str) -> dict:
 
 def _counts(found: History) -> str:
     recorded = [e for e in found.evenings if not e.missed]
-    scored = [e for e in recorded if any(_scored(x) for x in e.entries)]
+    scored = [e for e in recorded if any(_scored(x) and not x.reconstructed for x in e.entries)]
+    rebuilt = sum(1 for e in found.evenings for x in e.entries if x.reconstructed)
     return words.history_counts(
-        found.since, recorded=len(recorded), scored=len(scored), missed=len(found.missed)
-    )
+        found.since, recorded=len(recorded), scored=len(scored), missed=len(found.missed),
+        reconstructed=rebuilt,
+    )  # fmt: skip
 
 
 def _scored(item: Entry) -> bool:
@@ -113,19 +115,30 @@ def _scored(item: Entry) -> bool:
 def _evening(evening: Evening, now: datetime, zone: tzinfo | None) -> dict:
     day = evening.session
     title = words.short_day(day) if day else words.short_day(evening.as_of)
-    if evening.missed:
+    if evening.missed:  # its entries, if any, were reconstructed after the fact
+        items = _items(evening, day, now)
+        made = max((x.created_at for x in evening.entries if x.created_at), default=None)
         return {
             "as_of": evening.as_of,
             "session": day,
             "state": "missed",
             "title": title,
             "sub": words.missed_evening(evening.as_of),
-            "missed_words": words.MISSED_STAYS,
-            "items": [],
+            "missed_words": words.MISSED_STAYS
+            if made is None
+            else words.missed_reconstructed(words.when(made, now=now, local_zone=zone)),
+            "items": items,
         }
-    items = [_item(x, day, now) for x in evening.entries]
-    made = max((x.created_at for x in evening.entries if x.created_at), default=None)
-    waiting = any(item["state"] == "pending" for item in items)
+    items = _items(evening, day, now)
+    made = max(
+        (x.created_at for x in evening.entries if x.created_at and not x.reconstructed),
+        default=None,
+    )
+    waiting = any(  # the live outlooks only: a reconstruction never makes an evening wait
+        item["state"] == "pending"
+        for entry, item in zip(evening.entries, items, strict=True)
+        if not entry.reconstructed
+    )
     return {
         "as_of": evening.as_of,
         "session": day,
@@ -138,6 +151,16 @@ def _evening(evening: Evening, now: datetime, zone: tzinfo | None) -> dict:
         "missed_words": None,
         "items": items,
     }
+
+
+def _items(evening: Evening, day: str | None, now: datetime) -> list[dict]:
+    """The evening's items, a reconstructed one labelled (a stock without one stays absent)."""
+
+    items = [_item(x, day, now) for x in evening.entries]
+    for entry, item in zip(evening.entries, items, strict=True):
+        if entry.reconstructed:
+            item["label"] = words.RECONSTRUCTED_LABEL + item["label"]
+    return items
 
 
 def _item(x: Entry, day: str | None, now: datetime) -> dict:

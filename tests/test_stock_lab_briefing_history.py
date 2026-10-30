@@ -269,10 +269,10 @@ def test_a_record_that_fails_its_check_withholds_the_whole_history(lab):
     made(lab, Q, MONDAY)
 
     class Failing(ReadOnlyRecords):
-        def forecasts(self, symbol):
+        def forecasts(self, symbol, **kwargs):
             if symbol == Q:
                 raise ForecastRefused("the record does not match its id")
-            return super().forecasts(symbol)
+            return super().forecasts(symbol, **kwargs)
 
     found = read(lab, ny(TUESDAY, "10:00"), records=Failing(lab.path))
     assert found.problem == "record_check_failed" and found.evenings == ()
