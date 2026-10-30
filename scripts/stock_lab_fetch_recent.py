@@ -41,14 +41,34 @@ agent printed by scripts/stock_lab_schedule.py) needs no variable holding it.
 An item that cannot be read refuses the run before any request (exit 2),
 naming the reason, never the value.
 
+Unattended (--unattended, the evening agent's run, which may start the moment
+the Mac wakes; no wait or retry starts that would end at or after the open of
+the session after the window, when the evening can no longer be recorded):
+    power    on battery, a warning and one local notification
+             (stock_lab.notify, "on_battery"): run.sh's caffeinate -s holds
+             the Mac awake on AC power only. The run carries on.
+    network  before the key is read and before the first request, a wait of
+             at most 5 minutes until api.tiingo.com resolves and accepts a TCP
+             connection (stock_lab.tiingo.reach: no request, nothing sent, no
+             key). If it never does, exit 4 with nothing requested.
+    retries  a transport error (no response: the network dropped or timed
+             out) is retried up to TRANSPORT_RETRIES times in the whole run,
+             after 10, 30 and 90 seconds. Each retry is a request of the run's
+             budget, so the evening makes at most MAX_TICKERS +
+             TRANSPORT_RETRIES requests, under the key's HOURLY_REQUESTS. An
+             HTTP refusal (4xx, 429 included), a server error, a refused
+             response or an audit hold is never retried.
+
 Exit codes: 0 success; 1 a refused request, response or write; 2 refused
-before any request.
+before any request; 4 (--unattended) the network never came up, nothing
+requested.
 
 Usage:
     .venv/bin/python scripts/stock_lab_fetch_recent.py                        # the plan only
     .venv/bin/python scripts/stock_lab_fetch_recent.py --authorized           # read-only run
     .venv/bin/python scripts/stock_lab_fetch_recent.py --authorized --store   # store (approval)
     .venv/bin/python scripts/stock_lab_fetch_recent.py --authorized --store --keychain
+    .venv/bin/python scripts/stock_lab_fetch_recent.py --authorized --store --keychain --unattended
 The tickers are always the saved watchlist (add or remove them in the Lab).
 """
 
@@ -56,6 +76,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TextIO
@@ -70,9 +91,10 @@ from stock_agent.data.vendors.keychain import (
     add_command,
     read_key,
 )
-from stock_agent.data.vendors.tiingo import TiingoRequestFailed
+from stock_agent.data.vendors.tiingo import TiingoFailure, TiingoRequestFailed
 from stock_agent.stock_lab.audit import audit_bars, audit_lines
 from stock_agent.stock_lab.contracts import DataClass, SymbolStatus
+from stock_agent.stock_lab.forecast import session_open
 from stock_agent.stock_lab.inference.schema import (
     INFERENCE_SESSIONS,
     PROTECTED_START,
@@ -82,18 +104,30 @@ from stock_agent.stock_lab.inference.schema import (
 )
 from stock_agent.stock_lab.inference.store import InferenceStore
 from stock_agent.stock_lab.inference.window import load_inference_window
+from stock_agent.stock_lab.notify import NOTICES, notify
+from stock_agent.stock_lab.power import BATTERY
+from stock_agent.stock_lab.power import source as power_source
 from stock_agent.stock_lab.store import StockLabStore, utc_now
 from stock_agent.stock_lab.symbols import parse_ticker, refused
 from stock_agent.stock_lab.tiingo import (
+    NETWORK_WAIT,
+    PRICES_HOST,
     SOURCE_ID,
     VINTAGE_NOTE,
     NotAuthorized,
+    PriceResponse,
     StockAdapter,
     StockDataRefused,
     prices_url,
+    reach,
+    wait_for_network,
 )
 
 MAX_TICKERS = 30  # the authorized scope (A1); never raised by an option
+TRANSPORT_RETRIES = 3  # --unattended: extra requests in a run, after transport errors only
+RETRY_DELAYS = (10.0, 30.0, 90.0)  # seconds before each retry
+HOURLY_REQUESTS = 50  # the key's plan: the evening's at most MAX_TICKERS + TRANSPORT_RETRIES
+NO_NETWORK = 4  # exit status: the network never came up within the wait; nothing requested
 
 
 def shown(path: Path) -> str:
@@ -123,6 +157,57 @@ def request_window(now: pd.Timestamp) -> pd.DatetimeIndex:
     return sessions(end - CALENDAR_SPAN, end)[-INFERENCE_SESSIONS:]
 
 
+def recording_ends(last: pd.Timestamp) -> pd.Timestamp:
+    """The 09:30 New York open of the session after `last`: no evening of `last` after it."""
+
+    following = sessions(last + pd.Timedelta(days=1), last + pd.Timedelta(days=10))[0]
+    return pd.Timestamp(session_open(following.strftime("%Y-%m-%d"))).tz_convert("UTC")
+
+
+class Retries:
+    """A run's transport-error retries: at most `allowed`, none ending at or after `until`."""
+
+    def __init__(
+        self,
+        allowed: int,
+        until: pd.Timestamp | None,
+        clock: Callable[[], pd.Timestamp],
+        sleep: Callable[[float], None],
+    ) -> None:
+        self.allowed, self.until, self.clock, self.sleep = allowed, until, clock, sleep
+        self.used = 0
+
+    def delay(self, error: TiingoRequestFailed) -> float | None:
+        """The wait before retrying after `error`, or None when it is not retried."""
+
+        if error.reason is not TiingoFailure.TRANSPORT_ERROR or self.used >= self.allowed:
+            return None
+        delay = RETRY_DELAYS[self.used]
+        if self.until is None or self.clock() + pd.Timedelta(seconds=delay) >= self.until:
+            return None
+        self.used += 1
+        return delay
+
+
+def fetch_prices(
+    adapter: StockAdapter, ticker: str, days: pd.DatetimeIndex, retries: Retries, out: TextIO
+) -> PriceResponse:
+    """The ticker's window from the adapter, retried after a transport error (Retries)."""
+
+    while True:
+        try:
+            return adapter.prices(ticker, days[0].date(), days[-1].date())
+        except TiingoRequestFailed as error:
+            delay = retries.delay(error)
+            if delay is None:
+                raise
+            print(
+                f"  {ticker}: {error}; retry {retries.used} of {retries.allowed} in {delay:g} s",
+                file=out,
+            )
+            retries.sleep(delay)
+
+
 def on_request(bars: pd.DataFrame, days: pd.DatetimeIndex) -> pd.DataFrame:
     """Bars with one row per session of the request; a session not served is a row without prices."""
 
@@ -144,6 +229,7 @@ def plan(
     out: TextIO,
     *,
     keychain: bool = False,
+    unattended: bool = False,
 ) -> None:
     first, last = days[0].date(), days[-1].date()
     print("Stock Lab recent-window plan (no request made; pass --authorized to run):", file=out)
@@ -179,6 +265,16 @@ def plan(
             f"{TIINGO_ACCOUNT}) just before the first request; not read now",
             file=out,
         )
+    if unattended:
+        print(
+            f"unattended: waits up to {NETWORK_WAIT / 60:g} minutes for {PRICES_HOST} before the "
+            "first request (a DNS lookup and a TCP connection: no request, no key), retries a "
+            f"transport error up to {TRANSPORT_RETRIES} times (at most "
+            f"{len(supported) + TRANSPORT_RETRIES} requests), none ending after the "
+            f"{recording_ends(days[-1]).tz_convert('America/New_York'):%Y-%m-%d %H:%M} New York "
+            "open, and warns on battery; nothing checked now",
+            file=out,
+        )
 
 
 def main(
@@ -190,11 +286,16 @@ def main(
     clock: Callable[[], pd.Timestamp] = utc_now,
     out: TextIO = sys.stdout,
     key_reader: Callable[[], str] = read_key,
+    network: Callable[[], str | None] = reach,
+    sleep: Callable[[float], None] = time.sleep,
+    power: Callable[[], str] = power_source,
+    notifier: Callable[[str], object] = notify,
 ) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1], allow_abbrev=False)
     parser.add_argument("--authorized", action="store_true")
     parser.add_argument("--store", action="store_true")
     parser.add_argument("--keychain", action="store_true")
+    parser.add_argument("--unattended", action="store_true")
     args = parser.parse_args(argv)
     research = store_factory()
 
@@ -225,13 +326,35 @@ def main(
         print(f"refused: the inference store's location ({error})", file=out)
         return 2
     if not args.authorized:
-        plan(tickers, supported, days, research, inference, out, keychain=args.keychain)
+        plan(tickers, supported, days, research, inference, out, keychain=args.keychain,
+             unattended=args.unattended)  # fmt: skip
         return 0
+    if args.unattended and power() == BATTERY:
+        print(f"warning: {NOTICES['on_battery']}", file=out)
+        notifier("on_battery")
     if not supported:
         print("nothing to fetch: no watched ticker has a supported listing check yet", file=out)
         return 0
 
-    first, last = days[0].date(), days[-1].date()
+    last = days[-1].date()
+    retries = Retries(0, None, clock, sleep)  # by hand: no wait and no retry
+    if args.unattended:
+        retries = Retries(TRANSPORT_RETRIES, recording_ends(days[-1]), clock, sleep)
+        waited = wait_for_network(network, clock=clock, sleep=sleep, until=retries.until)
+        if not waited.reachable:
+            print(
+                f"stopped: {PRICES_HOST} was not reachable after {waited.waited:g} s of waiting "
+                f"({waited.checks} check{'s' * (waited.checks > 1)}; last {waited.reason}); "
+                "nothing was requested",
+                file=out,
+            )
+            return NO_NETWORK
+        if waited.checks > 1:
+            print(
+                f"network: {PRICES_HOST} reachable after {waited.waited:g} s ({waited.checks} "
+                f"checks; first {waited.first})",
+                file=out,
+            )
     key_source = {}
     if args.keychain:
         try:
@@ -244,12 +367,13 @@ def main(
             )
             return 2
         key_source["token_provider"] = lambda: key
-    adapter = adapter_factory(authorized=True, max_requests=len(supported), **key_source)
+    budget = len(supported) + retries.allowed
+    adapter = adapter_factory(authorized=True, max_requests=budget, **key_source)
     ready: list[str] = []
     review: list[str] = []
     try:
         for ticker in supported:
-            response = adapter.prices(ticker, first, last)
+            response = fetch_prices(adapter, ticker, days, retries, out)
             bars = on_request(response.bars, days)
             report = audit_bars(ticker, bars)
             for line in audit_lines(report):

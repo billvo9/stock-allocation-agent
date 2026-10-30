@@ -44,6 +44,9 @@ NOTICES = {
     "evening_not_recorded": "last evening was not recorded; it can still be recorded before 09:30",
     "evening_missed": "last evening was not recorded, and after the 09:30 open it can no longer be",
     "check_failed": "the morning check could not run - see its log before 09:30",
+    # The evening's price update (scripts/stock_lab_fetch_recent.py --unattended): run.sh's
+    # caffeinate -s holds the Mac awake on AC power only.
+    "on_battery": "running on battery - the Mac may sleep; plug in for reliable evenings",
     # scripts/stock_lab_morning_check.py --test-notification (the owner's one-time setup).
     "test": "test notification - alerts from the Stock Lab reach this Mac",
 }

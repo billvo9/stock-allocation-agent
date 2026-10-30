@@ -18,8 +18,12 @@ Modes
                      each step under `env -i` with only HOME, USER, LOGNAME,
                      TMPDIR, a system PATH and PYTHONPATH:
                        1. scripts/stock_lab_fetch_recent.py --authorized --store
-                          --keychain: the recent prices, with the Tiingo key
-                          read from the macOS Keychain inside that process;
+                          --keychain --unattended: the recent prices, with the
+                          Tiingo key read from the macOS Keychain inside that
+                          process, after a bounded wait for the network (a run
+                          may start the moment the Mac wakes) and with bounded
+                          retries of a transport error, and a warning on
+                          battery;
                        2. only when step 1 succeeds, scripts/stock_lab_daily.py
                           --record-real --model ID --health-inputs
                           ~/stock-agent-private/health_inputs: that evening's
@@ -27,7 +31,10 @@ Modes
                           that every checkout's Model Health reads.
                      A failed step 1 stops the run with its exit status: no
                      forecast is recorded that evening and none is backfilled
-                     later. A refusal, a failed step 1 or a failed step 2 shows
+                     later. caffeinate -s -i keeps the Mac awake until the run
+                     ends, but holds against system sleep only on AC power: a
+                     laptop must be plugged in. A refusal, a failed step 1
+                     (exit 4: the network never came up) or a failed step 2 shows
                      one local notification (/usr/bin/osascript; a fixed notice,
                      never a value), which never changes the exit status. The
                      job takes its session from the wall clock and skips
@@ -123,6 +130,9 @@ PROTECTED_FOLDERS = ("Desktop", "Documents", "Downloads")
 GIT = "/usr/bin/git"
 MAIN_BRANCH = "main"
 REFUSED_EXIT = 3  # run.sh's exit status when the checkout is not a clean main
+# The price update's exit when the network never came up after the wake, nothing requested
+# (scripts/stock_lab_fetch_recent.py NO_NETWORK; a test keeps the two equal).
+OFFLINE_EXIT = 4
 SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 # What each step's environment holds (`env -i`): nothing else from launchd or a shell.
 KEPT_VARIABLES = ("HOME", "USER", "LOGNAME", "TMPDIR")
@@ -151,6 +161,8 @@ APPLESCRIPT = (
 EVENING_NOTICES = {
     "refused": "tonight's run was refused by the checkout check - see the logs before 09:30",
     "fetch_refused": "tonight's price update was refused before any request - see the logs "
+    "before 09:30",
+    "fetch_offline": "tonight's price update found no network after the wake - see the logs "
     "before 09:30",
     "fetch_failed": "tonight's run failed (price update) - see the logs before 09:30",
     "record_failed": "tonight's run failed (forecasts) - see the logs before 09:30",
@@ -369,8 +381,10 @@ def evening_wake_note(zone: str = "America/New_York") -> str:
         "schedule already set, the briefing's 08:25 wake included: keep this one, since a late "
         f"briefing can still be read but a missed evening cannot be recorded): "
         f"{_pmset(zone, EVENING_WAKE)}. Check it before and after with: pmset -g sched. The Mac "
-        "must stay awake until 20:30 New York: a laptop should stay on power, and check the "
-        "first evening's log.\n"
+        "must stay awake until the run ends: a laptop must be plugged in, since the run's "
+        "caffeinate -s holds the Mac awake on AC power only, and a scheduled wake on battery may "
+        "be a dark wake that sleeps again mid-run (the run warns on battery). Check the first "
+        "evening's log.\n"
     )
 
 
@@ -405,9 +419,12 @@ def render_run_sh(
 # Stock Lab: the unattended evening, started by launchd at 20:30 New York on weekdays
 # ({LABEL}). Printed by scripts/stock_lab_schedule.py --run-sh: to change it, print it
 # again.
-#   1. The recent prices: scripts/stock_lab_fetch_recent.py --authorized --store --keychain.
-#      The Tiingo key is read from the macOS Keychain inside that process: never an
-#      environment variable, a command-line argument, this file or a log.
+#   1. The recent prices: scripts/stock_lab_fetch_recent.py --authorized --store --keychain
+#      --unattended. The Tiingo key is read from the macOS Keychain inside that process:
+#      never an environment variable, a command-line argument, this file or a log. A run
+#      that starts the moment the Mac wakes waits up to 5 minutes for the network (exit
+#      {OFFLINE_EXIT}, nothing requested, when it never comes up), retries a transport error a
+#      bounded number of times, and warns and notifies on battery.
 #   2. Only when step 1 succeeds, the evening's real forecasts for the activated model:
 #      scripts/stock_lab_daily.py --record-real --model <id>, with its Model Health input
 #      in the shared folder every checkout's Model Health reads (--health-inputs).
@@ -488,16 +505,20 @@ listed=${{${{changes%%$'\\n'*}}//[[:cntrl:]]/?}}  # the first line: a change, or
 [[ -z "$changes" ]] || refuse "$repo has uncommitted or untracked changes, or git warned \\
 (git status --porcelain: $listed)"
 cd "$repo" || refuse "cannot enter $repo"
-# Keep the Mac from idle sleep until this script, and each step it runs, has exited.
+# Keep the Mac awake until this script, and each step it runs, has exited: -s against
+# system sleep, which macOS honours only on AC power: a laptop must be plugged in (on battery
+# the price update warns); -i against idle sleep.
 if [[ -x /usr/bin/caffeinate ]]; then
-  /usr/bin/caffeinate -i -w $$ </dev/null >/dev/null 2>&1 &!
+  /usr/bin/caffeinate -s -i -w $$ </dev/null >/dev/null 2>&1 &!
 fi
-"${{clean[@]}}" "$python" scripts/stock_lab_fetch_recent.py --authorized --store --keychain
+"${{clean[@]}}" "$python" scripts/stock_lab_fetch_recent.py --authorized --store --keychain --unattended
 fetched=$?
 if (( fetched != 0 )); then
   say "stopped: the price update failed (exit $fetched); no forecast was recorded tonight"
   if (( fetched == 2 )); then
     notify {notice["fetch_refused"]}
+  elif (( fetched == {OFFLINE_EXIT} )); then
+    notify {notice["fetch_offline"]}
   else
     notify {notice["fetch_failed"]}
   fi

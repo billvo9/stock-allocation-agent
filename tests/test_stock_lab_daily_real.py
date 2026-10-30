@@ -144,6 +144,33 @@ def test_an_activated_model_records_forecasts_scores_and_the_health_input(lab, m
     assert {s["target"] for t in SOURCES for s in store.scores(t)} == {"1"}
 
 
+def test_a_mac_that_sleeps_after_the_decision_still_records_with_honest_timestamps(
+    lab, monkeypatch
+):
+    # 2026-10-27: the record step's decision, then a sleep before the writes, so the store
+    # refused every forecast as backdated. Each is now made again at the time of its write.
+    store, _, model, clock, _ = lab
+    monkeypatch.setattr(evening, "ACTIVATED_MODELS", frozenset({model["model_id"]}))
+    clock.now = ny(AS_OF, "21:07")
+    build, slept = evening.build_panel, []
+
+    def sleeps(*args, **kwargs):  # the windows are read; the Mac sleeps 25 minutes, once
+        if not slept:
+            slept.append(True)
+            clock.now += pd.Timedelta(minutes=25)
+        return build(*args, **kwargs)
+
+    monkeypatch.setattr(evening, "build_panel", sleeps)
+    code, text = _main(lab, "--record-real")
+    assert code == 0, text
+    assert store.latest_job_run()["status"] == "ok"
+    for ticker in SOURCES:
+        (forecast,) = store.forecasts(ticker)
+        made = pd.Timestamp(forecast["created_at"])
+        assert made == pd.Timestamp(forecast["data"]["decision_time"]) == ny(AS_OF, "21:32")
+        assert pd.Timestamp(forecast["data"]["retrieved_at"]) <= made
+
+
 def test_a_stale_close_is_reported_and_never_invented(lab, monkeypatch):
     store, _, model, clock, _ = lab
     monkeypatch.setattr(evening, "ACTIVATED_MODELS", frozenset({model["model_id"]}))

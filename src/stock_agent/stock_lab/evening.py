@@ -33,6 +33,21 @@ One evening, for each watched stock (`forecast_watchlist`)
        store, which refuses a created_at away from its clock or after the
        first target session opens.
 
+Timing (2026-10-27: the Mac slept between the decision and the writes, and
+the store refused every forecast as backdated)
+    A forecast is made at its decision time: its window is read as of that
+    time, which is both its created_at and its data.decision_time, so no
+    batch retrieved later reaches it. The evening's decision time is `now`.
+    When the store refuses a forecast as backdated (the Mac slept before the
+    write) and the job passes its clock, that stock's forecast is made again,
+    once, at clock(): its window read as of then (refused at or after the next
+    open, like any decision), on its own panel (every feature is the stock's
+    own), and written once more. Any other refusal, and a second one, is
+    final. With its clock the job also never writes at or after the first
+    target session's open (after_next_open), even a forecast made before it
+    (the store judges the open by created_at, within CLOCK_SKEW). The store's
+    checks are unchanged.
+
 Scoring (`score_real`): every real forecast not yet fully scored, on outcomes
 read from the inference store (read_outcomes): a target is scored only when
 every session it needs was absent from the store when the forecast was known
@@ -52,6 +67,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 
 import numpy as np
@@ -59,13 +75,13 @@ import pandas as pd
 
 from stock_agent.stock_lab import monitoring, registry, scoring
 from stock_agent.stock_lab.evaluation import build_panel
-from stock_agent.stock_lab.forecast import ForecastRefused
+from stock_agent.stock_lab.forecast import ForecastRefused, session_open
 from stock_agent.stock_lab.frozen_forecast import forecast_record
 from stock_agent.stock_lab.frozen_model import RegistryRefused
 from stock_agent.stock_lab.inference.outcomes import latest_close, read_outcomes
 from stock_agent.stock_lab.inference.schema import InferenceRefused, default_path
 from stock_agent.stock_lab.inference.window import load_inference_window
-from stock_agent.stock_lab.store import StockLabStore, StoreRefused, stamp
+from stock_agent.stock_lab.store import BackdatingRefused, StockLabStore, StoreRefused, stamp
 
 Sessions = Callable[[pd.Timestamp, pd.Timestamp], pd.DatetimeIndex]
 
@@ -86,6 +102,10 @@ NEXT_SPAN = pd.Timedelta(days=21)
 
 class NotActivated(ValueError):
     """The model is not activated for real forecasts (decision A4)."""
+
+
+class AfterOpen(ValueError):
+    """The job's clock reached the first target session's open before a write."""
 
 
 def inference_path() -> Path:
@@ -168,14 +188,18 @@ def forecast_watchlist(
     calendar_id: str,
     path: Path,
     record: bool,
+    clock: Callable[[], pd.Timestamp] | None = None,
 ) -> Evening:
     """
     One evening's forecasts (module docstring); `record` False is the dry run. Recording
-    refuses a model the owner has not activated (NotActivated, decision A4).
+    refuses a model the owner has not activated (NotActivated, decision A4). `now` is the
+    decision time; with `clock`, a forecast refused as backdated is made again at `clock()`
+    (module docstring, "Timing").
     """
 
     if record:
         check_activated(model.model_id)
+
     results: dict[str, TickerResult] = {}
     windows = {}
     freshness = []
@@ -233,40 +257,106 @@ def forecast_watchlist(
         for ticker, window in windows.items():
             if ticker in results:  # already recorded: its window counts for drift only
                 continue
-            newest = window.batches[-1]
-            data = {
-                "source": newest.source,
-                "batch_ids": [batch.batch_id for batch in window.batches],
-                "retrieved_at": max(batch.retrieved_at for batch in window.batches),
-                "last_close_session": day,
-                "decision_time": stamp(now),
-                "window": {
-                    "first_session": window.sessions[0].strftime("%Y-%m-%d"),
-                    "sessions": len(window.sessions),
-                    "gaps": list(window.gaps),
-                    "revised_sessions": list(window.revised_sessions),
-                    "calendar": window.calendar_id,
-                },
-            }
             try:
-                artifact = forecast_record(
-                    panel, ticker, model, target_sessions=targets, created_at=now, data=data,
-                    data_class=window.data_class,
-                )  # fmt: skip
+                artifact = _forecast(panel, ticker, model, window, day=day, targets=targets,
+                                     decided=now)  # fmt: skip
             except (RegistryRefused, ForecastRefused) as error:
                 reason = getattr(error, "reason", "forecast_refused")
                 results[ticker] = TickerResult(ticker, REFUSED, reason, str(error), None, day)
                 continue
             status, reason, detail = DRY_RUN, None, "computed; nothing recorded (dry run)"
             if record:
+                # Made again only on a panel of its own: under window_only, B0 pools every
+                # model stock's window, so a backdating refusal stays final there.
+                remake = None
+                if clock is not None and model.state_rule != registry.WINDOW_ONLY:
+                    remake = partial(
+                        _remade, model, ticker, path=path, day=day, targets=targets,
+                        sessions=sessions, calendar_id=calendar_id, clock=clock,
+                    )  # fmt: skip
                 try:
-                    store.record_forecast(artifact, real_authorized=True)
+                    artifact = _record(store, artifact, remake, clock)
                     status, detail = RECORDED, f"recorded {artifact['forecast_id'][:12]}"
+                    if artifact["created_at"] != stamp(now):
+                        detail += (
+                            f", made again at {artifact['created_at']} after a backdating refusal"
+                        )
                 except StoreRefused as error:
                     status, reason, detail = REFUSED, "store_refused", str(error)
+                except AfterOpen as error:
+                    status, reason, detail = REFUSED, "after_next_open", str(error)
+                except InferenceRefused as error:  # made again: its window refused (the open)
+                    status, reason, detail = REFUSED, error.reason.value, error.detail
+                except (RegistryRefused, ForecastRefused) as error:  # made again: refused
+                    status, reason = REFUSED, getattr(error, "reason", "forecast_refused")
+                    detail = str(error)
             results[ticker] = TickerResult(ticker, status, reason, detail, artifact, day)
     ordered = tuple(results[ticker] for ticker in tickers)
     return Evening(ordered, panel, tuple(freshness))
+
+
+def _forecast(panel, ticker, model, window, *, day, targets, decided) -> dict:
+    """`ticker`'s forecast from `window`, read as of `decided`: its decision time and created_at."""
+
+    newest = window.batches[-1]
+    data = {
+        "source": newest.source,
+        "batch_ids": [batch.batch_id for batch in window.batches],
+        "retrieved_at": max(batch.retrieved_at for batch in window.batches),
+        "last_close_session": day,
+        "decision_time": stamp(decided),
+        "window": {
+            "first_session": window.sessions[0].strftime("%Y-%m-%d"),
+            "sessions": len(window.sessions),
+            "gaps": list(window.gaps),
+            "revised_sessions": list(window.revised_sessions),
+            "calendar": window.calendar_id,
+        },
+    }
+    return forecast_record(
+        panel, ticker, model, target_sessions=targets, created_at=decided, data=data,
+        data_class=window.data_class,
+    )  # fmt: skip
+
+
+def _remade(model, ticker, *, path, day, targets, sessions, calendar_id, clock) -> dict:
+    """`ticker`'s forecast made again at `clock()`, from its window read as of then."""
+
+    decided = clock()
+    window = load_inference_window(
+        path, ticker, day, retrieved_by=decided, sessions=sessions, calendar_id=calendar_id
+    )
+    panel = build_panel({ticker: window.bars.drop(columns=["batch_id"])}, model.final.config)
+    return _forecast(panel, ticker, model, window, day=day, targets=targets, decided=decided)
+
+
+def _record(
+    store: StockLabStore,
+    artifact: dict,
+    remake: Callable[[], dict] | None,
+    clock: Callable[[], pd.Timestamp] | None,
+) -> dict:
+    """
+    Record `artifact` and return what was recorded. A backdating refusal (made before the Mac
+    slept) with `remake` makes the forecast again now and writes that once; any other refusal,
+    and a second one, propagates (StoreRefused, or the remade window's InferenceRefused). No
+    write starts at or after the first target session's open on `clock` (AfterOpen).
+    """
+
+    def write(record: dict) -> None:
+        opens = pd.Timestamp(session_open(record["target_sessions"][0]))
+        if clock is not None and clock() >= opens:
+            raise AfterOpen(f"the {record['target_sessions'][0]} open has passed: nothing written")
+        store.record_forecast(record, real_authorized=True)
+
+    try:
+        write(artifact)
+    except BackdatingRefused:
+        if remake is None:
+            raise
+        artifact = remake()
+        write(artifact)
+    return artifact
 
 
 def score_real(
